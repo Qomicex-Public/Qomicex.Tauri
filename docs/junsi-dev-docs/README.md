@@ -103,6 +103,7 @@
 - [ADR-100：Issue #127 外部唤起：qomicex-launcher:// OS 协议 + single-instance + 深链动作分发](1-决策记录/ADR-100-外部唤起-qomicex-launcher-OS协议-single-instance-深链动作分发-issue-127.md)
 - [ADR-101：模组依赖检测在 core 解析、前端判定（issue #165）](1-决策记录/ADR-101-模组依赖检测在-core-解析与前端判定-issue-165.md)
 - [ADR-102：Forge 加载器版本获取：Maven 元数据主路径 + 官方源失败回退 BMCLAPI + 缓存非空校验（issue #176）](1-决策记录/ADR-102-Forge-加载器版本获取改用-Maven-元数据并补官方源回退与缓存校验-issue-176.md)
+- [ADR-103：资源详情页 MC百科跳转与复制名称 / 资源中心改无限滚动（issue #188）](1-决策记录/ADR-103-资源详情MC百科跳转与复制名称-资源中心改无限滚动.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 
