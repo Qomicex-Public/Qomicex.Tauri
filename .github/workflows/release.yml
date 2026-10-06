@@ -836,10 +836,14 @@ jobs:
           # needs.setup.outputs.displayVersion 建 tag，用不带 v 的 version 会 404。
           URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$RELEASE_TAG"
 
-          # 签名用宿主架构的 CLI 显式拉取：@tauri-apps/cli 的原生二进制走
-          # optionalDependencies 分发，没有 loong64 变体，容器内的 pnpm install
-          # 不会为 x86_64 宿主准备可执行文件。版本与 package.json / pnpm-lock 对齐。
+          # 签名必须在工作区之外跑：npx 优先命中容器装进共享 workspace 的那份
+          # @tauri-apps/cli，而它的原生二进制经 optionalDependencies 分发、没有
+          # loong64 变体，容器内 pnpm install 跳过了全部平台可选依赖。那份副本在
+          # x86_64 宿主上加载 native binding 会失败（Cannot find module
+          # '@tauri-apps/cli-linux-x64-gnu'），--yes 也不会强制改从 registry 取。
+          # 换到独立目录执行即可解析到宿主架构的 CLI。版本与 package.json / pnpm-lock 对齐。
           TAURI_CLI="@tauri-apps/cli@2.11.4"
+          CLI_DIR=$(mktemp -d)
 
           # loong64 无 linuxdeploy 支持，产物固定 deb,rpm → 不出 appimage 包。
           # system 包以 deb 布局为基线：dpkg-deb -x 收集 / 相对布局
@@ -849,8 +853,11 @@ jobs:
           dpkg-deb -x "$DEB" "$STAGING"
           PKG_SYS="qomicex-update-linux-loongarch64-system.zip"
           (cd "$STAGING" && zip -qr "$OLDPWD/$PKG_SYS" .)
-          npx --yes "$TAURI_CLI" signer sign "$PKG_SYS"
-          rm -rf "$STAGING"
+          # 传绝对路径：CLI_DIR 里没有工作区上下文，相对路径会找不到包。
+          # 签名把 .sig 写到包旁边，故包必须仍在工作区内。
+          PKG_SYS_PATH="$PWD/$PKG_SYS"
+          (cd "$CLI_DIR" && npx --yes "$TAURI_CLI" signer sign "$PKG_SYS_PATH")
+          rm -rf "$CLI_DIR" "$STAGING"
           echo "{\"linux-loongarch64-system\":{\"url\":\"$URL_BASE/$PKG_SYS\",\"signature\":\"$(tr -d '\n' < "$PKG_SYS.sig")\",\"strategy\":\"system\"}}" > "update-package-fragment-linux-loongarch64-system.json"
           cat update-package-fragment-*.json
       - uses: actions/upload-artifact@v7
