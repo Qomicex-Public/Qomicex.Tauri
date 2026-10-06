@@ -770,9 +770,10 @@ jobs:
           # （stable 变体为 2.38，低于宿主系统库，链接期会缺符号）。
           URL="https://github.com/loong64/cross-tools/releases/download/${TOOLS_TAG}/x86_64-cross-tools-loongarch64-unknown-linux-gnu-mainline.tar.xz"
           TARBALL="$RUNNER_TEMP/cross-tools.tar.xz"
-          # 与 sysroot 脚本同理：73MB 在弱网下会被对端重置，用 -C - 续传。
-          # --retry-all-errors 让连接重置也纳入重试（默认只重试瞬时错误）。
-          curl -fL --retry 5 --retry-delay 3 --retry-all-errors -C - \
+          # 整包重下，不用 -C - 续传：CI 实测续传拼出的文件让 dpkg-deb 报
+          # lzma Broken pipe（半截旧数据接新数据导致偏移错乱）。
+          rm -f "$TARBALL"
+          curl -fL --retry 8 --retry-delay 3 --retry-all-errors \
             --speed-limit 1024 --speed-time 120 "$URL" -o "$TARBALL"
           # 解包前先验魔数与完整性：只报「File format not recognized」看不出
           # 拿到的到底是截断包、错误页还是代理返回的 HTML。

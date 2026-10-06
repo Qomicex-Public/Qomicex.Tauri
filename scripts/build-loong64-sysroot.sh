@@ -61,13 +61,13 @@ log() { printf '>>> %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 fetch() { # fetch <url> <dest>
-  # -C - 让 curl 断点续传：Contents 索引 48MB，弱网下实测会被对端重置而中断，
-  # --retry 虽会重试但每次都从 0 开始，反复整包重下（本机调试时在此卡了很久）。
-  # --speed-limit/--speed-time 再加一道：持续低速也主动断，交给 -C 续传。
-  # --speed-time 单独给宽限：实测这条链路常长时间低于 10KB/s 但仍在推进，
-  # 卡太紧会把「慢」误判成「挂」而反复重来。阈值取 1KB/s / 120s，
-  # 只在真的停滞时才交给 -C 续传。
-  curl -fSL --retry 5 --retry-delay 2 -C - \
+  # 整包重下，不用 -C -续传：CI 实测续传拼出的文件让 dpkg-deb 报
+  # 「lzma write error: Broken pipe」（半截旧数据接新数据，偏移错乱）。
+  # 索引有 .gz，损坏会被 zcat 直接发现并快速失败，不会像 deb 那样静默。
+  # --speed-time 给宽限：这条链路常长时间低于 10KB/s 但仍在推进，卡太紧会
+  # 把「慢」误判成「挂」而反复重来。
+  rm -f "$2"
+  curl -fL --retry 8 --retry-delay 3 --retry-all-errors \
     --speed-limit 1024 --speed-time 120 "$1" -o "$2" \
     || die "下载失败: $1"
 }
@@ -149,9 +149,11 @@ install_pkg() { # install_pkg <包名>
   # 解包阶段的磁盘满/权限错误）。改成先列举再按名解包后：
   #  - 没有匹配成员 → 列表为空，正常跳过（很多纯数据包不含 lib/）
   #  - 有匹配成员 → 整条管道退出码必须为 0，否则是真失败，直接中断
-  # 与 fetch() 同理：单个 deb 在弱网下也会被重置（实测 libsqlite3-dev 中断过），
-  # 用 -C - 续传而非整包重来。
-  curl -fL --retry 5 --retry-delay 2 -C - \
+  # 每个包重新下载到临时文件再改名：不用 curl -C - 直接续传——CI 实测续传拼出
+  # 的文件让 dpkg-deb 报「lzma write error: Broken pipe」，即半截旧数据接上
+  # 新数据导致归档内部偏移错乱。整包重来慢一点，但结果总是正确的归档。
+  rm -f "$WORK/pkg.deb"
+  curl -fL --retry 8 --retry-delay 3 --retry-all-errors \
     --speed-limit 1024 --speed-time 120 "$MIRROR/debian/$fn" -o "$WORK/pkg.deb" \
     || die "下载 $pkg 失败"
 
