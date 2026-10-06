@@ -158,9 +158,11 @@ install_pkg() { # install_pkg <包名>
   # 列举必须直接在当前 shell 里跑管道，不能写成$( ... ) 命令替换：命令替换会开
   # 子 shell，父 shell 的 PIPESTATUS 拿不到子shell 里的管道状态（实测 ps[1]
   # 直接 unbound，set -u 下会中止脚本）。故先落盘再筛。
+  # stderr 先落盘而不是丢弃：只在失败时回显。平时 400+ 个包都会报些无关噪声，
+  # 但一旦die，日志里就能直接看到是 deb 截断还是 tar 解不开，而不必再复现一遍。
   set +e
-  dpkg-deb --fsys-tarfile "$WORK/pkg.deb" 2>/dev/null \
-    | tar -tf /dev/stdin 2>/dev/null > "$WORK/list.txt"
+  dpkg-deb --fsys-tarfile "$WORK/pkg.deb" 2>"$WORK/dpkg.err" \
+    | tar -tf /dev/stdin 2>"$WORK/tar.err" > "$WORK/list.txt"
   ps=("${PIPESTATUS[@]}")
   grep -E '^\./(usr/include|usr/lib|lib|usr/share/pkgconfig)/' \
     "$WORK/list.txt" > "$WORK/members.txt"
@@ -168,8 +170,11 @@ install_pkg() { # install_pkg <包名>
   # 只对前两段硬性检查：grep 无匹配返回 1 属正常（很多纯数据包不含这些路径），
   # 但 dpkg-deb / tar 失败同样表现为 MEMBERS 为空，若不区分就会把「归档损坏 /
   # 下载截断」当成「无匹配成员」而跳过，并把它标记成已装。
-  [ "${ps[0]}" -eq 0 ] && [ "${ps[1]}" -eq 0 ] \
-    || die "读取归档失败 $pkg（dpkg-deb=${ps[0]} tar=${ps[1]}）"
+  if [ "${ps[0]}" -ne 0 ] || [ "${ps[1]}" -ne 0 ]; then
+    printf 'dpkg-deb: %s\n' "$(cat "$WORK/dpkg.err")" >&2
+    printf 'tar: %s\n' "$(cat "$WORK/tar.err")" >&2
+    die "读取归档失败 $pkg（dpkg-deb=${ps[0]} tar=${ps[1]}）"
+  fi
   if [ -s "$WORK/members.txt" ]; then
     set +e
     dpkg-deb --fsys-tarfile "$WORK/pkg.deb" \
