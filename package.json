@@ -17,7 +17,8 @@
     "dev:backend": "cargo run --manifest-path src-backend/qomicex-backend/Cargo.toml",
     "harness": "node scripts/harness/run.mjs",
     "test:update-channel": "node scripts/test-update-channel.mjs",
-    "test:deep-link": "node scripts/test-deep-link-parse.mjs"
+    "test:deep-link": "node scripts/test-deep-link-parse.mjs",
+    "test:i18n-steps": "node scripts/test-i18n-step-keys.mjs"
   },
   "dependencies": {
     "@fortawesome/free-brands-svg-icons": "^7.3.1",

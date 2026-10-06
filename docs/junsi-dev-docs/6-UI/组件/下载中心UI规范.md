@@ -31,3 +31,21 @@
 - `src/lib/downloadGroups.ts`（`normalizeResourceKind`、`getTaskGroup`、`groupTasks`、折叠状态读写）
 - `src/components/DownloadSpeedGraph.tsx`
 - `src/components/InstallStepsList.tsx`
+
+
+### 2026-10-06 更新
+
+## 步骤/阶段文案的 i18n 覆盖（护栏）
+
+下载中心卡片有两处「后端标识 → i18n 词条」映射，**任何一处缺词条都会把键名直接显示给用户**——`t()` 查不到键时原样返回键名（`src/i18n/index.tsx:60`）：
+
+| 映射 | 标识来源 | 词条位置 |
+|---|---|---|
+| `downloads.steps.<id>` | 后端安装管线 step id（`InstallStepSpec { id }` / `mark_step`） | `qomicex-tauri-i18n/src/*/downloads.ts` 的 `steps` |
+| `downloads.stage.<stage>` | `DownloadCenter.tsx` 的 `STAGE_LABELS` 白名单 | 同上，`stage` |
+
+- **已发生的缺陷（2026-10-06 修复）**：Technic Solder 管线（issue #181 / 期3）新定义 6 个 step，只补了 `install-game` / `copy-files`，`download-mods` / `verify` / `extract-merge` / `jarmod` 缺词条 → 卡片上显示 `downloads.steps.download-mods` 之类的键名。同源缺陷另有两处：`repair-files`（实例缺资源补全，`endpoints/instance.rs:1445`）与 stage `modpack-update-finalize`（整合包原地更新收尾，`endpoints/modpack_update.rs:874`）。均已补齐 7 语言。
+- **护栏**：`pnpm run test:i18n-steps`（`scripts/test-i18n-step-keys.mjs`）—— 扫后端 Rust 源码提取 step id（含 `#[cfg(test)]` 里假 id 的剔除、`id: step_id` 间接赋值的回溯），再取 `STAGE_LABELS` 白名单，逐语言比对 `downloads.ts` 的 `steps` / `stage` 键；缺任一键即退出码 1，并打印缺失键的后端定义位置。CI frontend-check 作业已接入。
+- **新增管线步骤 / 往 `STAGE_LABELS` 加 stage 时**：先补 7 语言词条再跑护栏。zh-CN 是 `TranslationSchema` 基准，其它语言 `satisfies TranslationSchema` 做编译期结构校验（漏翻 tsc 也会报错），但**只有护栏能同时守住「后端新增了标识」这一侧**。
+- **不算缺陷的情况**：`STAGE_LABELS` 未登记的 stage（如 `repairing` / `packing` / `verifying`）走通用「下载中」文案，不会显示键名。
+

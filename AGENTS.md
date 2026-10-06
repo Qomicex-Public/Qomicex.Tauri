@@ -99,8 +99,10 @@ Conventional Commits：
 
 - type：`feat` `fix` `build` `chore` `ci` `docs` `perf` `refactor` `revert` `style` `test`
 - summary：祈使句、小写、无句号
-- 正文只写：根因、方案、验证、风险、refs
-- 验证写实际命令与结果，不写过程叙事
+- 正文写**这次提交改了什么**：新增/修改/删除的文件与接口、行为前后差异、必须同行的配套改动（子模块指针、CI、文档、迁移），再加根因、方案、验证、风险、refs
+- 验证写实际命令与结果，不写过程叙事，也不写 AI 自述（「经分析」「我检查了…」）
+- 不写决策叙事：备选方案、权衡与取舍属于 ADR 或 `.memory/decisions/`，提交里最多留一句「方案见 ADR-XXX」
+- 一个提交一件事：无关改动拆成独立提交（`docs:` / `ci:` / `style:` 分开）
 - `BREAKING CHANGE:` 放 footer，或 type/scope 后加 `!`
 
 参考：
