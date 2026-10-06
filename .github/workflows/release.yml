@@ -770,9 +770,17 @@ jobs:
           # （stable 变体为 2.38，低于宿主系统库，链接期会缺符号）。
           URL="https://github.com/loong64/cross-tools/releases/download/${TOOLS_TAG}/x86_64-cross-tools-loongarch64-unknown-linux-gnu-mainline.tar.xz"
           TARBALL="$RUNNER_TEMP/cross-tools.tar.xz"
-          curl -fsSL --retry 5 --retry-delay 3 "$URL" -o "$TARBALL"
-          # 下载被截断时 xz 会报错，避免留下半个工具链继续往下走
-          xz -t "$TARBALL"
+          # 与 sysroot 脚本同理：73MB 在弱网下会被对端重置，用 -C - 续传。
+          # --retry-all-errors 让连接重置也纳入重试（默认只重试瞬时错误）。
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors -C - \
+            --speed-limit 1024 --speed-time 120 "$URL" -o "$TARBALL"
+          # 解包前先验魔数与完整性：只报「File format not recognized」看不出
+          # 拿到的到底是截断包、错误页还是代理返回的 HTML。
+          if ! xz -t "$TARBALL"; then
+            echo "工具链包异常，实际大小 $(stat -c%s "$TARBALL") 字节，前 32 字节："
+            head -c 32 "$TARBALL" | xxd || true
+            exit 1
+          fi
           sudo mkdir -p /opt/x-tools
           sudo tar -xJ -C /opt/x-tools "$TARBALL"
           /opt/x-tools/loongarch64-unknown-linux-gnu/bin/loongarch64-unknown-linux-gnu-gcc --version
