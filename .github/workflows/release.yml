@@ -738,66 +738,128 @@ jobs:
         (github.event.inputs.buildPlatform == 'loongarch64'))
     # 与 quality-gate 并行：release 汇总时仍要求 gate 通过，坏产物不会发布
     needs: [setup]
-    runs-on: ubuntu-latest
-    env:
-      IMAGE: ghcr.io/qomicex-public/qomicex-loong64-builder:latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
           token: ${{ secrets.QOMICEX_PAT }}
-      # 自更新包在宿主机侧打包签名（容器内无 zip），需要 node 跑 `npx tauri signer`；
-      # 不设 cache: pnpm —— 宿主机不跑 pnpm，依赖由下方容器安装到同一个 workspace。
+      # rust-toolchain.toml 钉住 1.95.0，dtolnay 动作只把 target 装进 stable；
+      # cargo 在仓库目录内解析到被钉住的链，交叉 target 缺失会报 E0463。
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cross target for pinned toolchain
+        run: rustup target add loongarch64-unknown-linux-gnu
+      - uses: swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7.0.0
-        with: { node-version: '22' }
-      # 注册 loong64 用户态模拟（与 build-loong64-builder.yml 构建镜像同款方案）
-      - name: Set up QEMU (loong64)
-        run: docker run --rm --privileged ghcr.io/loong64/binfmt --install all
-      # builder 镜像为私有包，需以 GITHUB_TOKEN 登录 GHCR 才能拉取
-      - name: Login to GHCR
-        run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-      - name: Build in loong64 container
-        env:
-          VERSION: ${{ needs.setup.outputs.version }}
-          LICENSE_REQUIRED: ${{ needs.setup.outputs.licenseRequired }}
+        with: { node-version: '22', cache: pnpm }
+      # loong64 原生库（libwebkit2gtk-4.1-dev 等）没有 x86_64 版本，只能从
+      # loong64 源解包出 sysroot；源码级依赖用宿主 apt。
+      - name: Install host build dependencies
         run: |
-          # 全部构建在 loong64 容器内完成（QEMU 模拟，耗时较长）：
-          # - protoc 用镜像自带 /usr/bin/protoc（host 侧 setup-connector-build 装的是
-          #   x86_64 二进制，容器内不可执行）；easytier 的 git 认证在容器内重写
-          # - AppImage 无 loong64 的 linuxdeploy 支持，固定 deb,rpm
-          docker run --rm -i --network=host --security-opt seccomp=unconfined --platform linux/loong64 \
-            -v "$PWD:/workspace" -w /workspace \
-            -e PROTOC=/usr/bin/protoc \
-            -e VC_LTL= \
-            -e YY_THUNKS= \
-            -e VERSION="$VERSION" \
-            -e LICENSE_REQUIRED="$LICENSE_REQUIRED" \
-            -e QOMICEX_PAT='${{ secrets.QOMICEX_PAT }}' \
-            -e TAURI_SIGNING_PRIVATE_KEY='${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}' \
-            -e TAURI_SIGNING_PRIVATE_KEY_PASSWORD='${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}' \
-            "$IMAGE" bash -euxo pipefail <<'EOF'
-            set -e
-            git config --global url."https://x-access-token:${QOMICEX_PAT}@github.com/".insteadOf "ssh://git@github.com/"
-            node scripts/bump-version.mjs "$VERSION"
-            FEATURES=""
-            if [ "$LICENSE_REQUIRED" = "true" ]; then FEATURES="--features license-required"; fi
-            cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml $FEATURES
-            mkdir -p src-tauri/binaries
-            mv src-backend/qomicex-backend/target/release/qomicex-backend src-tauri/binaries/backend
-            cargo build --release --manifest-path Qomicex.Updater/Cargo.toml
-            cp Qomicex.Updater/target/release/qomicex-updater src-tauri/binaries/updater
-            pnpm store prune || true
-            # ponytail: QEMU 用户态模拟下 pnpm tarball 完整性校验异常（Wanted==Got 仍报错），
-            # 用非 frozen 模式接受 registry 当前 integrity；仅 QEMU 交叉构建路径使用
-            pnpm install --no-frozen-lockfile \
-              --fetch-timeout=600000 --fetch-retries=5
-            pnpm --filter @qomicex/plugin-ui build
-            pnpm exec tauri build --bundles deb,rpm
-          EOF
+          sudo apt-get update
+          sudo apt-get install -y pkg-config protobuf-compiler libssl-dev libclang-dev
+      # 工具链 73MB + Contents 索引 48MB + 数百个 deb，每次重下会显著拖长作业。
+      # 缓存键取工具链 tag + sysroot 脚本内容，两者任一变化即失效。
+      - name: Fetch loong64 cross toolchain
+        id: xtools
+        env:
+          TOOLS_TAG: '20260912'
+        run: |
+          KEY="loong64-cross-${{ env.TOOLS_TAG }}-$(sha256sum scripts/build-loong64-sysroot.sh | cut -c1-12)"
+          CACHE="$RUNNER_TEMP/$KEY.tar.xz"
+          if [ ! -f "$CACHE" ]; then
+            # 官方 loong64/cross-tools（loong64 组织维护）。固定 release tag：
+            # 解析到可变引用（@main / latest）意味着工具链可在无人 review 的情况下
+            # 被替换，而本作业持有发布签名私钥。
+            # mainline 变体的 glibc 2.41 与 loong64 Debian trixie 的 libc6 2.41 一致
+            # （stable 变体为 2.38，低于宿主系统库，链接期会缺符号）。
+            URL="https://github.com/loong64/cross-tools/releases/download/${TOOLS_TAG}/x86_64-cross-tools-loongarch64-unknown-linux-gnu-mainline.tar.xz"
+            curl -fsSL --retry 5 --retry-delay 3 "$URL" -o "$CACHE"
+          else
+            echo "复用已缓存的工具链"
+          fi
+          # tar 流被截断时 xz 会报错，避免留下半个工具链继续往下走
+          xz -t "$CACHE"
+          sudo mkdir -p /opt/x-tools
+          sudo tar -xJ -C /opt/x-tools "$CACHE"
+          /opt/x-tools/loongarch64-unknown-linux-gnu/bin/loongarch64-unknown-linux-gnu-gcc --version
+      - name: Build loong64 sysroot
+        env:
+          TOOLS_DIR: /opt/x-tools
+          SYSROOT: ${{ runner.temp }}/loong64-sysroot
+        run: bash scripts/build-loong64-sysroot.sh
+      - name: Export cross-compile environment
+        run: |
+          echo "CARGO_TARGET_LOONGARCH64_UNKNOWN_LINUX_GNU_LINKER=loongarch64-unknown-linux-gnu-gcc" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_SYSROOT_DIR=${{ runner.temp }}/loong64-sysroot" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_LIBDIR=${{ runner.temp }}/loong64-sysroot/usr/lib/loongarch64-linux-gnu/pkgconfig:${{ runner.temp }}/loong64-sysroot/usr/share/pkgconfig" >> "$GITHUB_ENV"
+          # 清空 PKG_CONFIG_PATH：否则 pkg-config 会回落到宿主
+          # /usr/lib/x86_64-linux-gnu/pkgconfig，把 amd64 库链进LoongArch 产物。
+          echo "PKG_CONFIG_PATH=" >> "$GITHUB_ENV"
+          echo "/opt/x-tools/loongarch64-unknown-linux-gnu/bin" >> "$GITHUB_PATH"
+          # Debian multiarch 下部分架构相关头只在 usr/include/<triple>/ 子目录，
+          # 而 pkg-config 只发 -I$sysroot/usr/include；缺这层 openssl-sys 等会失败。
+          echo "C_INCLUDE_PATH=${{ runner.temp }}/loong64-sysroot/usr/include/loongarch64-unknown-linux-gnu" >> "$GITHUB_ENV"
+          # glibc 的 libc.so 是 GNU ld script，内部写的是绝对路径
+          # /lib64/libc.so.6、/usr/lib64/libc_nonshared.a，须显式给出这两个目录。
+          echo "LDFLAGS=-L${{ runner.temp }}/loong64-sysroot/lib64 -L${{ runner.temp }}/loong64-sysroot/usr/lib64" >> "$GITHUB_ENV"
+      - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
+      - name: Setup connector build
+        id: connector
+        uses: ./.github/actions/setup-connector-build
+        with:
+          pat: ${{ secrets.QOMICEX_PAT }}
+      - name: Build Rust backend
+        env:
+          PROTOC: ${{ steps.connector.outputs.protoc-path }}
+          VC_LTL: ""
+          YY_THUNKS: ""
+        run: |
+          FEATURES=""
+          if [ "${{ needs.setup.outputs.licenseRequired }}" = "true" ]; then FEATURES="--features license-required"; fi
+          # protoc 产出的是与目标架构无关的描述符，用宿主 x86_64 的即可
+          cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml \
+            --target loongarch64-unknown-linux-gnu $FEATURES
+      - name: Stage backend binary
+        run: |
+          # binaries/ 被 gitignore，CI checkout 后不存在，需先创建
+          mkdir -p src-tauri/binaries
+          mv src-backend/qomicex-backend/target/loongarch64-unknown-linux-gnu/release/qomicex-backend src-tauri/binaries/backend
+          # 自更新器（Qomicex.Updater submodule）：include_bytes 嵌入主程序
+          cargo build --release --manifest-path Qomicex.Updater/Cargo.toml \
+            --target loongarch64-unknown-linux-gnu
+          cp Qomicex.Updater/target/loongarch64-unknown-linux-gnu/release/qomicex-updater src-tauri/binaries/updater
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @qomicex/plugin-ui build
+      # AppImage 无 loong64 的 linuxdeploy 支持，固定 deb,rpm
+      - run: pnpm exec tauri build --bundles deb,rpm --target loongarch64-unknown-linux-gnu
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      # 交叉编译静默出错时，产物会是 amd64 ELF 却挂loong64 的 deb 名。
+      # 这里显式断言架构，避免错误产物流到 release。
+      - name: Assert loongarch64 artifacts
+        run: |
+          set -euo pipefail
+          BUNDLE_DIR="src-tauri/target/loongarch64-unknown-linux-gnu/release/bundle"
+          DEB=$(find "$BUNDLE_DIR/deb" -name '*.deb' | head -1)
+          [ -n "$DEB" ] || { echo "ERROR: 未找到 deb 产物"; exit 1; }
+          ARCH=$(dpkg-deb --fsys-tarfile "$DEB" \
+            | tar -xO "./usr/bin/Qomicex Launcher" | file - | grep -o 'LoongArch' || true)
+          [ "$ARCH" = "LoongArch" ] || { echo "ERROR: 产物不是 LoongArch（得到: ${ARCH:-未知}）"; exit 1; }
+          # 交叉链接最危险的失败模式是把宿主 amd64 的 .so 链进来，逐个确认关键库。
+          for so in libwebkit2gtk-4.1.so.0 libgtk-3.so.0 libsoup-3.0.so.0; do
+            hit=$(find "$PKG_CONFIG_SYSROOT_DIR" -name "${so}*" -type f | head -1)
+            [ -n "$hit" ] || { echo "ERROR: sysroot 缺少 $so"; exit 1; }
+            readelf -h "$hit" | grep -q 'Machine:.*LoongArch' \
+              || { echo "ERROR: $so 不是 LoongArch: $hit"; exit 1; }
+          done
+          echo "产物与运行时依赖架构校验通过: LoongArch"
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
-          BUNDLE_DIR="src-tauri/target/release/bundle"
+          BUNDLE_DIR="src-tauri/target/loongarch64-unknown-linux-gnu/release/bundle"
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
           PLATFORM="linux-loongarch64"
@@ -831,7 +893,7 @@ jobs:
           # 构造的版本文本会在持有签名私钥的步骤里被执行。
           RELEASE_TAG: ${{ needs.setup.outputs.displayVersion }}
         run: |
-          BUNDLE_DIR="src-tauri/target/release/bundle"
+          BUNDLE_DIR="src-tauri/target/loongarch64-unknown-linux-gnu/release/bundle"
           # 下载 URL 必须用带 v 前缀的 displayVersion：release 作业按
           # needs.setup.outputs.displayVersion 建 tag，用不带 v 的 version 会 404。
           URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$RELEASE_TAG"
@@ -878,10 +940,10 @@ jobs:
         with:
           name: qomicex-launcher-linux-loongarch64
           path: |
-            src-tauri/target/release/bundle/**/*.AppImage
-            src-tauri/target/release/bundle/**/*.AppImage.sig
-            src-tauri/target/release/bundle/**/*.deb
-            src-tauri/target/release/bundle/**/*.rpm
+            src-tauri/target/loongarch64-unknown-linux-gnu/release/bundle/**/*.AppImage
+            src-tauri/target/loongarch64-unknown-linux-gnu/release/bundle/**/*.AppImage.sig
+            src-tauri/target/loongarch64-unknown-linux-gnu/release/bundle/**/*.deb
+            src-tauri/target/loongarch64-unknown-linux-gnu/release/bundle/**/*.rpm
 
   macos-arm64:
     if: |
