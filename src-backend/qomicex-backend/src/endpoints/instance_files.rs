@@ -302,7 +302,9 @@ const MODS_CACHE_EMPTY_TTL_SECS: i64 = 5 * 60;
 /// 版本号不一致一律视为 miss，强制重扫一次。
 /// v3：新增 `providesIds`（嵌套 Jar-in-Jar 子模块 id）——旧缓存缺该字段会把
 /// `fabric-api` 的子模块判成缺失，造成误报，必须一并失效。
-const MODS_CACHE_SCHEMA: u32 = 3;
+/// v4：mcmod.info 世代（1.12.2）补全 modId / requiredMods / @Mod 注解硬依赖——
+/// 旧缓存的 modId/dependencies 恒为空，必须失效重扫。
+const MODS_CACHE_SCHEMA: u32 = 4;
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
