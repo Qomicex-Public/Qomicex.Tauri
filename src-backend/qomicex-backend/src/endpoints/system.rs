@@ -57,15 +57,32 @@ const MOD_SOURCES: &[(i32, &str, &str)] = &[
     ),
 ];
 
-/// 资源（mod 文件 CDN）下载源。ping 目标用各自文件 CDN 的根地址；QML Mirror 是用户
-/// 自建镜像（modrinth.lenmei233.dpdns.org 替换 cdn.modrinth.com / cdn-alt.modrinth.com，
-/// mirror.lenmei233.dpdns.org 替换 mediafilez.forgecdn.net），QML Mirror HK 同但域名换成
-/// modrinth.qomicex.dpdns.org / mirror.qomicex.dpdns.org。
+/// 资源（mod 文件 CDN）下载源。1 = 镜像源：MCIM 优先（cdn.modrinth.com /
+/// edge.forgecdn.net → mod.mcimirror.top），MCIM 不覆盖的 cdn-alt.modrinth.com /
+/// mediafilez.forgecdn.net（MCIM 明确禁止接管）走 QML Mirror；运行期失败自动回退
+/// QML 节点、官方 CDN 兜底（services/file_mirror.rs）。
 const FILE_DOWNLOAD_SOURCES: &[(i32, &str, &str)] = &[
-    (0, "官方源", "https://cdn.modrinth.com"),
-    (1, "QML Mirror", "https://modrinth.lenmei233.dpdns.org"),
-    (2, "QML Mirror HK", "https://modrinth.qomicex.dpdns.org"),
+    (0, "官方源", "https://cdn.modrinth.com/robots.txt"),
+    (
+        1,
+        "镜像源",
+        "https://mod.mcimirror.top/modrinth/v2/project/sodium",
+    ),
 ];
+
+/// 镜像源（id=1）聚合 ping 的候选节点：MCIM 主源 + QML Mirror 节点。
+/// 任一可用即认为镜像源可用，延迟取最快节点——一个选项背后是多节点故障转移链，
+/// 只测 MCIM 会在「MCIM 挂但 QML 活」时误报不可用。
+const FILE_MIRROR_PING_URLS: &[&str] = &[
+    "https://mod.mcimirror.top/modrinth/v2/project/sodium",
+    "https://modrinth.lenmei233.dpdns.org/data/AANobbMI/versions",
+    "https://modrinth1.qomicex.dpdns.org/data/AANobbMI/versions",
+    "https://modrinth.qomicex.dpdns.org/data/AANobbMI/versions",
+];
+
+/// 官方源 ping 目标：cdn.modrinth.com 根路径恒 404 会误判不可用，robots.txt 是
+/// 真实存在的静态资源，HEAD 200。
+const FILE_OFFICIAL_PING_URL: &str = "https://cdn.modrinth.com/robots.txt";
 
 pub fn router() -> Router<SharedState> {
     Router::new()
@@ -392,14 +409,25 @@ async fn ping_mod_sources() -> ApiResult<Json<Vec<ModSourcePing>>> {
 }
 
 async fn ping_file_download_sources() -> ApiResult<Json<Vec<DownloadSourcePing>>> {
-    let pings = futures::future::join_all(
-        FILE_DOWNLOAD_SOURCES
-            .iter()
-            .map(|(_, _, url)| ping_head(url)),
-    )
-    .await;
     let mut results = Vec::with_capacity(FILE_DOWNLOAD_SOURCES.len());
-    for ((id, name, url), (lat, ok)) in FILE_DOWNLOAD_SOURCES.iter().zip(pings) {
+    for (id, name, url) in FILE_DOWNLOAD_SOURCES {
+        let (lat, ok) = if *id == 1 {
+            // 镜像源 = MCIM + QML 节点故障转移链：任一可用即可用，延迟取最快节点。
+            let pings =
+                futures::future::join_all(FILE_MIRROR_PING_URLS.iter().map(|u| ping_get_fast(u)))
+                    .await;
+            let best = pings
+                .iter()
+                .filter(|(ok, _)| *ok)
+                .map(|(_, lat)| *lat)
+                .min();
+            match best {
+                Some(lat) => (lat, true),
+                None => (-1, false),
+            }
+        } else {
+            ping_head(url).await
+        };
         results.push(DownloadSourcePing {
             id: *id,
             name: (*name).to_string(),
@@ -456,18 +484,30 @@ async fn auto_select_mod_source() -> ApiResult<Json<AutoSelectResponse>> {
 }
 
 async fn auto_select_file_download_source() -> ApiResult<Json<AutoSelectResponse>> {
-    let pings = futures::future::join_all(
-        FILE_DOWNLOAD_SOURCES
+    // 官方源与镜像源（聚合节点）并行 ping；镜像源任一节点可用即视为可用，
+    // 延迟取该源下最快节点。
+    let official_fut = ping_head(FILE_OFFICIAL_PING_URL);
+    let mirror_fut = async {
+        let pings =
+            futures::future::join_all(FILE_MIRROR_PING_URLS.iter().map(|u| ping_get_fast(u))).await;
+        let best = pings
             .iter()
-            .map(|(_, _, url)| ping_head(url)),
-    )
-    .await;
+            .filter(|(ok, _)| *ok)
+            .map(|(_, lat)| *lat)
+            .min();
+        match best {
+            Some(lat) => (lat, true),
+            None => (-1, false),
+        }
+    };
+    let (official, mirror) = futures::join!(official_fut, mirror_fut);
+    let candidates = [(0, official), (1, mirror)];
     let mut best_id = 0;
     let mut best_latency = i64::MAX;
-    for ((id, _, _), (lat, ok)) in FILE_DOWNLOAD_SOURCES.iter().zip(pings) {
+    for (id, (lat, ok)) in candidates {
         if ok && lat < best_latency {
             best_latency = lat;
-            best_id = *id;
+            best_id = id;
         }
     }
     auto_select_update(|s| s.file_download_source = best_id);

@@ -26,10 +26,16 @@ export interface AppSettings {
   autoSelectDownloadSource: boolean
   modMirror: number
   autoSelectModMirror: boolean
-  /** 资源下载源（mod 文件 CDN）：0 = 官方源（直连原 CDN）；1 = QML Mirror（下载域名重写到镜像） */
+  /**
+   * 文件下载源（mod 文件 CDN）：0 = 官方源（直连原 CDN）；1 = 镜像源
+   * （MCIM 优先，MCIM 不覆盖的域名走 QML Mirror；运行期失败自动回退 QML 节点、
+   * 官方 CDN 兜底）。国内时区默认 1。
+   */
   fileDownloadSource: number
-  /** 自动选择资源（文件 CDN）下载源 */
+  /** 自动选择文件下载源 */
   autoSelectFileDownloadSource: boolean
+  /** 镜像源改版一次性迁移标记（true = 已处理，防止覆盖用户后续选择） */
+  fileDownloadSourceMigrated?: boolean
   downloadTimeout: number
   theme: 'dark' | 'light' | 'system'
   themePreset: 'default' | 'latte' | 'frappe' | 'macchiato' | 'mocha'
@@ -132,6 +138,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoSelectModMirror: false,
   fileDownloadSource: 0,
   autoSelectFileDownloadSource: false,
+  fileDownloadSourceMigrated: true,
   downloadTimeout: 60,
   theme: 'dark',
   themePreset: 'default',

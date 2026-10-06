@@ -1593,7 +1593,7 @@ export default function Settings() {
                 <div className="space-y-2 px-4 py-3">
                   <Label>{t('settings.launcher.resourceDownloadSource')}</Label>
                   <div className="flex flex-wrap items-center gap-2">
-                    {[0, 1, 2].map((s) => {
+                    {[0, 1].map((s) => {
                       const ping = filePings.find(p => p.id === s)
                       const showLatency = ping && ping.latency >= 0
                       const latencyColor = !ping?.ok ? 'text-destructive'

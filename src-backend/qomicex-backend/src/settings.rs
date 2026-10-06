@@ -17,6 +17,22 @@ fn default_proxy_mode() -> String {
     "system".to_string()
 }
 
+/// 「文件下载源」默认值：系统时区为 UTC+8（中国大陆及周边）时取镜像源（1），
+/// 其余时区官方源（0）。供 serde default（老配置缺字段）与全新安装共用。
+fn default_file_download_source() -> i32 {
+    if is_china_timezone() {
+        1
+    } else {
+        0
+    }
+}
+
+/// 系统时区偏移是否为 UTC+8。只用于下载源默认值的地域判断：无网络探测、
+/// 不做指纹，仅取本地时钟偏移。
+fn is_china_timezone() -> bool {
+    chrono::Local::now().offset().local_minus_utc() == 8 * 3600
+}
+
 fn local_app_data_root() -> PathBuf {
     dirs::data_local_dir().unwrap_or_else(|| std::env::temp_dir())
 }
@@ -80,15 +96,20 @@ pub struct SettingsResponse {
     pub auto_select_download_source: Option<bool>,
     pub mod_mirror: i32,
     pub auto_select_mod_mirror: Option<bool>,
-    /// 资源（mod 文件 CDN）下载源：0 = 官方源（直连原 CDN）；1 = QML Mirror（把
-    /// `cdn.modrinth.com`/`cdn-alt.modrinth.com` → `modrinth.lenmei233.dpdns.org`、
-    /// `mediafilez.forgecdn.net` → `mirror.lenmei233.dpdns.org`）；2 = QML Mirror HK
-    /// （同 1，域名换成 `modrinth.qomicex.dpdns.org` / `mirror.qomicex.dpdns.org`）。
-    /// 老配置缺失时默认 0。
-    #[serde(default)]
+    /// 资源（mod 文件 CDN）下载源：0 = 官方源（直连原 CDN）；1 = 镜像源（MCIM 优先：
+    /// `cdn.modrinth.com`/`edge.forgecdn.net` → `mod.mcimirror.top`，MCIM 不覆盖的
+    /// `cdn-alt.modrinth.com`/`mediafilez.forgecdn.net` 走 QML Mirror；运行期 MCIM
+    /// 失败自动回退 QML 节点、官方 CDN 兜底）。旧值 2（QML Mirror HK）已并入 1。
+    /// 默认值见 [`default_file_download_source`]（国内时区 → 1）。
+    #[serde(default = "default_file_download_source")]
     pub file_download_source: i32,
     /// 自动选择资源（文件 CDN）下载源：`true` = 自动选当前延迟最低的可用源。
     pub auto_select_file_download_source: Option<bool>,
+    /// 一次性迁移标记：镜像源改版（MCIM 优先 + 国内默认）后，把「值为旧默认 0 且
+    /// 处于 UTC+8 时区」的存量用户提升为 1。显式标记防止用户主动选回官方源后被
+    /// 每次启动反复改回。`None`/`Some(true)` = 已处理。
+    #[serde(default)]
+    pub file_download_source_migrated: Option<bool>,
     pub download_timeout: i32,
     pub animations_enabled: Option<bool>,
     pub animation_speed: Option<i32>,
@@ -262,8 +283,9 @@ impl Default for SettingsResponse {
             auto_select_download_source: None,
             mod_mirror: 0,
             auto_select_mod_mirror: None,
-            file_download_source: 0,
+            file_download_source: default_file_download_source(),
             auto_select_file_download_source: None,
+            file_download_source_migrated: Some(true),
             download_timeout: 60,
             animations_enabled: None,
             animation_speed: None,
@@ -360,6 +382,24 @@ impl SettingsResponse {
     }
 }
 
+/// 镜像源改版一次性迁移：
+/// - 旧值 2（QML Mirror HK，已废弃）→ 1（镜像源，行为被 MCIM 优先的镜像源覆盖，
+///   HK 节点仍在运行期回退链里）。
+/// - 值为旧默认 0 且系统时区 UTC+8 → 1（国内默认镜像源）。磁盘值 0 无法区分
+///   「主动选官方」和「从没动过」，按确认的策略一次性迁移并用显式标记防反复；
+///   迁移后用户改回 0 即被尊重。非 UTC+8 用户保持 0 不动。
+fn apply_file_download_source_migration(s: &mut SettingsResponse) {
+    if s.file_download_source_migrated == Some(true) {
+        return;
+    }
+    let should_mirror =
+        s.file_download_source == 2 || (s.file_download_source == 0 && is_china_timezone());
+    if should_mirror {
+        s.file_download_source = 1;
+    }
+    s.file_download_source_migrated = Some(true);
+}
+
 /// 加载设置（对应 SystemEndpoints.LoadSettings：文件缺失/解析失败 → 默认值）。
 pub fn load_settings() -> SettingsResponse {
     let path = settings_path();
@@ -384,6 +424,8 @@ pub fn load_settings() -> SettingsResponse {
                     }
                     parsed.download_timeout_migrated = Some(true);
                 }
+                // 镜像源改版一次性迁移（语义见 apply_file_download_source_migration）。
+                apply_file_download_source_migration(&mut parsed);
                 return parsed;
             }
         }
@@ -405,7 +447,7 @@ pub fn get_global_version_isolation() -> bool {
     load_settings().version_isolation
 }
 
-/// 全局「资源下载源」（mod 文件 CDN 镜像）：0 = 官方，1 = QML Mirror。
+/// 全局「资源下载源」（mod 文件 CDN 镜像）：0 = 官方，1 = 镜像源（MCIM 优先 + QML 回退）。
 pub fn get_global_file_download_source() -> i32 {
     load_settings().file_download_source
 }
@@ -788,5 +830,61 @@ mod relay_node_tests {
         // 无配置 / 空列表 → None
         assert_eq!(validate_relay_nodes_lenient(None), None);
         assert_eq!(validate_relay_nodes_lenient(Some(&[])), None);
+    }
+
+    /// 镜像源一次性迁移语义（issue：文件下载源改版）。用构造的 JSON 走 serde
+    /// 反序列化验证缺字段/旧值的组合行为，不落盘、不依赖真实 settings.json。
+    mod file_download_source_migration {
+        use super::*;
+
+        /// SettingsResponse 无 serde default 的必填字段合集（最小合法 settings.json）。
+        const BASE_JSON: &str = r#""gameDir":".minecraft","downloadThreads":64,"versionIsolation":true,"closeAfterLaunch":false,"defaultMaxMemory":4096,"jvmArgs":"","language":"zh-CN","defaultJavaPath":"","downloadSource":0,"modMirror":0,"downloadTimeout":60,"translationProvider":"mymemory","cornerRadius":8,"windowCorners":true,"curseforgeVersionFetchConcurrency":10,"curseforgeVersionCacheTtlSeconds":300"#;
+
+        fn parse(extra: &str) -> SettingsResponse {
+            let json = if extra.is_empty() {
+                format!("{{{BASE_JSON}}}")
+            } else {
+                format!("{{{BASE_JSON},{extra}}}")
+            };
+            serde_json::from_str(&json).expect("测试 JSON 必须可解析")
+        }
+
+        /// 老配置缺 file_download_source 字段：serde default 按当前系统时区取值
+        /// （UTC+8 → 1 镜像源，其余 → 0 官方）。
+        #[test]
+        fn missing_field_uses_timezone_default() {
+            let mut s = parse("");
+            apply_file_download_source_migration(&mut s);
+            let expected = if is_china_timezone() { 1 } else { 0 };
+            assert_eq!(s.file_download_source, expected);
+        }
+
+        /// 旧值 2（QML Mirror HK，已废弃）→ 1：HK 节点仍在运行期回退链里，
+        /// 迁移不丢已有镜像能力。
+        #[test]
+        fn legacy_value_2_migrates_to_1() {
+            let mut s = parse(r#""fileDownloadSource":2,"fileDownloadSourceMigrated":false"#);
+            apply_file_download_source_migration(&mut s);
+            assert_eq!(s.file_download_source, 1);
+        }
+
+        /// 国内（UTC+8）用户旧默认 0 → 1；显式迁移标记防反复。
+        /// 非 UTC+8 环境本用例退化为「保持 0」，断言按当前时区取分支。
+        #[test]
+        fn legacy_default_0_migrates_in_china_timezone() {
+            let mut s = parse(r#""fileDownloadSource":0,"fileDownloadSourceMigrated":false"#);
+            apply_file_download_source_migration(&mut s);
+            let expected = if is_china_timezone() { 1 } else { 0 };
+            assert_eq!(s.file_download_source, expected);
+            assert_eq!(s.file_download_source_migrated, Some(true));
+        }
+
+        /// 已迁移的配置不再被改写：用户主动选回官方源 0 必须被尊重。
+        #[test]
+        fn migrated_flag_preserves_user_choice() {
+            let mut s = parse(r#""fileDownloadSource":0,"fileDownloadSourceMigrated":true"#);
+            apply_file_download_source_migration(&mut s);
+            assert_eq!(s.file_download_source, 0);
+        }
     }
 }
