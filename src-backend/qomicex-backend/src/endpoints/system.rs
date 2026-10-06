@@ -80,15 +80,14 @@ const FILE_DOWNLOAD_SOURCES: &[(i32, &str, &str)] = &[
 ];
 
 /// 镜像源（id=1）的探测节点，**按实际下载顺序排列**：rewrite_file_cdn 先把文件
-/// 指到 MCIM，MCIM 不可用才依次回退 QML 节点、官方 CDN。探测逐个进行、取第一个
-/// 可用节点的延迟——测速结果与实际下载首节点一致（如果只取最快节点，QML 快
-/// MCIM 慢时会把镜像源测得比实际快）。官方 CDN 兜底（与回退链一致）也参与探测。
+/// 指到 MCIM，MCIM 不可用才依次回退 QML 节点。**不含官方 CDN 兜底**——全部镜像
+/// 节点失败时镜像源必须报告不可用，让 auto-select 直接选官方源，而不是选中镜像
+/// 后先撞一遍死节点。
 const FILE_MIRROR_PING_URLS: &[&str] = &[
     "https://mod.mcimirror.top/data/AANobbMI/versions/OihdIimA/sodium-fabric-0.5.13%2Bmc1.20.1.jar",
     "https://modrinth.lenmei233.dpdns.org/data/AANobbMI/versions/OihdIimA/sodium-fabric-0.5.13%2Bmc1.20.1.jar",
     "https://modrinth1.qomicex.dpdns.org/data/AANobbMI/versions/OihdIimA/sodium-fabric-0.5.13%2Bmc1.20.1.jar",
     "https://modrinth.qomicex.dpdns.org/data/AANobbMI/versions/OihdIimA/sodium-fabric-0.5.13%2Bmc1.20.1.jar",
-    "https://cdn.modrinth.com/data/AANobbMI/versions/OihdIimA/sodium-fabric-0.5.13%2Bmc1.20.1.jar",
 ];
 
 /// 官方源 ping 目标（pinned 真实文件，见 FILE_DOWNLOAD_SOURCES 注释）。
@@ -420,12 +419,14 @@ async fn ping_mod_sources() -> ApiResult<Json<Vec<ModSourcePing>>> {
 }
 
 /// 镜像源探测：按 [`FILE_MIRROR_PING_URLS`] 的实际下载顺序逐个 HEAD，取第一个
-/// 可用节点的延迟（与 rewrite_file_cdn 的首节点语义一致）。
+/// 可用节点的延迟（与 rewrite_file_cdn 的首节点语义一致）。**从链路起点计时**：
+/// 实际下载也要先等前置节点超时才轮到后续节点，只报末节点的 RTT 会高估镜像源。
 async fn probe_mirror_source() -> (i64, bool) {
+    let sw = Instant::now();
     for u in FILE_MIRROR_PING_URLS {
-        let (lat, ok) = ping_head(u).await;
+        let (_, ok) = ping_head(u).await;
         if ok {
-            return (lat, true);
+            return (sw.elapsed().as_millis() as i64, true);
         }
     }
     (-1, false)
