@@ -15,11 +15,15 @@ App.tsx (启动 5s 后台检查 / Settings 手动检查)
       2. POST /api/plugins/download/start        (targetPath={dataDir}/updates/qomicex-update-{v}.zip)
          → 共享 DownloadManager，任务出现在下载中心（SSE 进度）
       3. 轮询 GET /api/plugins/download/{taskId}/progress
-      4. completed → invoke('run_updater', { packagePath, signature, version })
-         （src-tauri/src/updater.rs：释放内嵌 updater.exe → 写签名文件 → 检测 strategy/install-dir →
-          detached spawn（--wait-pid 当前进程）→ app.exit(0)，RunEvent::Exit 收尾 backend）
+      4. completed → invoke('run_updater', { packagePath, signature, version, changelog })
+         （src-tauri/src/updater.rs：释放内嵌 updater → 写签名文件 → 检测 strategy/install-dir →
+          detached spawn（--wait-pid 当前进程）→ app.exit(0)，RunEvent::Exit 收尾 backend；
+          新一轮开始同时清掉上一次的 last-update-error.json）
   → Qomicex.Updater（独立仓库/submodule）:
-      minisign 校验（公钥内嵌）→ 等 pid 退出 → 按 strategy 覆盖 → --launch 拉起新版 → 退出
+      minisign 校验（公钥内嵌）→ 等平台信号放行（Windows 等镜像锁释放；unix 等 pid 退出）
+      → 按 strategy 覆盖 → --launch 拉起新版 → 退出
+  → 新进程：take_pending_update_notice 弹「更新完成」；updater 若落过失败交接，
+      take_pending_update_error 弹「更新未完成 + 原因 + 手动出路」
 ```
 
 ## 端点
@@ -36,10 +40,13 @@ App.tsx (启动 5s 后台检查 / Settings 手动检查)
 |---|---|---|---|---|
 | windows-x86_64 / windows-aarch64 | dir | NSIS /S /D= 安装后目录内容 | 解压覆盖安装根 | 无 |
 | linux-{arch}-appimage | appimage | AppImage 本体 | 整文件替换 + 0755 | 无 |
-| linux-{arch}-system | system | deb 层级（dpkg-deb -x） | pkexec 覆盖 / | polkit 弹窗 |
-| darwin-x86_64 / darwin-aarch64 | app | .app 内部内容 | osascript 提权覆盖 bundle（可写则直写） | admin 弹窗 |
+| linux-{arch}-system | system | deb 层级（dpkg-deb -x） | 目标可写则本地覆盖 /，否则提权覆盖 | polkit 弹窗；无 agent 时回退免密 `sudo -n` |
+| darwin-x86_64 / darwin-aarch64 | app | .app 内部内容 | 可写则直写，否则提权覆盖 bundle | ⚠️ osascript 提权未实现 |
 
 mode 检测：linux 且 $APPIMAGE 未设置 → system；其余平台 mode 忽略。
+
+已知缺口：darwin 行的提权分支在 updater 里只有 Linux 的 pkexec/sudo 实现，`.app` 不可写时
+macOS 更新会失败并落 `last-update-error.json`（ADR-067 修正记录已标注，未在本次修复范围）。
 
 ## Updater CLI 契约（Qomicex.Updater）
 
@@ -47,7 +54,10 @@ mode 检测：linux 且 $APPIMAGE 未设置 → system；其余平台 mode 忽�
 qomicex-updater --package <zip> --signature <sig> --strategy <dir|appimage|app|system>
   [--install-dir <p>] [--appimage <p>] [--app-bundle <p>] [--wait-pid <pid>] [--launch <exe>]
 ```
-退出码：0 成功 / 1 用法 / 2 IO / 3 签名无效 / 4 策略失败 / 5 等待超时。
+退出码：0 成功 / 1 用法 / 2 IO / 3 签名无效 / 4 策略失败 / 5 等待超时 / 6 提权未获授权（用户取消）。
+等待或安装失败都会写 `{dataDir}/updates/last-update-error.json`
+（`code|message|strategy|version|occurredAt`），安装失败仍尽力 `--launch` 把用户带回启动器；
+壳侧 `take_pending_update_error` 独占消费后由 `UpdateCompleteDialog` 展示（issue #201）。
 签名：minisign 公钥（`35DD6AE53301ABE3`）编译期内嵌 src/main.rs；CI 用 `npx tauri signer sign`（同一 keypair）。
 
 ## CI（release.yml / debug.yml 同构）
@@ -58,17 +68,31 @@ release job：update-package-fragment-*.json 合并 updates.json，与 zip/sig �
 
 ## 本地验证
 
-- `cargo test --manifest-path Qomicex.Updater/Cargo.toml`（1 个：坏签名拒绝 + exit 3）
-- `cargo test --manifest-path src-tauri/Cargo.toml`（version_order 回归 2 例 + 网关 7 例）
+- `cargo test --manifest-path Qomicex.Updater/Cargo.toml`（16 单测 + 1 CLI 集成：坏签名拒绝、
+  TargetState 分类、提权脚本用真 `sh` 跑通覆盖、deb 树本地覆盖端到端、包名注入回归）
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib`（updater 34 例：交接/待安装生命周期、
+  失败交接与 updater 输出的 JSON 契约）
 - dev 无嵌入二进制时 updater 解析顺序：QOMICEX_UPDATER_PATH env → 兄弟仓库 target/{release,debug}/
-- 全链路（下载→覆盖→重启）需 release 构建或双机实测；updates.json 结构可用 `bash scripts/test-api-filters.sh` 风格 curl 断言
+- 红→绿取证一条命令（deb/rpm 机器，只读，不写系统目录）：直接跑
+  `{dataDir}/updates/qomicex-updater --package … --signature … --strategy system
+  --wait-pid 999999 --launch "/usr/bin/Qomicex Launcher" --log /tmp/qml.log`
+- 无虚拟机时可用容器复现：`rust:1-slim-bookworm` + `dpkg -i` 真实 deb + 免密 sudo，
+  步骤与结论见本文末「2026-10-06 更新（issue #201）」小节
+- 全链路（下载→覆盖→重启）仍需 release 构建或双机实测；updates.json 结构可用
+  `bash scripts/test-api-filters.sh` 风格 curl 断言
 
 ## 安全边界
-
 - 签名无效 → updater 拒绝动手（exit 3），测试锁定
 - zip 提取拒绝 `..` 路径（mangled_name）
-- 覆盖先 staging 再 move（同卷 rename 原子）；提权脚本临时文件用后即删
+- 覆盖先 staging 再落位；本地与提权共用同一份 `plan_overlay` 计划（不分叉）
+- 落位 = 目标同目录临时名 + rename：不 `open(O_WRONLY)` 运行中的 image（ETXTBSY），
+  不跨卷 rename（EXDEV），权限位显式带上（root 提权后属主为 root，不退化成用户可写）
+- 提权脚本逐条显式命令渲染，所有路径经 `sh_quote`（`'` → `'\''`）：包内文件名带引号
+  也变不成 root 命令；脚本全文进日志（唯一现场证据），临时脚本用后即删
+- `--launch`/dataDir 只经 semver 校验的版本号才进文件名（防路径穿越写签名）
 - 灰度门控在服务端（weight），客户端不参与决策
+- release 构建不认 `QOMICEX_UPDATER_PATH`：那条路径会被提权执行，等于任意代码以 root 跑
+
 
 
 ### 2026-09-07 更新
@@ -849,4 +873,72 @@ IPC 失败**抛出**，不再返回 `none`：返回 `none` 会让 `installStaged
 
 - `cargo test --lib updater` → **28 例**；tauri 44、backend 419
 - `pnpm run typecheck`（含 i18n submodule）、`pnpm run build`、`cargo fmt --check` 通过
+
+
+### 2026-10-06 更新（issue #201：deb/rpm 安装无法自更新）
+
+**现象**：报告者（AnduniOS 2.0.0 / x86_64，deb 安装，0.1.0-beta32.0）点更新 → 下载完成 →
+启动器退出，但**既没安装也没重启**，版本号原地不动。日志只到
+`update plan: candidate=0.1.2-beta1.0` 就没了——updater 是 detached 进程，失败时不留痕迹。
+
+**根因（判据用错平台语义）**：`be5e1ef` 为解决中文 Windows `tasklist` 本地化失效，把
+「等 launcher 退出」改成「等 exe 可写」。这个前提在 unix 上不成立：
+
+| 平台 | 运行中的 image 锁文件？ | 写探测失败的含义 |
+|---|---|---|
+| Windows | 是（独占镜像锁，退出即释放） | 在用 → 强杀后等锁 |
+| Unix | 否 | **多数是 EACCES「没权限写」**，不是在用 |
+
+deb/rpm 形态的目标是 `/usr/bin/Qomicex Launcher`（root 所有 0755），非 root 用户永远拿不到
+写权限 → 探测恒失败 → 当成锁定 → `kill -9` 打进程组 → 30s 后 exit 5。AppImage 装在用户目录，
+探测直接通过，所以只有系统包形态中招。`install.rs` 顶部那条
+「on Unix … probe_unlockable is always true」的注释正是错的来源。
+
+**修复（Qomicex.Updater c047506 + ace30d3）**：
+
+1. `probe_target() -> TargetState{Free,Busy,Unknown}`：unix 只有 **ETXTBSY** 算占用，
+   EACCES/EPERM 归 Unknown（要提权，不代表在用），ENOENT 等不拦更新；Windows 分支逐字保留。
+2. unix 主等待回到 **pid 退出**（180s，沿用 `e0b8901` 实测的拆卸耗时上限）；
+   `kill_pid_tree` 收窄到 Windows——unix 不再对别人的进程组发 SIGKILL。
+3. `process_alive` 两道兜底：僵尸（`/proc/<pid>/stat` state=Z）视为已退出；
+   超出 pid_t 范围的输入直接判不存活——实测 `/usr/bin/kill -0 4294967295` 会因回绕按
+   「进程组 -1」解释并返回 0，旧实现据此白烧满超时（新增回归用例抓到）。
+4. system 策略改为**分级 + 单一计划**：`plan_overlay()` 生成唯一一份覆盖动作表，
+   本地执行与提权脚本同源；目标目录可写先本地覆盖，不可写/装到一半失败再提权（计划幂等，
+   `Place` 用 copy+rename 不消耗 staging，可安全重放）。落位不再 `open(O_WRONLY)` 目标本体
+   （运行中的 image 会 ETXTBSY），改为「目标同目录临时名 → rename」，同时避开 `/tmp` 与 `/`
+   跨卷的 EXDEV；权限位随计划带上（旧 `cp -a` 会把 root 的 0755 变成用户属主）。
+5. 提权 `pkexec → sudo -n` 分级。**ace30d3**：容器实测 polkitd 没跑时 pkexec **也**退 127
+   （stderr=`Error getting authority…Could not connect`），不能算「用户取消」，否则挡掉
+   sudo -n 兜底；用户真正取消仍不越过他的选择去试别的后端。stderr 不再丢弃（旧实现只留
+   `pkexec exit 1`，无法定位也无法转成提示）。
+6. 包内文件名一律过 `sh_quote`（`'` → `'\''`）：提权脚本以 root 跑，恶意/损坏的包名
+   不能变成命令（回归用例覆盖）。
+7. 失败可见性：新增退出码 **6 = ELEVATION_DENIED**；等待/安装失败都写
+   `{dataDir}/updates/last-update-error.json`（code/message/strategy/version/occurredAt），
+   安装失败仍 relaunch（不再「应用消失了但什么都没发生」）。壳侧
+   `take_pending_update_error` 独占消费 → `UpdateCompleteDialog` 失败态（7 语言文案）。
+   版本守卫**不适用于**失败交接：失败讲的正是「版本没前进」。
+
+**存量用户不可自愈**：updater 经 `include_bytes!` 内嵌，`v0.1.0-beta24.0`～修复版之间的
+deb/rpm 安装（含报告者的 beta32）无法靠自更新跳出来，必须手动 `sudo dpkg -i` / `sudo rpm -Uvh`
+一次；beta23 及更早（updater `ee8e58b`）走 pid 等待，能直接自更新拿到修复。
+
+**验证**：
+
+- 单元/集成：`cargo test --manifest-path Qomicex.Updater/Cargo.toml` 16+1 例；
+  `cargo test --lib` （src-tauri）46 例，含跨仓库 JSON 契约用例。
+- 红→绿（同一份真实签名资产 `qomicex-update-linux-x86_64-system.zip`，`--launch` 指向
+  root 0755 的文件）：修复前 `target locked → still locked after 30s → exit 5` 未安装；
+  修复后 `probe: Unknown → target released → install ok → done → exit 0`，61MB 本体带 0755 落位。
+- Debian bookworm 容器 + 真实 deb（`Qomicex.Launcher_0.1.0-beta32.0_amd64.deb`）：
+  非 root 用户跑修复后 updater → pkexec 存在但 polkitd 未运行 → 判不可用 → 回退免密
+  `sudo -n` → `install ok`、exit 0，`/usr/bin/Qomicex Launcher` 的 md5 与 0.1.2-beta1.0
+  官方 deb 内本体一致，属主权限 `755 root:root`、desktop `644 root:root`，
+  staging / place 临时名 / 失败交接均无残留。dpkg 版本库仍是 beta32——覆盖式更新不动
+  dpkg 库，是 ADR-067 的既定取舍（`dpkg -V` 会报不一致，后续 `apt upgrade` 同名版本可能回滚文件）。
+
+**相邻缺口（另开 issue，未混入本修复）**：`release.yml` 只在 x86_64 job 生成
+`qomicex-update-linux-x86_64-{appimage,system}.zip`，**没有 linux-aarch64 / loong64 的自更新包**，
+arm64 deb/rpm 用户即使等待逻辑修好也拿不到包。
 
