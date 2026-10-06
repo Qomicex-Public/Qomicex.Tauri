@@ -74,8 +74,10 @@ MCIM（公共镜像）提供 Modrinth/CurseForge 文件镜像。按其官方文�
 (mcimirror.top/guide/platform/{files,modrinth,curseforge}) 的覆盖边界与限制：
 `cdn.modrinth.com` 与 `edge.forgecdn.net` 可重写到 `mod.mcimirror.top`；
 **明确禁止**替换 `mediafilez.forgecdn.net`；文件下载是 302 重定向且「不保证稳定，
-优先官方源、失败回退镜像」。实测（reqwest 探针）MCIM 所有路径 HEAD 均 404、
-GET 才 200；QML 节点根路径 400/403/超时、真实数据路径 HEAD 200。
+优先官方源、失败回退镜像」。实测（reqwest 探针）：根路径/API 透传路径上 MCIM
+HEAD 恒 404、GET 才 200，QML 节点根路径 400/403/超时；**pinned 真实文件路径**
+（sodium 0.5.13 jar）在各节点 HEAD 全部 200（官方 354ms / MCIM 991ms /
+QML 2.1-4.6s）——测速目标据此定为真实文件。
 
 #### 决策
 
@@ -86,28 +88,38 @@ GET 才 200；QML 节点根路径 400/403/超时、真实数据路径 HEAD 200�
   Mirror、`mediafilez.forgecdn.net`（MCIM 禁止）→QML Mirror。
 - **运行期容错**：下载器 `mirror_urls` 回退链补 MCIM 主源分支——MCIM 未命中时按
   路径首段区分回退组（`/data/` → QML Modrinth 节点 → 官方 `cdn(-alt).modrinth.com`；
-  `/files/` → QML CF 节点 → 官方 `mediafilez`），每个文件独立走完链路才失败。
+  `/files/` → QML CF 节点 → 官方 `edge.forgecdn.net` → `mediafilez.forgecdn.net`，
+  保留原始落地域名），每个文件独立走完链路才失败。
 - **国内默认镜像源**：`default_file_download_source()` 按系统时区偏移 UTC+8 判定，
-  serde default 与全新安装共用；无网络探测、不做指纹。
+  serde default 与全新安装共用；无网络探测、不做指纹。前端 DEFAULT_SETTINGS 的
+  `fileDownloadSourceMigrated` 必须与 `fileDownloadSource: 0` 配对为 false——
+  设置加载完成前提前落盘的完整对象会跳过后端迁移，标记误设 true 会把 UTC+8
+  用户的镜像源默认值永久挡在门外。
 - **一次性迁移**：`apply_file_download_source_migration`（load_settings 内执行，
   纯函数可单测）——旧值 2→1；旧默认 0 且 UTC+8→1；显式标记
   `file_download_source_migrated` 防止用户改回官方源后被反复覆盖。海外用户保持 0。
-- **测速/自动选择**：「镜像源」聚合 ping MCIM + QML 全节点（任一可用即可用、
-  延迟取最快节点），官方源 ping `cdn.modrinth.com/robots.txt`（根路径恒 404，
-  实测 robots.txt HEAD 200）；MCIM 节点用 GET 测速（HEAD 恒 404）。
-  auto-select 并行测两源、取延迟最低可用者。
+- **测速/自动选择**：测速目标用 pinned 真实文件（API 透传路径与文件路径是不同
+  路由，测 API 不能证明文件路径可用）。镜像源**按实际下载顺序**（MCIM → QML 节点）
+  逐节点 HEAD、取首个可用节点的**链路总耗时**（从链路起点计时，含前置节点超时
+  等待，与实际下载体验一致）；**官方 CDN 兜底不参与镜像源探测**——全部镜像节点
+  失败时镜像源必须报告不可用，让 auto-select 直接选官方源，而不是选中镜像后先
+  撞一遍死节点。auto-select 并行测两源、取延迟最低可用者。
 
 #### 舍弃方案
 
 - **运行时探测选源**：下载前 HEAD 判活再定重写目标——每任务多一次探测、有竞态，
   且静态回退链已由下载器重试机制天然承载，舍弃。
 - **只测 MCIM 主源**：MCIM 挂但 QML 活时按钮显示不可用，与故障转移链语义矛盾，舍弃。
+- **取最快节点代表镜像源延迟**：QML 快 MCIM 慢时会高估镜像源（实际下载首节点
+  是 MCIM），且官方兜底节点成功会让全挂的镜像源误报可用；评审指正后改为按下载
+  顺序探测、剔除官方兜底、计链路总耗时。
 
 #### 影响
 
 - `services/file_mirror.rs`：重写规则 + `mirror_fallback_urls` MCIM 分支（按路径分段）+ 7 单测
 - `settings.rs`：时区默认 + 一次性迁移 + `file_download_source_migrated` 字段 + 4 单测
-- `endpoints/system.rs`：`FILE_DOWNLOAD_SOURCES` 两值 + 镜像源聚合 ping + auto-select 重写
-- 前端 `Settings.tsx` 选择器 `[0,1]`、`api/settings.ts` 注释与默认值
-- i18n 子模块 7 语言 `resourceDownloadSourceName`（删索引 2）+ `resourceDownloadSourceDesc`（i18n 仓单独提交 a823e97）
+- `endpoints/system.rs`：`FILE_DOWNLOAD_SOURCES` 两值 + 镜像源按下载顺序探测 + auto-select 重写
+- 前端 `Settings.tsx` 选择器 `[0,1]`、`api/settings.ts` 注释与 DEFAULT 配对
+- i18n 子模块 7 语言 `resourceDownloadSourceName`（删索引 2）+ `resourceDownloadSourceDesc`
+  （Qomicex.Tauri.i18n#22，merge f3d2564e）
 - 调用方（modpack / modpack_update / resource_download / instance）只透传 i32，无需改动
