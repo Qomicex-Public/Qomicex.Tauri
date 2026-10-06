@@ -667,6 +667,57 @@ jobs:
             echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           fi
           cat "update-fragment-$PLATFORM.json"
+      - name: Generate self-update packages (linux-aarch64)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # 走 step env 而非 run 体插值：workflow_dispatch 的版本输入会经
+          # needs.setup.outputs.version 流到这里，run 体里的 ${{ }} 是文本拼接，
+          # 构造的版本文本会在持有签名私钥的步骤里被执行。
+          RELEASE_TAG: ${{ needs.setup.outputs.displayVersion }}
+        run: |
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          # 下载 URL 必须用带 v 前缀的 displayVersion：release 作业按
+          # needs.setup.outputs.displayVersion 建 tag，用不带 v 的 version 会 404。
+          URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$RELEASE_TAG"
+
+          # AppImage 包：zip 内放 AppImage 本体（updater appimage 策略整文件替换）。
+          APPIMAGE=$(find "$BUNDLE_DIR" -name '*.AppImage' | head -1)
+          if [ -n "$APPIMAGE" ]; then
+            PKG_APP="qomicex-update-linux-aarch64-appimage.zip"
+            zip -j "$PKG_APP" "$APPIMAGE"
+            npx tauri signer sign "$PKG_APP"
+            echo "{\"linux-aarch64-appimage\":{\"url\":\"$URL_BASE/$PKG_APP\",\"signature\":\"$(tr -d '\n' < "$PKG_APP.sig")\",\"strategy\":\"appimage\"}}" > "update-package-fragment-linux-aarch64-appimage.json"
+          else
+            echo "::warning::No AppImage in bundle; skipping linux-aarch64-appimage self-update package"
+          fi
+
+          # system 包（deb 布局为基线）：dpkg-deb -x 收集 / 相对布局。
+          # linuxBundles 可只选 appimage/rpm，无 deb 时跳过而不报错，否则该合法
+          # 选择会失败整个作业、连带丢掉已构建的 bundle 资产。
+          DEB=$(find "$BUNDLE_DIR" -name '*.deb' | head -1)
+          if [ -n "$DEB" ]; then
+            STAGING=$(mktemp -d)
+            dpkg-deb -x "$DEB" "$STAGING"
+            PKG_SYS="qomicex-update-linux-aarch64-system.zip"
+            (cd "$STAGING" && zip -qr "$OLDPWD/$PKG_SYS" .)
+            npx tauri signer sign "$PKG_SYS"
+            rm -rf "$STAGING"
+            echo "{\"linux-aarch64-system\":{\"url\":\"$URL_BASE/$PKG_SYS\",\"signature\":\"$(tr -d '\n' < "$PKG_SYS.sig")\",\"strategy\":\"system\"}}" > "update-package-fragment-linux-aarch64-system.json"
+          else
+            echo "::warning::No deb in bundle; skipping linux-aarch64-system self-update package"
+          fi
+          cat update-package-fragment-*.json 2>/dev/null || echo "::warning::no self-update package produced for this bundle selection"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-package-linux-arm64
+          path: |
+            qomicex-update-*.zip
+            qomicex-update-*.zip.sig
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-package-fragment-${{ github.job }}
+          path: update-package-fragment-*.json
       - uses: actions/upload-artifact@v7
         with:
           name: update-fragment-${{ github.job }}
@@ -695,6 +746,10 @@ jobs:
         with:
           submodules: recursive
           token: ${{ secrets.QOMICEX_PAT }}
+      # 自更新包在宿主机侧打包签名（容器内无 zip），需要 node 跑 `npx tauri signer`；
+      # 不设 cache: pnpm —— 宿主机不跑 pnpm，依赖由下方容器安装到同一个 workspace。
+      - uses: actions/setup-node@v7.0.0
+        with: { node-version: '22' }
       # 注册 loong64 用户态模拟（与 build-loong64-builder.yml 构建镜像同款方案）
       - name: Set up QEMU (loong64)
         run: docker run --rm --privileged ghcr.io/loong64/binfmt --install all
@@ -767,6 +822,54 @@ jobs:
             echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           fi
           cat "update-fragment-$PLATFORM.json"
+      - name: Generate self-update package (linux-loongarch64)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # 走 step env 而非 run 体插值：workflow_dispatch 的版本输入会经
+          # needs.setup.outputs.version 流到这里，run 体里的 ${{ }} 是文本拼接，
+          # 构造的版本文本会在持有签名私钥的步骤里被执行。
+          RELEASE_TAG: ${{ needs.setup.outputs.displayVersion }}
+        run: |
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          # 下载 URL 必须用带 v 前缀的 displayVersion：release 作业按
+          # needs.setup.outputs.displayVersion 建 tag，用不带 v 的 version 会 404。
+          URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$RELEASE_TAG"
+
+          # 签名必须在工作区之外跑：npx 优先命中容器装进共享 workspace 的那份
+          # @tauri-apps/cli，而它的原生二进制经 optionalDependencies 分发、没有
+          # loong64 变体，容器内 pnpm install 跳过了全部平台可选依赖。那份副本在
+          # x86_64 宿主上加载 native binding 会失败（Cannot find module
+          # '@tauri-apps/cli-linux-x64-gnu'），--yes 也不会强制改从 registry 取。
+          # 换到独立目录执行即可解析到宿主架构的 CLI。版本与 package.json / pnpm-lock 对齐。
+          TAURI_CLI="@tauri-apps/cli@2.11.4"
+          CLI_DIR=$(mktemp -d)
+
+          # loong64 无 linuxdeploy 支持，产物固定 deb,rpm → 不出 appimage 包。
+          # system 包以 deb 布局为基线：dpkg-deb -x 收集 / 相对布局
+          DEB=$(find "$BUNDLE_DIR" -name '*.deb' | head -1)
+          if [ -z "$DEB" ]; then echo "ERROR: No deb found"; exit 1; fi
+          STAGING=$(mktemp -d)
+          dpkg-deb -x "$DEB" "$STAGING"
+          PKG_SYS="qomicex-update-linux-loongarch64-system.zip"
+          (cd "$STAGING" && zip -qr "$OLDPWD/$PKG_SYS" .)
+          # 传绝对路径：CLI_DIR 里没有工作区上下文，相对路径会找不到包。
+          # 签名把 .sig 写到包旁边，故包必须仍在工作区内。
+          PKG_SYS_PATH="$PWD/$PKG_SYS"
+          (cd "$CLI_DIR" && npx --yes "$TAURI_CLI" signer sign "$PKG_SYS_PATH")
+          rm -rf "$CLI_DIR" "$STAGING"
+          echo "{\"linux-loongarch64-system\":{\"url\":\"$URL_BASE/$PKG_SYS\",\"signature\":\"$(tr -d '\n' < "$PKG_SYS.sig")\",\"strategy\":\"system\"}}" > "update-package-fragment-linux-loongarch64-system.json"
+          cat update-package-fragment-*.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-package-linux-loongarch64
+          path: |
+            qomicex-update-*.zip
+            qomicex-update-*.zip.sig
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-package-fragment-${{ github.job }}
+          path: update-package-fragment-*.json
       - uses: actions/upload-artifact@v7
         with:
           name: update-fragment-${{ github.job }}

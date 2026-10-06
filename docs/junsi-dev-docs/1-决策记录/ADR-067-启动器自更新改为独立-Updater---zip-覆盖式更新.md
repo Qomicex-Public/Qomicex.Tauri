@@ -38,3 +38,36 @@
 | 日期 | 版本 | 修改内容 | 修改人 |
 |---|---|---|---|
 | 2026-09-07 | v1.0 | 初版创建 | AI Agent |
+| 2026-10-06 | v1.1 | 修正 system 策略的等待判据与提权链路（issue #201）；见下「修正记录」 | AI Agent |
+
+## 修正记录
+
+### 2026-10-06（issue #201：deb/rpm 安装无法自更新）
+
+本 ADR 采纳的方案（独立 Updater + zip 覆盖）不变，但实现里有两处判断与本 ADR 的
+前提不符，已修正：
+
+1. **「等 launcher 退出」不能靠 exe 是否可写**。原文承诺「等 `--wait-pid` 进程退出后
+   动手」，`be5e1ef` 为绕开中文 Windows `tasklist` 本地化问题改成了「等 exe 可写」。
+   Windows 上成立（运行中的 image 持有独占锁），unix 上不成立——运行中的 image
+   **不**锁文件，写探测失败通常只表示 EACCES「当前用户没权限写」，而
+   `/usr/bin/Qomicex Launcher` 恰好是 root 所有 0755。结果：探测恒失败 → 当锁定 →
+   30s 后 exit 5，deb/rpm 用户（AppImage 装在用户目录，探测能通过）自 `v0.1.0-beta24.0`
+   起全部无法自更新。现按平台分派：Unix 只有 ETXTBSY 算占用，主等待回到 pid 退出。
+2. **提权后端不能只有 pkexec**。原文写的「pkexec 提权」在无 polkit agent 的机器
+   （无桌面 / minimal 安装 / 定制发行版）不可用；且容器实测 polkitd 未运行时
+   pkexec 退 127 而非 126，不能被当成「用户取消」而挡掉其它后端。现为
+   `pkexec → sudo -n` 分级，只有用户明确取消才停止回退。
+
+顺带记录两处与本 ADR 取舍相关的既有事实（非本次引入，避免后人对账困惑）：
+
+- **macOS 提权从未实现**：原文「app(macOS 覆盖 .app，**osascript 提权**)」在 updater 里
+  只有 Linux 分支，非 Linux 的 `elevate_copy` 是显式失败桩。`.app` 不可写时 macOS
+  更新会失败（现在会落 `last-update-error.json` 并在新进程提示）。
+- **覆盖式更新不动包管理器数据库**：`dpkg`/`rpm` 仍记旧版本，`dpkg -V` 会报文件不一致，
+  同名版本的后续 `apt upgrade`/`dnf upgrade` 可能把文件回滚。这是「zip 覆盖」相对
+  「调包管理器安装」的既定代价。
+
+细节、复现命令与容器取证见
+`docs/junsi-dev-docs/2-架构设计/启动器自更新一键链路-独立-Updater.md` 的
+「2026-10-06 更新（issue #201）」小节。

@@ -1,15 +1,31 @@
 import Markdown from 'react-markdown'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Button } from './ui'
-import { ArrowRight, CheckCircle2, ExternalLink } from 'lucide-react'
+import { ArrowRight, CheckCircle2, CircleAlert, ExternalLink } from 'lucide-react'
 import { useI18n } from '../i18n/index.tsx'
 import { REPOSITORY_URL } from '../constants/credits.ts'
 import { trainLabelKey, trainOf } from '../lib/updateChannel.ts'
-import type { UpdateNotice } from '../api/update.ts'
+import type { UpdateError, UpdateNotice } from '../api/update.ts'
+
+
+/**
+ * `last-update-error.json` 的机器码 → 文案 key。
+ *
+ * 码由 Qomicex.Updater 决定（`ELEVATION_DENIED` / `UPDATE_INSTALL_FAILED` /
+ * `UPDATE_WAIT_TIMEOUT`），这里只做映射——未知码走 `failed.unknown`，
+ * 上游新增码时最多少一句定制文案，不会渲染成空白。
+ */
+const FAILURE_REASON_KEYS: Record<string, string> = {
+  ELEVATION_DENIED: 'dialogs.updateComplete.failed.elevationDenied',
+  UPDATE_INSTALL_FAILED: 'dialogs.updateComplete.failed.installFailed',
+  UPDATE_WAIT_TIMEOUT: 'dialogs.updateComplete.failed.waitTimeout',
+}
 
 interface Props {
   open: boolean
   notice: UpdateNotice | null
+  /** updater 落下的「这次更新没成」交接（读后即删，见 api/update.ts） */
+  error: UpdateError | null
   onClose: () => void
 }
 
@@ -17,11 +33,62 @@ interface Props {
  * 更新完成提示（#108）：自更新重启后的首次启动弹出，展示更新到的版本、
  * 新旧版本号与本次更新内容（changelog），避免用户再去设置页翻版本号。
  *
- * 数据源是旧进程退出前由 `run_updater` 写下的交接文件（读后即删，只弹一次）；
- * App.tsx 已做版本守卫（notice.version === 当前运行版本）才会渲染本组件。
+ * 两份交接都来自 `{dataDir}/updates/`，各自有独立的 claim 锁、各只提示一次：
+ * - `notice`：updater **装成功**并重启后的自报家门（App.tsx 已做版本守卫）；
+ * - `error`：updater **没装成**（提权被拒 / 覆盖失败 / 旧进程没退出）。
+ *
+ * `error` 这条是 issue #201 要的可见性：updater 是 detached 进程，它失败退出时
+ * 旧启动器早已退出，屏幕上原本不会留下任何痕迹——用户只能看到「应用自己消失了」。
+ * 两份同时存在时以 `notice` 为准（成功比旧的失败更贴近当前事实）。
  */
-export default function UpdateCompleteDialog({ open, notice, onClose }: Props) {
+export default function UpdateCompleteDialog({ open, notice, error, onClose }: Props) {
   const { t } = useI18n()
+
+  if (!notice && error) {
+    const failedVersion = (error.version || '').replace(/^v+/, '')
+    return (
+      <Dialog open={open} onClose={onClose} closeOnBackdrop closeOnEsc>
+        <DialogHeader onClose={onClose} className="min-h-[3.8125rem]">
+          <DialogTitle className="flex min-w-0 items-center gap-2">
+            <CircleAlert className="h-4 w-4 shrink-0 text-destructive" />
+            <span className="min-w-0 leading-snug [overflow-wrap:anywhere]">
+              {t('dialogs.updateComplete.failed.title')}
+            </span>
+          </DialogTitle>
+        </DialogHeader>
+        <DialogBody className="space-y-3">
+          <p className="text-sm leading-relaxed text-foreground">
+            {t(FAILURE_REASON_KEYS[error.code] ?? 'dialogs.updateComplete.failed.unknown')}
+          </p>
+          {failedVersion && (
+            <p className="text-xs text-muted-foreground">
+              {t('dialogs.updateComplete.failed.target')}{' '}
+              <span className="font-medium text-foreground">{failedVersion}</span>
+            </p>
+          )}
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {error.strategy === 'system'
+              ? t('dialogs.updateComplete.failed.hintSystem')
+              : t('dialogs.updateComplete.failed.hint')}
+          </p>
+          <div className="break-words rounded-lg border bg-background p-2">
+            <p className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+              {t('dialogs.updateComplete.failed.detail')}
+            </p>
+            {/* message 是 updater 落的 OS 报错原文，不进翻译，只作诊断展示 */}
+            <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">
+              {error.message}
+            </p>
+          </div>
+        </DialogBody>
+        <DialogFooter className="min-h-[4.0625rem] flex-wrap gap-2">
+          <Button size="sm" onClick={onClose}>
+            {t('dialogs.updateComplete.dismiss')}
+          </Button>
+        </DialogFooter>
+      </Dialog>
+    )
+  }
 
   if (!notice) return null
 

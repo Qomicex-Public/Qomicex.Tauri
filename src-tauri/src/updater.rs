@@ -23,6 +23,12 @@ pub(crate) const NOTICE_FILE: &str = "pending-update-notice.json";
 /// 交接的占用锁（claim）文件名，与交接文件同目录。
 const CLAIM_FILE: &str = "pending-update-notice.claim";
 
+/// 失败交接文件名（与 .zip/.sig 同处 `{dataDir}/updates/`）。
+/// 写入端在 `Qomicex.Updater/src/main.rs` 的 `write_update_error`，两边必须一致。
+pub(crate) const ERROR_FILE: &str = "last-update-error.json";
+
+/// 失败交接的占用锁文件名。
+const ERROR_CLAIM_FILE: &str = "last-update-error.claim";
 /// 占用的 stale 阈值（秒）：占用者崩溃没来得及释放时，超过该时长后允许重新
 /// 竞争，避免一次崩溃永久堵死后续的更新完成提示。
 const CLAIM_STALE_AFTER_SECS: u64 = 60;
@@ -118,13 +124,13 @@ pub(crate) fn take_pending_notice(data_dir: &str) -> Option<PendingUpdateNotice>
         return None;
     }
     let updates_dir = Path::new(dir).join("updates");
-    if !claim_notice(&updates_dir) {
+    if !claim(&updates_dir, CLAIM_FILE) {
         // 没抢到占用：别的实例正在（或刚刚）消费同一份交接
         return None;
     }
     // 抢到占用后本实例独占消费；任何路径返回前都要释放占用
     let notice = consume_notice(&updates_dir);
-    release_claim(&updates_dir);
+    release_claim(&updates_dir, CLAIM_FILE);
     notice
 }
 
@@ -133,8 +139,15 @@ pub(crate) fn take_pending_notice(data_dir: &str) -> Option<PendingUpdateNotice>
 /// `create_new` 保证跨进程/跨线程只有一个创建者成功；另一个拿到
 /// `AlreadyExists`。已存在的占用按 claimed_at 判断是否 stale（占用者崩溃
 /// 未释放），stale 才清号重试一次——重试仍失败说明有活跃占用者，返回 false。
-fn claim_notice(updates_dir: &Path) -> bool {
-    let claim_path = updates_dir.join(CLAIM_FILE);
+/// 尝试独占占用指定的 claim 文件。返回 false = 本次不消费。
+///
+/// `create_new` 保证跨进程/跨线程只有一个创建者成功；另一个拿到
+/// `AlreadyExists`。已存在的占用按 claimed_at 判断是否 stale（占用者崩溃
+/// 未释放），stale 才清号重试一次——重试仍失败说明有活跃占用者，返回 false。
+///
+/// 「更新完成」通知与「更新失败」交接各用各的 claim 文件名，抢锁逻辑只这一份。
+fn claim(updates_dir: &Path, claim_name: &str) -> bool {
+    let claim_path = updates_dir.join(claim_name);
     let open_claim = || {
         OpenOptions::new()
             .write(true)
@@ -174,13 +187,20 @@ fn claim_is_stale(claim_path: &Path) -> bool {
 }
 
 /// 读并删除交接文件。删除失败返回 None：文件还留在盘上，不能返回它。
-fn consume_notice(updates_dir: &Path) -> Option<PendingUpdateNotice> {
-    let path = notice_path(updates_dir);
+/// 读并删除指定交接文件（泛型：完成通知与失败交接共用这套「读后即删」语义）。
+fn consume_file<T: serde::de::DeserializeOwned>(updates_dir: &Path, name: &str) -> Option<T> {
+    let path = updates_dir.join(name);
     let raw = std::fs::read_to_string(&path).ok()?;
+    // 删不掉就不返回：文件还留在盘上，返回它等于下次启动再弹一次。
     if std::fs::remove_file(&path).is_err() {
         return None;
     }
-    let notice: PendingUpdateNotice = serde_json::from_str(&raw).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// 读并删除「更新完成」交接文件；version 为空的记录没有可展示内容，丢弃。
+fn consume_notice(updates_dir: &Path) -> Option<PendingUpdateNotice> {
+    let notice: PendingUpdateNotice = consume_file(updates_dir, NOTICE_FILE)?;
     if notice.version.trim().is_empty() {
         return None;
     }
@@ -188,8 +208,65 @@ fn consume_notice(updates_dir: &Path) -> Option<PendingUpdateNotice> {
 }
 
 /// 释放占用（尽力而为）：正常路径消费完即删；崩溃场景由 stale 回收兜底。
-fn release_claim(updates_dir: &Path) {
-    let _ = std::fs::remove_file(updates_dir.join(CLAIM_FILE));
+fn release_claim(updates_dir: &Path, claim_name: &str) {
+    let _ = std::fs::remove_file(updates_dir.join(claim_name));
+}
+
+// ---------------------------------------------------------------------------
+// 更新失败的交接（issue #201 的可见性）
+// ---------------------------------------------------------------------------
+//
+// updater 是 detached 进程：它失败退出时旧启动器早已 `app.exit(0)`，屏幕上不会
+// 留下任何痕迹——报告者的原话是「等待下载完成后自动重启，并没重启和更新完成」。
+// 所以失败必须由 updater 落盘、由新进程读出来告诉用户。
+
+/// updater 落盘的「这次更新没成」记录。
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateError {
+    /// 机器可读码：ELEVATION_DENIED | UPDATE_INSTALL_FAILED | UPDATE_WAIT_TIMEOUT。
+    /// 前端按它取多语言文案；`message` 只当技术细节展示，不进翻译。
+    pub(crate) code: String,
+    /// 技术细节（OS 报错原文，可能含路径与引号）
+    pub(crate) message: String,
+    /// 安装策略（dir | appimage | app | system），决定给哪条手动升级命令
+    pub(crate) strategy: String,
+    /// 本次要更新到的版本（由包文件名反推，可能为空串）
+    pub(crate) version: String,
+    /// 写入时间（unix 秒），仅诊断用
+    pub(crate) occurred_at: u64,
+}
+
+/// 消费「更新失败」交接：claim 加锁 → 读并删 → 释放锁。
+///
+/// 任何异常（dataDir 为空/文件缺失/内容损坏/抢锁失败）都返回 None——提示是附加
+/// 体验，不能因为它影响启动。写入端是 `Qomicex.Updater/src/main.rs` 的
+/// `write_update_error`，文件名与字段口径两边必须一致。
+pub(crate) fn take_update_error(data_dir: &str) -> Option<UpdateError> {
+    let dir = data_dir.trim();
+    if dir.is_empty() {
+        return None;
+    }
+    let updates_dir = Path::new(dir).join("updates");
+    if !claim(&updates_dir, ERROR_CLAIM_FILE) {
+        // 没抢到占用：别的实例正在（或刚刚）消费同一份失败交接
+        return None;
+    }
+    let error =
+        consume_file::<UpdateError>(&updates_dir, ERROR_FILE).filter(|e| !e.code.trim().is_empty());
+    release_claim(&updates_dir, ERROR_CLAIM_FILE);
+    error
+}
+
+/// 新一轮更新开始前丢掉上一次的失败交接（`run_updater` 调用）。
+///
+/// 只删数据文件、不动 claim 锁：并发消费由 claim 的 stale 超时自己回收。
+fn clear_update_error(updates_dir: &Path) {
+    if let Err(e) = std::fs::remove_file(updates_dir.join(ERROR_FILE)) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            tauri_log!("updater", "clear stale update error failed: {e}");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -943,6 +1020,13 @@ pub fn run_updater(
         .collect();
     step!("stage5 cmd: {}", argv.join(" "));
 
+    // 清掉上一次的失败交接，**必须早于 spawn**：updater 是 detached 进程，它可能在
+    // 我们这批清理写盘之前就已经跑完并写下新的失败记录——清理放在 spawn 之后会
+    // 把刚刚发生的那次失败删掉，下次启动就看不到原因了（review 指出）。
+    // 放在这里也覆盖了 spawn 失败提前 return 的路径：本次尝试已开始，旧失败不该
+    // 再作为"最新一次"提示给用户。
+    clear_update_error(&updates_dir);
+
     if let Err(e) = cmd.spawn() {
         step!("stage5 spawn failed: {e}");
         return Err(format!("UPDATER_SPAWN_FAILED: {e}"));
@@ -978,6 +1062,15 @@ pub fn run_updater(
 #[tauri::command]
 pub fn take_pending_update_notice(data_dir: String) -> Option<PendingUpdateNotice> {
     take_pending_notice(&data_dir)
+}
+
+/// 新进程启动后读取并删除「更新失败」交接文件（见 [`take_update_error`]）。
+///
+/// 与 `take_pending_update_notice` 同样是**独占消费**（只提示一次），但**不做版本
+/// 守卫**：失败交接描述的正是「版本没前进」，拿当前运行版本去比对会把它自己过滤掉。
+#[tauri::command]
+pub fn take_pending_update_error(data_dir: String) -> Option<UpdateError> {
+    take_update_error(&data_dir)
 }
 
 /// 只读查询自动更新状态（是否有待安装记录 / 哪个版本已作废）。
@@ -1789,5 +1882,147 @@ mod tests {
         assert_eq!(view.pending.unwrap().channel, None);
 
         let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    // ------------------------------------------------ 更新失败交接（#201）
+
+    /// updater 侧 `write_update_error` 的**真实输出**（单行、无空格、message 里
+    /// 带转义引号）。壳侧结构体必须能解析它——这是跨仓库契约，改一边就得红。
+    const UPDATER_WIRE_FIXTURE: &str = r#"{"code":"ELEVATION_DENIED","message":"pkexec 退出 127：\"x\" \\ y","strategy":"system","version":"0.1.2-beta1.0","occurredAt":1791259159}"#;
+
+    fn write_error_file(updates_dir: &Path, body: &str) {
+        std::fs::create_dir_all(updates_dir).unwrap();
+        std::fs::write(updates_dir.join(ERROR_FILE), body).unwrap();
+    }
+
+    #[test]
+    fn update_error_parses_the_updater_wire_format() {
+        let data_dir = temp_data_dir("err-wire");
+        let updates_dir = data_dir.join("updates");
+        write_error_file(&updates_dir, UPDATER_WIRE_FIXTURE);
+
+        let err = take_update_error(&data_dir.to_string_lossy()).expect("应能解析 updater 的输出");
+        assert_eq!(err.code, "ELEVATION_DENIED");
+        // message 里的 \" 与 \\ 必须还原成 " 和 \，否则用户看到的细节是坏的
+        assert_eq!(err.message, "pkexec 退出 127：\"x\" \\ y");
+        assert_eq!(err.strategy, "system");
+        assert_eq!(err.version, "0.1.2-beta1.0");
+        assert_eq!(err.occurred_at, 1791259159);
+        // 读后即删
+        assert!(!updates_dir.join(ERROR_FILE).exists());
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn update_error_take_is_once_only() {
+        let data_dir = temp_data_dir("err-once");
+        write_error_file(&data_dir.join("updates"), UPDATER_WIRE_FIXTURE);
+        let dir = data_dir.to_string_lossy().to_string();
+
+        assert!(take_update_error(&dir).is_some());
+        assert!(
+            take_update_error(&dir).is_none(),
+            "同一条失败只能提示一次，否则每次启动都弹"
+        );
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn update_error_and_notice_are_independent() {
+        // 装失败后紧接着又成功一次的场景里，两个交接各有自己的 claim，
+        // 不能互相挡住（否则「更新完成」或「更新未完成」有一条永远弹不出来）。
+        let data_dir = temp_data_dir("err-vs-notice");
+        let updates_dir = data_dir.join("updates");
+        std::fs::create_dir_all(&updates_dir).unwrap();
+        write_pending_notice(&updates_dir, "0.2.0", "- 修好了链接");
+        write_error_file(&updates_dir, UPDATER_WIRE_FIXTURE);
+        let dir = data_dir.to_string_lossy().to_string();
+
+        let notice = take_pending_notice(&dir).expect("完成交接应可读");
+        assert_eq!(notice.version, "0.2.0");
+        let err = take_update_error(&dir).expect("失败交接不该被完成交接的锁挡住");
+        assert_eq!(err.code, "ELEVATION_DENIED");
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn concurrent_update_error_take_consumes_exactly_once() {
+        let data_dir = temp_data_dir("err-concurrent");
+        write_error_file(&data_dir.join("updates"), UPDATER_WIRE_FIXTURE);
+        let dir = data_dir.to_string_lossy().to_string();
+        let got = std::thread::scope(|s| {
+            let a = s.spawn(|| take_update_error(&dir).is_some());
+            let b = s.spawn(|| take_update_error(&dir).is_some());
+            (a.join().unwrap(), b.join().unwrap())
+        });
+        assert!(
+            got.0 ^ got.1,
+            "两个实例并发消费只能有一个拿到，实得 {got:?}"
+        );
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn update_error_rejects_missing_code_and_absent_file() {
+        // 缺 code 的记录没法映射文案，丢弃；但文件已被 consume_file 删掉，
+        // 不会留下每次启动都解析一遍的残渣。
+        let data_dir = temp_data_dir("err-no-code");
+        let updates_dir = data_dir.join("updates");
+        write_error_file(
+            &updates_dir,
+            r#"{"code":"","message":"x","strategy":"system","version":"","occurredAt":1}"#,
+        );
+        assert!(take_update_error(&data_dir.to_string_lossy()).is_none());
+        assert!(!updates_dir.join(ERROR_FILE).exists());
+        // 没有文件时静默 None（正常启动的最常见路径）
+        assert!(take_update_error(&data_dir.to_string_lossy()).is_none());
+        assert!(take_update_error("").is_none(), "dataDir 未加载完时短路");
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn clear_update_error_drops_the_previous_attempt_record() {
+        // run_updater 在新一轮更新开始时调用它：否则下次启动会弹一条属于
+        // 更早那次尝试的「更新未完成」。缺文件也不能报错（NotFound 是常态）。
+        let data_dir = temp_data_dir("err-clear");
+        let updates_dir = data_dir.join("updates");
+        write_error_file(&updates_dir, UPDATER_WIRE_FIXTURE);
+        clear_update_error(&updates_dir);
+        assert!(take_update_error(&data_dir.to_string_lossy()).is_none());
+        clear_update_error(&updates_dir); // 再清一次不应 panic / 不应留下残渣
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+    /// 钉住调用顺序：`run_updater` 必须在 **spawn 之前** 清掉上一次的失败交接。
+    ///
+    /// 为什么值得用源码断言守：updater 是 detached 进程，清理若放在 spawn 之后，
+    /// 就可能把 updater 刚写下的**本次**失败记录删掉——用户下次启动看不到原因，
+    /// 而这正是 #201 之后花力气建立的可见性（review 两轮都点了这里）。
+    /// 运行时难以稳定构造该竞态，故直接锁源码顺序。
+    #[test]
+    fn clear_update_error_precedes_spawn_in_run_updater() {
+        let src = include_str!("updater.rs");
+        // 只取 run_updater 的函数体：到测试模块为止。否则计数会把测试自身
+        // （函数名与断言里的字面量）也数进去。
+        let run = src
+            .split("pub fn run_updater")
+            .nth(1)
+            .expect("run_updater 必须在 updater.rs 里")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("测试模块之前必须是函数体");
+        let clear_at = run
+            .find("clear_update_error(")
+            .expect("必须调用 clear_update_error");
+        let spawn_at = run.find("cmd.spawn()").expect("必须 spawn updater");
+        assert!(
+            clear_at < spawn_at,
+            "clear_update_error 必须在 cmd.spawn() 之前调用，否则会删掉本次失败记录"
+        );
+        // 且只应出现一次（避免「挪到前面但忘了删旧的」这种半吊子修复）
+        assert_eq!(
+            run.matches("clear_update_error(").count(),
+            1,
+            "run_updater 里只应有一处 clear_update_error 调用"
+        );
     }
 }
