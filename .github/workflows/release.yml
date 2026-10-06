@@ -530,10 +530,15 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # 走 step env 而非 run 体插值：workflow_dispatch 的版本输入会经
+          # needs.setup.outputs.version 流到这里，run 体里的 ${{ }} 是文本拼接，
+          # 构造的版本文本会在持有签名私钥的步骤里被执行。
+          RELEASE_TAG: ${{ needs.setup.outputs.displayVersion }}
         run: |
-          VERSION="${{ needs.setup.outputs.version }}"
+          # 下载 URL 必须用带 v 前缀的 displayVersion：release 作业按
+          # needs.setup.outputs.displayVersion 建 tag，用不带 v 的 version 会 404。
+          URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$RELEASE_TAG"
           BUNDLE_DIR="src-tauri/target/release/bundle"
-          URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION"
 
           # AppImage 包：zip 内放 AppImage 本体（updater appimage 策略整文件替换）
           APPIMAGE=$(find "$BUNDLE_DIR" -name '*.AppImage' | head -1)
@@ -971,10 +976,15 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # 走 step env 而非 run 体插值：workflow_dispatch 的版本输入会经
+          # needs.setup.outputs.version 流到这里，run 体里的 ${{ }} 是文本拼接，
+          # 构造的版本文本会在持有签名私钥的步骤里被执行。
+          RELEASE_TAG: ${{ needs.setup.outputs.displayVersion }}
         run: |
-          VERSION="${{ needs.setup.outputs.version }}"
+          # 下载 URL 必须用带 v 前缀的 displayVersion：release 作业按
+          # needs.setup.outputs.displayVersion 建 tag，用不带 v 的 version 会 404。
           BUNDLE_DIR="src-tauri/target/release/bundle"
-          URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION"
+          URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$RELEASE_TAG"
           # app 包：zip 内放 .app 内部内容（Contents/...），updater 解压覆盖 bundle 根
           APP="$BUNDLE_DIR/macos/Qomicex Launcher.app"
           PKG="qomicex-update-darwin-aarch64.zip"
@@ -1132,10 +1142,15 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # 走 step env 而非 run 体插值：workflow_dispatch 的版本输入会经
+          # needs.setup.outputs.version 流到这里，run 体里的 ${{ }} 是文本拼接，
+          # 构造的版本文本会在持有签名私钥的步骤里被执行。
+          RELEASE_TAG: ${{ needs.setup.outputs.displayVersion }}
         run: |
-          VERSION="${{ needs.setup.outputs.version }}"
+          # 下载 URL 必须用带 v 前缀的 displayVersion：release 作业按
+          # needs.setup.outputs.displayVersion 建 tag，用不带 v 的 version 会 404。
           BUNDLE_DIR="src-tauri/target/x86_64-apple-darwin/release/bundle"
-          URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION"
+          URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$RELEASE_TAG"
           APP="$BUNDLE_DIR/macos/Qomicex Launcher.app"
           PKG="qomicex-update-darwin-x86_64.zip"
           (cd "$APP" && zip -qry "$OLDPWD/$PKG" .)
