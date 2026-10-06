@@ -134,6 +134,16 @@ Types: `feat`, `fix`, `build`, `chore`, `ci`, `docs`, `perf`, `refactor`, `rever
 - Scope: component/area (e.g. `ui`, `backend`, `release.yml`).
 - Description: imperative, lowercase, no period.
 
+### commit 内容规范（写什么，不写什么）
+
+首行 + 正文只回答**这次提交改了什么**，让 `git log --oneline` 与 `git show` 能独立看懂，不看对话记录、不看 `.memory/` 也能判断影响面：
+
+- ✅ **改了什么**：新增/修改/删除的文件或接口、行为前后差异、必须同行的配套改动（子模块指针、CI、文档、迁移），以及怎么验证（命令 / 期望输出）。
+- ✅ **为什么必要**：一句话说明动机或修的是哪个现象（对应 issue 号更好），不要展开。
+- ❌ **不写决策叙事**：不写「决定采用 A，而不是 B/C」「权衡了 A/B/C」「方案里选了什么」——备选与理由属于 ADR 或 `.memory/decisions/`，提交里最多留一句「方案见 ADR-XXX」。
+- ❌ **不写过程与自述**：不写排查心路、试错经过、AI 自述（「经分析」「我检查了…」）、号召式总结（「后续要…」当正文）。
+- 一个提交一件事：与提交无关的改动拆成独立提交（如 `docs:` / `ci:` 分开），别把工具链、格式化、功能混在一起。
+
 ## CI/CD
 
 `.github/workflows/release.yml` — `workflow_dispatch` (填版本各部分，自动构造标准版本号) 或 `release: [published]` (从 tag 解析版本)。版本格式: `v<major>.<minor>.<patch>-<type><序数>.<补丁/构建>`，其中 release/beta 用人工输入的序数，alpha 自动取当天日期+当日构建序号。
