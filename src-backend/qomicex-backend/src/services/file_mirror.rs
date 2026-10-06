@@ -22,6 +22,9 @@ const MCIM_HOST: &str = "mod.mcimirror.top";
 const MODRINTH_CDN_HOSTS: &[&str] = &["cdn.modrinth.com", "cdn-alt.modrinth.com"];
 /// CurseForge 官方文件 CDN 落地域名（MCIM 明确禁止接管，恒走 QML Mirror）。
 const CURSEFORGE_CDN_HOSTS: &[&str] = &["mediafilez.forgecdn.net"];
+/// CF 文件从 `edge.forgecdn.net` 重写到 MCIM 后，回退链的官方兜底集合：
+/// 落地域 `mediafilez` 之外保留原始 `edge.forgecdn.net`（重写前可能就是它）。
+const CF_OFFICIAL_CDN_HOSTS: &[&str] = &["edge.forgecdn.net", "mediafilez.forgecdn.net"];
 
 /// Modrinth CDN 镜像节点（互为故障转移；见 docs.qomicex.top/guide/mirror.html）。
 const MODRINTH_MIRROR_HOSTS: &[&str] = &[
@@ -51,13 +54,14 @@ pub fn mirror_fallback_urls(url: &str) -> Vec<String> {
         // MCIM 主节点未命中（限流/故障）时按文件来源回退：MCIM 对 Modrinth 与 CF
         // 文件共用一个 host，仅路径首段不同（Modrinth=/data/...，CF=/files/...），
         // 官方兜底域名也必须按此区分，否则会把 `/data/` 路径兜到 mediafilez 上 404。
+        // CF 官方兜底包含原始 edge.forgecdn.net（可能就是重写前的原始落地域名）。
         let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
         let is_cf_file = rest
             .split_once('/')
             .map(|(_, path)| path.starts_with("files/") || path.starts_with("files?"))
             .unwrap_or(false);
         let (nodes, official): (&[&str], &[&str]) = if is_cf_file {
-            (GENERIC_MIRROR_HOSTS, CURSEFORGE_CDN_HOSTS)
+            (GENERIC_MIRROR_HOSTS, CF_OFFICIAL_CDN_HOSTS)
         } else {
             (MODRINTH_MIRROR_HOSTS, MODRINTH_CDN_HOSTS)
         };
@@ -251,6 +255,7 @@ mod tests {
                 "https://mirror.lenmei233.dpdns.org/files/1/2/a.jar",
                 "https://mirror.qomicex.dpdns.org/files/1/2/a.jar",
                 "https://mirror1.qomicex.dpdns.org/files/1/2/a.jar",
+                "https://edge.forgecdn.net/files/1/2/a.jar",
                 "https://mediafilez.forgecdn.net/files/1/2/a.jar",
             ]
         );

@@ -138,7 +138,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoSelectModMirror: false,
   fileDownloadSource: 0,
   autoSelectFileDownloadSource: false,
-  fileDownloadSourceMigrated: true,
+  // 必须与 fileDownloadSource: 0 配对为 false：设置加载完成前 update() 提前落盘
+  // 的完整对象会按此标记跳过后端迁移，migrated:true 会把 UTC+8 用户的镜像源
+  // 默认值永久挡在门外（CodeRabbit #217 指出）。
+  fileDownloadSourceMigrated: false,
   downloadTimeout: 60,
   theme: 'dark',
   themePreset: 'default',
