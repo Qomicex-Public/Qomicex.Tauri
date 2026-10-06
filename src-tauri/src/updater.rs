@@ -1020,6 +1020,13 @@ pub fn run_updater(
         .collect();
     step!("stage5 cmd: {}", argv.join(" "));
 
+    // 清掉上一次的失败交接，**必须早于 spawn**：updater 是 detached 进程，它可能在
+    // 我们这批清理写盘之前就已经跑完并写下新的失败记录——清理放在 spawn 之后会
+    // 把刚刚发生的那次失败删掉，下次启动就看不到原因了（review 指出）。
+    // 放在这里也覆盖了 spawn 失败提前 return 的路径：本次尝试已开始，旧失败不该
+    // 再作为"最新一次"提示给用户。
+    clear_update_error(&updates_dir);
+
     if let Err(e) = cmd.spawn() {
         step!("stage5 spawn failed: {e}");
         return Err(format!("UPDATER_SPAWN_FAILED: {e}"));
@@ -1038,9 +1045,6 @@ pub fn run_updater(
         "stage6 notice written: {}",
         notice_path(&updates_dir).display()
     );
-    // 新一轮更新已经开始：清掉上一次的失败交接。否则下次启动会弹出一条属于
-    // 更早那次尝试的「更新未完成」——updater 这次成功时根本不会再写它。
-    clear_update_error(&updates_dir);
 
     // Give the OS a beat to start the child, then close: RunEvent::Exit kills
     // the backend, the updater waits for our pid before touching files.
@@ -1987,5 +1991,38 @@ mod tests {
         assert!(take_update_error(&data_dir.to_string_lossy()).is_none());
         clear_update_error(&updates_dir); // 再清一次不应 panic / 不应留下残渣
         let _ = std::fs::remove_dir_all(&data_dir);
+    }
+    /// 钉住调用顺序：`run_updater` 必须在 **spawn 之前** 清掉上一次的失败交接。
+    ///
+    /// 为什么值得用源码断言守：updater 是 detached 进程，清理若放在 spawn 之后，
+    /// 就可能把 updater 刚写下的**本次**失败记录删掉——用户下次启动看不到原因，
+    /// 而这正是 #201 之后花力气建立的可见性（review 两轮都点了这里）。
+    /// 运行时难以稳定构造该竞态，故直接锁源码顺序。
+    #[test]
+    fn clear_update_error_precedes_spawn_in_run_updater() {
+        let src = include_str!("updater.rs");
+        // 只取 run_updater 的函数体：到测试模块为止。否则计数会把测试自身
+        // （函数名与断言里的字面量）也数进去。
+        let run = src
+            .split("pub fn run_updater")
+            .nth(1)
+            .expect("run_updater 必须在 updater.rs 里")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("测试模块之前必须是函数体");
+        let clear_at = run
+            .find("clear_update_error(")
+            .expect("必须调用 clear_update_error");
+        let spawn_at = run.find("cmd.spawn()").expect("必须 spawn updater");
+        assert!(
+            clear_at < spawn_at,
+            "clear_update_error 必须在 cmd.spawn() 之前调用，否则会删掉本次失败记录"
+        );
+        // 且只应出现一次（避免「挪到前面但忘了删旧的」这种半吊子修复）
+        assert_eq!(
+            run.matches("clear_update_error(").count(),
+            1,
+            "run_updater 里只应有一处 clear_update_error 调用"
+        );
     }
 }
