@@ -57,15 +57,42 @@ const MOD_SOURCES: &[(i32, &str, &str)] = &[
     ),
 ];
 
-/// 资源（mod 文件 CDN）下载源。ping 目标用各自文件 CDN 的根地址；QML Mirror 是用户
-/// 自建镜像（modrinth.lenmei233.dpdns.org 替换 cdn.modrinth.com / cdn-alt.modrinth.com，
-/// mirror.lenmei233.dpdns.org 替换 mediafilez.forgecdn.net），QML Mirror HK 同但域名换成
-/// modrinth.qomicex.dpdns.org / mirror.qomicex.dpdns.org。
+/// 资源（mod 文件 CDN）下载源。1 = 镜像源：MCIM 优先（cdn.modrinth.com /
+/// edge.forgecdn.net → mod.mcimirror.top），MCIM 不覆盖的 cdn-alt.modrinth.com /
+/// mediafilez.forgecdn.net（MCIM 明确禁止接管）走 QML Mirror；运行期失败自动回退
+/// QML 节点、官方 CDN 兜底（services/file_mirror.rs）。
+///
+/// 测速目标用 **pinned 的真实文件**（Modrinth sodium 0.5.13 jar，版本已锁定不会
+/// 变动）：MCIM/QML 的 API 透传路径与文件路径是不同路由，测 API 路径不能证明
+/// 文件路径可用。实测根路径/robots.txt/API 路径在各节点的 HEAD 多为 404/400，
+/// 真实文件路径 HEAD 全部 200。
 const FILE_DOWNLOAD_SOURCES: &[(i32, &str, &str)] = &[
-    (0, "官方源", "https://cdn.modrinth.com"),
-    (1, "QML Mirror", "https://modrinth.lenmei233.dpdns.org"),
-    (2, "QML Mirror HK", "https://modrinth.qomicex.dpdns.org"),
+    (
+        0,
+        "官方源",
+        "https://cdn.modrinth.com/data/AANobbMI/versions/OihdIimA/sodium-fabric-0.5.13%2Bmc1.20.1.jar",
+    ),
+    (
+        1,
+        "镜像源",
+        "https://mod.mcimirror.top/data/AANobbMI/versions/OihdIimA/sodium-fabric-0.5.13%2Bmc1.20.1.jar",
+    ),
 ];
+
+/// 镜像源（id=1）的探测节点，**按实际下载顺序排列**：rewrite_file_cdn 先把文件
+/// 指到 MCIM，MCIM 不可用才依次回退 QML 节点。**不含官方 CDN 兜底**——全部镜像
+/// 节点失败时镜像源必须报告不可用，让 auto-select 直接选官方源，而不是选中镜像
+/// 后先撞一遍死节点。
+const FILE_MIRROR_PING_URLS: &[&str] = &[
+    "https://mod.mcimirror.top/data/AANobbMI/versions/OihdIimA/sodium-fabric-0.5.13%2Bmc1.20.1.jar",
+    "https://modrinth.lenmei233.dpdns.org/data/AANobbMI/versions/OihdIimA/sodium-fabric-0.5.13%2Bmc1.20.1.jar",
+    "https://modrinth1.qomicex.dpdns.org/data/AANobbMI/versions/OihdIimA/sodium-fabric-0.5.13%2Bmc1.20.1.jar",
+    "https://modrinth.qomicex.dpdns.org/data/AANobbMI/versions/OihdIimA/sodium-fabric-0.5.13%2Bmc1.20.1.jar",
+];
+
+/// 官方源 ping 目标（pinned 真实文件，见 FILE_DOWNLOAD_SOURCES 注释）。
+const FILE_OFFICIAL_PING_URL: &str =
+    "https://cdn.modrinth.com/data/AANobbMI/versions/OihdIimA/sodium-fabric-0.5.13%2Bmc1.20.1.jar";
 
 pub fn router() -> Router<SharedState> {
     Router::new()
@@ -391,15 +418,27 @@ async fn ping_mod_sources() -> ApiResult<Json<Vec<ModSourcePing>>> {
     Ok(Json(results))
 }
 
+/// 镜像源探测：按 [`FILE_MIRROR_PING_URLS`] 的实际下载顺序逐个 HEAD，取第一个
+/// 可用节点的延迟（与 rewrite_file_cdn 的首节点语义一致）。**从链路起点计时**：
+/// 实际下载也要先等前置节点超时才轮到后续节点，只报末节点的 RTT 会高估镜像源。
+async fn probe_mirror_source() -> (i64, bool) {
+    let sw = Instant::now();
+    for u in FILE_MIRROR_PING_URLS {
+        let (_, ok) = ping_head(u).await;
+        if ok {
+            return (sw.elapsed().as_millis() as i64, true);
+        }
+    }
+    (-1, false)
+}
+
 async fn ping_file_download_sources() -> ApiResult<Json<Vec<DownloadSourcePing>>> {
-    let pings = futures::future::join_all(
-        FILE_DOWNLOAD_SOURCES
-            .iter()
-            .map(|(_, _, url)| ping_head(url)),
-    )
-    .await;
+    // 两组探测互不依赖，同时启动（串行时官方源超时会拖慢镜像源的启动）。
+    let (official, mirror) =
+        futures::join!(ping_head(FILE_OFFICIAL_PING_URL), probe_mirror_source());
     let mut results = Vec::with_capacity(FILE_DOWNLOAD_SOURCES.len());
-    for ((id, name, url), (lat, ok)) in FILE_DOWNLOAD_SOURCES.iter().zip(pings) {
+    for (id, name, url) in FILE_DOWNLOAD_SOURCES {
+        let (lat, ok) = if *id == 1 { mirror } else { official };
         results.push(DownloadSourcePing {
             id: *id,
             name: (*name).to_string(),
@@ -456,18 +495,16 @@ async fn auto_select_mod_source() -> ApiResult<Json<AutoSelectResponse>> {
 }
 
 async fn auto_select_file_download_source() -> ApiResult<Json<AutoSelectResponse>> {
-    let pings = futures::future::join_all(
-        FILE_DOWNLOAD_SOURCES
-            .iter()
-            .map(|(_, _, url)| ping_head(url)),
-    )
-    .await;
+    // 官方源与镜像源（按实际下载顺序探测，取首个可用节点）并行测量。
+    let (official, mirror) =
+        futures::join!(ping_head(FILE_OFFICIAL_PING_URL), probe_mirror_source());
+    let candidates = [(0, official), (1, mirror)];
     let mut best_id = 0;
     let mut best_latency = i64::MAX;
-    for ((id, _, _), (lat, ok)) in FILE_DOWNLOAD_SOURCES.iter().zip(pings) {
+    for (id, (lat, ok)) in candidates {
         if ok && lat < best_latency {
             best_latency = lat;
-            best_id = *id;
+            best_id = id;
         }
     }
     auto_select_update(|s| s.file_download_source = best_id);
