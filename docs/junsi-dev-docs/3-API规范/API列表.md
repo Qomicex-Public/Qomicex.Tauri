@@ -1859,6 +1859,18 @@ data: [plugin:com.example.demo:info] hello
 
 自动选择最优 Mod 源。
 
+### GET `/api/settings/file-download-sources/ping`
+
+测试文件下载源延迟。`id=1`（镜像源）聚合 ping MCIM 与 QML Mirror 全部节点，
+任一可用即可用、延迟取最快节点。
+
+**响应：** `List<DownloadSourcePing>`
+
+### GET `/api/settings/file-download-source/auto-select`
+
+自动选择最优文件下载源（官方源 vs 镜像源聚合节点，取延迟最低可用者），写入
+`fileDownloadSource`。
+
 ---
 
 ## 21. 更新 Update
