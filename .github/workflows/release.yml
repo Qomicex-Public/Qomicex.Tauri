@@ -759,30 +759,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config protobuf-compiler libssl-dev libclang-dev
-      # 工具链 73MB + Contents 索引 48MB + 数百个 deb，每次重下会显著拖长作业。
-      # 缓存键取工具链 tag + sysroot 脚本内容，两者任一变化即失效。
       - name: Fetch loong64 cross toolchain
-        id: xtools
         env:
           TOOLS_TAG: '20260912'
         run: |
-          KEY="loong64-cross-${{ env.TOOLS_TAG }}-$(sha256sum scripts/build-loong64-sysroot.sh | cut -c1-12)"
-          CACHE="$RUNNER_TEMP/$KEY.tar.xz"
-          if [ ! -f "$CACHE" ]; then
-            # 官方 loong64/cross-tools（loong64 组织维护）。固定 release tag：
-            # 解析到可变引用（@main / latest）意味着工具链可在无人 review 的情况下
-            # 被替换，而本作业持有发布签名私钥。
-            # mainline 变体的 glibc 2.41 与 loong64 Debian trixie 的 libc6 2.41 一致
-            # （stable 变体为 2.38，低于宿主系统库，链接期会缺符号）。
-            URL="https://github.com/loong64/cross-tools/releases/download/${TOOLS_TAG}/x86_64-cross-tools-loongarch64-unknown-linux-gnu-mainline.tar.xz"
-            curl -fsSL --retry 5 --retry-delay 3 "$URL" -o "$CACHE"
-          else
-            echo "复用已缓存的工具链"
-          fi
-          # tar 流被截断时 xz 会报错，避免留下半个工具链继续往下走
-          xz -t "$CACHE"
+          # 官方 loong64/cross-tools（loong64 组织维护）。固定 release tag：
+          # 解析到可变引用（@main / latest）意味着工具链可在无人 review 的情况下
+          # 被替换，而本作业持有发布签名私钥。
+          # mainline 变体的 glibc 2.41 与 loong64 Debian trixie 的 libc6 2.41 一致
+          # （stable 变体为 2.38，低于宿主系统库，链接期会缺符号）。
+          URL="https://github.com/loong64/cross-tools/releases/download/${TOOLS_TAG}/x86_64-cross-tools-loongarch64-unknown-linux-gnu-mainline.tar.xz"
+          TARBALL="$RUNNER_TEMP/cross-tools.tar.xz"
+          curl -fsSL --retry 5 --retry-delay 3 "$URL" -o "$TARBALL"
+          # 下载被截断时 xz 会报错，避免留下半个工具链继续往下走
+          xz -t "$TARBALL"
           sudo mkdir -p /opt/x-tools
-          sudo tar -xJ -C /opt/x-tools "$CACHE"
+          sudo tar -xJ -C /opt/x-tools "$TARBALL"
           /opt/x-tools/loongarch64-unknown-linux-gnu/bin/loongarch64-unknown-linux-gnu-gcc --version
       - name: Build loong64 sysroot
         env:
