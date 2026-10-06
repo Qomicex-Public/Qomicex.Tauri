@@ -155,13 +155,22 @@ install_pkg() { # install_pkg <包名>
     --speed-limit 1024 --speed-time 120 "$MIRROR/debian/$fn" -o "$WORK/pkg.deb" \
     || die "下载 $pkg 失败"
 
+  # 列举必须直接在当前 shell 里跑管道，不能写成$( ... ) 命令替换：命令替换会开
+  # 子 shell，父 shell 的 PIPESTATUS 拿不到子shell 里的管道状态（实测 ps[1]
+  # 直接 unbound，set -u 下会中止脚本）。故先落盘再筛。
   set +e
-  MEMBERS=$(dpkg-deb --fsys-tarfile "$WORK/pkg.deb" \
-    | tar -tf /dev/stdin 2>/dev/null \
-    | grep -E '^\./(usr/include|usr/lib|lib|usr/share/pkgconfig)/')
+  dpkg-deb --fsys-tarfile "$WORK/pkg.deb" 2>/dev/null \
+    | tar -tf /dev/stdin 2>/dev/null > "$WORK/list.txt"
+  ps=("${PIPESTATUS[@]}")
+  grep -E '^\./(usr/include|usr/lib|lib|usr/share/pkgconfig)/' \
+    "$WORK/list.txt" > "$WORK/members.txt"
   set -e
-  if [ -n "$MEMBERS" ]; then
-    printf '%s\n' "$MEMBERS" > "$WORK/members.txt"
+  # 只对前两段硬性检查：grep 无匹配返回 1 属正常（很多纯数据包不含这些路径），
+  # 但 dpkg-deb / tar 失败同样表现为 MEMBERS 为空，若不区分就会把「归档损坏 /
+  # 下载截断」当成「无匹配成员」而跳过，并把它标记成已装。
+  [ "${ps[0]}" -eq 0 ] && [ "${ps[1]}" -eq 0 ] \
+    || die "读取归档失败 $pkg（dpkg-deb=${ps[0]} tar=${ps[1]}）"
+  if [ -s "$WORK/members.txt" ]; then
     set +e
     dpkg-deb --fsys-tarfile "$WORK/pkg.deb" \
       | tar -x -C "$SYSROOT" --no-recursion -T "$WORK/members.txt"
