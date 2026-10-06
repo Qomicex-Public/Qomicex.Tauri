@@ -1,284 +1,296 @@
-# Qomicex Launcher
+# AGENTS.md
 
-## Stack & Ports
+本文件是 AI 代理在本仓库工作的**唯一入口**。所有 AI 工具（Cursor、Claude Code、Copilot、opencode 等）必须遵守本文件及下列文件：
 
-| Layer | Tech | Dir | Port |
-|-------|------|-----|------|
-| Desktop shell | Tauri v2 (Rust) | `src-tauri/` | — |
-| Frontend | React 19 + Vite 7 + TS + Tailwind | `src/` | 1420 |
-| Backend API | Rust (axum + tokio) | `src-backend/qomicex-backend/` | 5000 |
-| UI component lib | workspace package `@qomicex/plugin-ui` | `packages/plugin-ui/` | — |
+- [`rules/AI_CONSTITUTION.md`](rules/AI_CONSTITUTION.md) — AI 宪法（硬规则）
+- [`AI_POLICY.md`](AI_POLICY.md) — AI 使用政策（披露、责任）
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — 贡献指南（提交信息、注释、PR）
 
-Vite proxies `/api/*` → `http://localhost:5000` and `/announcements-proxy` → `https://api.qomicex.top` (`vite.config.ts`). The frontend client also calls `http://localhost:5000/api` directly (`src/api/client.ts` `API_BASE`), so the proxy is a fallback, not the primary path.
+冲突时优先级：`AI_CONSTITUTION.md` > `AI_POLICY.md` > `CONTRIBUTING.md` > 本文件。
 
-Backend binds `127.0.0.1:5000` by default; `QOMICEX_PORT` env overrides the port (`main.rs`).
+---
 
-`src-backend/` has 1 tracked project: `qomicex-backend` (Rust backend, rewrite of the removed C# `Qomicex.Launcher.Backend.Neo`). The `Qomicex.Launcher.Backend.Neo/` directory still exists locally but is **gitignored leftover runtime data** (no source; contains an NTFS-reserved-named artifact that can't be removed via Win32) — do not treat it as code.
+## 0. 核心规则
 
-External Rust crates are git submodules at the repo root: `qomicex-core-rust/` (core lib), `qomicex-downloader-rust/` (downloader) and `qomicex-connector-rust/` (联机/SCF 协议, 依赖 EasyTier4QML fork).
+1. **你必须理解你的代码。** 无法解释的改动不要提交。
+2. **默认最小改动。** 不顺手重构、不格式化无关文件、不改公共 API。
+3. **注释默认不写。** 只解释非显然的 why、约束、坑。
+4. **提交信息只写工程事实**：标题、根因、方案、验证、风险、refs。
+5. **不得声称运行过未运行的命令。** 测试结果必须来自真实执行。
+6. **AI 使用必须披露**（见 PR 模板）。
+7. 禁止生成 emoji、夸赞、免责声明、AI 对话残留、自我评价。
 
-`qomicex-tauri-i18n/` 也是 repo root 的 submodule：前端 i18n 多语言资源仓库（`src/zh-CN/` + `src/en/` TS 模块 + 类型）。启动器 `src/i18n/` 仅保留 Provider/错误映射/类型 re-export，全部语言资源经 `../../qomicex-tauri-i18n/src/index.ts` 导入。**编辑翻译必须改 submodule 内文件**（并在 i18n 仓库单独提交推送），不要在 `src/i18n/` 下建 zh-CN/en 目录。改完 submodule 需 `git submodule update --remote` 拉取最新。
+禁止出现在提交信息 / 注释中：`修法一/修法二`、`方案一/方案二`、`CodeRabbit`、`评审过程`、`worktree`、`子模块 pin`、`AI 对话`、`本 PR 不再`。
 
-Submodules (recursive checkout): `qomicex-core-rust/`, `qomicex-downloader-rust/`, `qomicex-connector-rust/`, `qomicex-tauri-i18n/`, `Qomicex.Updater/`（外部更新器，release 打包会用到）.
+---
 
-Legacy code (pre-Neo / pre-Rust) is preserved on the `legacy` branch.
+## 1. 项目概览
 
-## Package manager (critical)
+Qomicex Launcher — Minecraft 启动器。
 
-The repo is **pnpm-managed**: `pnpm-lock.yaml` + `@qomicex/plugin-ui: "workspace:*"`. `package-lock.json` is stale and npm does **not** support `workspace:*`. On a fresh checkout:
+| 层 | 技术 | 目录 | 端口 |
+|---|---|---|---|
+| 桌面外壳 | Tauri v2 (Rust) | `src-tauri/` | — |
+| 前端 | React 19 + Vite 7 + TS + Tailwind | `src/` | 1420 |
+| 后端 API | Rust (axum + tokio) | `src-backend/qomicex-backend/` | 5000 |
+| UI 组件库 | workspace 包 `@qomicex/plugin-ui` | `packages/plugin-ui/` | — |
+
+前端 `/api/*` 代理到 `http://localhost:5000`；后端绑定 `127.0.0.1:5000`，`QOMICEX_PORT` 覆盖。前端 `src/api/client.ts` 也直连 `:5000`，代理是 fallback。
+
+Submodule（recursive）：`qomicex-core-rust/`、`qomicex-downloader-rust/`、`qomicex-connector-rust/`、`qomicex-tauri-i18n/`、`Qomicex.Updater/`。Legacy 在 `legacy` 分支。
+
+`src-backend/Qomicex.Launcher.Backend.Neo/` 是 **gitignored 本地残留**（含 NTFS 保留名），不要当代码。
+
+---
+
+## 2. 必跑命令
+
+### 前端
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm --filter @qomicex/plugin-ui build   # dist/ is gitignored; frontend imports resolve to it
+pnpm --filter @qomicex/plugin-ui build   # dist/ gitignored，改 plugin-ui 后必跑
+pnpm run typecheck
+pnpm run lint
+pnpm run format:check
+pnpm run build
+pnpm run dev          # :1420
+pnpm run tauri dev
 ```
 
-`@qomicex/plugin-ui` resolves to `packages/plugin-ui/dist/index.js` (`main`/`types` in its package.json). After editing any file in `packages/plugin-ui/src/`, rebuild the package or the launcher will keep using the stale `dist/`. `tailwind.config.js` scans both `packages/plugin-ui/src` and `packages/plugin-ui/dist`.
-
-## 联机（connector）构建注意事项
-
-- 仓库根 `.cargo/config.toml` 提供 `PROTOC` / `VC_LTL` / `YY_THUNKS` 环境变量与 `net.git-fetch-with-cli = true`（easytier 构建必需；路径为本机特定，当前指向 `C:/Users/tmoam/...` WinGet profile，换机器需调整）。
-- easytier build.rs 以相对路径 `easytier/third_party/x86_64/` 搜索 `Packet.lib`（按 rustc CWD 解析）→ 已复制到 `src-backend/qomicex-backend/easytier/third_party/x86_64/`，删除会导致 `LNK1181: Packet.lib`。
-- CI 用 `.github/actions/setup-connector-build/action.yml` 复合 action 配置这些前置：easytier git 依赖 SSH→HTTPS+PAT 重写（`git config url.insteadOf`）、`arduino/setup-protoc` 装 protoc、Windows 装 7-Zip（easytier build.rs 自动解压 VC-LTL/YY-Thunks）、复制 `Packet.lib`。
-- 运行 `qomicex-backend.exe` 需要 `Packet.dll`（npcap，来自 connector-rust `easytier/third_party/<arch>/`）在 exe 同目录；缺失时进程退出 `0xC0000135 (STATUS_DLL_NOT_FOUND)`。release 打包（release.yml / Tauri bundle）必须一并带上。Windows 管理员模式下联机启用 easytier TUN 虚拟网卡（wintun），还需 `wintun.dll`（动态加载，缺失仅 TUN 模式不可用、不崩进程）；非管理员自动回退 no-tun（smoltcp 用户态栈）。开发模式由 `src-backend/qomicex-backend/build.rs` 在 cargo build 时按 `TARGET` 架构自动复制到 exe 同目录（`OUT_DIR` 上 3 级），无需手动复制；复制错架构（如 arm64 DLL 给 x64 exe）会得到 `0xC000007B (STATUS_INVALID_IMAGE_FORMAT)`。
-- 联机端点：`src-backend/qomicex-backend/src/endpoints/connector.rs`（11 个 `/connector/*` 端点，含 `kick` 踢人）。EasyTier 为库内嵌（非子进程），`/connector/easytier/*` 恒返回 installed。EasyTier 使用 smoltcp 用户态协议栈，**不支持 127.0.0.1 回环**——本机无法验证 host→join 全链路，需两台真实机器。
-- **connector 架构定位（重要）**：`qomicex-connector-rust` 是**符合标准 SCF 协议的联机库**，只提供协议与拓展接口，**不内置业务功能**（踢人/黑名单/审核等一律由调用方实现）。拓展接口：`ScaffoldingCenter::set_player_ping_handler`（`c:player_ping` 裁决钩子，`create_room` 可选参数传入；返回 false → 状态 255 不刷新心跳，入列与否由调用方闭包决定）+ `handle_player_ping`（标准入列）+ 能力方法（`disconnect_machine` / `machine_source_ip` / `easy_tier_nodes` / `disconnect_peer` / `deny_peer` / `allow_peer` / `remove_player` / `get_players`）。改 connector 前先问：这是协议/接口还是业务功能？后者应放 backend。deny 能力底层在 EasyTier4QML fork（rev 9055aef+，控制面黑名单），connector 仅委托。
-- 踢人（`/connector/kick`，仅房主）：**实现位于调用方 `src-backend/qomicex-backend/src/services/kick.rs` `KickManager`**（经 connector 拓展接口组合实现，connector 零业务代码）——①解析 guest 的 easytier peer 并 `deny_peer`（**持久物理封禁**：优先已上报 `easytier_id`，否则按 hostname `scaffolding-mc-guest-{machine_id前8位}` 或 SCF TCP 源虚拟 IP 反查 `easy_tier_nodes()`；fork `EasyTier4QML` rev 9055aef+ 的 `CoreInstance::deny_peer` 入控制面黑名单 + 立即断连，对方入站/出站连接在建立处被拒，自动重连/重启也连不上）；②记入已踢黑名单——若 deny 后 guest 仍以其他方式触达 SCF（直连等），re-ping 进入**审核状态机**（防误踢兜底）：`/connector/status` 的 `pendingKickReviews[]` + `POST /connector/kick/review`，`allow` 时 `allow_peer` 解除 deny + 移出黑名单（guest 重新加入），`reject`/`reject_silent` 维持 deny + 黑名单（静默 255）；③`disconnect_machine` 定向断开 Scaffolding TCP；④`remove_player`。**已知限制**：deny 按 easytier 节点 id（默认持久化）；guest 更换 node id/删除数据目录后需重新踢；`allow_peer` 提供解封入口。
-- easytier 出站**自动绑定已连接物理网卡 IP**（`qomicex-connector-rust` `util::resolve_bind_ip`，network-interface 枚举：排除虚拟网卡关键词 + 回环 + APIPA，有线优先→无线）——规避 Radmin 等 VPN 虚拟网卡抢默认路由导致的单向劫持（实测：出站从 radmin 网卡发出但无回包 → 中继不可达 → guest join 失败）。建房/加入后可用 `netstat` 验证 easytier 监听绑定物理 IP 而非 0.0.0.0。
-- join/host 超时语义：前端 `api/connector.ts` 对 joinRoom/hostByPort 用 120s 长超时（全局默认 15s）；后端 `run_with_connector_timeout` 包 75s 整体超时（协作取消 + close_all 清理 + mode 复位 Idle），返回 `CONNECTOR_JOIN_TIMEOUT`/`CONNECTOR_HOST_TIMEOUT`。
-
-## Commands
+### 后端
 
 ```bash
-# Backend dev
 cargo run --manifest-path src-backend/qomicex-backend/Cargo.toml
-# with license verification enabled
 cargo run --manifest-path src-backend/qomicex-backend/Cargo.toml --features license-required
-
-# Frontend dev (plain Vite, after plugin-ui build)
-pnpm run dev          # on :1420
-
-# Tauri desktop dev (replaces plain vite)
-pnpm run tauri dev
-
-# Build (tsc then vite build — type errors fail the build)
-pnpm run build
-
-# 质量门禁（push 前必跑，见「工具链」节）
-pnpm run typecheck   # tsc --noEmit
-pnpm run lint        # eslint .（存量见「Lint 现状」）
-pnpm run format:check
+cargo fmt --manifest-path src-backend/qomicex-backend/Cargo.toml
+cargo clippy --manifest-path src-backend/qomicex-backend/Cargo.toml --no-deps -- -D warnings
+cargo test --manifest-path src-backend/qomicex-backend/Cargo.toml
 ```
 
-No test framework. Backend API test script: `bash scripts/test-api-filters.sh` (and a `test-api-filters.ps1` twin) against `http://localhost:5000/api`.
+### Tauri
 
-## 工具链（Toolchain）
-
-| 层 | 工具 | 配置 | 命令 |
-|---|---|---|---|
-| 前端 | TypeScript 5.8 strict | `tsconfig.json` | `pnpm run typecheck` |
-| 前端 | ESLint 10（flat） | `eslint.config.js` | `pnpm run lint` |
-| 前端 | Prettier 3 | `.prettierrc.json` + `.prettierignore` | `pnpm run format` / `format:check` |
-| 前端 | EditorConfig | `.editorconfig` | 编辑器自动 |
-| 包管理 | pnpm 11（仓库唯一事实来源） | `pnpm-workspace.yaml` + `engines`/`packageManager` | `pnpm install --frozen-lockfile` |
-| Rust | rustfmt / clippy | `rust-toolchain.toml` | `cargo fmt` / `cargo clippy --no-deps -- -D warnings` |
-
-**Rust 工具链被 `rust-toolchain.toml` 钉在 1.95.0**（`dtolnay/rust-toolchain@stable` 装的是 rustup 默认链，本文件覆盖它）。不钉的后果：clippy 每次发版新增 lint，本地/CI 结论漂移、门禁时绿时红。升级需同时改 `rust-toolchain.toml` 与本节。
-
-**Clippy 存量（2026-09 基线，工具链 1.95.0，`cargo clippy --no-deps -- -D warnings`）**：后端 138 条、Tauri 11 条（数字随代码增量浮动）。CI 的 clippy 步骤目前是 advisory（`continue-on-error`），清到 0 后去掉该标记并改为阻断。
-常见分布：`endpoints/connector.rs`（锁守卫 unwrap）、`endpoints/instance.rs`（guard across await）、`endpoints/modpack.rs`（参数过多 10+）、`services/log_analysis.rs`（循环内编译正则）。
-**Lint 现状**：`pnpm run lint` 目前有 63 error / 116 warning 存量（ESLint 初始基线，2026-09）。存量见
-`docs/junsi-dev-docs/4-编码规范/` 之外的阶段 3 清理计划；清理期间 lint 不进 CI 阻断。`no-empty`(31) 对应静默 `catch {}`；`@typescript-eslint/no-explicit-any`(41) 与 `no-console`(23) 为 warning。`react-hooks/v7` 的 compiler 系规则（static-components / use-memo / immutability）暂不启用。
-`src/pages/Settings.tsx:523,568` 与 `src/plugins/plugin-loader.tsx:152` 存在 hook 在非组件函数里调用的历史写法（能跑但违反规则，属阶段 3 待修项）。
-
-**Prettier 现状**：仓库尚未格式化（`src/` 172/181 文件不符）。不要顺手 `pnpm run format`——格式化必须是一次独立的 `style:` 提交，全量重排在阶段 2 之后单独排期。
-
-**ESLint / Prettier 的遍历排除项**：`src-backend/Qomicex.Launcher.Backend.Neo/` 是本地运行时残留，内含一个 NTFS 保留名目录（`D:\Test\.minecraft`），任何递归扫描工具都会 ENOENT——`.gitignore`、`eslint.config.js`、`.prettierignore` 都要显式排除它。
-
-**前端无测试框架**：`playwright` 仅用于 `scripts/harness/` 的插件联调，不是单元测试框架。关键行为测试的引入属阶段 4 之前提，见本仓「生产级化」阶段计划。
-
-## Rust 测试
-
-- **Rust 格式化（必做）**：修改 `src-backend/qomicex-backend/` 或 `src-tauri/` 下任何 `.rs` 文件后，必须运行
-  `cargo fmt --manifest-path src-backend/qomicex-backend/Cargo.toml` 和 `cargo fmt --manifest-path src-tauri/Cargo.toml`。
-  CI（`.github/workflows/ci.yml`）会跑 `cargo fmt -- --check`，漏跑会导致 push 失败。
-- **Tauri 侧测试**（WASM 网关）：`cd src-tauri && cargo test --lib plugin_gateway`。
-  夹具在 `src-tauri/tests/fixtures/`：`dev.test.wasm/`（预编译 `plugin.wasm` + `manifest.json`）
-  会被测试自动部署到临时 `QOMICEX_HOME`，无需手工预置。
-- **重编 WASM 插件**：`rustup target add wasm32-unknown-unknown` 后
-  `cd src-tauri/tests/fixtures/dev-test-wasm-src && cargo build --release --target wasm32-unknown-unknown`，
-  把 `target/wasm32-unknown-unknown/release/dev_test_wasm.wasm` 复制为
-  `../dev.test.wasm/plugin.wasm`。
-- **Rust 后端**（`src-backend/qomicex-backend/`）：单元测试（如 `services/kick.rs` 的重连审核状态机），`cargo test` 全量 239+ 个（2026-09 基线，实际随新增用例增长）；行为验证走 `bash scripts/test-api-filters.sh`。
-
-## 文档（docs/）
-
-- **ADR 索引与编号**：`docs/junsi-dev-docs/README.md` 是 ADR 索引；条目编号由**文件名**承载，正文首行标题必须与文件名编号一致（历史上有 4 篇不一致，已在 2026-09 修正）。
-- **已知编号重复**：`ADR-015` 有两篇（NAT 检测 / 版权隐私入口），日期相同、主题不同。这是有意的既成事实，两篇正文顶部互相标注；**新增 ADR 请从 086 起编号**（015 与 085 已被占用，084 是扫描缓存、085 是更新通道）。
-- **`4-编码规范/CSharp-规范.md` 已废止**：后端重写为 Rust 后仓库内无任何 `.cs`/`.csproj`/`.sln`（`git ls-files` 命中 0），该文件仅对 `legacy` 分支有效。
-- **`2-架构设计/技术选型.md` 的结构**：顶部是**当前**技术栈，`### 2026-08-09 更新` 一节是历史快照。改技术栈时改顶部，不要动历史快照。
-
-## Conventional Commits
-
-All commits must follow [Conventional Commits v1.0.0](https://www.conventionalcommits.org/zh-hans/v1.0.0/):
-
-```
-<type>[optional scope]: <description>
-
-[optional body]
-
-[optional footer(s)]
+```bash
+cargo fmt --manifest-path src-tauri/Cargo.toml
+cd src-tauri && cargo test --lib plugin_gateway
 ```
 
-Types: `feat`, `fix`, `build`, `chore`, `ci`, `docs`, `perf`, `refactor`, `revert`, `style`, `test`.
-- `BREAKING CHANGE:` in footer or `!` after type/scope for breaking changes.
-- Scope: component/area (e.g. `ui`, `backend`, `release.yml`).
-- Description: imperative, lowercase, no period.
+**Rust 工具链被 `rust-toolchain.toml` 钉在 1.95.0**，不要改成 `stable`。
 
-## CI/CD
+仓库是 **pnpm-managed**（`pnpm-lock.yaml` + `workspace:*`）。`package-lock.json` 已过期，npm **不支持** `workspace:*`。只用 pnpm。
 
-`.github/workflows/release.yml` — `workflow_dispatch` (填版本各部分，自动构造标准版本号) 或 `release: [published]` (从 tag 解析版本)。版本格式: `v<major>.<minor>.<patch>-<type><序数>.<补丁/构建>`，其中 release/beta 用人工输入的序数，alpha 自动取当天日期+当日构建序号。
+---
 
-构建时可选择: 平台、打包格式、架构、是否启用许可证验证 (`--features license-required`)，是否标记 GitHub Pre-release。
+## 3. 提交信息
 
-requires `QOMICEX_PAT` secret for submodule checkout. Builds cargo backend per target triple (`cargo build --target <triple>`，输出到 `src-backend/qomicex-backend/target/<triple>/release/`)，将其嵌入 `src-tauri/binaries/`（release 构建经 `include_bytes!`，Windows 还需复制 `Packet.dll`），再构建 Tauri bundle。无需 .NET SDK。
+Conventional Commits：
 
-CI 使用 **pnpm**（非 npm）：`pnpm install --frozen-lockfile` 后必须 `pnpm --filter @qomicex/plugin-ui build`（workspace 包需先构建 `dist/`）。`actions/setup-node` 配 `cache: pnpm`，之前需 `pnpm/action-setup@v4`。
+```
+<type>(<scope>): <summary>
 
-**工作流里调 tauri CLI 必须写 `pnpm exec tauri build ...`，不要写 `pnpm run tauri -- build ...`**：pnpm 对 `run` 后 `--` 的剥离行为随版本而变（实测 11.11 剥离、11.19 原样透传给 CLI），透传时 clap 报 `unexpected argument 'build' found`，run 36157803787 六个平台作业即因此全挂（#109 把 `npm run tauri -- build` 改成 pnpm 时引入；npm 一直会剥离 `--`）。`pnpm exec` 直接把参数转发给 CLI，无此歧义。
+<root cause>
 
-**交叉编译作业必须额外 `rustup target add <triple>`**：`rust-toolchain.toml` 把工具链钉在 1.95.0，而 `dtolnay/rust-toolchain@stable` 只把 `targets:` 装进 `stable`（1.98.1）；cargo 在仓库目录内解析到被钉住的 1.95.0，交叉 target 缺失 → `error[E0463]: can't find crate for 'core'`。受影响作业：windows-arm64（aarch64-pc-windows-msvc，x64 runner）、macos-x64（x86_64-apple-darwin，arm64 runner）。
+<approach>
 
-Mac 的 Create DMG 步骤必须给 `hdiutil create` 传显式 `-size`（按 `du -sm "$STAGING"` ×1.3 + 64MiB 计算）：`-srcfolder` 自动估算会偏小，嵌入 Rust 后端后镜像内复制到一半报 `No space left on device`（宿主盘其实有空间）。UDZO 压缩会回收多余空间，不影响最终 DMG 大小。
+<verification>
 
-`.github/workflows/mirror.yml` — 将仓库（含子模块）镜像同步到 CNB（cnb.cool）。纯 git 操作（`git remote add cnb` + `push --mirror`，子模块逐个镜像并改写 `.gitmodules`），不依赖任何 CNB CLI。需要 `QOMICEX_PAT`、`CNB_ACCESS_TOKEN` secret 和 `CNB_REPO` variable。
+<refs>
+```
 
-## Issue / PR 自动化（标签与分类）
+- type：`feat` `fix` `build` `chore` `ci` `docs` `perf` `refactor` `revert` `style` `test`
+- summary：祈使句、小写、无句号
+- 正文只写：根因、方案、验证、风险、refs
+- 验证写实际命令与结果，不写过程叙事
+- `BREAKING CHANGE:` 放 footer，或 type/scope 后加 `!`
 
-**Issue 选模板却不打 Type 的根因**：issue form 的 `labels:` 前置元数据只会自动添加**仓库里已存在**的标签名，不存在的被静默忽略（GitHub 官方 `syntax-for-issue-forms`）。历史模板写的 `bug`/`enhancement`/`improvement`/`needs-triage` 都不存在，所以 #101/#112/#114/#116/#117 全是 0 label。
+参考：
 
-- `.github/labels.yml` — 标签体系唯一事实来源（`type:` 互斥 / `status:` 维护者手工 / `area:` 模块），改这里，不要手工在 GitHub UI 建标签。
-- `.github/workflows/label-sync.yml` — `push: main` 且这两个文件变更时用 `EndBug/label-sync@v2` 同步（`delete-other-labels: false`，GitHub 内置标签不动），也可 `workflow_dispatch` 手动跑。
-- `.github/workflows/issue-triage.yml` — `issues`/`pull_request_target` 的 opened/reopened/edited 上确定性打标（标题前缀 `^\[Bug\]`/`^\[Feature\]`/`^\[Improvement\]` → issue form 标题；issue 正文 marker `### QML 版本号`/`### 复现步骤`/`### 功能描述`/`### 优化类型`；PR 标题按 Conventional Commits 前缀）。模板 issue 已由 front matter 打好标签时，此步只做互斥校正，**幂等，无变更零 API 写**。
-- opcode 兜底 triage：上一步判不出类型时（空白 issue / 无前缀标题），仍在该工作流里用 `opencode run` 非交互模式分类并补 `type:`/`area:`——`anomalyco/opencode/github` action 内部 `assertContextEvent("issue_comment","pull_request_review_comment")`，**只能在评论事件跑**，所以 issue 打开即分类必须走 CLI 模式。需要 secret `OPENCODE_API_KEY`（与 `.github/workflows/opencode.yml` 共用）；variable `ISSUE_TRIAGE_MODEL`（默认 `opencode/nemotron-3-ultra-free`）、`ISSUE_TRIAGE_ENABLED=off` 一键关闭（确定性打标不受影响）。失败 `continue-on-error`，只补标签不删标签。
-- 存量补录：`Actions → Issue & PR Triage → Run workflow` 填 `issue_number`（留空则批量给无 `type:` 的 open issue 补 `status: needs-triage`）。
-- `.github/ISSUE_TEMPLATE/config.yml` 设 `blank_issues_enabled: false`，堵住绕过模板的Issue；`.github/PULL_REQUEST_TEMPLATE.md` 约束 PR 检查项；`.github/dependabot.yml` **只开 github-actions 生态**（不开 cargo/npm，避免噪音）。
+```text
+fix(resource): 补全 Technic 列表元数据并在切片前排序
 
-改模板字段名/标题前缀前必读 `docs/junsi-dev-docs/8-部署运维/GitHub-Issue-模板与自动分类.md`：`issue-triage.yml` 的正文 marker 是精确字符串匹配，改字段名会静默失效。根因与排障表同在该文档。
-## Import rules (critical)
+Technic 列表接口只返回 id/name/slug/url/iconUrl，导致简介、作者、
+下载数为空。现对候选集并发拉取详情补全，按 slug 缓存 1 小时；
+单条失败降级为列表数据，不用空值覆盖已有值。
 
-All local TS/TSX imports **must include file extensions** — Vite path bug:
+聚合搜索原先先切片再补全，补全后 download_count 变化会导致分页
+边界漂移。现改为先补全完整候选集，按 download_count 降序、同值
+按 id 排序，再切片。
+
+验证：cargo test --bin qomicex-backend；cargo fmt --check。
+
+Refs: #197
+```
+
+---
+
+## 4. 注释
+
+默认不写。只有以下情况写：
+
+- 非显然的业务约束
+- 外部接口 / 上游数据的坑
+- 兼容性、安全性、性能陷阱
+- 为什么不能采用更直观的写法
+
+禁止：变更日志式注释、评审记录、PR 讨论、AI 对话残留、解释显而易见的事。
+
+TODO 必须带 issue：
+
+```rust
+// TODO(#123): 上游修复后移除兼容分支
+```
+
+---
+
+## 5. 项目关键约定
+
+### Import 规则（关键）
+
+本地 TS/TSX import **必须带扩展名**：
+
 ```ts
-import { foo } from './bar.ts'             // correct
-import { x } from './baz'                  // WRONG — Vite will error
-```
-Exception: directory barrels like `src/components/ui` (its `index.ts`) resolve fine without an extension, but explicit `./components/ui/index.ts` also works.
-
-## Frontend conventions
-
-- `cn()` from `@qomicex/plugin-ui` (re-exported via `src/components/ui/index.ts`) for Tailwind class merging.
-- Dark mode via CSS variables in `src/index.css`, Tailwind `darkMode: "class"`.
-- Strict TS: `noUnusedLocals`, `noUnusedParameters`, `strict: true`.
-- Router: `BrowserRouter` → `MessageBoxProvider` → `Layout.tsx` → 12 routes: `/`, `/instances`, `/instances/:id`, `/downloads`, `/accounts`, `/accounts/:uuid`, `/resource-center`, `/resource-center/:resourceId`, `/connect`, `/settings`, `/running`, `/plugins/p/:pluginId`. `LaunchProgressDialog` rendered outside routes. Frontend also renders `SplashScreen` until the backend `/api/health` poll succeeds.
-- **Internal nav: `<Link>` not `<a>`** — plain `<a>` reloads the page, resetting persistent state. External links use `<a target="_blank">`.
-- **UI components live in `packages/plugin-ui/src/components/`** (Badge, Button, Card, Checkbox, Combobox, Dialog, Input, Label, MessageBox, Select, Separator, Table, Tabs, Textarea, Tooltip, BatchToolbar). `src/components/ui/` is only a re-export barrel. Import via `'../components/ui'` or `'@qomicex/plugin-ui'`. **After editing a component, rebuild plugin-ui** (its `dist/` is gitignored and the launcher imports resolve there).
-- **Tooltip**: use instead of native `title`. Always wrap icon-only buttons.
-- **Select**: use `Select`/`SelectOption`/`SelectDivider` instead of native `<select>`.
-- **Button icon animations**: Use `MorphActionIcon` (`src/components/MorphActionIcon.tsx`) for action buttons that trigger async operations (clear, delete, refresh, etc.). Pattern: `active` state → busy icon spins → success check flashes → rest icon. Example: download clear button uses `Trash2` (rest) → `RotateCw` (busy) → `Check` (success flash 800ms). Always wrap with `Tooltip` for icon-only buttons.
-- **Copy buttons**: use `CopyActionIcon` (`src/components/CopyActionIcon.tsx`) — it owns the Copy ⇄ Check morph and the flash timer. Do **not** hand-write `{copied ? <Check/> : <Copy/>}`; that kills the morph animation and re-implements the timer. Pass the parent's `copied` boolean; the parent must still flip it back to `false` (keep the `setTimeout` + clear-on-repeat pattern, see `Connect.tsx`) or a second click won't re-trigger the animation.
-- **Never hand-write icon ternary switches**: for any icon↔icon state toggle use `MorphIcon` (`icon={cond ? XData : YData}` + `spring="snappy" reducedMotion="user"`); for copy feedback use `CopyActionIcon`; for async actions use `MorphActionIcon`. The full migration mapping and the "not converted" criteria live in `docs/junsi-dev-docs/6-UI/组件设计/MAPPING_TABLE-icon-ternary-to-MorphIcon.yaml`.
-
-## 浏览器调试（Playwright Tauri mock 注入）
-
-前端在**纯浏览器**(Vite dev)里不能直接挂载：`src/components/TitleBar.tsx:5` 在模块顶层调用 `getCurrentWindow()`，读取 `window.__TAURI_INTERNALS__.metadata.currentWindow.label`，无 Tauri 外壳时抛异常 → `#root` 一直为空。要在浏览器里跑起前端检查/自动化，须在页面脚本前用 Playwright `addInitScript` 注入一套 Tauri API mock，再 `goto` 到 `http://127.0.0.1:1420/`。完整 mock 写法、挂载等待方法与注意事项见
-`docs/junsi-dev-docs/2-架构设计/前端浏览器调试-Playwright-Tauri-mock注入.md`。
-
-要点：
-- **前置**：后端在 `:5000`（`SplashScreen` 轮询 `/api/health` 通过才渲染）；`pnpm run dev` 起 Vite(:1420)。已占 5000 时用 `QOMICEX_PORT` 起第二实例。
-- **mock 核心**：`window.__TAURI_INTERNALS__` 提供 `metadata.currentWindow.label`、`transformCallback`、`invoke`（`plugin:window|is_*`→false、`plugin:event|listen`→id、其它→undefined）、`event.{listen,once,emit,emitTo}`；补 `__TAURI_EVENT_PLUGIN_INTERNALS__` 等。
-- **挂载判断**：`document.querySelector('main')` 存在即已挂载（SplashScreen 阶段无 `main`）；`goto domcontentloaded` 后轮询等待，勿等 `load`。
-- **注意**：浏览器(Chromium)≠WebView2 保真，复合/backdrop-filter 行为可能有差异，web 检查结论需在真实 Tauri/WebView2 复核；仅导航只读页面，勿触发写数据/启动实例；用后停 server、删探针。
-
-## Backend conventions
-
-- **30 endpoint modules** in `src-backend/qomicex-backend/src/endpoints/` → `api/<name>` routes, assembled in `app.rs` (`build_router`). `main.rs` loads config (`settings.rs`) then serves.
-- **Log analysis** (`endpoints/loganalysis.rs` → `api/loganalysis`): `POST /loganalysis/analyze`（body `{logContent}`，逐行/`(?s)` 跨行模式匹配）和 `POST /loganalysis/analyze-crash/{instanceId}`（读 `LaunchTracker` 内存中的 `crash_report`，无则 400 `NO_CRASH_REPORT`；成功后可选上传 mclo.gs）。模式库在 `Resources/error-patterns.json`（44 种），分析引擎 `services/log_analysis.rs`（去重+按 Critical>Error>Warning>Info 排序）。
-- Router: `.nest("/api", ...)` + permissive CORS (`CorsLayer`) + `TraceLayer`; `/api/ping` (in `app.rs`) and `/api/health` (in `system.rs`) liveness probes — the frontend polls `/api/health`. `middleware/not_found.rs` handles 404 (registered before `.layer()` so CORS wraps fallback).
-- Data dir resolution (`settings.rs` `resolve_base_dir`): `QOMICEX_HOME` env → `.qomicex-bootstrap` file (content is the path) → `{LocalAppData}/qomicex-launcher`.
-- Shared services in `services/` and `state.rs` (`AppState`): reqwest HTTP clients (Modrinth, CurseForge, FTB, etc.), `InstallTracker`, `LaunchTracker`, account/skin services, trace buffer, plugin service. License core only under `--features license-required` (`#[cfg(feature = "license-required")]` in `license_core.rs`).
-- Embedded resources: `Resources/Alex.png`, `Resources/mcmod_data.json.gz`（gzip 嵌入，运行时 flate2 解压）, `appsettings.json` (via `include_bytes!` / `include_str!`). 重新生成见 `scripts/build-mcmod-data.mjs`。
-- **`appsettings.json` 不入库**（issue #159）：由 `build.rs` 生成并已 gitignore。基线取**现有文件**（存在则保留开发者已填值，只覆盖环境变量提供的字段并把模板新增键补齐），文件缺失时回退入库模板 `appsettings.example.json`。环境变量 `CURSEFORGE_API_KEY` / `MICROSOFT_CLIENT_ID`（**非空**时生效；空串视为未提供）。`include_str!` 是编译期展开，**删掉生成逻辑会导致编译失败**，改 `build.rs` 前先读它的头注释。**当 `CurseForge.ApiKey` 最终为空时**（模板新生成且无环境变量）CF 功能（模组图标补全/更新检查）优雅降级、构建不失败；本地已填 key 则保留。CI 注入点在三个 workflow 的**工作流级 `env:`**（各 1 处，非逐作业）。`scripts/test-api-filters.*` 按后端实际生效配置判断是否具备 CF 凭据，缺失时显式 SKIP 而非判失败。本地开发：**推荐**在 crate 目录建 `src-backend/qomicex-backend/.env.local` 填 `CURSEFORGE_API_KEY=...`（见下条）；或复制 `appsettings.example.json` 为 `appsettings.json` 并填自己的值。
-- **dev 凭据注入 `.env.local`（debug-only，issue #159 补充）**：`src/dev_env.rs` 在 `AppState::build()` **之前**加载 `.env.local`（回退 `.env`），注入的环境变量经 `state.rs` 的「运行时环境变量非空优先 → 编译期嵌入值」生效——不改 `appsettings.json`、不触发 `build.rs` 重编、`git clean` 不丢。候选目录顺序 **crate 目录（`CARGO_MANIFEST_DIR`）→ CWD 及向上 8 级 → exe 同目录**，文件名 `.env.local` 优先于 `.env`；crate 目录锚点是必需的（`pnpm run dev:backend` 与 `.vscode/launch.json`「启动 Rust 后端」都在仓库根 `cargo run`，而 `.env.local` 是 CWD 的**后代**，仅向上回溯找不到）。语义对齐 `build.rs`：空值视为未提供、**已存在的非空环境变量优先**（显式 `export` 的键始终赢）。`#[cfg(debug_assertions)]` 门控——release 不读用户机器上的 `.env`（已用二进制字符串比对 + 运行验证）。解析为手写（约 50 行、零新依赖，支持引号 / `export ` / CRLF），**因为本环境 cargo 无法访问 crates.io（schannel `SEC_E_NO_CREDENTIALS`），不能引入 `dotenvy`**。
-- No OpenAPI endpoint (C# `/openapi/v1.json` removed in the Rust rewrite).
-
-## Error handling
-
-**Backend**: errors → `ApiError` (`src-backend/qomicex-backend/src/error.rs`, mirrors C# `ApiError`) → returns:
-```json
-{ "code": "ERROR_CODE", "message": "...", "detail": "...", "traceId": "...", "timestamp": "...", "status": 500 }
-```
-- Do NOT add ad-hoc result wrapping in handlers. Return `ApiResult<T>` and let `ApiError` propagate.
-- For expected errors use constructors: `ApiError::bad_request(...)`, `ApiError::not_found(...)`, `ApiError::forbidden(...)`, `ApiError::upstream(...)`, `ApiError::internal(...)`.
-- `From<std::io::Error>` maps `NotFound`→404, `PermissionDenied`→403, else→500 (mirrors C# `MapException`).
-
-**Frontend**: `src/api/client.ts` exports `ApiError` with `.code`, `.status`, `.detail`, `.traceId`, `.displayMessage`.
-```ts
-import { ApiError } from '../api/client.ts'
-try { ... } catch (e) { if (e instanceof ApiError) showToast(e.displayMessage) }
+import { foo } from './bar.ts'   // 正确
+import { x } from './baz'        // 错误 — Vite 会报错
 ```
 
-## Cross-platform rules
+例外：目录 barrel（如 `src/components/ui`）可省略。
 
-The launcher ships on **Windows, Linux, macOS**. Never assume Windows.
+### plugin-ui
 
-### Rust (Backend / Core)
-- Use `std::path::PathBuf`/`Path::join` — never hardcoded drive letters or `\\` separators.
-- Platform guards: `#[cfg(windows)]` / `#[cfg(unix)]` (not `cfg(not(windows))`); runtime check with `std::env::consts::OS`.
-- Shell: `/bin/sh` on unix, powershell/cmd on Windows (see `services/plugin.rs`).
-- Data dir: `dirs` crate (`LocalApplicationData`-equivalent) + app name, with `QOMICEX_HOME` env override for portable mode. Never write relative to the exe dir.
-- No .NET — native OS APIs only (winreg on Windows, sysinfo for diagnostics).
-- Set `0o755` permissions after `std::fs::write` for binaries.
+`@qomicex/plugin-ui` 解析到 `packages/plugin-ui/dist/index.js`。改 `packages/plugin-ui/src/` 后必须重建，否则启动器用旧 `dist/`。`tailwind.config.js` 同时扫描 `src` 与 `dist`。
 
-### Frontend (TS)
-- Normalize backend paths: `.replace(/\\/g, '/')`.
-- File picker filters: `['exe']` on Windows, `['*']` elsewhere.
-- `file://` URI on Unix: `'file:///' + path.replace(/\\/g, '/').replace(/^\/+/, '')`.
+### 前端约定
 
-### Rust (Tauri)
-- `cfg(unix)` not `cfg(not(windows))`.
-- Set `0o755` permissions after `std::fs::write` for binaries.
-- Use `#[cfg(windows)]` / `#[cfg(unix)]` for binary file names.
+- `cn()` from `@qomicex/plugin-ui`（经 `src/components/ui/index.ts` re-export）
+- Dark mode：CSS 变量 + `darkMode: "class"`
+- Strict TS：`noUnusedLocals` / `noUnusedParameters` / `strict: true`
+- 内部导航用 `<Link>`，不用 `<a>`（`<a>` 会重载页面、丢持久状态）
+- UI 组件在 `packages/plugin-ui/src/components/`，`src/components/ui/` 只是 re-export barrel
+- 图标按钮必须 `Tooltip`；`Select` 用 `Select`/`SelectOption`，不用原生 `<select>`
+- 图标↔图标切换用 `MorphIcon`；copy 反馈用 `CopyActionIcon`；异步操作用 `MorphActionIcon`。禁止手写 ternary 切换
+- 路由：`BrowserRouter` → `MessageBoxProvider` → `Layout.tsx` → 12 条路由；`SplashScreen` 轮询 `/api/health` 成功后渲染
 
-## Path system & version isolation (critical)
+### 后端约定
 
-**GameDir** = `.minecraft` root. **VersionDir** = `GameDir/versions/{VersionDirName}/` (JSON, jar, libraries).
+- 端点模块在 `src-backend/qomicex-backend/src/endpoints/`，路由在 `app.rs` `build_router` 组装
+- 错误统一走 `ApiError`，返回 `ApiResult<T>`。不要 ad-hoc 包装
+- 数据目录解析：`QOMICEX_HOME` → `.qomicex-bootstrap` → `{LocalAppData}/qomicex-launcher`
+- `appsettings.json` 不入库，由 `build.rs` 生成；环境变量 `CURSEFORGE_API_KEY` / `MICROSOFT_CLIENT_ID` 非空时生效
+- dev 凭据用 `.env.local`（debug-only，`src/dev_env.rs` 加载，不触发 `build.rs` 重编）
+- 无 OpenAPI 端点（C# 的 `/openapi/v1.json` 已移除）
 
-- `VersionDirName` = `{GameVersion}-{Loader}-{LoaderVersion}` (e.g. `1.20.1-Forge-47.1.0`) — used only for VersionDir.
-- `GameVersion` = pure version (e.g. `1.20.1`).
-- `inst.Name` = folder name, synced to `VersionDirName` on install. Use `inst.Name` for **all** version-isolated path construction.
+### 跨平台
 
-Version-isolated dirs (`mods`, `saves`, `resourcepacks`, `shaderpacks`, `screenshots`, `datapacks`, `crash-reports`, `servers.dat`) go under `GameDir/versions/{inst.Name}/` when isolation is enabled. Shared dirs (`versions`, `assets`, `libraries`, `logs`, `temp`) stay at GameDir root.
+Windows / Linux / macOS 都要支持。
 
-**Always resolve `inst.GameDir` (not VersionDir) as the base** for path construction. Core library constructors (`Mods`, `Saves`, etc.) take `(gameDirectory, version, versionSegmented, apiKey)` — `gameDirectory` must be the GameDir root, `version` must be `inst.Name`.
+- Rust：用 `PathBuf`/`Path::join`，不用硬编码盘符或 `\\`
+- 平台守卫用 `#[cfg(windows)]` / `#[cfg(unix)]`，不用 `cfg(not(windows))`
+- 前端路径归一化：`.replace(/\\/g, '/')`
+- 写二进制后设 `0o755` 权限
+- 文件选择器：Windows `['exe']`，其他 `['*']`
 
-## Plugin system
+### 路径系统（关键）
 
-- **Manifest**: `src/plugins/types.ts` / `PluginManifest` in `src-backend/qomicex-backend/src/services/plugin.rs` — `PluginManifest`, `PluginContributes`, `PluginMenuItem`.
-- **Activation**: `activatePlugin()` in `src/plugins/plugin-loader.tsx:57` — calls `renderInline()`, registers sidebar slots, loads theme CSS.
-- **Inline rendering**: `sandbox.ts:212` `renderInline()` — fetches `dist/index.html`, strips `<html>/<head>/<body>`, sets `container.innerHTML` with bridge script appended.
-- **Plugin page**: `src/pages/PluginPage.tsx` — mounts at `/plugins/p/:pluginId`. Switches plugins by clearing `containerRef.innerHTML` before appending new container. Scripts activate once (`data-scripts-activated` flag).
-- **Overlay system**: `PluginOverlayManager.tsx` — overlays are iframes with `sandbox="allow-scripts"`. Created via `createPluginBridge().createOverlay()`. Global `window.__pluginOverlayStore` exposes store methods.
-- **Sidebar action**: `menuItems[].action: "overlay"` + `contributes.overlay.file` → sidebar button calls `createOverlay` directly, no page navigation (`plugin-loader.tsx:151` `OverlaySidebarButton`).
-- **Plugin packages**: `.qplugin` = `.zip` with `manifest.json` at root. Upload via `POST /api/plugins/upload`. States persisted to `{BaseDir}/plugin-states.json`.
-- **Dev plugins**: placed in `plugins-dev/` directory during development.
-- **Plugin build (Vite + React)**: Plugins using Vite/React/Tailwind scaffold follow example-toolkit pattern: `package.json` with `@qomicex/plugin-ui` + `@qomicex/plugin-ui/tailwind-preset`, `tsc && vite build` for build, the plugin's own `scripts/build.sh` for `.qplugin` packaging. Multi-page builds supported via `rollupOptions.input`.
-- **Plugin API bridge**: `window.__PLUGIN_API__` (inline) / `parent.postMessage` (iframe) — methods: `getSettings`, `setSettings`, `callBackend`, `navigate`, `openPluginSettings`（权限 `config:read`，跳转「设置→插件→插件设置」并定位到指定插件/缺省本插件；pending 机制见 `pluginSettingsNav.ts`）, `showToast`, `proxyFetchStream`, `registerMethod`, `callPlugin`, `readFile`, `writeFile`, `execCommand`, `overlay.*`, `download.*`（`download.addTask|progress|cancel|list`，权限 `download:manage`，复用 `DownloadSessionManager` 使任务进入下载中心；`download.registerInstall`，权限 `instance:write`，仅在前端下载中心登记安装任务）、`modpack.install`（权限 `instance:write`，一键安装整合包，走 `POST /api/modpack/install-direct`，复用 `ModpackService`+`InstallTracker` 与前端整合包页同管线）。`proxyFetch` 走 `POST /api/plugins/proxy`（`stream: true` 时后端转发 SSE 流式响应，前端经 `proxyFetchStream(req, { onChunk, onError })` 消费）。文件读写走授权制（`/api/plugins/files/{id}/read|write|delete|authorize`，未授权返回 403 `FS_AUTHORIZATION_REQUIRED`，前端 `window.confirm` 弹窗授权后重试；`deleteFile` 权限 `filesystem:write`）；shell 执行走 `/api/plugins/shell/{id}`（win: powershell，linux/mac: /bin/sh，超时默认 15s 范围 1-120s）。
-- **Plugin dependencies**: manifest `dependencies: [{id, version?, optional?}]`，安装时检查必装前置（缺失拒装 `PLUGIN_MISSING_DEPENDENCY`），激活时检查前置已启用（缺失则禁用）。`registerMethod`/`callPlugin` 提供插件间方法调用，主窗口 `__pluginRegistry` 统一中转（`src/plugins/plugin-registry.ts`），激活顺序由 `sortByDependencies` 拓扑排序保证。
-- **Layers 渲染**: manifest `layers` 含 `l2` → iframe 沙箱（`createSandbox`，srcdoc + postMessage 桥，脚本自动执行）；不含 `l2` → 内联渲染（需进入 `/plugins/p/:id` 页面脚本才执行）。纯 `["l3"]` 的 installed 插件不自动激活。
-- **L3 WASM 网关**: `src-tauri/src/plugin_gateway/`（wasmtime 26 核心模块）—— `loader.rs` 扫描 `plugins/{id}/plugin.wasm`（需 manifest layers 含 l3），注入 host 函数（`qomicex` 模块：`log`/`http_fetch`/`instance_list`/`db_set`/`db_get`/`get_plugin_id`），插件导出 `on_load`/`on_unload`/`get_manifest`。`server.rs` 提供 `GET /plugins`、`GET /plugins/{id}/info`、`POST /plugins/{id}/invoke`、`GET /health`，端口写入 `plugins/.gateway_port`。路径与后端一致（`config::base_dir`，QOMICEX_HOME 优先）。后端经 `PluginGatewayClient` 代理暴露 `/api/plugins/wasm`、`/api/plugins/wasm/{id}`、`/api/plugins/wasm/{id}/invoke`，前端 API `callWasm`/`listWasmPlugins`（权限 `wasm:execute`）。
+- `GameDir` = `.minecraft` 根
+- `VersionDir` = `GameDir/versions/{VersionDirName}/`
+- `VersionDirName` = `{GameVersion}-{Loader}-{LoaderVersion}`（如 `1.20.1-Forge-47.1.0`）
+- 隔离目录（`mods` / `saves` / `resourcepacks` / `shaderpacks` / `screenshots` / `datapacks` / `crash-reports` / `servers.dat`）在 `GameDir/versions/{inst.Name}/`
+- 共享目录（`versions` / `assets` / `libraries` / `logs` / `temp`）在 GameDir 根
+- 路径构造基座永远是 `inst.GameDir`，版本参数用 `inst.Name`
 
-## Tauri details
+### 错误处理
 
-- Backend binary is embedded via `include_bytes!` in release builds only (`#[cfg(all(windows, not(debug_assertions)))]` → `src-tauri/binaries/backend.exe`, unix → `backend`), extracted to a temp dir on startup. In dev the constant is empty and the backend runs separately. Backend child is killed on exit via `BackendChild` state. Setting `QOMICEX_LAUNCHER_MANAGED` skips spawn.
-- **Window decorations**: Windows calls `set_decorations(false)` in setup (`lib.rs:138-141`); Linux/macOS keep the default (decorated).
-- Capability permissions: `core:default`, window controls, `opener:default`, `opener:allow-open-path`, `opener:allow-reveal-item-in-dir`, `dialog:default`, `updater:default`.
-- CSP in `tauri.conf.json` allows `http://localhost:5000`/`ws://localhost:5000` for the embedded backend; updater endpoints include `https://api.qomicex.top`, localhost:8787, and localhost:5000.
+后端：`ApiError` → `{code, message, detail, traceId, timestamp, status}`。用 `ApiError::bad_request` / `not_found` / `forbidden` / `upstream` / `internal` 构造器。`From<std::io::Error>`：`NotFound`→404、`PermissionDenied`→403、其他→500。
+
+前端：`ApiError` from `src/api/client.ts`，有 `.code` / `.status` / `.detail` / `.traceId` / `.displayMessage`。
+
+---
+
+## 6. 已知坑
+
+- **连接器构建**：`.cargo/config.toml` 提供 `PROTOC` / `VC_LTL` / `YY_THUNKS`（本机路径，换机器需调）；easytier 按相对路径找 `Packet.lib`，已复制到后端 crate；CI 用 `.github/actions/setup-connector-build/`
+- **运行后端需要 `Packet.dll`**（npcap，connector-rust 的 `easytier/third_party/`），缺失 → `0xC0000135`
+- **TUN 需要 `wintun.dll`**（缺失仅 TUN 不可用，不崩）；非管理员自动回退 no-tun
+- **架构不匹配 DLL** → `0xC000007B`
+- **easytier smoltcp 不支持 127.0.0.1 回环**，联机需两台真机
+- **connector 只提供协议/接口，不内置业务**；踢人等业务在 backend（`services/kick.rs`）
+- **`src-backend/Qomicex.Launcher.Backend.Neo/`** 是 gitignored 本地残留，含 NTFS 保留名，递归扫描会 ENOENT。`.gitignore` / `eslint.config.js` / `.prettierignore` 都要排除
+- **CI 调 tauri CLI 必须 `pnpm exec tauri build`**，不要 `pnpm run tauri -- build`（pnpm 对 `--` 剥离行为随版本而变）
+- **交叉编译作业额外 `rustup target add <triple>`**（`rust-toolchain.toml` 钉 1.95.0，`dtolnay/rust-toolchain@stable` 只装到 stable）
+- **Mac Create DMG 必须给 `hdiutil create` 显式 `-size`**（×1.3 + 64MiB），否则 `No space left on device`
+- **Vite dev 里前端不能直接挂载**（`TitleBar.tsx` 顶层调 `getCurrentWindow()`），需 Playwright 注入 Tauri mock，见 `docs/junsi-dev-docs/2-架构设计/前端浏览器调试-Playwright-Tauri-mock注入.md`
+- **join/host 超时**：前端 120s，后端 `run_with_connector_timeout` 75s → `CONNECTOR_JOIN_TIMEOUT` / `CONNECTOR_HOST_TIMEOUT`
+
+---
+
+## 7. 文档（docs/）
+
+- **ADR 索引**：`docs/junsi-dev-docs/README.md`；编号由**文件名**承载，正文首行标题须与文件名一致；新增从 **086** 起（015/085 已占，084 扫描缓存、085 更新通道）
+- **`4-编码规范/CSharp-规范.md` 已废止**（后端已重写为 Rust，仓库内无 `.cs`）
+- **`2-架构设计/技术选型.md`**：顶部是当前栈，`### 2026-08-09 更新` 是历史快照，改技术栈只改顶部
+- **Issue 模板字段名**改动前必读 `docs/junsi-dev-docs/8-部署运维/GitHub-Issue-模板与自动分类.md`（`issue-triage.yml` 是精确字符串匹配，改字段名会静默失效）
+- **图标切换映射**：`docs/junsi-dev-docs/6-UI/组件设计/MAPPING_TABLE-icon-ternary-to-MorphIcon.yaml`
+
+---
+
+## 8. 工具链现状（基线）
+
+- **Clippy 存量**：后端 138、Tauri 11（2026-09 基线，1.95.0）。CI advisory（`continue-on-error`），清到 0 后改阻断
+- **ESLint 存量**：63 error / 116 warning。清理期间不进 CI 阻断
+- **Prettier**：仓库尚未全量格式化（`src/` 172/181 不符）。**不要顺手 `pnpm run format`**，格式化必须是一次独立的 `style:` 提交，全量重排单独排期
+- **无前端单测框架**：`playwright` 仅用于 `scripts/harness/`
+- **hook 历史写法**：`src/pages/Settings.tsx:523,568` 与 `src/plugins/plugin-loader.tsx:152` 存在 hook 在非组件函数里调用，属阶段 3 待修项
+
+---
+
+## 9. 常见任务
+
+### 添加后端端点
+
+1. 在 `src-backend/qomicex-backend/src/endpoints/` 新建模块
+2. 在 `app.rs` 的 `build_router` 注册
+3. 错误用 `ApiError`，返回 `ApiResult<T>`
+4. 跑 `cargo fmt` + `cargo clippy --no-deps -- -D warnings` + `cargo test`
+
+### 添加/修改 UI 组件
+
+1. 改 `packages/plugin-ui/src/components/`
+2. 重建：`pnpm --filter @qomicex/plugin-ui build`
+3. `src/components/ui/` 只做 re-export
+
+### 修改翻译
+
+1. 改 submodule `qomicex-tauri-i18n/src/zh-CN/` 或 `src/en/`
+2. 在 i18n 仓库单独提交推送
+3. `git submodule update --remote` 拉最新
+4. **不要**在 `src/i18n/` 下建 zh-CN/en 目录
+
+### 修改连接器
+
+先问：这是协议/接口还是业务功能？协议/接口放 connector，业务放 backend。
+
+### 修改 WASM 插件 fixture
+
+```bash
+rustup target add wasm32-unknown-unknown
+cd src-tauri/tests/fixtures/dev-test-wasm-src
+cargo build --release --target wasm32-unknown-unknown
+cp target/wasm32-unknown-unknown/release/dev_test_wasm.wasm ../dev.test.wasm/plugin.wasm
+```
+
+---
+
+## 10. 禁止事项
+
+- 提交无法解释的代码
+- 伪造测试结果、命令输出、issue / PR 引用
+- 泄露密钥、令牌、私有数据、用户数据
+- 大规模无意义重构、格式化无关文件
+- 生成垃圾注释、过程叙事、emoji、自夸、免责声明
+- 在提交信息中写 AI 对话、评审元信息、临时环境细节
+- 顺手 `pnpm run format`（格式化必须独立提交）
+- 在 CI 里写 `pnpm run tauri -- build`（必须 `pnpm exec tauri build`）
+- 把 `src-backend/Qomicex.Launcher.Backend.Neo/` 当代码
+- 假设 Windows-only（三平台都要支持）
+- 在 `src/i18n/` 下建 zh-CN/en 目录（翻译改 submodule）
+- 用原生 `<a>` 做内部导航、用原生 `<select>`、手写 icon ternary
