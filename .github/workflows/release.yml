@@ -671,14 +671,17 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # 走 step env 而非 run 体插值：workflow_dispatch 的版本输入会经
+          # needs.setup.outputs.version 流到这里，run 体里的 ${{ }} 是文本拼接，
+          # 构造的版本文本会在持有签名私钥的步骤里被执行。
+          RELEASE_TAG: ${{ needs.setup.outputs.displayVersion }}
         run: |
-          VERSION="${{ needs.setup.outputs.version }}"
           BUNDLE_DIR="src-tauri/target/release/bundle"
-          URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION"
+          # 下载 URL 必须用带 v 前缀的 displayVersion：release 作业按
+          # needs.setup.outputs.displayVersion 建 tag，用不带 v 的 version 会 404。
+          URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$RELEASE_TAG"
 
           # AppImage 包：zip 内放 AppImage 本体（updater appimage 策略整文件替换）。
-          # linuxBundles 可只选 deb/rpm，此时无 AppImage 可打 —— 跳过而不是报错，
-          # 否则「不构建 appimage」这种合法选择会把整个发布拖垮。
           APPIMAGE=$(find "$BUNDLE_DIR" -name '*.AppImage' | head -1)
           if [ -n "$APPIMAGE" ]; then
             PKG_APP="qomicex-update-linux-aarch64-appimage.zip"
@@ -689,17 +692,22 @@ jobs:
             echo "::warning::No AppImage in bundle; skipping linux-aarch64-appimage self-update package"
           fi
 
-          # system 包（deb 布局为基线）：dpkg-deb -x 收集 / 相对布局
+          # system 包（deb 布局为基线）：dpkg-deb -x 收集 / 相对布局。
+          # linuxBundles 可只选 appimage/rpm，无 deb 时跳过而不报错，否则该合法
+          # 选择会失败整个作业、连带丢掉已构建的 bundle 资产。
           DEB=$(find "$BUNDLE_DIR" -name '*.deb' | head -1)
-          if [ -z "$DEB" ]; then echo "ERROR: No deb found"; exit 1; fi
-          STAGING=$(mktemp -d)
-          dpkg-deb -x "$DEB" "$STAGING"
-          PKG_SYS="qomicex-update-linux-aarch64-system.zip"
-          (cd "$STAGING" && zip -qr "$OLDPWD/$PKG_SYS" .)
-          npx tauri signer sign "$PKG_SYS"
-          rm -rf "$STAGING"
-          echo "{\"linux-aarch64-system\":{\"url\":\"$URL_BASE/$PKG_SYS\",\"signature\":\"$(tr -d '\n' < "$PKG_SYS.sig")\",\"strategy\":\"system\"}}" > "update-package-fragment-linux-aarch64-system.json"
-          cat update-package-fragment-*.json
+          if [ -n "$DEB" ]; then
+            STAGING=$(mktemp -d)
+            dpkg-deb -x "$DEB" "$STAGING"
+            PKG_SYS="qomicex-update-linux-aarch64-system.zip"
+            (cd "$STAGING" && zip -qr "$OLDPWD/$PKG_SYS" .)
+            npx tauri signer sign "$PKG_SYS"
+            rm -rf "$STAGING"
+            echo "{\"linux-aarch64-system\":{\"url\":\"$URL_BASE/$PKG_SYS\",\"signature\":\"$(tr -d '\n' < "$PKG_SYS.sig")\",\"strategy\":\"system\"}}" > "update-package-fragment-linux-aarch64-system.json"
+          else
+            echo "::warning::No deb in bundle; skipping linux-aarch64-system self-update package"
+          fi
+          cat update-package-fragment-*.json 2>/dev/null || echo "::warning::no self-update package produced for this bundle selection"
       - uses: actions/upload-artifact@v7
         with:
           name: update-package-linux-arm64
@@ -818,10 +826,20 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # 走 step env 而非 run 体插值：workflow_dispatch 的版本输入会经
+          # needs.setup.outputs.version 流到这里，run 体里的 ${{ }} 是文本拼接，
+          # 构造的版本文本会在持有签名私钥的步骤里被执行。
+          RELEASE_TAG: ${{ needs.setup.outputs.displayVersion }}
         run: |
-          VERSION="${{ needs.setup.outputs.version }}"
           BUNDLE_DIR="src-tauri/target/release/bundle"
-          URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION"
+          # 下载 URL 必须用带 v 前缀的 displayVersion：release 作业按
+          # needs.setup.outputs.displayVersion 建 tag，用不带 v 的 version 会 404。
+          URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$RELEASE_TAG"
+
+          # 签名用宿主架构的 CLI 显式拉取：@tauri-apps/cli 的原生二进制走
+          # optionalDependencies 分发，没有 loong64 变体，容器内的 pnpm install
+          # 不会为 x86_64 宿主准备可执行文件。版本与 package.json / pnpm-lock 对齐。
+          TAURI_CLI="@tauri-apps/cli@2.11.4"
 
           # loong64 无 linuxdeploy 支持，产物固定 deb,rpm → 不出 appimage 包。
           # system 包以 deb 布局为基线：dpkg-deb -x 收集 / 相对布局
@@ -831,7 +849,7 @@ jobs:
           dpkg-deb -x "$DEB" "$STAGING"
           PKG_SYS="qomicex-update-linux-loongarch64-system.zip"
           (cd "$STAGING" && zip -qr "$OLDPWD/$PKG_SYS" .)
-          npx tauri signer sign "$PKG_SYS"
+          npx --yes "$TAURI_CLI" signer sign "$PKG_SYS"
           rm -rf "$STAGING"
           echo "{\"linux-loongarch64-system\":{\"url\":\"$URL_BASE/$PKG_SYS\",\"signature\":\"$(tr -d '\n' < "$PKG_SYS.sig")\",\"strategy\":\"system\"}}" > "update-package-fragment-linux-loongarch64-system.json"
           cat update-package-fragment-*.json
