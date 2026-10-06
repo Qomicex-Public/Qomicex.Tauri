@@ -27,7 +27,9 @@ SYSROOT="${SYSROOT:-${RUNNER_TEMP:-.}/loong64-sysroot}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# Rust/工具链三元组，与 Debian 的 multiarch 元组（DEB_ARCH）不是同一个名字。
 TRIPLE="loongarch64-unknown-linux-gnu"
+DEB_ARCH="loongarch64-linux-gnu"
 PKGCONFIG_DIRS=(
   "$SYSROOT/usr/lib/loongarch64-linux-gnu/pkgconfig"
   "$SYSROOT/usr/share/pkgconfig"
@@ -71,9 +73,21 @@ fetch "$MIRROR/debian/dists/$SUITE/main/Contents-loong64.gz" "$WORK/Contents.gz"
 # Contents 是全量文件清单（数十 MB），只在需要反查时建索引。
 contents_lookup() { # contents_lookup <相对路径> → 打印提供该文件的包名
   local want="$1"
+  # Contents 第二列形如 "    libdevel/libgtk-3-dev"（前导空格 + 可选 section 前缀，
+  # 多属主时逗号分隔）。不 trim 会让 install_pkg 查不到包而静默跳过。
   [ -f "$WORK/contents.idx" ] || zcat "$WORK/Contents.gz" \
     | awk -F'\t' '$1 ~ /pkgconfig\/.*\.pc$/ { print $1 "\t" $2 }' > "$WORK/contents.idx"
-  awk -F'\t' -v w="$want" '$1 == w { print $2; exit }' "$WORK/contents.idx"
+  awk -F'\t' -v w="$want" '
+    $1 == w {
+      n = split($2, owners, ",")
+      for (i = 1; i <= n; i++) {
+        o = owners[i]
+        sub(/^[ \t]+/, "", o); sub(/[ \t]+$/, "", o)
+        sub(/^.*\//, "", o)
+        if (o != "") { print o; exit }
+      }
+    }
+  ' "$WORK/contents.idx"
 }
 
 # --- sysroot 准备 -------------------------------------------------------------
@@ -120,14 +134,26 @@ install_pkg() { # install_pkg <包名>
   log "  解包 $pkg"
   curl -fsSL --retry 5 "$MIRROR/debian/$fn" -o "$WORK/pkg.deb" \
     || die "下载 $pkg 失败"
+  # 区分两类失败：
+  #  - 归档本身坏（磁盘满/下载截断/tar 损坏）→ 必须中断
+  #  - 某个路径模式在包里不存在→ 正常，很多包不含 lib/ 或 pkgconfig
+  #
+  # 实测 GNU tar 对「成员找不到」返回 2（不是 1），与部分失败同码，无法靠退出码
+  # 区分。故先单独验证归档可完整读取（tar -tf 走完流返回 0），再抽取并忽略
+  # 成员缺失。早先用 || true 会把归档损坏也吞掉，并把包标记成已装，闭包不再重试，
+  # 错误一路拖到 cargo 阶段才爆。
+  if ! dpkg-deb --fsys-tarfile "$WORK/pkg.deb" | tar -tf /dev/stdin >/dev/null 2>&1; then
+    die "归档损坏或读取失败: $pkg"
+  fi
+  set +e
   dpkg-deb --fsys-tarfile "$WORK/pkg.deb" \
-    | tar -x -C "$SYSROOT" \
-        --wildcards \
+    | tar -x -C "$SYSROOT" --wildcards --no-recursion --ignore-failed-read \
         './usr/include/*' \
         './usr/lib/*' \
         './lib/*' \
         './usr/share/pkgconfig/*' \
-      2>/dev/null || true
+      2>/dev/null
+  set -e
   INSTALLED[$pkg]=1
 }
 
@@ -237,7 +263,9 @@ log "架构校验通过: 关键运行时库均为 LoongArch"
 # 由调用方把该目录加入 C_INCLUDE_PATH（见 release.yml的 Export cross-compile
 # environment 步骤）；此处只校验它存在，不做逐文件软链——软链要跟着
 # configuration.h 之类的链式包含逐个补，漏一个就又炸。
-MULTIARCH_INC="$SYSROOT/usr/include/$TRIPLE"
+# 注意：Debian 的 multiarch 元组（loongarch64-linux-gnu）与 Rust/工具链三元组
+# （loongarch64-unknown-linux-gnu）不同名，这里必须用前者。
+MULTIARCH_INC="$SYSROOT/usr/include/$DEB_ARCH"
 [ -d "$MULTIARCH_INC" ] || die "multiarch 头目录不存在: $MULTIARCH_INC"
 log "multiarch 头目录就绪: $MULTIARCH_INC"
 
