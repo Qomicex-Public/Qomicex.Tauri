@@ -329,6 +329,7 @@ pub fn run() {
             ipc::ipc_stream_abort,
             updater::run_updater,
             updater::take_pending_update_notice,
+            updater::take_pending_update_error,
             updater::update_auto_install_state,
             updater::stage_pending_update_install,
             updater::take_pending_update_install,

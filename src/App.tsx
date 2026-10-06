@@ -35,7 +35,7 @@ import UpdateCompleteDialog from './components/UpdateCompleteDialog.tsx'
 import UpdateReadyToast from './components/UpdateReadyToast.tsx'
 import { get } from './api/client.ts'
 import { initApiTransport, isIpcMode } from './api/ipc.ts'
-import { fetchUpdatePlan, fetchAutoInstallState, clearPendingInstall as clearPendingInstallFromApi, takeUpdateNotice, type UpdatePlan, type UpdateNotice } from './api/update.ts'
+import { fetchUpdatePlan, fetchAutoInstallState, clearPendingInstall as clearPendingInstallFromApi, takeUpdateNotice, takeUpdateError, type UpdatePlan, type UpdateNotice, type UpdateError } from './api/update.ts'
 import { resolveChannel, stagedChannelMatchesCurrent } from './lib/updateChannel.ts'
 import { APP_INFO } from './constants/credits.ts'
 import { applyThemeColor } from './lib/themeColor.ts'
@@ -143,6 +143,8 @@ function AppContent() {
   runningCountRef.current = runningInstances.length
   /** 「更新完成」交接提示（自更新重启后的首次启动，只弹一次，见 UpdateCompleteDialog） */
   const [updateNotice, setUpdateNotice] = useState<UpdateNotice | null>(null)
+  /** 「更新未完成」交接提示（updater 失败后由新进程读出并解释原因，只弹一次） */
+  const [updateError, setUpdateError] = useState<UpdateError | null>(null)
   const autoCheckDone = useRef(false)
   /** 插件更新静默轮询只做一次（与 autoCheckDone/javaChecked 同模式） */
   const pluginUpdatesChecked = useRef(false)
@@ -342,14 +344,24 @@ function AppContent() {
     const timer = setTimeout(async () => {
       updateNoticeChecked.current = true
       const dataDir = (getSettings().dataDir || '').replace(/[\\/]+$/, '')
+      let noticeShown = false
       const notice = await takeUpdateNotice(dataDir)
-      if (!notice) return
-      // 版本守卫：交接文件里的目标版本必须与当前运行版本一致（忽略 v 前缀与
-      // 首尾空白）。不一致说明更新实际没落地（updater 失败/手动开旧构建），
-      // 此时弹「更新完成」是错误信息，直接丢弃（文件已在 Rust 侧消费）。
-      const norm = (v: string) => (v || '').trim().replace(/^v+/i, '')
-      if (norm(notice.version) !== norm(APP_INFO.version)) return
-      setUpdateNotice(notice)
+      if (notice) {
+        // 版本守卫：交接文件里的目标版本必须与当前运行版本一致（忽略 v 前缀与
+        // 首尾空白）。不一致说明更新实际没落地（updater 失败/手动开旧构建），
+        // 此时弹「更新完成」是错误信息，直接丢弃（文件已在 Rust 侧消费）。
+        const norm = (v: string) => (v || '').trim().replace(/^v+/i, '')
+        if (norm(notice.version) === norm(APP_INFO.version)) {
+          setUpdateNotice(notice)
+          noticeShown = true
+        }
+      }
+      // 「更新未完成」交接（issue #201）：updater 没装成时旧进程早已退出，而它是
+      // detached 的——屏幕上原本不会留下任何痕迹，用户只看到「应用自己消失了」。
+      // 这里**不套**上面那个版本守卫：失败讲的正是「版本没前进」，守卫会把它自己
+      // 过滤掉；只在「更新完成」已要展示时让位（同一次启动不叠两个弹窗）。
+      const failure = await takeUpdateError(dataDir)
+      if (failure && !noticeShown) setUpdateError(failure)
     }, 1500)
     return () => clearTimeout(timer)
   }, [backendState, settingsReady])
@@ -471,9 +483,13 @@ function AppContent() {
         }}
       />
       <UpdateCompleteDialog
-        open={updateNotice !== null}
+        open={updateNotice !== null || updateError !== null}
         notice={updateNotice}
-        onClose={() => setUpdateNotice(null)}
+        error={updateError}
+        onClose={() => {
+          setUpdateNotice(null)
+          setUpdateError(null)
+        }}
       />
       {/* 自动更新「已准备好安装」Toast：下载完成后弹，点击立即重启
           安装，不点击则下次启动由 installStagedOnLaunch 自动装完。 */}
