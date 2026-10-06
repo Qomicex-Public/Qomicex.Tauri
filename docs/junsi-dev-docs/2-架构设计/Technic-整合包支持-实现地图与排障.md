@@ -304,3 +304,21 @@ POST /api/modpack/parse-path  {path:"<无 version.json 且无 fmlversion 的包>
 | 日期 | 版本 | 修改内容 | 修改人 |
 | 2026-10-05 | v1.0 | 初版创建 | AI Agent |
 | 2026-10-05 | v1.1 | 期3 Solder 实现：状态表/端点实测补充/代码地图/数据流 4.3/§9 落地记录/E2E 记录 | AI Agent |
+
+
+### 2026-10-06 更新
+
+## 11. 期3 复盘（2026-10-06）：Solder 步骤文案漏词条 → 已补 + 加护栏
+
+**症状**：下载中心里 Solder 整合包（如 tekkit）的任务卡片，多个步骤名显示为 `downloads.steps.download-mods` 之类的 i18n 键名。
+
+**根因**：`run_solder_import`（`endpoints/modpack.rs:1670` 起）定义 6 个 step：`download-mods` / `verify` / `extract-merge` / `install-game` / `copy-files` / `jarmod`，而 i18n 的 `downloads.steps` 只有后两个 —— 前端 `t('downloads.steps.${id}')` 缺键时**原样返回键名**（`src/i18n/index.tsx:60`），于是把键名渲染给用户（不是报错、不是空白）。同源缺陷另有两处：`repair-files`（实例缺资源补全 `instance.rs:1445`，未在任何语言里）与 stage `modpack-update-finalize`（原地更新收尾 `modpack_update.rs:874`，在 `STAGE_LABELS` 白名单里但无词条）。
+
+**修复**（7 语言 × 6 个键，全部落在 i18n submodule `src/*/downloads.ts`）：
+- `steps` 新增 `download-mods` / `verify` / `extract-merge` / `jarmod` / `repair-files`；
+- `stage` 新增 `modpack-update-finalize`。
+
+**护栏**：新增 `packages` 侧脚本 `scripts/test-i18n-step-keys.mjs` + `pnpm run test:i18n-steps`（CI frontend-check 已接入）—— 后端 step id 与 `STAGE_LABELS` 白名单逐语言比对 i18n 词条，缺键即 FAIL。契约与用法见 `6-UI/组件/下载中心UI规范.md`「步骤/阶段文案的 i18n 覆盖」。
+
+**教训**：step id 是**跨仓契约**（后端 Rust → i18n submodule），单仓编译、单仓测试、单仓 typecheck 都发现不了「后端新增了标识、前端/词条没跟上」；以后新增 step / stage 一律先跑护栏。
+
