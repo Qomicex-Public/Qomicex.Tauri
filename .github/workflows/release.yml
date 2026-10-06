@@ -667,6 +667,49 @@ jobs:
             echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           fi
           cat "update-fragment-$PLATFORM.json"
+      - name: Generate self-update packages (linux-aarch64)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          VERSION="${{ needs.setup.outputs.version }}"
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION"
+
+          # AppImage 包：zip 内放 AppImage 本体（updater appimage 策略整文件替换）。
+          # linuxBundles 可只选 deb/rpm，此时无 AppImage 可打 —— 跳过而不是报错，
+          # 否则「不构建 appimage」这种合法选择会把整个发布拖垮。
+          APPIMAGE=$(find "$BUNDLE_DIR" -name '*.AppImage' | head -1)
+          if [ -n "$APPIMAGE" ]; then
+            PKG_APP="qomicex-update-linux-aarch64-appimage.zip"
+            zip -j "$PKG_APP" "$APPIMAGE"
+            npx tauri signer sign "$PKG_APP"
+            echo "{\"linux-aarch64-appimage\":{\"url\":\"$URL_BASE/$PKG_APP\",\"signature\":\"$(tr -d '\n' < "$PKG_APP.sig")\",\"strategy\":\"appimage\"}}" > "update-package-fragment-linux-aarch64-appimage.json"
+          else
+            echo "::warning::No AppImage in bundle; skipping linux-aarch64-appimage self-update package"
+          fi
+
+          # system 包（deb 布局为基线）：dpkg-deb -x 收集 / 相对布局
+          DEB=$(find "$BUNDLE_DIR" -name '*.deb' | head -1)
+          if [ -z "$DEB" ]; then echo "ERROR: No deb found"; exit 1; fi
+          STAGING=$(mktemp -d)
+          dpkg-deb -x "$DEB" "$STAGING"
+          PKG_SYS="qomicex-update-linux-aarch64-system.zip"
+          (cd "$STAGING" && zip -qr "$OLDPWD/$PKG_SYS" .)
+          npx tauri signer sign "$PKG_SYS"
+          rm -rf "$STAGING"
+          echo "{\"linux-aarch64-system\":{\"url\":\"$URL_BASE/$PKG_SYS\",\"signature\":\"$(tr -d '\n' < "$PKG_SYS.sig")\",\"strategy\":\"system\"}}" > "update-package-fragment-linux-aarch64-system.json"
+          cat update-package-fragment-*.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-package-linux-arm64
+          path: |
+            qomicex-update-*.zip
+            qomicex-update-*.zip.sig
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-package-fragment-${{ github.job }}
+          path: update-package-fragment-*.json
       - uses: actions/upload-artifact@v7
         with:
           name: update-fragment-${{ github.job }}
@@ -695,6 +738,10 @@ jobs:
         with:
           submodules: recursive
           token: ${{ secrets.QOMICEX_PAT }}
+      # 自更新包在宿主机侧打包签名（容器内无 zip），需要 node 跑 `npx tauri signer`；
+      # 不设 cache: pnpm —— 宿主机不跑 pnpm，依赖由下方容器安装到同一个 workspace。
+      - uses: actions/setup-node@v7.0.0
+        with: { node-version: '22' }
       # 注册 loong64 用户态模拟（与 build-loong64-builder.yml 构建镜像同款方案）
       - name: Set up QEMU (loong64)
         run: docker run --rm --privileged ghcr.io/loong64/binfmt --install all
@@ -767,6 +814,37 @@ jobs:
             echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
           fi
           cat "update-fragment-$PLATFORM.json"
+      - name: Generate self-update package (linux-loongarch64)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          VERSION="${{ needs.setup.outputs.version }}"
+          BUNDLE_DIR="src-tauri/target/release/bundle"
+          URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION"
+
+          # loong64 无 linuxdeploy 支持，产物固定 deb,rpm → 不出 appimage 包。
+          # system 包以 deb 布局为基线：dpkg-deb -x 收集 / 相对布局
+          DEB=$(find "$BUNDLE_DIR" -name '*.deb' | head -1)
+          if [ -z "$DEB" ]; then echo "ERROR: No deb found"; exit 1; fi
+          STAGING=$(mktemp -d)
+          dpkg-deb -x "$DEB" "$STAGING"
+          PKG_SYS="qomicex-update-linux-loongarch64-system.zip"
+          (cd "$STAGING" && zip -qr "$OLDPWD/$PKG_SYS" .)
+          npx tauri signer sign "$PKG_SYS"
+          rm -rf "$STAGING"
+          echo "{\"linux-loongarch64-system\":{\"url\":\"$URL_BASE/$PKG_SYS\",\"signature\":\"$(tr -d '\n' < "$PKG_SYS.sig")\",\"strategy\":\"system\"}}" > "update-package-fragment-linux-loongarch64-system.json"
+          cat update-package-fragment-*.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-package-linux-loongarch64
+          path: |
+            qomicex-update-*.zip
+            qomicex-update-*.zip.sig
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-package-fragment-${{ github.job }}
+          path: update-package-fragment-*.json
       - uses: actions/upload-artifact@v7
         with:
           name: update-fragment-${{ github.job }}
