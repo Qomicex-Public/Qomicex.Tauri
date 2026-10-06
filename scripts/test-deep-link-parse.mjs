@@ -53,19 +53,39 @@ try {
   check('open 根路径', parseDeepLink(`${S}open/`), { kind: 'open', route: '/' })
   check('open 白名单页', parseDeepLink(`${S}open/settings`), { kind: 'open', route: '/settings' })
   check('open 子路径', parseDeepLink(`${S}open/instances/abc`), { kind: 'open', route: '/instances/abc' })
-  check('launch（纯名字）', parseDeepLink(`${S}launch/1.20.1-Forge`), {
+  check('launch（纯名字）', parseDeepLink(`${S}launch?target=1.20.1-Forge`), {
     kind: 'launch',
     target: '1.20.1-Forge',
     dir: undefined,
     raw: '1.20.1-Forge',
   })
-  check('launch（目录:名字）', parseDeepLink(`${S}launch/C%3A%5Cmc%5Cinst%3AMyPack`), {
+  check('launch（目录:名字）', parseDeepLink(`${S}launch?target=${encodeURIComponent('C:\\mc\\inst:MyPack')}`), {
     kind: 'launch',
     target: 'MyPack',
     dir: 'C:\\mc\\inst',
     raw: 'C:\\mc\\inst:MyPack',
   })
-  check('join', parseDeepLink(`${S}join/482913`), { kind: 'join', code: '482913' })
+  check('launch（正斜杠目录，query 不受路径切分影响）', parseDeepLink(`${S}launch?target=${encodeURIComponent('C:/mc/inst:MyPack')}`), {
+    kind: 'launch',
+    target: 'MyPack',
+    dir: 'C:/mc/inst',
+    raw: 'C:/mc/inst:MyPack',
+  })
+  // 真实房间码格式 `U/XXXX-XXXX-XXXX-XXXX`（connector RoomCode PREFIX="U/"）必然含 `/`。
+  check('join（query，编码斜杠）', parseDeepLink(`${S}join?code=${encodeURIComponent('U/THL9-GBKX-2NTH-H9VL')}`), {
+    kind: 'join',
+    code: 'U/THL9-GBKX-2NTH-H9VL',
+  })
+  check('join（query，裸斜杠）', parseDeepLink(`${S}join?code=U/THL9-GBKX-2NTH-H9VL`), {
+    kind: 'join',
+    code: 'U/THL9-GBKX-2NTH-H9VL',
+  })
+  check('join 空 code', parseDeepLink(`${S}join?code=`), null)
+  check('join 缺 code', parseDeepLink(`${S}join`), null)
+  check('launch 缺 target', parseDeepLink(`${S}launch`), null)
+  // 旧 path 形态按已确认决策弃用：join/U/THL9-… 曾被截断识别为 "U"，静默忽略。
+  check('join 旧 path 形态弃用', parseDeepLink(`${S}join/U/THL9-GBKX-2NTH-H9VL`), null)
+  check('launch 旧 path 形态弃用', parseDeepLink(`${S}launch/MyPack`), null)
   check('install plugin slug', parseDeepLink(`${S}install/plugin?slug=a.b`), {
     kind: 'installPlugin',
     slug: 'a.b',

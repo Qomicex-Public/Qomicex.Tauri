@@ -283,3 +283,46 @@ PR #172 合并时，我判定「CodeQL 失败属存量告警、与本 PR 无关�
 
 `scripts/test-deep-link-parse.mjs` 从「直接 `node xx.ts` 依赖类型剥离」改为**用仓库自带 tsc 把真实源码编译到临时目录再断言**（对齐既有 `test-update-channel.mjs` 范式）。原因：`package.json` 声明 `engines.node >= 22`，而 Node 的类型剥离 **22.18.0 才默认开启**，22.0~22.17 会在断言执行前就失败。同时该测试已接入 CI（`frontend-lint` 作业）。
 
+
+
+### 2026-10-06 更新
+### 2026-10-06 更新
+
+## 补充决策：`launch`/`join` 值参数改用 query 语法（房间码含 `/` 被截断）
+
+### 问题（探针实测，非推测）
+
+真实房间码格式为 `U/XXXX-XXXX-XXXX-XXXX`（connector `RoomCode::PREFIX = "U/"`，**必然含 `/`**）。深链 `qomicex-launcher://join/U/THL9-GBKX-2NTH-H9VL` 经 `parseDeepLink` 解析得到 `{"kind":"join","code":"U"}` —— 房间码被截断，join 必然失败。
+
+因果链取证：
+
+| 环节 | 结论 | 证据等级 |
+|---|---|---|
+| OS/注册表层 | Windows `"exe" "%1"`、Linux `%u` 模板，argv 单参数原样传 URL，无截断 | 已读证（tauri-plugin-deep-link 2.4.10 lib.rs:278） |
+| Rust 分发层 | `u.to_string()` 原样保留，无解析 | 已读证（`deep_link.rs` dispatch） |
+| **前端解析层** | `pathname.split('/').filter(Boolean)` 切段后 `join`/`launch` 分支只取 `segments[0]` | **已证明**（探针：`parseDeepLink` 返回 `code:"U"`；`URL.pathname` 本身为 `/U/THL9-GBKX-2NTH-H9VL`，解析器没截断） |
+
+`launch` 的正斜杠路径形态（POSIX 游戏目录）同理被切坏；`open` 整段 join、`install` 参数在 query，均不受影响。既有测试 `join/482913` 用的是不含 `/` 的假房间码，恰好绕开缺陷——漏测原因。
+
+### 决策
+
+1. `join` 改为 `qomicex-launcher://join?code=<房间码>`；`launch` 改为 `qomicex-launcher://launch?target=<实例名或ID 或 游戏目录:实例名>`。
+2. 旧 path 形态（`join/U/…`、`launch/MyPack`）弃用，解析为 null 静默忽略——当前仓库内无任何链接生成方，无旧链接兼容负担。
+3. `open`/`install` 语法不变。
+
+### 备选（均舍弃）
+
+- **方案 A（path 整段解析）**：保留 path 语法、按动作分支约定「动作名之后的整段路径为值」。可在不改语法的前提下修复，但「值内含 `/` 与路径分隔符歧义」只是被约定掩盖，每个新动作都要重新约定拼接规则，结构性问题未消除。
+- **A+B 并存**：双语法解析面更大，且无生成方需要兼容，属未要求的功能。
+
+### 验证证据
+
+| 项 | 结果 |
+| :--- | :--- |
+| 反向探针（修复前跑新测试） | **FAILED（EXIT=1）**，失败点为 `launch?target=` 用例——证明测试守的正是本缺陷，非空绿 |
+| `node scripts/test-deep-link-parse.mjs` | 修复后 **51 passed**（新增真实房间码 query 编码/裸斜杠、空/缺参、旧 path 形态弃用共 9 例），连跑 3 次全过 |
+| `pnpm run typecheck` | EXIT=0 |
+| `pnpm run build` | BUILD_EXIT=0（✓ built in 8.38s） |
+| `parseDeepLink('qomicex-launcher://join?code=U/THL9-GBKX-2NTH-H9VL')` | `{kind:"join", code:"U/THL9-GBKX-2NTH-H9VL"}`（编码 `%2F` 与裸 `/` 两种形态均通过） |
+
+**未在本机验证（需真机/真房间）**：从浏览器点击新语法链接唤起启动器走完整 join 流程——OS 传参层已确认为原样传递（插件 2.4.10 lib.rs:278），前端解析已由单测覆盖，中间环节无涉及面。
