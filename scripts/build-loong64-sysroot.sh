@@ -61,7 +61,14 @@ log() { printf '>>> %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 fetch() { # fetch <url> <dest>
-  curl -fsSL --retry 5 --retry-delay 2 "$1" -o "$2" \
+  # -C - 让 curl 断点续传：Contents 索引 48MB，弱网下实测会被对端重置而中断，
+  # --retry 虽会重试但每次都从 0 开始，反复整包重下（本机调试时在此卡了很久）。
+  # --speed-limit/--speed-time 再加一道：持续低速也主动断，交给 -C 续传。
+  # --speed-time 单独给宽限：实测这条链路常长时间低于 10KB/s 但仍在推进，
+  # 卡太紧会把「慢」误判成「挂」而反复重来。阈值取 1KB/s / 120s，
+  # 只在真的停滞时才交给 -C 续传。
+  curl -fSL --retry 5 --retry-delay 2 -C - \
+    --speed-limit 1024 --speed-time 120 "$1" -o "$2" \
     || die "下载失败: $1"
 }
 
@@ -134,26 +141,36 @@ install_pkg() { # install_pkg <包名>
   log "  解包 $pkg"
   curl -fsSL --retry 5 "$MIRROR/debian/$fn" -o "$WORK/pkg.deb" \
     || die "下载 $pkg 失败"
-  # 区分两类失败：
-  #  - 归档本身坏（磁盘满/下载截断/tar 损坏）→ 必须中断
-  #  - 某个路径模式在包里不存在→ 正常，很多包不含 lib/ 或 pkgconfig
+  # 先从归档清单筛出实际存在的白名单成员，再按名字解包，而不是用通配符让 tar
+  # 自行匹配。
   #
-  # 实测 GNU tar 对「成员找不到」返回 2（不是 1），与部分失败同码，无法靠退出码
-  # 区分。故先单独验证归档可完整读取（tar -tf 走完流返回 0），再抽取并忽略
-  # 成员缺失。早先用 || true 会把归档损坏也吞掉，并把包标记成已装，闭包不再重试，
-  # 错误一路拖到 cargo 阶段才爆。
-  if ! dpkg-deb --fsys-tarfile "$WORK/pkg.deb" | tar -tf /dev/stdin >/dev/null 2>&1; then
-    die "归档损坏或读取失败: $pkg"
-  fi
+  # 原因：实测 GNU tar 对「请求的成员不存在」返回 2，与真正的 IO/格式失败同码，
+  # 无法靠退出码区分（预检归档可读性也不能替代——那只拦得住下载截断，拦不住
+  # 解包阶段的磁盘满/权限错误）。改成先列举再按名解包后：
+  #  - 没有匹配成员 → 列表为空，正常跳过（很多纯数据包不含 lib/）
+  #  - 有匹配成员 → 整条管道退出码必须为 0，否则是真失败，直接中断
+  # 与 fetch() 同理：单个 deb 在弱网下也会被重置（实测 libsqlite3-dev 中断过），
+  # 用 -C - 续传而非整包重来。
+  curl -fL --retry 5 --retry-delay 2 -C - \
+    --speed-limit 1024 --speed-time 120 "$MIRROR/debian/$fn" -o "$WORK/pkg.deb" \
+    || die "下载 $pkg 失败"
+
   set +e
-  dpkg-deb --fsys-tarfile "$WORK/pkg.deb" \
-    | tar -x -C "$SYSROOT" --wildcards --no-recursion --ignore-failed-read \
-        './usr/include/*' \
-        './usr/lib/*' \
-        './lib/*' \
-        './usr/share/pkgconfig/*' \
-      2>/dev/null
+  MEMBERS=$(dpkg-deb --fsys-tarfile "$WORK/pkg.deb" \
+    | tar -tf /dev/stdin 2>/dev/null \
+    | grep -E '^\./(usr/include|usr/lib|lib|usr/share/pkgconfig)/')
   set -e
+  if [ -n "$MEMBERS" ]; then
+    printf '%s\n' "$MEMBERS" > "$WORK/members.txt"
+    set +e
+    dpkg-deb --fsys-tarfile "$WORK/pkg.deb" \
+      | tar -x -C "$SYSROOT" --no-recursion -T "$WORK/members.txt"
+    rc=${PIPESTATUS[1]}
+    set -e
+    [ "$rc" -eq 0 ] || die "解包 $pkg 失败（tar 退出码 $rc）"
+  else
+    log "    （$pkg 不含 include/lib/pkgconfig，跳过）"
+  fi
   INSTALLED[$pkg]=1
 }
 
