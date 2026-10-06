@@ -163,6 +163,9 @@ jobs:
       # 深链解析的安全边界回归（路径穿越绕白名单 / 非法编码抛错 / 同名实例被静默乱挑）。
       # 同样是用仓库自带 tsc 编译真实源码后断言，不依赖 Node 的类型剥离。
       - run: pnpm run test:deep-link
+      # 步骤名 i18n 覆盖护栏：后端安装管线里的 step id 必须在 downloads.steps 有词条，
+      # 否则下载中心卡片直接显示 `downloads.steps.<id>` 键名（Technic Solder 期3 漏过 4 个）。
+      - run: pnpm run test:i18n-steps
       # lint 尚未进阻断：存量见 AGENTS.md「Lint 现状」，清零后再去掉 continue-on-error。
       - name: ESLint
         continue-on-error: true
