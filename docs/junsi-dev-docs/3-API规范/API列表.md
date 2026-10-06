@@ -1861,15 +1861,17 @@ data: [plugin:com.example.demo:info] hello
 
 ### GET `/api/settings/file-download-sources/ping`
 
-测试文件下载源延迟。`id=1`（镜像源）聚合 ping MCIM 与 QML Mirror 全部节点，
-任一可用即可用、延迟取最快节点。
+测试文件下载源延迟。测速目标为 pinned 的真实文件（Modrinth sodium jar）——
+API 透传路径与文件路径是不同路由，测 API 不能证明文件路径可用。`id=1`（镜像源）
+按实际下载顺序（MCIM → QML Mirror 节点）逐节点探测、取首个可用节点的链路总耗时；
+官方 CDN 兜底不参与镜像源探测，全部镜像节点失败时镜像源报告不可用。
 
 **响应：** `List<DownloadSourcePing>`
 
 ### GET `/api/settings/file-download-source/auto-select`
 
-自动选择最优文件下载源（官方源 vs 镜像源聚合节点，取延迟最低可用者），写入
-`fileDownloadSource`。
+自动选择最优文件下载源（官方源 vs 镜像源，均并行测量、取延迟最低可用者），
+写入 `fileDownloadSource`。
 
 ---
 
