@@ -781,8 +781,10 @@ jobs:
             head -c 32 "$TARBALL" | xxd || true
             exit 1
           fi
+          # 用 -xf 而非 -xJ：-J 强制走 xz 过滤器，而 cross-tools 的 tarball 需要
+          # tar 自动探测。实测同一文件 -xJ 报「无法识别文件格式」而 -xf 能解出。
           sudo mkdir -p /opt/x-tools
-          sudo tar -xJ -C /opt/x-tools "$TARBALL"
+          sudo tar -xf "$TARBALL" -C /opt/x-tools
           /opt/x-tools/loongarch64-unknown-linux-gnu/bin/loongarch64-unknown-linux-gnu-gcc --version
       - name: Build loong64 sysroot
         env:
