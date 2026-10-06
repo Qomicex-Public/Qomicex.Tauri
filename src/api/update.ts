@@ -80,6 +80,49 @@ export async function takeUpdateNotice(dataDir: string): Promise<UpdateNotice | 
   }
 }
 
+/**
+ * Qomicex.Updater 落盘的「这次更新没成」交接（`{dataDir}/updates/last-update-error.json`）。
+ *
+ * 存在理由（issue #201）：updater 是 detached 进程，它失败退出时旧启动器早已退出，
+ * 屏幕上不会留下任何痕迹——用户的描述是「点了更新，既没重启也没更新完成」。
+ * 由新进程读出来告诉他到底卡在哪一步，比让他自己猜强。
+ */
+export interface UpdateError {
+  /**
+   * 机器可读码，UI 按它取多语言文案：
+   * `ELEVATION_DENIED`（授权被取消/不可用）| `UPDATE_INSTALL_FAILED`（覆盖失败）|
+   * `UPDATE_WAIT_TIMEOUT`（旧进程没退出）。
+   */
+  code: string
+  /** 技术细节（OS 报错原文，可能含路径与引号），只做次要展示 */
+  message: string
+  /** 安装策略：dir | appimage | app | system */
+  strategy: string
+  /** 本次要更新到的版本（由包文件名反推，可能是空串） */
+  version: string
+  /** 写入时间（unix 秒），仅诊断用 */
+  occurredAt: number
+}
+
+/**
+ * 读取并消费「更新失败」交接（`take_pending_update_error`，读后即删，只提示一次）。
+ *
+ * 与 `takeUpdateNotice` 的两点差别：
+ * - **不做版本守卫**：失败交接讲的正是「版本没前进」，拿当前版本比对会把它自己过滤掉；
+ * - 与「更新完成」交接各有独立的 claim 锁，两条提示不会互相挡住。
+ *
+ * 非 Tauri 环境（浏览器 dev）/任何失败 → null：附加体验，不影响启动。
+ */
+export async function takeUpdateError(dataDir: string): Promise<UpdateError | null> {
+  if (!dataDir) return null
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    return await invoke<UpdateError | null>('take_pending_update_error', { dataDir })
+  } catch {
+    return null
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 自动更新：静默下载 → 待安装 → 下次启动自动装完
 // ---------------------------------------------------------------------------
