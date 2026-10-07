@@ -17,7 +17,7 @@
 //! `endpoints/modpack.rs` 的 technic 导入管线完成。
 
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
@@ -81,6 +81,27 @@ fn read_jar_properties_entry(jar_path: &Path, entry_name: &str) -> Option<String
     let mut archive = zip::ZipArchive::new(file).ok()?;
     let mut entry = archive.by_name(entry_name).ok()?;
     read_bounded_string(&mut entry)
+}
+
+/// 从 modpack zip 内提取 `bin/modpack.jar` 到独立文件（Solder 管线探测用）。
+///
+/// modpack zip 是**外层 zip**，`fmlversion.properties` 在其嵌套的
+/// `bin/modpack.jar` 内（GTNH 实测），不能把外层 zip 直接当 jar 读。
+/// 嵌套 jar 读取带 [`MAX_JAR_BYTES`] 上限（中央目录 size 由包作者控制，
+/// 不可信）。返回落盘路径；zip 缺该条目 / jar 超限 / IO 失败返回 None。
+pub(crate) fn extract_modpack_jar_from_zip(zip_path: &Path, dest: &Path) -> Option<PathBuf> {
+    let file = std::fs::File::open(zip_path).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+    let mut jar = archive.by_name("bin/modpack.jar").ok()?;
+    if jar.size() > MAX_JAR_BYTES {
+        return None;
+    }
+    let mut jar_bytes = Vec::new();
+    std::io::Read::take(&mut jar, MAX_JAR_BYTES)
+        .read_to_end(&mut jar_bytes)
+        .ok()?;
+    std::fs::write(dest, &jar_bytes).ok()?;
+    Some(dest.to_path_buf())
 }
 
 /// 探测 zip 是否为 Technic SingleZip 包。
@@ -868,6 +889,35 @@ mod tests {
             super::loader_meta_from_modpack_jar(&dir.join("no-such.jar")),
             (None, None)
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn extract_modpack_jar_reads_nested_jar_from_zip() {
+        // CodeRabbit 评审发现：探测对象是**外层 modpack zip**，fmlversion.properties
+        // 在其嵌套的 bin/modpack.jar 内——直接把外层 zip 当 jar 读永远探测不出。
+        // 本夹具复刻真实层级：zip → bin/modpack.jar → fmlversion.properties。
+        let dir = temp_zip_dir("gtnh-nested");
+        let outer = write_technic_zip(
+            &dir,
+            &[(
+                "bin/modpack.jar",
+                build_modpack_jar(&[(
+                    "fmlversion.properties",
+                    b"fmlbuild.build.number=1614\nfmlbuild.mcversion=1.7.10\n".as_slice(),
+                )]),
+            )],
+        );
+        let dest = dir.join("extracted.jar");
+        let jar = super::extract_modpack_jar_from_zip(&outer, &dest)
+            .expect("应从外层 zip 提取出 bin/modpack.jar");
+        assert_eq!(jar, dest);
+        let (loader, ver) = super::loader_meta_from_modpack_jar(&jar);
+        assert_eq!(loader.as_deref(), Some("forge"));
+        assert_eq!(ver.as_deref(), Some("1614"));
+        // zip 无 bin/modpack.jar → None
+        let bare = write_technic_zip(&dir, &[("mods/a.jar", b"dummy".to_vec())]);
+        assert!(super::extract_modpack_jar_from_zip(&bare, &dest).is_none());
         std::fs::remove_dir_all(&dir).ok();
     }
 }

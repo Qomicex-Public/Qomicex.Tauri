@@ -1573,19 +1573,16 @@ pub(crate) async fn solder_import_impl(
     //
     // Forge 交付形态探测（GTNH 类包）：Solder 元数据 `forge=null` 不代表没有
     // Forge——1.7.10 时代 Forge/FML 以 mod 清单内 `modpack-*.zip`（解压出
-    // `bin/modpack.jar`）分发。`build.forge` 有值（Tekkit 1.2.5 实测 164）直接用；
-    // 为 null 时下载 modpack zip 探测 `fmlbuild.build.number` 并在 Forge 版本列表
-    // 确认可安装 → 走 Forge 安装管线；探测不出 → 退回 vanilla+jarmod（期3 原行为）。
-    let (detected_loader, detected_loader_version) = if let Some(f) = build
-        .forge
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        (Some("forge".to_string()), Some(f.to_string()))
-    } else {
-        detect_solder_pack_forge(&s.http_client, &build, &game_version).await
-    };
+    // `bin/modpack.jar`）分发。为 null 时下载 modpack zip 探测
+    // `fmlbuild.build.number` 并在 Forge 版本列表确认可安装 → 走 Forge 安装
+    // 管线；探测不出 → 退回 vanilla+jarmod（期3 原行为）。
+    //
+    // ⚠️ `build.forge`（Tekkit 1.2.5 实测为裸 build 号 "164"）**不进安装管线**：
+    // 管线按版本号精确匹配 Forge 列表，"164" 匹配不到任何 artifact（真实形态是
+    // `1.2.5-3.2.0.164`），直传会以「找不到安装器」中止导入。它仅作实例元数据
+    // 标注保留；是否切管线只由「探测出可安装版本」决定。
+    let (detected_loader, detected_loader_version) =
+        detect_solder_pack_forge(&s.http_client, &build, &game_version).await;
 
     let base_name = sanitize_instance_name(if req.name.trim().is_empty() {
         detail.instance_name()
@@ -1603,6 +1600,9 @@ pub(crate) async fn solder_import_impl(
     let mut inst = crate::services::instance::GameInstance::default();
     inst.name = name.clone();
     inst.game_version = game_version.clone();
+    // 探测成功 → forge/可安装版本号（实例显示与启动链一致）；探测失败 →
+    // 期3 原行为（vanilla 实例）。build.forge 裸 build 号不进任何字段（它不是
+    // 可寻址的 Forge 版本，写进去会让实例显示与版本列表对不上）。
     inst.loader = detected_loader.clone();
     inst.loader_version = detected_loader_version.clone();
     inst.game_dir = game_dir.to_string_lossy().into_owned();
@@ -1948,10 +1948,10 @@ fn solder_mod_zip_path(zips_dir: &Path, index: usize, mod_name: &str) -> PathBuf
 /// `net.minecraft.client.main.Main`，FML 根本不初始化（GTNH 实测：实例显示
 /// 原版、229 个 mod 全不加载）。
 ///
-/// 探测链：清单里找 `modpack` 前缀条目 → 下载 zip → `loader_meta_from_modpack_jar`
-/// 读 `fmlbuild.build.number` → 用 `{mc}-{build}` 在 Forge 版本列表（官方 Maven 元数据
-/// 优先，BMCLAPI 回退）中确认存在。任一环节失败返回 `(None, None)`，调用方退回
-/// 期3 原行为（vanilla + jarmod），安装不中断。
+/// 探测链：清单里找 `modpack` 前缀条目 → 下载 zip → 提取嵌套 `bin/modpack.jar` →
+/// `loader_meta_from_modpack_jar` 读 `fmlbuild.build.number` → 用 `{mc}-{build}`
+/// 在 Forge 版本列表（官方 Maven 元数据优先，BMCLAPI 回退）中确认存在。任一环节
+/// 失败返回 `(None, None)`，调用方退回期3 原行为（vanilla + jarmod），安装不中断。
 async fn detect_solder_pack_forge(
     http_client: &reqwest::Client,
     build: &qomicex_core::models::expansion::technic::TechnicSolderBuild,
@@ -1975,8 +1975,13 @@ async fn detect_solder_pack_forge(
 
     // 下载 modpack zip 到临时目录（MD5 有则校验；失败按「探测不出」处理）。
     // 探测请求不经 DownloadManager（无进度/重试诉求），直接流式落盘。
+    // zip 根的 bin/ 目录同时含 basemods 与资源包，各 10~50 MB 级。
     let tmp = std::env::temp_dir().join(format!(
         "qml-solder-forge-probe-{}.zip",
+        uuid::Uuid::new_v4()
+    ));
+    let jar_tmp = std::env::temp_dir().join(format!(
+        "qml-solder-forge-probe-{}.jar",
         uuid::Uuid::new_v4()
     ));
     let probe = async {
@@ -1992,25 +1997,36 @@ async fn detect_solder_pack_forge(
             .map_err(|e| e.to_string())?
             .error_for_status()
             .map_err(|e| e.to_string())?;
-        // modpack zip 仅数 MB（GTNH 实测 2.85 MB），整包入内存可承受。
-        let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+        // modpack zip 30~100 MB 级（GTNH 2.8.4 实测），流式落盘。
+        let file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
+        let mut writer = std::io::BufWriter::new(file);
+        use std::io::Write;
+        let mut resp_stream = resp;
+        while let Some(chunk) = resp_stream.chunk().await.map_err(|e| e.to_string())? {
+            writer.write_all(&chunk).map_err(|e| e.to_string())?;
+        }
+        writer.flush().map_err(|e| e.to_string())?;
         if let Some(expected) = entry
             .md5
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
+            let bytes = std::fs::read(&tmp).map_err(|e| e.to_string())?;
             if !solder_md5_matches(&bytes, expected) {
                 return Err("modpack zip MD5 不符".to_string());
             }
         }
-        std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
-        crate::services::technic::loader_meta_from_modpack_jar(&tmp)
+        // fmlversion.properties 在外层 zip 的嵌套 bin/modpack.jar 内，先提取。
+        let jar_path = crate::services::technic::extract_modpack_jar_from_zip(&tmp, &jar_tmp)
+            .ok_or_else(|| "modpack zip 内无 bin/modpack.jar 或超出大小上限".to_string())?;
+        crate::services::technic::loader_meta_from_modpack_jar(&jar_path)
             .1
             .ok_or_else(|| "modpack.jar 内无有效的 fmlbuild.build.number".to_string())
     };
     let probe_result = probe.await;
     let _ = std::fs::remove_file(&tmp);
+    let _ = std::fs::remove_file(&jar_tmp);
     let Ok(forge_build) = probe_result else {
         return (None, None);
     };

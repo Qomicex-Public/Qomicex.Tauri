@@ -155,6 +155,11 @@ pub enum RenameFailure {
     Io(String),
 }
 
+/// 安装中宽限期：sync_from_disk 对「已创建、版本目录未落」的隔离记录的保留窗口。
+/// 整合包管线先 create 记录、后台任务才建版本目录；常量模块级共享（第 1 步
+/// retain、第 5 步 scanned_dirs 兜底、测试三处同源，防漂移）。
+const MODULE_INSTALLING_GRACE: chrono::Duration = chrono::Duration::minutes(10);
+
 /// 实例服务（对应 C# InstanceService）。
 pub struct InstanceService {
     file_path: PathBuf,
@@ -483,13 +488,8 @@ impl InstanceService {
 
         // 1. 清理残留：版本隔离开启 + 版本目录不存在 → 删除记录
         //
-        // ⚠️ 宽限期：整合包导入（technic/multimc 等）先 create 记录、后台任务
-        // 才建 `versions/{name}/`。刚创建（10 分钟内）且目录尚未落盘的隔离记录
-        // 是**安装进行中**，不是残留——直接清掉会把管线手里的 instance_id 变成
-        // 悬空引用：任务完成后 update 落空、磁盘扫描反推出一条丢失 loader/隔离/
-        // 整合包元数据的裸记录（GTNH 实测：completed 的 85b237c5 消失，出现
-        // 无 modpack 元数据的 d79304c5）。宽限期外的无目录记录仍按残留清理。
-        const INSTALLING_GRACE: chrono::Duration = chrono::Duration::minutes(10);
+        // （常量提为模块级：第 5 步的兜底与测试共用同一值，防两处漂移。）
+        const INSTALLING_GRACE: chrono::Duration = MODULE_INSTALLING_GRACE;
         let now = chrono::Utc::now();
         json_instances.retain(|inst| {
             let isolation = inst.version_isolation.unwrap_or(global_isolation);
@@ -599,12 +599,27 @@ impl InstanceService {
 
         // 5. 将未被扫描的游戏目录的 JSON 实例追加到结果中
         //    （只保留未被扫描的目录的实例，已扫描目录中不存在的 JSON 条目视为残留，不保留）
+        //
+        // ⚠️ 例外：宽限期内的安装中实例必须在**同目录已有其他版本被扫描**时也保留
+        // ——此时第 5 步的 `!scanned_dirs.contains(game_dir)` 会把它排除（目录被
+        // 其它实例扫描命中），等于绕过第 1 步的宽限期（GTNH 评审发现）。
+        const RETAIN_GRACE: chrono::Duration = INSTALLING_GRACE;
         for inst in &json_instances {
             let key = (inst.game_dir.clone(), inst.name.clone());
-            if !seen_keys.contains_key(&key) && !scanned_dirs.contains(&inst.game_dir) {
-                seen_keys.insert(key, result.len());
-                result.push(inst.clone());
+            if seen_keys.contains_key(&key) || scanned_dirs.contains(&inst.game_dir) {
+                // 同目录已被扫描：正常实例已在合并段处理；宽限期记录在此兜底。
+                let in_grace = matches!(
+                    inst.created_at
+                        .as_deref()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()),
+                    Some(t) if now.signed_duration_since(t) < RETAIN_GRACE
+                );
+                if !in_grace {
+                    continue;
+                }
             }
+            seen_keys.insert(key, result.len());
+            result.push(inst.clone());
         }
 
         // 6. 写回 JSON
@@ -879,20 +894,46 @@ mod tests {
         // 超过宽限期的记录（目录不存在）→ 仍按残留清理
         let mut stale = make_instance("Stale", game_dir.to_str().unwrap(), Some(true));
         stale.created_at = Some(
-            (chrono::Utc::now() - chrono::Duration::hours(1))
+            (chrono::Utc::now() - MODULE_INSTALLING_GRACE - chrono::Duration::minutes(1))
                 .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         );
         service.create(stale);
 
-        let result = service.sync_from_disk(&[]);
+        // 同 game_dir 下另一个实例已被扫描命中（目录存在）→ 第 5 步的
+        // scanned_dirs 排除不得绕过宽限期（CodeRabbit 评审发现）
+        let scanned_dir = game_dir.join("versions").join("Existing");
+        std::fs::create_dir_all(&scanned_dir).unwrap();
+        service.create(make_instance(
+            "Existing",
+            game_dir.to_str().unwrap(),
+            Some(true),
+        ));
+        let scanned = vec![ScannedVersionInfo {
+            name: "Existing".to_string(),
+            game_version: "1.20.1".to_string(),
+            game_dir: game_dir.to_str().unwrap().to_string(),
+            loader: None,
+            loader_version: None,
+            icon_data: None,
+            modpack_name: None,
+            modpack_version: None,
+            modpack_author: None,
+            modpack_summary: None,
+        }];
+
+        let result = service.sync_from_disk(&scanned);
         let names: Vec<&str> = result.iter().map(|i| i.name.as_str()).collect();
         assert!(
             names.contains(&"GT New Horizons"),
-            "宽限期内的安装中实例不应被清掉: {names:?}"
+            "宽限期内的安装中实例不应被清掉（含同目录其它版本被扫描的场景）: {names:?}"
         );
         assert!(
             !names.contains(&"Stale"),
             "宽限期外的无目录记录仍应按残留清理: {names:?}"
+        );
+        assert!(
+            names.contains(&"Existing"),
+            "被扫描的正常实例应保留: {names:?}"
         );
         // 保留下来的记录应保持完整字段（loader/version_isolation 不丢）
         let kept = service
