@@ -681,7 +681,7 @@ fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
 }
 
 /// 构建一次性安装 core（对应源 `GameCoreBuilder` 配置）。
-fn build_core(
+pub(crate) fn build_core(
     game_root: &Path,
     mirror: DownloadMirror,
     http_client: reqwest::Client,

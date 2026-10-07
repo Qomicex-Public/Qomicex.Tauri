@@ -80,6 +80,10 @@ pub struct GameInstance {
     /// 用户自定义备注名（ENH-01）；为空时实例列表显示原版本名。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remark: Option<String>,
+    /// 记录创建时间（RFC3339）。仅服务端写入，供 sync_from_disk 的
+    /// 「安装中宽限期」判定（整合包管线先建记录后建版本目录）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
 }
 
 impl Default for GameInstance {
@@ -117,6 +121,8 @@ impl Default for GameInstance {
             resolved_game_dir: None,
             custom_group_ids: Vec::new(),
             remark: None,
+            // 记录创建时间（RFC3339）；sync_from_disk 的安装中宽限期判定用。
+            created_at: None,
         }
     }
 }
@@ -288,6 +294,12 @@ impl InstanceService {
         let mut guard = self.instances.lock().unwrap_or_else(|p| p.into_inner());
         if instance.id.is_empty() {
             instance.id = new_short_id();
+        }
+        // 创建时间戳：sync_from_disk 据此给「记录已建、版本目录未落」的整合包
+        // 安装留宽限期（宽限期内的隔离记录不当残留清除）。
+        if instance.created_at.is_none() {
+            instance.created_at =
+                Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
         }
         guard.push(instance.clone());
         drop(guard);
@@ -470,15 +482,35 @@ impl InstanceService {
         let mut json_instances = self.get_all();
 
         // 1. 清理残留：版本隔离开启 + 版本目录不存在 → 删除记录
+        //
+        // ⚠️ 宽限期：整合包导入（technic/multimc 等）先 create 记录、后台任务
+        // 才建 `versions/{name}/`。刚创建（10 分钟内）且目录尚未落盘的隔离记录
+        // 是**安装进行中**，不是残留——直接清掉会把管线手里的 instance_id 变成
+        // 悬空引用：任务完成后 update 落空、磁盘扫描反推出一条丢失 loader/隔离/
+        // 整合包元数据的裸记录（GTNH 实测：completed 的 85b237c5 消失，出现
+        // 无 modpack 元数据的 d79304c5）。宽限期外的无目录记录仍按残留清理。
+        const INSTALLING_GRACE: chrono::Duration = chrono::Duration::minutes(10);
+        let now = chrono::Utc::now();
         json_instances.retain(|inst| {
             let isolation = inst.version_isolation.unwrap_or(global_isolation);
             if !isolation {
                 return true;
             }
-            std::path::Path::new(&inst.game_dir)
+            let dir_exists = std::path::Path::new(&inst.game_dir)
                 .join("versions")
                 .join(&inst.name)
-                .is_dir()
+                .is_dir();
+            if dir_exists {
+                return true;
+            }
+            match inst
+                .created_at
+                .as_deref()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            {
+                Some(t) if now.signed_duration_since(t) < INSTALLING_GRACE => true,
+                _ => false,
+            }
         });
 
         // 2. 跟踪已扫描的游戏目录
@@ -820,6 +852,61 @@ mod tests {
 
     /// 回归：幽灵实例防线。try_delete 正常删目录 → Ok；删除失败 → Err 且记录恢复
     /// （否则残留目录会被 sync_from_disk 反推成幽灵实例复活）。
+    #[test]
+    fn sync_from_disk_grace_period_keeps_installing_isolated_instance() {
+        // GTNH 实测缺陷：整合包管线先 create 记录（版本目录未落盘），此期间
+        // sync_from_disk 的 retain 把记录当残留清掉；任务完成后磁盘扫描反推出
+        // 一条丢失 loader/隔离/整合包元数据的裸记录。宽限期内的「已创建、目录
+        // 未落」隔离记录必须保留。
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home =
+            std::env::temp_dir().join(format!("qomicex-grace-test-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&home);
+        let old_home = std::env::var_os("QOMICEX_HOME");
+        std::env::set_var("QOMICEX_HOME", &home);
+
+        let game_dir = home.join("games").join("mc");
+        let service = InstanceService::new();
+
+        // 刚创建（宽限期内）+ 目录不存在 → 必须保留
+        let installing = service.create(make_instance(
+            "GT New Horizons",
+            game_dir.to_str().unwrap(),
+            Some(true),
+        ));
+        assert!(installing.created_at.is_some(), "create 应写入 created_at");
+
+        // 超过宽限期的记录（目录不存在）→ 仍按残留清理
+        let mut stale = make_instance("Stale", game_dir.to_str().unwrap(), Some(true));
+        stale.created_at = Some(
+            (chrono::Utc::now() - chrono::Duration::hours(1))
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        );
+        service.create(stale);
+
+        let result = service.sync_from_disk(&[]);
+        let names: Vec<&str> = result.iter().map(|i| i.name.as_str()).collect();
+        assert!(
+            names.contains(&"GT New Horizons"),
+            "宽限期内的安装中实例不应被清掉: {names:?}"
+        );
+        assert!(
+            !names.contains(&"Stale"),
+            "宽限期外的无目录记录仍应按残留清理: {names:?}"
+        );
+        // 保留下来的记录应保持完整字段（loader/version_isolation 不丢）
+        let kept = service
+            .get_by_id(&installing.id)
+            .expect("宽限期记录应写回 JSON");
+        assert_eq!(kept.version_isolation, Some(true));
+
+        match old_home {
+            Some(v) => std::env::set_var("QOMICEX_HOME", v),
+            None => std::env::remove_var("QOMICEX_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     #[test]
     fn try_delete_recovers_record_when_dir_undeletable() {
         let _guard = ENV_LOCK.lock().unwrap();

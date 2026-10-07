@@ -45,6 +45,44 @@ pub struct TechnicMeta {
     pub jarmod: bool,
 }
 
+/// 从**已解压**的 `bin/modpack.jar` 解析 loader 元数据（Solder 管线专用）。
+///
+/// Solder 分发的 Forge 本体在 basemods zip 的 `bin/modpack.jar`（期3 实测），
+/// 该 jar 内**无** `version.json`、**无** `forgeversion.properties`（GTNH 实测），
+/// Forge build 只能从 `fmlversion.properties` 的 `fmlbuild.build.number` 取
+/// （GTNH 实测 = 1614，对应 Forge `1.7.10-10.13.4.1614`）。
+///
+/// 返回 `(loader, loader_version)`；jar 缺失 / 无 fmlversion.properties /
+/// build 号非纯数字一律 `None`（宁可退回 vanilla+jarmod 行为，不造假版本号）。
+pub fn loader_meta_from_modpack_jar(jar_path: &Path) -> (Option<String>, Option<String>) {
+    let Some(content) = read_jar_properties_entry(jar_path, "fmlversion.properties") else {
+        return (None, None);
+    };
+    let mut build = None;
+    for line in content.lines() {
+        let line = line.trim();
+        if let Some(v) = line.strip_prefix("fmlbuild.build.number=") {
+            let v = v.trim();
+            if !v.is_empty() {
+                build = Some(v.to_string());
+            }
+            break;
+        }
+    }
+    match build {
+        Some(b) if b.chars().all(|c| c.is_ascii_digit()) => (Some("forge".to_string()), Some(b)),
+        _ => (None, None),
+    }
+}
+
+/// 读取 jar 内单个属性文件（上限 1 MiB），不存在或超限返回 None。
+fn read_jar_properties_entry(jar_path: &Path, entry_name: &str) -> Option<String> {
+    let file = std::fs::File::open(jar_path).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+    let mut entry = archive.by_name(entry_name).ok()?;
+    read_bounded_string(&mut entry)
+}
+
 /// 探测 zip 是否为 Technic SingleZip 包。
 ///
 /// 只读中央目录（`file_names()`）而不 `by_index()`：后者会为每个条目 seek 并读
@@ -769,6 +807,67 @@ mod tests {
         let meta = super::parse_technic_zip(&zip_path).unwrap();
         assert_eq!(meta.game_version, "1.6.4");
         assert!(meta.loader.is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // -----------------------------------------------------------------------
+    // GTNH 型 Solder 包的 Forge 探测（loader_meta_from_modpack_jar）
+    // -----------------------------------------------------------------------
+
+    /// 落盘独立 jar 文件（Solder 管线探测的是**已解压**的 modpack.jar）。
+    fn write_modpack_jar_file(dir: &Path, entries: &[(&str, &[u8])]) -> std::path::PathBuf {
+        let jar_path = dir.join("modpack.jar");
+        std::fs::write(&jar_path, build_modpack_jar(entries)).unwrap();
+        jar_path
+    }
+
+    #[test]
+    fn loader_meta_from_modpack_jar_reads_fml_build() {
+        // GTNH 实测形态：jar 内无 version.json / forgeversion.properties，
+        // 只有 fmlversion.properties（build.number=1614 → Forge 1.7.10-10.13.4.1614）。
+        let dir = temp_zip_dir("gtnh-probe");
+        let jar = write_modpack_jar_file(
+            &dir,
+            &[(
+                "fmlversion.properties",
+                b"fmlbuild.major.number=7\nfmlbuild.minor.number=99\nfmlbuild.revision.number=40\nfmlbuild.build.number=1614\nfmlbuild.mcversion=1.7.10\n".as_slice(),
+            )],
+        );
+        let (loader, ver) = super::loader_meta_from_modpack_jar(&jar);
+        assert_eq!(loader.as_deref(), Some("forge"));
+        assert_eq!(ver.as_deref(), Some("1614"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn loader_meta_rejects_missing_or_malformed_properties() {
+        let dir = temp_zip_dir("gtnh-probe-bad");
+        // 无 fmlversion.properties → 探测不出
+        let jar = write_modpack_jar_file(&dir, &[("dummy.txt", b"x".as_slice())]);
+        assert_eq!(super::loader_meta_from_modpack_jar(&jar), (None, None));
+        // build 号非数字 → 探测不出（宁可不切管线，不造假版本号）
+        let jar = write_modpack_jar_file(
+            &dir,
+            &[(
+                "fmlversion.properties",
+                b"fmlbuild.build.number=abc\n".as_slice(),
+            )],
+        );
+        assert_eq!(super::loader_meta_from_modpack_jar(&jar), (None, None));
+        // build 号缺失 → 探测不出
+        let jar = write_modpack_jar_file(
+            &dir,
+            &[(
+                "fmlversion.properties",
+                b"fmlbuild.mcversion=1.7.10\n".as_slice(),
+            )],
+        );
+        assert_eq!(super::loader_meta_from_modpack_jar(&jar), (None, None));
+        // 文件不存在 → 探测不出
+        assert_eq!(
+            super::loader_meta_from_modpack_jar(&dir.join("no-such.jar")),
+            (None, None)
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

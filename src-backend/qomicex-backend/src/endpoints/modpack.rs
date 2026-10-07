@@ -1570,6 +1570,23 @@ pub(crate) async fn solder_import_impl(
         })?;
 
     // 3) 建实例（元数据一次写对：Solder 无「下载后二次解析」环节）。
+    //
+    // Forge 交付形态探测（GTNH 类包）：Solder 元数据 `forge=null` 不代表没有
+    // Forge——1.7.10 时代 Forge/FML 以 mod 清单内 `modpack-*.zip`（解压出
+    // `bin/modpack.jar`）分发。`build.forge` 有值（Tekkit 1.2.5 实测 164）直接用；
+    // 为 null 时下载 modpack zip 探测 `fmlbuild.build.number` 并在 Forge 版本列表
+    // 确认可安装 → 走 Forge 安装管线；探测不出 → 退回 vanilla+jarmod（期3 原行为）。
+    let (detected_loader, detected_loader_version) = if let Some(f) = build
+        .forge
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        (Some("forge".to_string()), Some(f.to_string()))
+    } else {
+        detect_solder_pack_forge(&s.http_client, &build, &game_version).await
+    };
+
     let base_name = sanitize_instance_name(if req.name.trim().is_empty() {
         detail.instance_name()
     } else {
@@ -1586,9 +1603,8 @@ pub(crate) async fn solder_import_impl(
     let mut inst = crate::services::instance::GameInstance::default();
     inst.name = name.clone();
     inst.game_version = game_version.clone();
-    // Forge build 仅元数据标注（1.2.5 时代无 installer；本体经 jarmod 注入）。
-    inst.loader = build.forge.as_ref().map(|_| "forge".to_string());
-    inst.loader_version = build.forge.clone();
+    inst.loader = detected_loader.clone();
+    inst.loader_version = detected_loader_version.clone();
     inst.game_dir = game_dir.to_string_lossy().into_owned();
     inst.version_isolation = Some(version_isolation);
     inst.modpack_name = Some(base_name.clone());
@@ -1605,6 +1621,9 @@ pub(crate) async fn solder_import_impl(
     let gd = game_dir.to_string_lossy().into_owned();
     let inst_id_inner = instance_id.clone();
     let technic_root = technic_imports_dir()?;
+    // 探测结果传给后台管线：Some → install-game 走 Forge 安装管线（FMLTweaker
+    // 从 launchwrapper 启动），None → 期3 原行为（vanilla + jarmod 派生 jar）。
+    let forge_loader_version = detected_loader_version;
 
     tracker.start_modpack_install(instance_id.clone(), move |handle| async move {
         // RAII 清理（同 technic_import_impl 的 Cleanup：任务目录随任务终局删除）。
@@ -1631,6 +1650,7 @@ pub(crate) async fn solder_import_impl(
             &http_client,
             &build,
             &game_version,
+            forge_loader_version.as_deref(),
             &zips_dir,
             &extract_dir,
             &gd,
@@ -1659,13 +1679,19 @@ pub(crate) async fn solder_import_impl(
     Ok(Json(ModpackInstallDirectResponse { instance_id }))
 }
 
-/// Solder 导入后台管线（issue #181）。步骤表权重合计 100：
-/// download-mods(25) → verify(5) → extract-merge(10) → install-game(40) →
-/// copy-files(15) → jarmod(5)。
+/// Solder 导入后台管线（issue #181；GTNH 型 Forge 交付修正见 `detect_solder_pack_forge`）。
+/// 步骤表权重合计 100：download-mods(25) → verify(5) → extract-merge(10) →
+/// install-game(40) → copy-files(15) → jarmod(5)。
 ///
 /// 数据流：Solder mods[] 按**数组顺序**逐 zip 解压叠加到 extract_dir（后者覆盖
 /// 前者——`z-` 前缀配置包排在清单末尾最后覆盖是 Technic 约定，见 ADR-108），
-/// 然后 vanilla 安装管线装 MC，最后把包内容拷进版本隔离目录并注入 jarmod。
+/// 然后安装 MC，最后把包内容拷进版本隔离目录。
+///
+/// `forge_loader_version`：Some（如 `1.7.10-10.13.4.1614`）→ install-game 走
+/// Forge 安装管线，启动时 FMLTweaker 经 launchwrapper 初始化 FML（1.7.10 的
+/// vanilla JSON 无 launchwrapper，jarmod 派生 jar 路径对它不成立）；
+/// None（1.2.5 时代无 installer，Tekkit 实测）→ 期3 原行为：vanilla 安装 +
+/// `bin/modpack.jar` 作 jarmod 注入。
 #[allow(clippy::too_many_arguments)]
 async fn run_solder_import(
     handle: &InstallHandle,
@@ -1673,6 +1699,7 @@ async fn run_solder_import(
     http_client: &reqwest::Client,
     build: &qomicex_core::models::expansion::technic::TechnicSolderBuild,
     game_version: &str,
+    forge_loader_version: Option<&str>,
     zips_dir: &std::path::Path,
     extract_dir: &std::path::Path,
     game_dir: &str,
@@ -1825,14 +1852,17 @@ async fn run_solder_import(
     }
     handle.mark_step("extract-merge", "done");
 
-    // === 4. 安装 vanilla MC（loader 安装不走：1.2.5 无 installer.jar）===
+    // === 4. 安装 MC（forge_loader_version 有值 → Forge 管线；否则 vanilla）===
     handle.mark_step("install-game", "active");
     handle.set_stage("downloading-game");
-    let loader_note = build
-        .forge
-        .as_deref()
-        .map(|f| format!("（Forge {f} 经整合包内置，稍后注入）"))
-        .unwrap_or_default();
+    let loader_note = match forge_loader_version {
+        Some(v) => format!("（Forge {v}，启动时 FML 经 launchwrapper 初始化）"),
+        None => build
+            .forge
+            .as_deref()
+            .map(|f| format!("（Forge {f} 经整合包内置，稍后注入）"))
+            .unwrap_or_default(),
+    };
     handle.update(|f| {
         f.set_status(InstallStatus::Installing);
         f.current_file = format!("Minecraft {game_version} {loader_note}");
@@ -1841,10 +1871,12 @@ async fn run_solder_import(
         game_version: game_version.to_string(),
         game_dir: game_dir.to_string(),
         version_dir_name: version_dir_name.to_string(),
-        // 关键：loader 置 None → run_install_pipeline 走 vanilla 分支。
-        // Forge 本体在 basemods zip 的 bin/modpack.jar 里，步骤 6 注入。
-        loader: None,
-        loader_version: None,
+        // GTNH 型（1.6+ 且 Forge 以 modpack.jar 分发）：走 Forge 安装管线生成带
+        // launchwrapper + FMLTweaker 的版本 JSON——1.7.10 vanilla JSON 不含
+        // launchwrapper 库，jarmod 派生 jar 无法让 FML 初始化（GTNH 实测 229 个
+        // mod 全不加载）。Tekkit 型（1.2.5 无 installer）保持 loader=None。
+        loader: forge_loader_version.map(|_| "forge".to_string()),
+        loader_version: forge_loader_version.map(str::to_string),
         addons: Vec::new(),
         download_threads: 8,
         version_isolation: true,
@@ -1862,9 +1894,14 @@ async fn run_solder_import(
     copy_technic_content(extract_dir, Path::new(game_dir), version_dir_name)?;
     handle.mark_step("copy-files", "done");
 
-    // === 6. JarMod 注入（Forge/FML 本体从 bin/modpack.jar 进 classpath）===
+    // === 6. JarMod 注入（仅 vanilla 路径：Forge 管线的启动链已含 FML）===
     handle.mark_step("jarmod", "active");
-    if extract_dir.join("bin").join("modpack.jar").is_file() {
+    if forge_loader_version.is_some() {
+        // Forge 安装管线已生成带 launchwrapper + FMLTweaker 的版本 JSON；
+        // 再叠 jarmod 会让 FML 重复挂同一批类（modpack.jar 本体也非 mod 载体），
+        // 跳过注入，bin/ 由 copy_technic_content 剔除。
+        handle.set_current_file("跳过 JarMod（Forge 管线已就绪）...");
+    } else if extract_dir.join("bin").join("modpack.jar").is_file() {
         handle.set_current_file("注入 Forge（整合包内置 modpack.jar）...");
         install_technic_jarmod(extract_dir, Path::new(game_dir), version_dir_name)?;
     } else {
@@ -1898,6 +1935,115 @@ fn solder_mod_zip_path(zips_dir: &Path, index: usize, mod_name: &str) -> PathBuf
         "{index:04}-{}.zip",
         sanitize_instance_name(mod_name)
     ))
+}
+
+/// GTNH 型 Solder 包的 Forge 版本探测（install 前同步执行，一次网络往返）。
+///
+/// 背景（GTNH 实测）：现代 1.7.10 Solder 包的 Forge 本体以 mod 清单内
+/// `modpack/modpack-{mc}-{build}.zip` 分发，Solder build 元数据的 `forge` 字段为
+/// `null`；该 zip 解压出 `bin/modpack.jar`（FML 本体，含 `fmlversion.properties`，
+/// 无 `version.json` / `forgeversion.properties`）。FML Tweaker 需要 launchwrapper
+/// 从 classpath 启动，而 1.7.10 的 vanilla 版本 JSON **不含** launchwrapper 库，
+/// 期3 的「vanilla + jarmod 派生 jar」路径对它不成立——JVM 起的是
+/// `net.minecraft.client.main.Main`，FML 根本不初始化（GTNH 实测：实例显示
+/// 原版、229 个 mod 全不加载）。
+///
+/// 探测链：清单里找 `modpack` 前缀条目 → 下载 zip → `loader_meta_from_modpack_jar`
+/// 读 `fmlbuild.build.number` → 用 `{mc}-{build}` 在 Forge 版本列表（官方 Maven 元数据
+/// 优先，BMCLAPI 回退）中确认存在。任一环节失败返回 `(None, None)`，调用方退回
+/// 期3 原行为（vanilla + jarmod），安装不中断。
+async fn detect_solder_pack_forge(
+    http_client: &reqwest::Client,
+    build: &qomicex_core::models::expansion::technic::TechnicSolderBuild,
+    game_version: &str,
+) -> (Option<String>, Option<String>) {
+    let entry = build
+        .mods
+        .iter()
+        .find(|m| m.name.trim_start_matches("modpack").len() != m.name.len());
+    let Some(entry) = entry else {
+        return (None, None);
+    };
+    let Some(url) = entry
+        .url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return (None, None);
+    };
+
+    // 下载 modpack zip 到临时目录（MD5 有则校验；失败按「探测不出」处理）。
+    // 探测请求不经 DownloadManager（无进度/重试诉求），直接流式落盘。
+    let tmp = std::env::temp_dir().join(format!(
+        "qml-solder-forge-probe-{}.zip",
+        uuid::Uuid::new_v4()
+    ));
+    let probe = async {
+        let mut req = http_client
+            .get(url)
+            .timeout(std::time::Duration::from_secs(120));
+        for (k, v) in technic_download_headers() {
+            req = req.header(k, v);
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?;
+        // modpack zip 仅数 MB（GTNH 实测 2.85 MB），整包入内存可承受。
+        let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+        if let Some(expected) = entry
+            .md5
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            if !solder_md5_matches(&bytes, expected) {
+                return Err("modpack zip MD5 不符".to_string());
+            }
+        }
+        std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+        crate::services::technic::loader_meta_from_modpack_jar(&tmp)
+            .1
+            .ok_or_else(|| "modpack.jar 内无有效的 fmlbuild.build.number".to_string())
+    };
+    let probe_result = probe.await;
+    let _ = std::fs::remove_file(&tmp);
+    let Ok(forge_build) = probe_result else {
+        return (None, None);
+    };
+
+    // 在 Forge 版本列表中确认 {mc}-{build} 存在（get_forge_versions 内部已带
+    // Official→BMCLAPI 自动回退；build 号不在列表里则不交付——宁可不切管线，
+    // 也不给安装器一个必然 404 的版本）。
+    let artifact_version = format!("{game_version}-{forge_build}");
+    let core = crate::services::install_service::build_core(
+        &std::env::temp_dir(),
+        qomicex_core::models::download::DownloadMirror::Official,
+        http_client.clone(),
+    );
+    let loaders = core
+        .installer_provider()
+        .get_available_mod_loaders(
+            game_version,
+            qomicex_core::models::installer::ModLoaderType::Forge,
+        )
+        .await
+        .unwrap_or_default();
+    if loaders
+        .iter()
+        .any(|l| l.version.eq_ignore_ascii_case(&artifact_version))
+    {
+        (Some("forge".to_string()), Some(artifact_version))
+    } else {
+        eprintln!(
+            "[Solder] Forge {artifact_version} 不在版本列表中（候选 {} 条），退回 vanilla+jarmod 路径",
+            loaders.len()
+        );
+        (None, None)
+    }
 }
 
 /// Solder 分发文件 MD5 判定（`run_solder_import` 的 verify 步骤与单测共用）。
