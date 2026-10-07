@@ -606,7 +606,12 @@ impl InstanceService {
         const RETAIN_GRACE: chrono::Duration = INSTALLING_GRACE;
         for inst in &json_instances {
             let key = (inst.game_dir.clone(), inst.name.clone());
-            if seen_keys.contains_key(&key) || scanned_dirs.contains(&inst.game_dir) {
+            // 已在合并段处理过的 key 不再追加（否则宽限期兜底会把同 key 记录
+            // 重复写入结果并回存，且每次同步都会累加）。
+            if seen_keys.contains_key(&key) {
+                continue;
+            }
+            if scanned_dirs.contains(&inst.game_dir) {
                 // 同目录已被扫描：正常实例已在合并段处理；宽限期记录在此兜底。
                 let in_grace = matches!(
                     inst.created_at
@@ -934,6 +939,12 @@ mod tests {
         assert!(
             names.contains(&"Existing"),
             "被扫描的正常实例应保留: {names:?}"
+        );
+        // 扫描命中的实例只允许出现一次（宽限期兜底不得把同 key 记录重复写入）。
+        assert_eq!(
+            names.iter().filter(|n| **n == "Existing").count(),
+            1,
+            "同 key 实例不得重复: {names:?}"
         );
         // 保留下来的记录应保持完整字段（loader/version_isolation 不丢）
         let kept = service

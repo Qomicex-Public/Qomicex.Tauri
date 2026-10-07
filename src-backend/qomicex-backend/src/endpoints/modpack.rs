@@ -1997,12 +1997,24 @@ async fn detect_solder_pack_forge(
             .map_err(|e| e.to_string())?
             .error_for_status()
             .map_err(|e| e.to_string())?;
-        // modpack zip 30~100 MB 级（GTNH 2.8.4 实测），流式落盘。
+        // 大小上限 + 流式 MD5：清单来自远端，响应大小不可信（120s 超时只限时间
+        // 不限大小，恶意/异常源可写满磁盘）；MD5 在写入循环里增量计算，不回读文件。
+        const PROBE_MAX_BYTES: u64 = 512 * 1024 * 1024;
         let file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
         let mut writer = std::io::BufWriter::new(file);
+        let mut hasher = md5::Md5::new();
+        let mut total: u64 = 0;
+        use md5::Digest;
         use std::io::Write;
         let mut resp_stream = resp;
         while let Some(chunk) = resp_stream.chunk().await.map_err(|e| e.to_string())? {
+            total += chunk.len() as u64;
+            if total > PROBE_MAX_BYTES {
+                return Err(format!(
+                    "modpack zip 超过 {PROBE_MAX_BYTES} 字节上限，疑似异常源"
+                ));
+            }
+            Digest::update(&mut hasher, &chunk);
             writer.write_all(&chunk).map_err(|e| e.to_string())?;
         }
         writer.flush().map_err(|e| e.to_string())?;
@@ -2012,8 +2024,8 @@ async fn detect_solder_pack_forge(
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            let bytes = std::fs::read(&tmp).map_err(|e| e.to_string())?;
-            if !solder_md5_matches(&bytes, expected) {
+            let got = format!("{:x}", Digest::finalize(hasher));
+            if !solder_md5_matches(got.as_bytes(), expected) {
                 return Err("modpack zip MD5 不符".to_string());
             }
         }
