@@ -322,3 +322,26 @@ POST /api/modpack/parse-path  {path:"<无 version.json 且无 fmlversion 的包>
 
 **教训**：step id 是**跨仓契约**（后端 Rust → i18n submodule），单仓编译、单仓测试、单仓 typecheck 都发现不了「后端新增了标识、前端/词条没跟上」；以后新增 step / stage 一律先跑护栏。
 
+
+
+### 2026-10-07 更新
+## 12. 期3 缺陷复盘（2026-10-07）：GTNH 型 Solder 包装完显示原版、模组全不加载
+
+**症状**：资源中心安装 GT New Horizons（`mcnewhorizons`，Solder 分发 2.8.4）后任务 completed，实例却显示「原版」，启动后 229 个 mod 全不加载。版本 JSON 实测 `mainClass=net.minecraft.client.main.Main`（vanilla）、无 launchwrapper 库、无 FMLTweaker 参数；`mods/`、`jarmods/modpack.jar` 落盘均完整。
+
+**根因（两条，均实测确认）**：
+
+1. **Solder 管线的 Forge 交付假设只对 1.2.5 成立**。Tekkit 1.2.5 的 FML 不需要 launchwrapper，`modpack.jar` 进 classpath 即生效；1.7.10 的 FML 必须经 launchwrapper 的 FMLTweaker 启动，而 1.7.10 的 **vanilla 版本 JSON 不含 launchwrapper 库**——jarmod 派生 jar 把类塞进 classpath 不等于 FML 初始化。GTNH 的 Solder 元数据 `forge=null`（Forge 本体藏在 mod 清单的 `modpack-1.7.10-10.13.4.1614.zip` → `bin/modpack.jar`，jar 内无 version.json/forgeversion.properties，只有 `fmlversion.properties` 的 `fmlbuild.build.number=1614`），原管线按 `forge=null` 判定走 vanilla。
+2. **安装中实例记录被 sync_from_disk 误删**。管线先 create 记录、后台任务才建版本目录；期间实例列表请求触发 `sync_from_disk` 的 retain 把「目录不存在」的隔离记录当残留清除。日志证据：completed 的实例 `85b237c5-97d` 消失，被磁盘扫描反推的裸记录（丢失 loader/隔离/整合包元数据）取代。
+
+**修复**：
+
+- `services/technic.rs` 新增 `loader_meta_from_modpack_jar`：从解压后的 `bin/modpack.jar` 读 `fmlbuild.build.number`（非数字/缺失返回 None，不造假版本号）。
+- `endpoints/modpack.rs` 新增 `detect_solder_pack_forge`（install 前同步，一次探测）：`build.forge` 有值直接用（Tekkit 1.2.5 兼容）；为 null 时下载 modpack zip（MD5 校验）→ 读 build 号 → **在 Forge 版本列表确认 `{mc}-{build}` 存在**（`get_forge_versions` 自带 Official→BMCLAPI 回退）才交付；任一环节失败回退期3 原行为（vanilla+jarmod），安装不中断。`run_solder_import` 的 install-game 段按探测结果走 Forge 安装管线（`loader=forge`），jarmod 段在 Forge 管线时跳过（FML 已就绪，modpack.jar 也非 mod 载体）。
+- `services/instance.rs`：`GameInstance` 新增 `created_at`（`create()` 写 RFC3339）；`sync_from_disk` 对创建 10 分钟内且版本目录未落的隔离实例给宽限期，不再当残留清除；宽限期外行为不变。
+
+**兼容性保证**：期1/期2 SingleZip 路径（本地导入/古董 JarMod）完全未触碰；Tekkit 型（`forge` 有值或探测不出）逐字保持期3 原行为；探测任一环节失败即回退。期3 原有 3 条单测原样通过。
+
+**回归护栏**：`loader_meta_from_modpack_jar_reads_fml_build`（GTNH 真实属性形态）、`loader_meta_rejects_missing_or_malformed_properties`、`sync_from_disk_grace_period_keeps_installing_isolated_instance`（验证过「抽掉宽限期必失败」）。
+
+**教训**：Solder 包的 Forge 交付形态随 MC 版本代际漂移（1.2.5=裸 jar 可直接进 classpath；1.7.10=必须 launchwrapper+FMLTweaker），「forge 字段为 null」不等于「没有 Forge」——判定 Forge 是否需要安装管线，必须以 mod 清单实际内容为准，元数据字段只是提示。
