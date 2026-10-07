@@ -80,6 +80,10 @@ pub struct GameInstance {
     /// 用户自定义备注名（ENH-01）；为空时实例列表显示原版本名。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remark: Option<String>,
+    /// 记录创建时间（RFC3339）。仅服务端写入，供 sync_from_disk 的
+    /// 「安装中宽限期」判定（整合包管线先建记录后建版本目录）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
 }
 
 impl Default for GameInstance {
@@ -117,6 +121,8 @@ impl Default for GameInstance {
             resolved_game_dir: None,
             custom_group_ids: Vec::new(),
             remark: None,
+            // 记录创建时间（RFC3339）；sync_from_disk 的安装中宽限期判定用。
+            created_at: None,
         }
     }
 }
@@ -148,6 +154,11 @@ pub enum RenameFailure {
     TargetExists(String),
     Io(String),
 }
+
+/// 安装中宽限期：sync_from_disk 对「已创建、版本目录未落」的隔离记录的保留窗口。
+/// 整合包管线先 create 记录、后台任务才建版本目录；常量模块级共享（第 1 步
+/// retain、第 5 步 scanned_dirs 兜底、测试三处同源，防漂移）。
+const MODULE_INSTALLING_GRACE: chrono::Duration = chrono::Duration::minutes(10);
 
 /// 实例服务（对应 C# InstanceService）。
 pub struct InstanceService {
@@ -288,6 +299,12 @@ impl InstanceService {
         let mut guard = self.instances.lock().unwrap_or_else(|p| p.into_inner());
         if instance.id.is_empty() {
             instance.id = new_short_id();
+        }
+        // 创建时间戳：sync_from_disk 据此给「记录已建、版本目录未落」的整合包
+        // 安装留宽限期（宽限期内的隔离记录不当残留清除）。
+        if instance.created_at.is_none() {
+            instance.created_at =
+                Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
         }
         guard.push(instance.clone());
         drop(guard);
@@ -470,15 +487,30 @@ impl InstanceService {
         let mut json_instances = self.get_all();
 
         // 1. 清理残留：版本隔离开启 + 版本目录不存在 → 删除记录
+        //
+        // （常量提为模块级：第 5 步的兜底与测试共用同一值，防两处漂移。）
+        const INSTALLING_GRACE: chrono::Duration = MODULE_INSTALLING_GRACE;
+        let now = chrono::Utc::now();
         json_instances.retain(|inst| {
             let isolation = inst.version_isolation.unwrap_or(global_isolation);
             if !isolation {
                 return true;
             }
-            std::path::Path::new(&inst.game_dir)
+            let dir_exists = std::path::Path::new(&inst.game_dir)
                 .join("versions")
                 .join(&inst.name)
-                .is_dir()
+                .is_dir();
+            if dir_exists {
+                return true;
+            }
+            match inst
+                .created_at
+                .as_deref()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            {
+                Some(t) if now.signed_duration_since(t) < INSTALLING_GRACE => true,
+                _ => false,
+            }
         });
 
         // 2. 跟踪已扫描的游戏目录
@@ -567,12 +599,32 @@ impl InstanceService {
 
         // 5. 将未被扫描的游戏目录的 JSON 实例追加到结果中
         //    （只保留未被扫描的目录的实例，已扫描目录中不存在的 JSON 条目视为残留，不保留）
+        //
+        // ⚠️ 例外：宽限期内的安装中实例必须在**同目录已有其他版本被扫描**时也保留
+        // ——此时第 5 步的 `!scanned_dirs.contains(game_dir)` 会把它排除（目录被
+        // 其它实例扫描命中），等于绕过第 1 步的宽限期（GTNH 评审发现）。
+        const RETAIN_GRACE: chrono::Duration = INSTALLING_GRACE;
         for inst in &json_instances {
             let key = (inst.game_dir.clone(), inst.name.clone());
-            if !seen_keys.contains_key(&key) && !scanned_dirs.contains(&inst.game_dir) {
-                seen_keys.insert(key, result.len());
-                result.push(inst.clone());
+            // 已在合并段处理过的 key 不再追加（否则宽限期兜底会把同 key 记录
+            // 重复写入结果并回存，且每次同步都会累加）。
+            if seen_keys.contains_key(&key) {
+                continue;
             }
+            if scanned_dirs.contains(&inst.game_dir) {
+                // 同目录已被扫描：正常实例已在合并段处理；宽限期记录在此兜底。
+                let in_grace = matches!(
+                    inst.created_at
+                        .as_deref()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()),
+                    Some(t) if now.signed_duration_since(t) < RETAIN_GRACE
+                );
+                if !in_grace {
+                    continue;
+                }
+            }
+            seen_keys.insert(key, result.len());
+            result.push(inst.clone());
         }
 
         // 6. 写回 JSON
@@ -820,6 +872,93 @@ mod tests {
 
     /// 回归：幽灵实例防线。try_delete 正常删目录 → Ok；删除失败 → Err 且记录恢复
     /// （否则残留目录会被 sync_from_disk 反推成幽灵实例复活）。
+    #[test]
+    fn sync_from_disk_grace_period_keeps_installing_isolated_instance() {
+        // GTNH 实测缺陷：整合包管线先 create 记录（版本目录未落盘），此期间
+        // sync_from_disk 的 retain 把记录当残留清掉；任务完成后磁盘扫描反推出
+        // 一条丢失 loader/隔离/整合包元数据的裸记录。宽限期内的「已创建、目录
+        // 未落」隔离记录必须保留。
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home =
+            std::env::temp_dir().join(format!("qomicex-grace-test-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&home);
+        let old_home = std::env::var_os("QOMICEX_HOME");
+        std::env::set_var("QOMICEX_HOME", &home);
+
+        let game_dir = home.join("games").join("mc");
+        let service = InstanceService::new();
+
+        // 刚创建（宽限期内）+ 目录不存在 → 必须保留
+        let installing = service.create(make_instance(
+            "GT New Horizons",
+            game_dir.to_str().unwrap(),
+            Some(true),
+        ));
+        assert!(installing.created_at.is_some(), "create 应写入 created_at");
+
+        // 超过宽限期的记录（目录不存在）→ 仍按残留清理
+        let mut stale = make_instance("Stale", game_dir.to_str().unwrap(), Some(true));
+        stale.created_at = Some(
+            (chrono::Utc::now() - MODULE_INSTALLING_GRACE - chrono::Duration::minutes(1))
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        );
+        service.create(stale);
+
+        // 同 game_dir 下另一个实例已被扫描命中（目录存在）→ 第 5 步的
+        // scanned_dirs 排除不得绕过宽限期（CodeRabbit 评审发现）
+        let scanned_dir = game_dir.join("versions").join("Existing");
+        std::fs::create_dir_all(&scanned_dir).unwrap();
+        service.create(make_instance(
+            "Existing",
+            game_dir.to_str().unwrap(),
+            Some(true),
+        ));
+        let scanned = vec![ScannedVersionInfo {
+            name: "Existing".to_string(),
+            game_version: "1.20.1".to_string(),
+            game_dir: game_dir.to_str().unwrap().to_string(),
+            loader: None,
+            loader_version: None,
+            icon_data: None,
+            modpack_name: None,
+            modpack_version: None,
+            modpack_author: None,
+            modpack_summary: None,
+        }];
+
+        let result = service.sync_from_disk(&scanned);
+        let names: Vec<&str> = result.iter().map(|i| i.name.as_str()).collect();
+        assert!(
+            names.contains(&"GT New Horizons"),
+            "宽限期内的安装中实例不应被清掉（含同目录其它版本被扫描的场景）: {names:?}"
+        );
+        assert!(
+            !names.contains(&"Stale"),
+            "宽限期外的无目录记录仍应按残留清理: {names:?}"
+        );
+        assert!(
+            names.contains(&"Existing"),
+            "被扫描的正常实例应保留: {names:?}"
+        );
+        // 扫描命中的实例只允许出现一次（宽限期兜底不得把同 key 记录重复写入）。
+        assert_eq!(
+            names.iter().filter(|n| **n == "Existing").count(),
+            1,
+            "同 key 实例不得重复: {names:?}"
+        );
+        // 保留下来的记录应保持完整字段（loader/version_isolation 不丢）
+        let kept = service
+            .get_by_id(&installing.id)
+            .expect("宽限期记录应写回 JSON");
+        assert_eq!(kept.version_isolation, Some(true));
+
+        match old_home {
+            Some(v) => std::env::set_var("QOMICEX_HOME", v),
+            None => std::env::remove_var("QOMICEX_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     #[test]
     fn try_delete_recovers_record_when_dir_undeletable() {
         let _guard = ENV_LOCK.lock().unwrap();
