@@ -228,7 +228,7 @@ Windows / Linux / macOS 都要支持。
 
 ## 7. 文档（docs/）
 
-- **ADR 索引**：`docs/junsi-dev-docs/README.md`；编号由**文件名**承载，正文首行标题须与文件名一致；新增从 **109** 起（当前最大 108）。**注意存量编号异常**：`015` 与 `102` 各占两个文件；`003`/`041`/`056`/`057`/`058` 空缺 —— 立项新 ADR 前先核对文件名，不要只按"最大号 +1"
+- **ADR 索引**：`docs/junsi-dev-docs/README.md`；编号由**文件名**承载，正文首行标题须与文件名一致；新增从 **111** 起（当前最大 110）。**注意存量编号异常**：`015` 与 `102` 各占两个文件；`003`/`041`/`056`/`057`/`058` 空缺 —— 立项新 ADR 前先核对文件名，不要只按"最大号 +1"
 - **`4-编码规范/CSharp-规范.md` 已废止**（后端已重写为 Rust，仓库内无 `.cs`）
 - **`2-架构设计/技术选型.md`**：顶部是当前栈，`### 2026-08-09 更新` 是历史快照，改技术栈只改顶部
 - **Issue 模板字段名**改动前必读 `docs/junsi-dev-docs/8-部署运维/GitHub-Issue-模板与自动分类.md`（`issue-triage.yml` 是精确字符串匹配，改字段名会静默失效）
@@ -242,7 +242,7 @@ Windows / Linux / macOS 都要支持。
 - **ESLint 存量**：**30 error / 105 warning**（2026-10-09 实测 `pnpm run lint` 全仓）。清理期间不进 CI 阻断
 - **Prettier**：仓库**全量未格式化**（2026-10-09 实测 `prettier --check .` 有 **522** 个文件不符，另有 2 个 YAML 解析报错）。**不要顺手 `pnpm run format`**，格式化必须是一次独立的 `style:` 提交，全量重排单独排期
 - **无前端单测框架**：`playwright` 仅用于 `scripts/harness/`
-- **hook 历史写法**：`src/pages/Settings.tsx:665,710`（`useExpandAnimation` 在 `map` 回调内）与 `src/plugins/plugin-loader.tsx:152`（`useWebview` 命名像 hook 但在非组件函数里定义/调用）存在 hook 违规，属待修项
+- **hook 历史写法**：`src/pages/Settings.tsx:645,690`（`useExpandAnimation` 在 `map` 回调内）与 `src/plugins/plugin-loader.tsx:66,152`（`useWebview` 命名像 hook 但在非组件函数里定义/调用）存在 hook 违规，属待修项
 
 ---
 
