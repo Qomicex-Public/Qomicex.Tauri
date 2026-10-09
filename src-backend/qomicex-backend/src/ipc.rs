@@ -95,6 +95,7 @@ pub async fn serve(
     }
 }
 
+#[derive(Debug)]
 struct QipcRequest {
     method: Method,
     path: String,
@@ -103,6 +104,16 @@ struct QipcRequest {
 }
 
 async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<Option<QipcRequest>> {
+    read_frame_with(r, FRAME_READ_IDLE_TIMEOUT, FRAME_READ_CHUNK).await
+}
+
+/// [`read_frame`] 的可注入版本：`idle_timeout` / `chunk_size` 可调，供回归测试
+/// 用毫秒级时限覆盖**完整的**帧解析路径（而不是只测其中一段 helper）。
+async fn read_frame_with<R: AsyncRead + Unpin>(
+    r: &mut R,
+    idle_timeout: std::time::Duration,
+    chunk_size: usize,
+) -> std::io::Result<Option<QipcRequest>> {
     // total_len 为 0 或 EOF：客户端未发请求即断开，静默结束
     let total = match read_u32(r).await? {
         None => return Ok(None),
@@ -117,8 +128,8 @@ async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<Option<Q
     }
     let mut buf = vec![0u8; total as usize];
     // 分块读取 + 每块重置空闲超时：只要数据在持续流动就不会超时，避免大帧
-    // 在慢管道上被整帧总时限误杀（详见 FRAME_READ_IDLE_TIMEOUT 注释）。
-    read_frame_body(r, &mut buf).await?;
+    // 在整帧总时限下被误杀（见 FRAME_READ_IDLE_TIMEOUT 注释）。
+    read_frame_body_with(r, &mut buf, idle_timeout, chunk_size).await?;
     let mut cur = &buf[..];
 
     let method_len = read_u8(&mut cur)? as usize;
@@ -221,11 +232,6 @@ async fn read_frame_body_with<R: AsyncRead + Unpin>(
     Ok(())
 }
 
-/// [`read_frame_body_with`] 的生产参数（空闲超时 + 1 MiB 块）。
-async fn read_frame_body<R: AsyncRead + Unpin>(r: &mut R, buf: &mut [u8]) -> std::io::Result<()> {
-    read_frame_body_with(r, buf, FRAME_READ_IDLE_TIMEOUT, FRAME_READ_CHUNK).await
-}
-
 async fn handle_conn<S>(app: Router, mut io: S) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -312,51 +318,44 @@ mod tests {
     async fn slow_but_progressing_frame_is_not_timed_out() {
         use tokio::io::AsyncWriteExt;
 
-        let (mut client, mut server) = tokio::io::duplex(64);
-        let total = 10usize;
-        let payload = vec![7u8; total];
-        let expect = payload.clone();
+        let (mut client, mut server) = tokio::io::duplex(1024);
+        // 构造一个合法的完整请求帧（长度前缀 + method/path/headers/body），
+        // 通过 read_frame_with 走**真实**的帧解析路径（而非只测其中的 helper），
+        // 这样即便有人把 read_frame 改回整帧总超时，本测试也会失败。
+        let frame = build_request("GET", "/api/ping", &[], b"");
+        let expect = frame.clone();
 
         tokio::spawn(async move {
-            for b in payload {
+            // 逐字节、每字节间隔 40ms：总耗时远超下面的总时限，但每次间隔都短于空闲时限
+            for b in frame {
                 client.write_all(&[b]).await.unwrap();
                 tokio::time::sleep(std::time::Duration::from_millis(40)).await;
             }
         });
 
-        let mut buf = vec![0u8; total];
-        // chunk_size=1：每字节一次 read，逐块重置空闲超时
-        let r = read_frame_body_with(
+        let r = read_frame_with(
             &mut server,
-            &mut buf,
             std::time::Duration::from_millis(200),
-            1,
+            1, // 每字节一次 read，逐块重置空闲超时
         )
         .await;
-        assert!(r.is_ok(), "持续有数据的慢帧不应超时: {r:?}");
-        assert_eq!(buf, expect);
+        let req = r.expect("持续有数据的慢帧不应超时").expect("应有请求");
+        assert_eq!(req.path, "/api/ping");
+        assert!(expect.len() > 9, "帧应足够长以跨越总时限");
     }
 
     /// 反向护栏：真正卡死的连接（声明长度后不再发字节）必须被空闲超时回收。
     #[tokio::test]
     async fn stalled_frame_is_timed_out() {
-        // 服务端只发前 2 字节后挂起，不再发剩余
+        use tokio::io::AsyncWriteExt;
         let (mut client, mut server) = tokio::io::duplex(64);
         tokio::spawn(async move {
-            use tokio::io::AsyncWriteExt;
-            client.write_all(&[1, 2]).await.unwrap();
-            // 之后既不写也不关，模拟卡死
+            // 声明 16 字节的帧，但只发长度前缀后就挂起
+            client.write_all(&16u32.to_le_bytes()).await.unwrap();
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
         });
 
-        let mut buf = vec![0u8; 16];
-        let r = read_frame_body_with(
-            &mut server,
-            &mut buf,
-            std::time::Duration::from_millis(150),
-            1,
-        )
-        .await;
+        let r = read_frame_with(&mut server, std::time::Duration::from_millis(150), 1).await;
         let err = r.expect_err("卡死的帧必须超时");
         assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
     }
@@ -364,23 +363,42 @@ mod tests {
     /// 对端在帧中途关闭 → 立即报截断，不等超时。
     #[tokio::test]
     async fn peer_closed_mid_frame_is_truncated() {
+        use tokio::io::AsyncWriteExt;
         let (mut client, mut server) = tokio::io::duplex(64);
         tokio::spawn(async move {
-            use tokio::io::AsyncWriteExt;
+            client.write_all(&16u32.to_le_bytes()).await.unwrap();
             client.write_all(&[1, 2, 3]).await.unwrap();
             drop(client); // 关闭
         });
 
-        let mut buf = vec![0u8; 16];
-        let r = read_frame_body_with(
-            &mut server,
-            &mut buf,
-            std::time::Duration::from_millis(5000),
-            1,
-        )
-        .await;
+        let r = read_frame_with(&mut server, std::time::Duration::from_millis(5000), 1).await;
         let err = r.expect_err("中途关闭必须报错");
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    /// 正向护栏：正常快帧仍应被完整解析（method / path / headers / body）。
+    #[tokio::test]
+    async fn complete_frame_round_trips_through_real_parser() {
+        use tokio::io::AsyncWriteExt;
+        let (mut client, mut server) = tokio::io::duplex(4096);
+        let frame = build_request(
+            "POST",
+            "/api/x",
+            &[("content-type", "application/json")],
+            b"{}",
+        );
+        tokio::spawn(async move {
+            client.write_all(&frame).await.unwrap();
+        });
+
+        let req = read_frame_with(&mut server, std::time::Duration::from_secs(5), 1 << 20)
+            .await
+            .expect("应解析成功")
+            .expect("应有请求");
+        assert_eq!(req.method, axum::http::Method::POST);
+        assert_eq!(req.path, "/api/x");
+        assert_eq!(req.headers.len(), 1);
+        assert_eq!(req.body, b"{}");
     }
 
     fn test_app() -> Router {
