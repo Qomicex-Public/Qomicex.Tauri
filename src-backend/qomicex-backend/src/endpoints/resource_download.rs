@@ -117,12 +117,12 @@ pub(crate) struct TaskSnapshot {
 /// Snapshot of all tracked download tasks (id -> snapshot), for the progress
 /// SSE stream so the download center reflects live resource-download states.
 pub(crate) fn download_snapshots() -> Vec<(u64, TaskSnapshot)> {
-    task_registry()
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|(id, s)| (*id, s.clone()))
-        .collect()
+    let mut reg = task_registry().lock().unwrap();
+    // 读取时顺带清理：只在插入时清理的话，若最后一批下载结束后不再有新任务，
+    // 过期终态会一直留在 SSE 载荷里（#229 评审）。此函数由进度 SSE 每 300ms 调用，
+    // 等于天然的周期清理点。
+    prune_terminal_snapshots(&mut reg);
+    reg.iter().map(|(id, s)| (*id, s.clone())).collect()
 }
 
 /// 终态快照在注册表里的保留时长（#229）。
@@ -513,8 +513,12 @@ async fn start(
     State(state): State<SharedState>,
     Json(req): Json<StartDownloadRequest>,
 ) -> ApiResult<Json<DownloadStartResponse>> {
+    // 管理器只取一次并复用：若 ensure_watcher 与 add 之间发生热替换（PUT /settings），
+    // 分别 load_full 会订阅旧实例却把任务提交给新实例 —— 新实例没有订阅者、事件也
+    // 不会重放，该任务的快照会一直停在 queued（#228 评审）。
+    let mgr = state.download_manager.load_full();
     ensure_watcher(
-        state.download_manager.load_full(),
+        Arc::clone(&mgr),
         crate::state::download_manager_generation().load(std::sync::atomic::Ordering::SeqCst),
     );
 
@@ -590,16 +594,10 @@ async fn start(
     let id = match world_base {
         Some(base) => {
             // 挑名 + 入队 + 登记在同一把锁内，避免并发同名下载挑到同一个名字。
-            add_world_atomically(
-                &state.download_manager.load_full(),
-                task,
-                full_path,
-                target_dir.clone(),
-                &base,
-            )
-            .0
+            add_world_atomically(&mgr, task, full_path, target_dir.clone(), &base).0
         }
-        None => state.download_manager.load_full().add(task),
+        // 复用本次请求开头取到的同一实例（见该处注释：不能二次 load_full）
+        None => mgr.add(task),
     };
 
     let file_name = req.file_name.clone();
@@ -632,8 +630,11 @@ async fn download_to(
     State(state): State<SharedState>,
     Json(req): Json<DownloadToRequest>,
 ) -> ApiResult<Json<DownloadToResponse>> {
+    // 管理器只取一次并复用（同 start：避免 ensure_watcher 与 add 之间热替换
+    // 造成「订阅旧实例、任务进新实例」而一直 queued）
+    let mgr = state.download_manager.load_full();
     ensure_watcher(
-        state.download_manager.load_full(),
+        Arc::clone(&mgr),
         crate::state::download_manager_generation().load(std::sync::atomic::Ordering::SeqCst),
     );
 
@@ -707,8 +708,9 @@ async fn download_to(
     };
 
     let id = match intent {
-        Some(intent) => add_with_intent(&state.download_manager.load_full(), task, intent),
-        None => state.download_manager.load_full().add(task),
+        Some(intent) => add_with_intent(&mgr, task, intent),
+        // 复用同一实例（不能二次 load_full）
+        None => mgr.add(task),
     };
 
     let path = target.to_string_lossy().into_owned();

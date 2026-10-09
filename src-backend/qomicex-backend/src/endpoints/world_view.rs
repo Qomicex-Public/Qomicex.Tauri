@@ -126,7 +126,7 @@ async fn open(
     Ok(Json(OpenResponse { key: req.key, info }))
 }
 
-/// POST /instance/{id}/world/close?id=<key>
+/// POST /instance/{id}/world/close?key=<key>
 ///
 /// 关闭会话并释放区块缓存。带 `key` 时只关该槽位（多窗口场景下不会误关其他窗口
 /// 的会话）；不带则关闭全部（兼容旧调用方）。

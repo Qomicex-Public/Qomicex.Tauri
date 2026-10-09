@@ -226,17 +226,18 @@ fn version_parse(version: &str) -> Vec<i32> {
 /// 非空、≤128、不含 `..`、只允许 `[A-Za-z0-9._-]`（白名单同时挡住分隔符、
 /// 盘符与绝对路径）。
 ///
-/// 额外拒绝**以 `.` 开头或结尾**的 id：
-/// - 单独的 `"."` 经 `Path::join` 解析后就是 `plugins_dir` 本身（不是某个插件目录），
-///   且 `scan_plugins` 会跳过以 `.` 开头的目录 —— 这种 id 既非法又会污染 plugins 根；
-/// - 结尾的 `.` 在 Windows 上会被文件系统折叠（`plugins/foo.` 即 `plugins/foo`），
-///   可借此覆盖同名插件目录。
+/// 额外拒绝三类「能装上但扫不出来 / 会污染 plugins 根」的形态：
+/// - 单独或结尾的 `.`：`plugins_dir.join(".")` 解析后就是 plugins 根目录本身
+///   （不是某个插件目录）；结尾 `.` 在 Windows 上还会被文件系统折叠，可覆盖同名插件。
+/// - 以 `.` 开头：`scan_plugins` 视为内部临时目录并跳过，装了也不会出现在列表里。
+/// - 含 `.bak-`：同上，会被当成升级快照跳过。安装成功却查无此插件，比直接拒绝更难排查。
 fn validate_plugin_id(id: &str) -> Result<(), ApiError> {
     let safe = !id.is_empty()
         && id.len() <= 128
         && !id.contains("..")
         && !id.starts_with('.')
         && !id.ends_with('.')
+        && !id.contains(".bak-")
         && id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
@@ -1018,8 +1019,10 @@ mod tests {
     /// 回归（#225）：`install_from_dir` 过去只做 `plugins_dir.join(&manifest.id)`，
     /// 没有 `install_from_package` 那套 id 校验 → 恶意 manifest 可把内容写到 plugins/ 之外。
     ///
-    /// 含 `.` 与 `foo.`：`plugins_dir.join(".")` 解析后就是 plugins 根目录本身，
-    /// 结尾的 `.` 在 Windows 上会被文件系统折叠（可覆盖 `foo` 插件）。
+    /// 含 `.` / `foo.` / `.foo` / `demo.bak-test`：
+    /// - `plugins_dir.join(".")` 解析后就是 plugins 根目录本身；
+    /// - 结尾 `.` 在 Windows 上被文件系统折叠（可覆盖 `foo` 插件）；
+    /// - 以 `.` 开头或含 `.bak-` 的目录会被 scan_plugins 跳过 → 装上却查无此插件。
     #[test]
     fn install_from_dir_rejects_path_traversal_id() {
         for id in [
@@ -1033,6 +1036,7 @@ mod tests {
             ".",
             "foo.",
             ".foo",
+            "demo.bak-test",
         ] {
             let (tmp, _guard) = make_temp_root();
             let src = tmp.join("src");
@@ -1049,6 +1053,35 @@ mod tests {
             assert!(
                 !tmp.join("manifest.json").exists(),
                 "id={id} 逃逸出了 plugins 目录"
+            );
+        }
+    }
+
+    /// 一致性护栏：**任何通过 `validate_plugin_id` 的 id，其目录名都不能被
+    /// `scan_plugins` 当作内部目录跳过**。否则安装返回成功、插件列表里却查不到。
+    ///
+    /// 这两处规则分别在 validate（安装入口）与 is_internal_plugin_dir（扫描）里，
+    /// 是历史 bug 的来源（`.` 开头、含 `.bak-` 的 id 都曾能装上却扫不出来）。
+    #[test]
+    fn accepted_ids_are_always_scannable() {
+        // 这些必须被拒（一装上就会被扫描跳过或落到 plugins 根）
+        for bad in [".foo", "demo.bak-test", ".", "..", "foo."] {
+            assert!(
+                validate_plugin_id(bad).is_err(),
+                "{bad} 应被 validate_plugin_id 拒绝"
+            );
+        }
+        // 这些必须被接受，且对应目录不得被判定为内部目录
+        for good in [
+            "hello-plugin",
+            "dev.test.wasm",
+            "com.qomicex.demo",
+            "my_plugin-1.0",
+        ] {
+            assert!(validate_plugin_id(good).is_ok(), "{good} 应被接受");
+            assert!(
+                !is_internal_plugin_dir(good),
+                "{good} 通过校验却会被 scan_plugins 跳过"
             );
         }
     }

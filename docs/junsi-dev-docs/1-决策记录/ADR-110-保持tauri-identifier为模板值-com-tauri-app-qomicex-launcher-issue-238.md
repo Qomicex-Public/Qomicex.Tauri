@@ -12,7 +12,7 @@ issue #238 指出 `src-tauri/tauri.conf.json` 的 `identifier` 仍是 Tauri 模�
 
 ## 决策
 
-本轮**保持不变**，维持 `com.tauri-app.qomicex-launcher`。理由：当前处于 beta 阶段但已有实际用户数据，改动 identifier 而不配套迁移会让老用户配置失效；而数据目录迁移（复制 + 校验 + 失败回滚）是一个独立特性，不应捆绑在 #238 的配置漂移修复中。本轮只做无用户可见后果的三项（权限表收敛、Tailwind preset 合并、theme 双写收敛、npm→pnpm），identifier 单独登记为待决策项。未来若要迁移，需同时实现：旧 identifier 目录探测 → 复制到新目录 → 校验完整性 → 失败回滚，并在发布说明中提示。
+本轮**保持不变**，维持 `com.tauri-app.qomicex-launcher`。理由：当前处于 beta 阶段但已有实际用户数据，改动 identifier 而不配套迁移会让老用户配置失效；而数据目录迁移（复制 + 校验 + 失败回滚）是一个独立特性，不应捆绑在 #238 的配置漂移修复中。本轮只做无用户可见后果的四项（权限表收敛、Tailwind preset 合并、theme 双写收敛、npm→pnpm），identifier 单独登记为待决策项。未来若要迁移，需同时实现：旧 identifier 目录探测 → 复制到新目录 → 校验完整性 → 失败回滚，并在发布说明中提示。
 
 ## 备选方案
 

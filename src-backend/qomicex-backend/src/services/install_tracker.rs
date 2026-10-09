@@ -247,6 +247,26 @@ impl InstallHandle {
         guard.terminal_at.map(|t| now.saturating_duration_since(t))
     }
 
+    /// 是否应继续留在 `InstallTracker.states` 中。
+    ///
+    /// 进行中 → 保留。终态 → 保留 [`REGISTRY_RETENTION`] 窗口：必须显著长于
+    /// [`TERMINAL_RETENTION`]，因为 `completed` 会**立刻**退出 SSE，前端随即回查
+    /// `get_state` 补正卡片终态；窗口太短会让那次回查取不到。
+    fn should_remain_in_registry(&self, now: std::time::Instant) -> bool {
+        let status = {
+            let guard = self.0.inner.lock().unwrap_or_else(|p| p.into_inner());
+            guard.status.clone()
+        };
+        if !matches!(status.as_str(), "completed" | "failed" | "cancelled") {
+            return true;
+        }
+        match self.terminal_age(now) {
+            Some(age) => age <= REGISTRY_RETENTION,
+            // 终态却无时刻（不应发生）：保守回收，避免永久滞留
+            None => false,
+        }
+    }
+
     fn broadcast(&self) {
         let snap = self.snapshot();
         let _ = self.0.tx.send(snap);
@@ -278,6 +298,13 @@ pub struct ProgressField {
 /// 这里给一个保留窗口：窗口内失败原因照常可见，窗口后不再推送；
 /// 失败详情仍可由 `/instance/{id}/install/progress` 取到（该端点不受本过滤影响）。
 const TERMINAL_RETENTION: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// 终态句柄在 `InstallTracker.states` 里的回收窗口（必须 > [`TERMINAL_RETENTION`]）。
+///
+/// `completed` 任务会立刻退出 SSE，前端随即回查 `get_state` 把卡片补正为已完成
+/// （见 `get_all_active` 注释），因此句柄必须比 SSE 保留期活得更久。用 30 分钟：
+/// 足以覆盖那次回查，又让长期运行会话的注册表有确定上界。
+const REGISTRY_RETENTION: std::time::Duration = std::time::Duration::from_secs(1800);
 
 impl ProgressField {
     fn to_progress(&self, instance_id: &str, kind: &str, is_paused: bool) -> InstallProgress {
@@ -646,19 +673,20 @@ impl InstallTracker {
     ///
     /// 失败详情在窗口后仍可查：`/instance/{id}/install/progress` 直接用
     /// `get_state`，不经过本过滤。
+    ///
+    /// 顺带回收**超过保留窗口**的终态句柄（本方法由进度 SSE 每 300ms 调用，等于
+    /// 一个天然的周期清理点）。只过滤返回值而不回收的话，`states` 与
+    /// `clone_handles()` 的扫描会随历史实例数一直增长（#229 评审）。
+    ///
+    /// 为什么过了窗口才回收：前端依赖 `get_state` 在任务离开 SSE 后仍能取到终态
+    /// —— DownloadCenter 的补正逻辑（`completed` 被 SSE 剔除后回查该端点，把卡片从
+    /// 「下载中」改成「已完成」）。该回查每个实例只做一次、发生在任务刚离开 SSE 的
+    /// 数秒内，5 分钟窗口足够覆盖；此后回收不会影响它。
     pub fn get_all_active(&self) -> Vec<InstallProgress> {
         let now = std::time::Instant::now();
-        self.clone_handles()
-            .into_iter()
-            .filter_map(|h| {
-                let snapshot = h.snapshot();
-                if should_keep_in_active(&snapshot.status, h.terminal_age(now)) {
-                    Some(snapshot)
-                } else {
-                    None
-                }
-            })
-            .collect()
+        let mut guard = self.states.lock().unwrap_or_else(|p| p.into_inner());
+        guard.retain(|_, h| h.should_remain_in_registry(now));
+        guard.values().map(|h| h.snapshot()).collect()
     }
 
     /// 列出全部任务（含终态）。
