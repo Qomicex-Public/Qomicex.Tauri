@@ -1,3 +1,13 @@
+import preset from '@qomicex/plugin-ui/tailwind-preset'
+
+/**
+ * 宿主（主仓库）Tailwind 配置。
+ *
+ * 颜色 / 圆角 / keyframes / animation 由 `@qomicex/plugin-ui/tailwind-preset`
+ * 单一提供（`presets` 会与本地 `theme.extend` 合并），不再各抄一份 —— 此前两份
+ * 拷贝已经漂移（`borderRadius.xl` 为 +2px，preset 为 +4px），宿主与插件包对同一个
+ * `rounded-xl` 定义不同。统一取 preset 的 +4px。
+ */
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
@@ -7,81 +17,12 @@ export default {
     "./node_modules/@qomicex/plugin-ui/dist/**/*.js",
   ],
   darkMode: "class",
+  presets: [preset],
   theme: {
     extend: {
-      colors: {
-        border: "hsl(var(--border))",
-        input: "hsl(var(--input))",
-        ring: "hsl(var(--ring))",
-        background: "hsl(var(--background))",
-        foreground: "hsl(var(--foreground))",
-        primary: {
-          DEFAULT: "hsl(var(--primary))",
-          foreground: "hsl(var(--primary-foreground))",
-        },
-        secondary: {
-          DEFAULT: "hsl(var(--secondary))",
-          foreground: "hsl(var(--secondary-foreground))",
-        },
-        destructive: {
-          DEFAULT: "hsl(var(--destructive))",
-          foreground: "hsl(var(--destructive-foreground))",
-        },
-        muted: {
-          DEFAULT: "hsl(var(--muted))",
-          foreground: "hsl(var(--muted-foreground))",
-        },
-        accent: {
-          DEFAULT: "hsl(var(--accent))",
-          foreground: "hsl(var(--accent-foreground))",
-        },
-        card: {
-          DEFAULT: "hsl(var(--card))",
-          foreground: "hsl(var(--card-foreground))",
-        },
-        popover: {
-          DEFAULT: "hsl(var(--popover))",
-          foreground: "hsl(var(--popover-foreground))",
-        },
-      },
-      borderRadius: {
-        xl: "calc(var(--radius) + 2px)",
-        lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
-      },
+      // preset 不含缓动曲线（插件包内部使用 CSS 直接书写），仅宿主侧保留。
       transitionTimingFunction: {
         'out-expo': 'cubic-bezier(0.16, 1, 0.3, 1)',
-      },
-      keyframes: {
-        'sidebar-indicator': {
-          '0%': { transform: 'scaleX(0)' },
-          '100%': { transform: 'scaleX(1)' },
-        },
-        'zoom-fade-in': {
-          from: { opacity: '0', transform: 'scale(0.95)' },
-          to: { opacity: '1', transform: 'scale(1)' },
-        },
-        'slide-in-right': {
-          from: { opacity: '0', transform: 'translateX(1rem)' },
-          to: { opacity: '1', transform: 'translateX(0)' },
-        },
-        'label-swap': {
-          from: { opacity: '0', transform: 'translateY(4px)' },
-          to: { opacity: '1', transform: 'translateY(0)' },
-        },
-        'focus-glow': {
-          '0%': { boxShadow: '0 0 0 0 hsl(var(--ring) / 0.5)' },
-          '70%': { boxShadow: '0 0 0 4px hsl(var(--ring) / 0.12)' },
-          '100%': { boxShadow: '0 0 0 6px hsl(var(--ring) / 0)' },
-        },
-      },
-      animation: {
-        'sidebar-indicator': 'sidebar-indicator 200ms cubic-bezier(0.16, 1, 0.3, 1)',
-        'zoom-fade-in': 'zoom-fade-in calc(150ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.16, 1, 0.3, 1)',
-        'slide-in-right': 'slide-in-right calc(200ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.16, 1, 0.3, 1)',
-        'label-swap': 'label-swap calc(180ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.16, 1, 0.3, 1)',
-        'focus-glow': 'focus-glow calc(450ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.16, 1, 0.3, 1)',
       },
     },
   },
