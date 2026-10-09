@@ -43,27 +43,48 @@ pub struct World {
     pub player: Option<PlayerInfo>,
 }
 
+/// Anvil region 文件的位置表（location table）长度：1024 项 × 4 字节 = 4 KiB。
+/// 每项第 4 个字节是扇区数，非 0 表示该区块存在。计数只需这 4 KiB。
+const REGION_HEADER_LEN: usize = 4096;
+
+/// 统计目录下的 `.mca` 文件数与其中的区块总数。
+///
+/// 只读每个文件的**头部 4 KiB**（位置表），不再整文件读入：`.mca` 单个可达数 MB
+/// 至数十 MB，此前 `std::fs::read` 会把整个文件读进内存，而实际只用前 4 KiB，
+/// 大存档 open 时的峰值内存与耗时都与 region 文件总大小成正比（#233）。
 fn count_regions(dir: &Path) -> (u32, u32) {
+    use std::io::Read;
+
     let mut files = 0u32;
     let mut chunks = 0u32;
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return (0, 0),
     };
+    let mut header = [0u8; REGION_HEADER_LEN];
     for e in entries.flatten() {
         let p = e.path();
         if p.extension().and_then(|x| x.to_str()) != Some("mca") {
             continue;
         }
         files += 1;
-        if let Ok(data) = std::fs::read(&p) {
-            if data.len() >= 8192 {
-                for i in 0..1024 {
-                    let cnt = data[i * 4 + 3];
-                    if cnt != 0 {
-                        chunks += 1;
-                    }
-                }
+        // 保留旧实现的长度门槛（>= 8192：头部 4 KiB + 至少一个扇区），只把
+        // 「整文件读入」换成「读头部 4 KiB」——计数只用到位置表，语义不变。
+        let Ok(meta) = std::fs::metadata(&p) else {
+            continue;
+        };
+        if meta.len() < 8192 {
+            continue;
+        }
+        let Ok(mut f) = std::fs::File::open(&p) else {
+            continue;
+        };
+        if f.read_exact(&mut header).is_err() {
+            continue;
+        }
+        for i in 0..1024 {
+            if header[i * 4 + 3] != 0 {
+                chunks += 1;
             }
         }
     }

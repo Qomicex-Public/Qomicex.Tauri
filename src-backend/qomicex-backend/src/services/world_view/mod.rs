@@ -34,10 +34,10 @@ use world::{World, WorldInfo};
 
 /// 世界预览会话：领域世界 + 瓦片区块缓存。
 ///
-/// 同一时间只有一个会话（与 `AppState` 的单例语义一致）；前端带新存档时
-/// 整体替换。`key` 由前端生成并写进瓦片 URL，用于隔离浏览器缓存。
+/// 不再自带 `key`：会话表（[`Sessions::map`]）本身以 `key` 为索引，字段与索引
+/// 重复只会产生「哪个才是权威」的歧义。`key` 由前端生成并写进瓦片 URL，
+/// 用于隔离不同存档与浏览器缓存。
 pub struct WorldSession {
-    pub key: String,
     pub world: World,
     /// `Arc` 以便瓦片请求克隆后释放锁再渲染——跨 `render_tile` 持锁会把
     /// 前端 6 路并发串行化（上游实测仅 0.94x 加速）。
@@ -45,10 +45,40 @@ pub struct WorldSession {
 }
 
 /// 世界预览服务（注册进 `AppState`）。
+///
+/// 会话按 `key` 分槽（不再全局单例）：多窗口（主窗口 + 子窗口 / 插件窗口）
+/// 同时预览不同存档时互不影响，此前后打开的会顶掉前一个，前一个的瓦片请求
+/// 随即失败（#233）。
 #[derive(Default)]
 pub struct WorldViewService {
-    session: Mutex<Option<WorldSession>>,
+    sessions: Mutex<Sessions>,
 }
+
+/// 分槽会话表 + LRU 顺序（最近使用在末尾）。
+#[derive(Default)]
+struct Sessions {
+    map: std::collections::HashMap<String, WorldSession>,
+    /// 最近使用顺序；容量上限见 [`MAX_SESSIONS`]。
+    lru: std::collections::VecDeque<String>,
+}
+
+impl Sessions {
+    /// 把 `key` 标记为最近使用（存在时）。不存在的 key 不登记，
+    /// 避免 tile/probe 对未打开存档的请求把 LRU 撑大。
+    fn touch(&mut self, key: &str) {
+        if !self.map.contains_key(key) {
+            return;
+        }
+        self.lru.retain(|k| k != key);
+        self.lru.push_back(key.to_string());
+    }
+}
+
+/// 同时保留的会话数上限。
+///
+/// 每个会话持有一份区块缓存（约 78 MB，见 `CACHE_CAPACITY`），故必须有上限；
+/// 多窗口预览的并发数很小（2-4），取 4 足够且内存可控。超出按 LRU 淘汰。
+const MAX_SESSIONS: usize = 4;
 
 /// 瓦片渲染结果。`has_data == false` 表示该瓦片覆盖区域没有任何已生成区块，
 /// 前端据此显示棋盘格占位，与「仍在加载」区分。
@@ -75,26 +105,51 @@ impl WorldViewService {
         Self::default()
     }
 
-    /// 打开存档并替换当前会话。`key` 由调用方生成（前端哈希存档路径）。
+    /// 打开存档并在 `key` 槽位建立会话（同 key 覆盖）。
+    ///
+    /// `key` 由调用方生成（前端哈希存档路径）。
     pub fn open(&self, key: String, save_dir: &Path) -> Result<WorldInfo, String> {
         let w = world::open_world(save_dir, None)?;
         let info = w.info();
         let pal = palette::Palette::load(&w.instance_root, &w.level_dat)
             .unwrap_or_else(|_| palette::Palette::empty());
         let cache = Arc::new(TileCache::new(pal, CACHE_CAPACITY));
-        *self.session.lock().unwrap() = Some(WorldSession {
-            key,
-            world: w,
-            cache,
-        });
-        // 上一个世界的 region 句柄指向不同的文件。
+        {
+            let mut sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
+            sessions
+                .map
+                .insert(key.clone(), WorldSession { world: w, cache });
+            // 触碰 LRU 并淘汰超限的槽位
+            sessions.lru.retain(|k| k != &key);
+            sessions.lru.push_back(key.clone());
+            while sessions.lru.len() > MAX_SESSIONS {
+                if let Some(evicted) = sessions.lru.pop_front() {
+                    sessions.map.remove(&evicted);
+                }
+            }
+        }
+        // 新会话要读的 region 文件可能与缓存中的句柄不同（换了存档/维度），
+        // 且打开动作本身可能发生在存档文件变化之后。
         region::clear_region_cache();
         Ok(info)
     }
 
-    /// 关闭当前会话（释放区块缓存）。
-    pub fn close(&self) {
-        *self.session.lock().unwrap() = None;
+    /// 关闭会话。`key` 为 `None` 时关闭全部（端点语义：前端一个对话框只开一个会话，
+    /// 关闭时不带 key）。
+    pub fn close(&self, key: Option<&str>) {
+        {
+            let mut sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
+            match key {
+                Some(k) => {
+                    sessions.map.remove(k);
+                    sessions.lru.retain(|x| x != k);
+                }
+                None => {
+                    sessions.map.clear();
+                    sessions.lru.clear();
+                }
+            }
+        }
         region::clear_region_cache();
     }
 
@@ -116,11 +171,9 @@ impl WorldViewService {
         // 只在这一段持锁：取出渲染所需的全部数据后立即释放，几十毫秒的
         // surface 扫描在锁外进行。
         let (cache, region_dir, ymax) = {
-            let guard = self.session.lock().unwrap();
-            let session = guard.as_ref().ok_or("尚未打开任何存档")?;
-            if session.key != key {
-                return Err("瓦片所属存档与当前会话不符".into());
-            }
+            let mut guard = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
+            guard.touch(key);
+            let session = guard.map.get(key).ok_or("尚未打开任何存档")?;
             let dim_info = session
                 .world
                 .dimension(dim)
@@ -151,11 +204,9 @@ impl WorldViewService {
         use render::{BlockRef, BlockRefRef};
 
         let (cache, region_dir, ymax) = {
-            let guard = self.session.lock().unwrap();
-            let session = guard.as_ref().ok_or("尚未打开任何存档")?;
-            if session.key != key {
-                return Err("瓦片所属存档与当前会话不符".into());
-            }
+            let mut guard = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
+            guard.touch(key);
+            let session = guard.map.get(key).ok_or("尚未打开任何存档")?;
             let dim_info = session
                 .world
                 .dimension(dim)
@@ -210,6 +261,26 @@ const CACHE_CAPACITY: usize = 8192;
 mod tests {
     use super::*;
 
+    /// 构造一个只含路径与空调色板的 `World`（分槽逻辑不依赖真实存档内容）。
+    fn stub_world(name: &str) -> World {
+        World {
+            save_dir: PathBuf::from(format!("/tmp/{name}")),
+            instance_root: PathBuf::from("/tmp"),
+            level_dat: PathBuf::from(format!("/tmp/{name}/level.dat")),
+            dimensions: Vec::new(),
+            palette: palette::Palette::empty(),
+            waypoints: Vec::new(),
+            player: None,
+        }
+    }
+
+    fn stub_session(key: &str) -> WorldSession {
+        WorldSession {
+            world: stub_world(key),
+            cache: Arc::new(TileCache::new(palette::Palette::empty(), 8)),
+        }
+    }
+
     /// 未打开存档时必须报错，而不是 panic 或返回空白瓦片。
     #[test]
     fn tile_without_open_session_is_an_error() {
@@ -231,5 +302,88 @@ mod tests {
         assert!(svc
             .tile("k1", 0, 0, 0, 0, None, render::RenderOpts::default())
             .is_err());
+    }
+
+    /// 回归（#233）：会话按 key 分槽，打开新存档不得顶掉其他槽位。
+    ///
+    /// 旧实现只有一个会话槽位，多窗口分别预览不同存档时后打开的会顶掉前一个，
+    /// 前一个窗口的瓦片请求随即失败。
+    #[test]
+    fn sessions_are_slotted_per_key() {
+        let svc = WorldViewService::new();
+        {
+            let mut g = svc.sessions.lock().unwrap();
+            g.map.insert("ka".into(), stub_session("ka"));
+            g.map.insert("kb".into(), stub_session("kb"));
+            g.lru.push_back("ka".into());
+            g.lru.push_back("kb".into());
+        }
+
+        // 两个槽位同时存在（旧实现这里只会剩一个）
+        {
+            let g = svc.sessions.lock().unwrap();
+            assert_eq!(g.map.len(), 2, "两个 key 必须各自持有会话");
+            assert!(g.map.contains_key("ka"));
+            assert!(g.map.contains_key("kb"));
+        }
+
+        // 关闭其中一个不影响另一个
+        svc.close(Some("ka"));
+        {
+            let g = svc.sessions.lock().unwrap();
+            assert!(!g.map.contains_key("ka"), "ka 应被关闭");
+            assert!(g.map.contains_key("kb"), "kb 不得被连带关闭");
+        }
+
+        // 关闭全部
+        svc.close(None);
+        assert!(svc.sessions.lock().unwrap().map.is_empty());
+    }
+
+    /// `open` 的 LRU 淘汰：超过 MAX_SESSIONS 时移除最久未用槽位（避免缓存无界增长）。
+    #[test]
+    fn sessions_are_evicted_by_lru_cap() {
+        let svc = WorldViewService::new();
+        {
+            let mut g = svc.sessions.lock().unwrap();
+            for i in 0..(MAX_SESSIONS + 3) {
+                let k = format!("k{i}");
+                g.map.insert(k.clone(), stub_session(&k));
+                g.lru.push_back(k);
+            }
+            // 与 WorldViewService::open 内的淘汰逻辑一致
+            while g.lru.len() > MAX_SESSIONS {
+                if let Some(evicted) = g.lru.pop_front() {
+                    g.map.remove(&evicted);
+                }
+            }
+            assert_eq!(g.map.len(), MAX_SESSIONS, "必须按上限淘汰");
+            assert!(!g.map.contains_key("k0"), "最久未用的应被淘汰");
+            assert!(g.map.contains_key(&format!("k{}", MAX_SESSIONS + 2)));
+        }
+    }
+
+    /// `touch` 应把 key 挪到 LRU 末尾，且不为不存在的 key 登记。
+    #[test]
+    fn touch_updates_lru_without_growing_it() {
+        let svc = WorldViewService::new();
+        {
+            let mut g = svc.sessions.lock().unwrap();
+            g.map.insert("a".into(), stub_session("a"));
+            g.map.insert("b".into(), stub_session("b"));
+            g.lru.push_back("a".into());
+            g.lru.push_back("b".into());
+
+            g.touch("a");
+            assert_eq!(
+                g.lru.iter().cloned().collect::<Vec<_>>(),
+                vec!["b".to_string(), "a".to_string()],
+                "被触碰的 key 应移到末尾"
+            );
+
+            let before = g.lru.len();
+            g.touch("nope");
+            assert_eq!(g.lru.len(), before, "未打开的 key 不得登记进 LRU");
+        }
     }
 }

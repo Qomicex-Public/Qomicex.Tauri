@@ -266,7 +266,7 @@ export default function WorldPreviewDialog({ open, instanceId, saveName, savePat
       mapRef.current = null
       layerRef.current = null
       markersRef.current = null
-      closeWorld(instanceId).catch(() => {})
+      closeWorld(instanceId, worldKeyRef.current).catch(() => {})
     }
   }, [open, load, instanceId])
 

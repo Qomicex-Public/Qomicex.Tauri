@@ -26,8 +26,13 @@ pub struct GameLogEntry {
 }
 
 /// 每个实例的日志缓冲 + 实时广播。
+///
+/// `lines` 用 `VecDeque` 而非 `Vec`：环形容量语义下每次追加都可能淘汰最旧一行，
+/// `Vec::remove(0)` 需要把剩余全部元素前移一位（O(n) 搬移），而缓冲区满后**每来
+/// 一行日志**都要付这个代价，且发生在游戏运行中的热路径上（#234）。
+/// `VecDeque::pop_front()` 是 O(1)，语义不变（仍最多保留 `MAX_LINES` 行、仍按时间序）。
 struct InstanceLogs {
-    lines: Vec<GameLogEntry>,
+    lines: std::collections::VecDeque<GameLogEntry>,
     tx: broadcast::Sender<GameLogEntry>,
 }
 
@@ -79,7 +84,7 @@ impl GameLogService {
         guard
             .entry(instance_id.to_string())
             .or_insert_with(|| InstanceLogs {
-                lines: Vec::new(),
+                lines: std::collections::VecDeque::new(),
                 tx: broadcast::channel(CHANNEL_CAP).0,
             });
     }
@@ -94,20 +99,20 @@ impl GameLogService {
         guard.insert(
             instance_id.to_string(),
             InstanceLogs {
-                lines: Vec::new(),
+                lines: std::collections::VecDeque::new(),
                 tx,
             },
         );
         rx
     }
 
-    /// 返回某实例已缓冲的全部历史行（供日志窗口/页面初始回显）。
+    /// 返回某实例已缓冲的全部历史行（供日志窗口/页面初始回显），按时间顺序。
     pub fn history(&self, instance_id: &str) -> Vec<GameLogEntry> {
         self.buffers
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .get(instance_id)
-            .map(|l| l.lines.clone())
+            .map(|l| l.lines.iter().cloned().collect())
             .unwrap_or_default()
     }
 
@@ -143,9 +148,10 @@ impl GameLogService {
         };
         let mut guard = self.buffers.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(logs) = guard.get_mut(&instance_id) {
-            logs.lines.push(entry.clone());
+            logs.lines.push_back(entry.clone());
             if logs.lines.len() > MAX_LINES {
-                logs.lines.remove(0);
+                // O(1)：VecDeque 淘汰队首，避免 Vec::remove(0) 的 O(n) 搬移（#234）
+                logs.lines.pop_front();
             }
             let _ = logs.tx.send(entry);
         }
@@ -212,5 +218,49 @@ mod tests {
         });
         assert_eq!(svc.history("new").len(), 1);
         assert_eq!(svc.history("old").len(), 0);
+    }
+
+    /// 回归（#234）：换 `VecDeque` 后容量语义与顺序都必须不变。
+    ///
+    /// 旧实现是 `Vec` + `remove(0)`：容量语义相同但每次淘汰都要 O(n) 搬移。
+    /// 本测试钉住「最多 MAX_LINES 行 + 淘汰最旧 + 保持时间序」，防止优化改错语义。
+    #[test]
+    fn buffer_keeps_capacity_and_order_after_overflow() {
+        let svc = GameLogService::new();
+        svc.register("inst", 7);
+
+        // 多灌入 100 行，确保越过容量边界
+        let extra = 100;
+        let total = MAX_LINES + extra;
+        for i in 0..total {
+            svc.forward(GameLogLine {
+                pid: 7,
+                is_stdout: true,
+                text: format!("line-{i}"),
+            });
+        }
+
+        let hist = svc.history("inst");
+        // 容量不变
+        assert_eq!(hist.len(), MAX_LINES, "必须恰好保留 MAX_LINES 行");
+        // 淘汰最旧：首行应是第 extra 行
+        assert_eq!(hist.first().unwrap().text, format!("line-{extra}"));
+        // 保留最新
+        assert_eq!(hist.last().unwrap().text, format!("line-{}", total - 1));
+        // 顺序仍为时间序（按行号数值严格递增；不能用字符串比较，line-999 > line-1000）
+        let idx = |e: &GameLogEntry| -> usize {
+            e.text
+                .strip_prefix("line-")
+                .and_then(|s| s.parse().ok())
+                .expect("行号可解析")
+        };
+        for w in hist.windows(2) {
+            assert!(
+                idx(&w[0]) < idx(&w[1]),
+                "顺序被破坏: {} 应早于 {}",
+                w[0].text,
+                w[1].text
+            );
+        }
     }
 }
