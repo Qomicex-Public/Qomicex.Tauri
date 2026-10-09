@@ -222,6 +222,26 @@ fn version_parse(version: &str) -> Vec<i32> {
     nums
 }
 
+/// `manifest.id` 会被用作文件系统路径（安装目录名），两个安装入口共用本校验：
+/// 非空、≤128、不含 `..`、只允许 `[A-Za-z0-9._-]`（白名单同时挡住分隔符、
+/// 盘符与绝对路径）。
+fn validate_plugin_id(id: &str) -> Result<(), ApiError> {
+    let safe = !id.is_empty()
+        && id.len() <= 128
+        && !id.contains("..")
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
+    if safe {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(
+            "INVALID_PLUGIN_PACKAGE",
+            format!("非法的插件 ID: \"{id}\""),
+        ))
+    }
+}
+
 // =====================================================================
 // PluginStore
 // =====================================================================
@@ -237,6 +257,18 @@ impl PluginStore {
     pub fn new() -> Self {
         let plugins_dir = settings::plugins_dir();
         let states_file = settings::resolve_base_dir().join("plugin-states.json");
+        let _ = std::fs::create_dir_all(&plugins_dir);
+        Self {
+            plugins_dir,
+            states_file,
+            cache: Mutex::new(None),
+            states_cache: Mutex::new(None),
+        }
+    }
+
+    /// 测试专用：把 plugins / states 路径重定向到临时根，避免触碰真实配置目录。
+    #[cfg(test)]
+    fn with_dirs(plugins_dir: PathBuf, states_file: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(&plugins_dir);
         Self {
             plugins_dir,
@@ -282,6 +314,10 @@ impl PluginStore {
         let json = std::fs::read_to_string(&manifest_path)?;
         let manifest: PluginManifest = serde_json::from_str(&json)
             .map_err(|e| ApiError::bad_request("INVALID_PLUGIN_MANIFEST", e.to_string()))?;
+
+        // 与 install_from_package 同一套 id 校验：本入口的入参是任意本地目录，
+        // 漏校验时 `plugins_dir.join(&manifest.id)` 可把内容写到 plugins/ 之外。
+        validate_plugin_id(&manifest.id)?;
 
         let missing = self.resolve_missing_dependencies(&manifest);
         if !missing.is_empty() {
@@ -500,21 +536,7 @@ pub fn install_from_package(
 
     // manifest.id 会被用作文件系统路径（安装目录名），必须先做格式校验，
     // 拒绝路径穿越（../、绝对路径、盘符、隐藏分隔）等恶意 ID。
-    {
-        let id = &manifest.id;
-        let safe = !id.is_empty()
-            && id.len() <= 128
-            && !id.contains("..")
-            && id
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
-        if !safe {
-            return Err(ApiError::bad_request(
-                "INVALID_PLUGIN_PACKAGE",
-                format!("非法的插件 ID: \"{id}\""),
-            ));
-        }
-    }
+    validate_plugin_id(&manifest.id)?;
 
     // 依赖预检：与 install_from_dir 相同的必装前置检查（缺依赖拒装），
     // 在替换目标目录之前执行，避免半安装状态。
@@ -983,6 +1005,60 @@ mod tests {
             let err = install_from_package(&pkg, false, false).unwrap_err();
             assert_eq!(err.code, "INVALID_PLUGIN_PACKAGE", "id={id}");
         }
+    }
+
+    /// 回归（#225）：`install_from_dir` 过去只做 `plugins_dir.join(&manifest.id)`，
+    /// 没有 `install_from_package` 那套 id 校验 → 恶意 manifest 可把内容写到 plugins/ 之外。
+    #[test]
+    fn install_from_dir_rejects_path_traversal_id() {
+        for id in [
+            "../..",
+            "..",
+            "C:\\Windows\\Temp",
+            "/etc/passwd",
+            "a/b",
+            "a\\b",
+            "",
+        ] {
+            let (tmp, _guard) = make_temp_root();
+            let src = tmp.join("src");
+            std::fs::create_dir_all(&src).unwrap();
+            // 用 serde_json 构造，避免 Windows 路径里的反斜杠被当成非法 JSON 转义
+            let manifest =
+                serde_json::json!({ "id": id, "name": "x", "version": "1.0.0" }).to_string();
+            std::fs::write(src.join("manifest.json"), manifest).unwrap();
+            let store = PluginStore::with_dirs(tmp.join("plugins"), tmp.join("states.json"));
+
+            let err = store.install_from_dir(&src).unwrap_err();
+            assert_eq!(err.code, "INVALID_PLUGIN_PACKAGE", "id={id}");
+            // 关键断言：plugins 目录之外不得出现被拷贝的 manifest.json
+            assert!(
+                !tmp.join("manifest.json").exists(),
+                "id={id} 逃逸出了 plugins 目录"
+            );
+        }
+    }
+
+    /// 反向护栏：合法 id 仍可正常安装（防止校验过严把正常流程挡掉）。
+    #[test]
+    fn install_from_dir_accepts_safe_id() {
+        let (tmp, _guard) = make_temp_root();
+        let src = tmp.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(
+            src.join("manifest.json"),
+            r#"{"id":"com.qomicex.safe","name":"x","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        let plugins_dir = tmp.join("plugins");
+        let store = PluginStore::with_dirs(plugins_dir.clone(), tmp.join("states.json"));
+
+        let info = store.install_from_dir(&src).unwrap().unwrap();
+        assert_eq!(info.manifest.id, "com.qomicex.safe");
+        assert!(plugins_dir
+            .join("com.qomicex.safe")
+            .join("manifest.json")
+            .is_file());
     }
 
     #[test]

@@ -184,11 +184,15 @@ impl AppState {
         let download_manager = new_download_manager(&settings_now);
 
         // 插件 proxy 客户端（对应命名 HttpClient "PluginProxy"）。
+        // `redirect(none)`：`/plugins/proxy` 只在发起请求前对**初始** host 做一次私网
+        // 校验（`validate_target`），reqwest 若自动跟随 302 则不会回调该校验，于是
+        // 「公网 URL → 302 到 127.0.0.1」可绕开全部 SSRF 防护。策略必须与下方
+        // `plugin_download_client` 一致；确需跟随重定向时应逐跳重校验目标。
         let proxy_client = {
             let mut b = reqwest::Client::builder()
                 .timeout(Duration::from_secs(60))
                 .user_agent(user_agent.clone())
-                .redirect(reqwest::redirect::Policy::limited(10));
+                .redirect(reqwest::redirect::Policy::none());
             if ignore_ssl {
                 b = b.danger_accept_invalid_certs(true);
             }
