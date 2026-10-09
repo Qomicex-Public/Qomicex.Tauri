@@ -149,7 +149,7 @@ export interface PendingUpdateInstall {
   /**
    * 该包所属发布列车（release | beta | alpha）。缺失 = 旧版记录没带通道。
    *
-   * 用途：跨列车不得自动安装（ADR-081）——用户在下载完成后可能又切了通道，
+   * 用途：跨列车不得自动安装（ADR-085）——用户在下载完成后可能又切了通道，
    * 此时这份包已不属于当前列车，静默装上就是一次跨列车更新。
    */
   channel?: string

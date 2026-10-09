@@ -6,7 +6,7 @@
  * `ipc.ts` 里的 `qomicex` 是 webview **内部**自定义协议（前后端 QIPC 管道传输，
  * ADR-040）；本模块处理的是**操作系统级** URL 协议，由浏览器等外部程序唤起启动器。
  * 两者同名会在 macOS/Linux 上产生真实歧义，故 OS 协议名取 `qomicex-launcher`
- * （见 ADR-087），内部协议零改动。
+ * （见 ADR-100），内部协议零改动。
  *
  * # 支持的动作
  *
@@ -209,7 +209,7 @@ function normalizeModpackSource(raw: string | null): ModpackSource | null {
 /**
  * 该来源是否**只**需要 projectId（无 fileId 概念）。
  *
- * Technic 一个包只有一个直链，没有「版本 id」这一层（issue #151，ADR-103）：
+ * Technic 一个包只有一个直链，没有「版本 id」这一层（issue #151，ADR-105）：
  * `projectId` 即 slug。其余三个源的 `fileId` 是版本身份，缺一不可——
  * 后端 `install_direct` 对非 technic 源仍强制要求两者齐备。
  */

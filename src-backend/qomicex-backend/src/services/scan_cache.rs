@@ -16,7 +16,7 @@
 //!
 //! 用指纹而非显式 `invalidate`：安装/卸载/改名/整合包导入路径分散，显式失效
 //! 迟早漏一个；指纹方式对调用方零侵入（改名/换 jar/补文件天然失效）。
-//! 已知取舍（见 ADR-082）：同一文件系统 mtime tick 内被改写为同长度的 jar
+//! 已知取舍（见 ADR-084）：同一文件系统 mtime tick 内被改写为同长度的 jar
 //! 会读到旧值，实际不可复现；删除 `version-scan-cache.json` 可强制重算。
 
 use std::collections::HashMap;

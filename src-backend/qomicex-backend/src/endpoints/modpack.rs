@@ -3181,7 +3181,7 @@ impl ModpackServiceData {
         } else {
             let project_id = req.project_id.as_deref().unwrap_or_default();
             let file_id = req.file_id.as_deref().unwrap_or_default();
-            // Technic 例外：它没有 fileId 概念（一个包 = 一个直链，ADR-103 实测），
+            // Technic 例外：它没有 fileId 概念（一个包 = 一个直链，ADR-105 实测），
             // 只要 projectId（slug）。其余源仍要求两者齐备（fileId 是版本身份）。
             let is_technic = req
                 .r#type
@@ -3214,7 +3214,7 @@ impl ModpackServiceData {
                 Some("technic") => {
                     // === Technic 在线安装（issue #151）===
                     //
-                    // 与其它源的模型差异（ADR-103 实测）：
+                    // 与其它源的模型差异（ADR-105 实测）：
                     // - projectId 语义是 **slug**（数字 id 在详情接口上 404）；
                     // - **无 fileId**（一个包只有一个直链），故这里不要求 fileId；
                     // - 直链由**后端**从 Technic API 解析后交给导入管线下载，

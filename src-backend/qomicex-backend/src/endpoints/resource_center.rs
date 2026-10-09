@@ -1059,7 +1059,7 @@ const MAX_AGGREGATE_FETCH: i32 = 200;
 ///
 /// **为什么必须是「先全局排序再切窗口」**：各源各自取第 N 页再合并排序时，全局顺序与
 /// 「各源第 N 页」不对应——`download_count` 为 0 的条目（Technic 列表接口不提供下载量，
-/// 见 ADR-103）在第一页排序后必然被 `truncate` 掉，而第 2 页又从各源的
+/// 见 ADR-105）在第一页排序后必然被 `truncate` 掉，而第 2 页又从各源的
 /// `offset = pageSize` 开始，于是这些条目**永远无法被浏览到**，但 `total` 里却统计了
 /// 它们（CodeRabbit 在 PR #187 指出的问题）。改为累计取前缀后切窗口，分页即连续。
 fn aggregate_window(
@@ -1718,7 +1718,7 @@ async fn detail(
     }
 
     if src.eq_ignore_ascii_case("technic") {
-        // id 即 slug：实测数字 id 在详情接口上 404，slug 是唯一键（ADR-103）。
+        // id 即 slug：实测数字 id 在详情接口上 404，slug 是唯一键（ADR-105）。
         let technic = state.core.create_technic_source();
         let pack = technic
             .get_pack_detail(&id)
@@ -1956,7 +1956,7 @@ async fn versions(
 
     if src.eq_ignore_ascii_case("technic") {
         // Technic **无版本列表**：一个包只有一个 `version` 字符串 + 一个直链
-        // （ADR-103 实测）。因此这里把「包本身」建模成唯一的版本条目，让前端
+        // （ADR-105 实测）。因此这里把「包本身」建模成唯一的版本条目，让前端
         // 现有的「选版本 → 安装」流程无需特殊分支即可工作。
         //
         // 版本 id 用 slug（唯一键）；SingleZip 的直链填进 downloads，使前端的
@@ -3677,7 +3677,7 @@ mod favorites_tests {
 
     /// 列表项 → DTO：`id` 必须是 **slug**（唯一可寻址键），不是数字 id。
     ///
-    /// 数字 id 在详情接口上 404（ADR-103 实测），若这里误用 `p.id`，
+    /// 数字 id 在详情接口上 404（ADR-105 实测），若这里误用 `p.id`，
     /// 前端点进详情/安装会全部失败。
     #[test]
     fn technic_summary_maps_slug_as_id() {
@@ -3723,7 +3723,7 @@ mod favorites_tests {
 
     /// 聚合分页连续性（CodeRabbit PR #187 的回归护栏）。
     ///
-    /// Technic 条目的 `download_count` 恒为 0（列表接口不提供，见 ADR-103），按下载量
+    /// Technic 条目的 `download_count` 恒为 0（列表接口不提供，见 ADR-105），按下载量
     /// 排序后必然排在最后。若「各源只取第 page 页再排序截断」，这些条目在第 1 页被
     /// `truncate` 掉、第 2 页又从各源 offset=pageSize 开始 → **永远浏览不到，但 total
     /// 统计了它们**。`aggregate_window` 改为「累计取前缀 → 全局排序 → 切窗口」后，
@@ -3879,7 +3879,7 @@ mod favorites_tests {
         assert_eq!(item.title, "Agrarian Skies");
         // 列表图标为空时用详情补齐
         assert_eq!(item.icon_url, "https://cdn/icon.png");
-        // 寻址键绝不能被补全改写（数字 id 在详情接口 404，见 ADR-103）
+        // 寻址键绝不能被补全改写（数字 id 在详情接口 404，见 ADR-105）
         assert_eq!(item.id, "agrarian-skies");
         assert_eq!(item.slug, "agrarian-skies");
     }

@@ -24,7 +24,7 @@ interface ModpackQuickInstallDialogProps {
 }
 
 /**
- * Technic 安装是「一个包 = 一个直链」，没有版本/fileId 概念（issue #151，ADR-103）。
+ * Technic 安装是「一个包 = 一个直链」，没有版本/fileId 概念（issue #151，ADR-105）。
  *
  * 后端 `/modpack/install-direct` 的 technic 分支自行从 Technic API 解析直链并
  * 下载导入，因此前端**不需要**也不应该传 URL——只给 slug（projectId）。

@@ -310,7 +310,7 @@ fn scan_impl(
         "scan: found versions"
     );
     // 自动修复只在 full 段做。fast 段的 gameVersion 是 JSON 链的猜测值，把它
-    // 写回 instances.json 会在 full 段失败/超时后永久留下脏数据（ADR-082 决策 4）。
+    // 写回 instances.json 会在 full 段失败/超时后永久留下脏数据（ADR-084 决策 4）。
     if full_mode {
         fix_instance_game_versions(&state.instance, &result, game_dir);
         fix_instance_loaders(&state.instance, &result, game_dir);

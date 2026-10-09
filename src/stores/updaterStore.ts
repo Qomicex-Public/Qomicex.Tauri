@@ -269,7 +269,7 @@ export const useUpdaterStore = create<UpdaterState>((set, getState) => ({
         changelog: plan.changelog ?? '',
         attempts: 0,
         // 记下落盘时的列车：启动自动安装前据此比对当前有效通道，跨列车则不装
-        // （ADR-081：通道切换必须由用户显式决定，不能被一份旧包悄悄绕过）。
+        // （ADR-085：通道切换必须由用户显式决定，不能被一份旧包悄悄绕过）。
         channel: plan.channel,
       }
       await stagePendingInstall(currentDataDir(), {
@@ -336,7 +336,7 @@ export const useUpdaterStore = create<UpdaterState>((set, getState) => ({
       // none / missing：无事可做（missing 表示包被清理，记录已作废，下次会重下）
       return
     }
-    // 跨列车守卫（ADR-081）：这份包落盘时属于别的列车，说明用户中途切了通道。
+    // 跨列车守卫（ADR-085）：这份包落盘时属于别的列车，说明用户中途切了通道。
     // 通道切换必须由用户显式决定，无人值守装上一份别列车的包会绕过这个前提——
     // 丢弃记录并交回正常流程（下次检查会按当前列车重新发现更新）。
     if (!stagedChannelMatchesCurrent(taken.install.channel, APP_INFO.version)) {

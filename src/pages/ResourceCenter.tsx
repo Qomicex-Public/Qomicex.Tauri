@@ -145,7 +145,7 @@ const SORT_OPTIONS: Record<string, { key: string }[]> = {
     { key: 'name' },
     { key: 'newest' },
   ],
-  // Technic API 无排序/分页参数（固定返回若干条，ADR-103 实测）→ 只给一个
+  // Technic API 无排序/分页参数（固定返回若干条，ADR-105 实测）→ 只给一个
   // 稳定的默认项，避免给用户「换了排序但结果没变」的错觉。
   technic: [
     { key: 'relevance' },
@@ -272,7 +272,7 @@ function fallbackLoaders(category: string): ResourceCategory[] {
  */
 function loadersSupported(source: string, category: string): boolean {
   if (category === 'save') return false
-  // Technic 列表接口只给 id/name/slug/url/iconUrl（见 ADR-103），没有加载器维度，
+  // Technic 列表接口只给 id/name/slug/url/iconUrl（见 ADR-105），没有加载器维度，
   // 后端无法在服务端过滤 → 提供该控件只会「选了等于没选」。
   if (source === 'technic') return false
   if (source === 'ftb') return category === 'modpack'
