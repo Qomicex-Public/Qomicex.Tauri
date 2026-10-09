@@ -1,7 +1,7 @@
 import type { PluginInfo } from './types.ts'
 import { usePluginStore } from '../stores/pluginStore.ts'
 import { createPluginBridge } from './plugin-api.ts'
-import { injectCss, registerThemeSync, getThemeVarsCss, themeBridgeScript } from './plugin-css.ts'
+import { injectCss, registerThemeSync, unregisterThemeSync, getThemeVarsCss, themeBridgeScript } from './plugin-css.ts'
 import { API_BASE } from '../api/client.ts'
 import { applyThemeOverride, clearThemeOverride } from '../theme/override.ts'
 import { normalizeHex, THEME_COLOR_MODE_BACKGROUND } from '../lib/themeColor.ts'
@@ -34,6 +34,13 @@ const webviewInstances = new Map<string, WebviewInstance>()
 /** UI 槽位沙箱：pluginId → 该插件挂载到各槽位的 iframe 列表（与主页面沙箱独立管理） */
 const slotSandboxes = new Map<string, SandboxInstance[]>()
 const sourceMap = new WeakMap<Window, string>()
+
+/// 已销毁的 iframe 集合（弱引用，不阻止回收）。
+///
+/// `iframe.onload` 是异步触发的，而 `destroy()` 是同步的：插件快速停用时
+/// onload 可能在 destroy 之后才跑，此时若仍注册主题同步就会永久泄漏该 iframe
+/// 及其整棵 DOM（#236）。用弱集合标记已销毁，供 onload 回调判定。
+const destroyedIframes = new WeakSet<HTMLIFrameElement>()
 
 export function getFileUrl(pluginId: string, frontend: string, path: string) {
   const base = frontend.split('/').slice(0, -1).join('/')
@@ -284,6 +291,8 @@ export function createSandbox(plugin: PluginInfo): SandboxInstance {
   const instance: SandboxInstance = {
     iframe, plugin,
     destroy: () => {
+      destroyedIframes.add(iframe)
+      unregisterThemeSync(iframe)
       sandboxes.delete(plugin.manifest.id)
       iframe.remove()
     }
@@ -303,6 +312,8 @@ export function createSlotSandbox(plugin: PluginInfo, file: string): SandboxInst
   const instance: SandboxInstance = {
     iframe, plugin,
     destroy: () => {
+      destroyedIframes.add(iframe)
+      unregisterThemeSync(iframe)
       const list = slotSandboxes.get(plugin.manifest.id)
       if (list) {
         const idx = list.indexOf(instance)
@@ -344,6 +355,9 @@ async function loadSandboxContent(plugin: PluginInfo, iframe: HTMLIFrameElement,
     html = buildPluginDoc(plugin, html, entry)
 
     iframe.onload = () => {
+      // destroy() 可能先于 onload 触发（见 destroyedIframes 注释），
+      // 此时不得再注册主题同步，否则泄漏已卸载的 iframe（#236）。
+      if (destroyedIframes.has(iframe)) return
       if (iframe.contentWindow) sourceMap.set(iframe.contentWindow, plugin.manifest.id)
       registerThemeSync(iframe)
     }

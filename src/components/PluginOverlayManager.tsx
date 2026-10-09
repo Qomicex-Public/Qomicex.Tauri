@@ -2,7 +2,7 @@ import { useRef, useEffect, useCallback, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { usePluginStore, type PluginOverlay } from '../stores/pluginStore.ts'
 import { registerOverlayIframe } from '../plugins/sandbox.ts'
-import { pluginCss, registerThemeSync, getThemeVarsCss, themeBridgeScript } from '../plugins/plugin-css.ts'
+import { pluginCss, registerThemeSync, unregisterThemeSync, getThemeVarsCss, themeBridgeScript } from '../plugins/plugin-css.ts'
 
 const apiScript = `<script>
 ;(function () {
@@ -224,7 +224,13 @@ function Floater({ overlay }: { overlay: PluginOverlay }) {
       } catch { /* sandboxed iframe without allow-same-origin: contentDocument not accessible */ }
     }
     iframe.addEventListener('load', onLoad)
-    return () => iframe.removeEventListener('load', onLoad)
+    return () => {
+      iframe.removeEventListener('load', onLoad)
+      // effect 清理（overlay 关闭 / 依赖变化 / 插件停用）时必须注销主题同步：
+      // 否则 overlay iframe 永久留在 themeSyncTargets 里（#236），
+      // 每次开关 overlay 都泄漏一个 iframe 及其 DOM。
+      unregisterThemeSync(iframe)
+    }
   }, [overlay.html, overlay.pluginId, overlay.id])
 
   // Re-apply live gesture coordinates if a re-render resets inline styles mid-gesture
