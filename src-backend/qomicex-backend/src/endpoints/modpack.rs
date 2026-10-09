@@ -31,6 +31,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
+use arc_swap::ArcSwap;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Multipart, Path as AxumPath, State};
 use axum::http::{header, StatusCode};
@@ -64,7 +65,8 @@ struct ModpackServiceData {
     http_client: reqwest::Client,
     instance: Arc<InstanceService>,
     tracker: Arc<InstallTracker>,
-    download_manager: Arc<qomicex_downloader::DownloadManager>,
+    /// 共享管理器句柄（每次使用现取，见 `Self::download_manager`）。
+    download_manager: Arc<ArcSwap<qomicex_downloader::DownloadManager>>,
 }
 
 /// Process-wide singleton: assembled once per SharedState via OnceLock.
@@ -79,10 +81,17 @@ fn modpack_data(shared: &SharedState) -> Arc<ModpackServiceData> {
                 http_client: shared.http_client.clone(),
                 instance: shared.instance.clone(),
                 tracker: shared.install_tracker.clone(),
-                download_manager: shared.download_manager.load_full(),
+                download_manager: shared.download_manager.clone(),
             })
         })
         .clone()
+}
+
+impl ModpackServiceData {
+    /// 当前生效的下载管理器（热替换后自动跟随，不在构造时抓快照 → #228）。
+    fn download_manager(&self) -> Arc<qomicex_downloader::DownloadManager> {
+        self.download_manager.load_full()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2948,7 +2957,7 @@ impl ModpackServiceData {
         let version_dir_name = created.name.clone();
 
         let tracker = self.tracker.clone();
-        let mgr = self.download_manager.clone();
+        let mgr = self.download_manager();
         let http_client = self.http_client.clone();
         let cf_api_key = self.curse_api_key.clone();
         let core = self.core.clone();

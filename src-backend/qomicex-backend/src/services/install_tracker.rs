@@ -116,7 +116,10 @@ impl InstallStep {
 }
 
 /// 对外进度 DTO（对应源 `InstallProgressResponse` 记录，字段逐一对齐，camelCase）。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+///
+/// 后端唯一事实源：`/instance/{id}/install/progress` 与进度 SSE 都序列化本类型，
+/// 避免再出现「端点精简副本 vs 前端类型」的静默漂移。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallProgress {
     pub instance_id: String,
@@ -238,6 +241,12 @@ impl InstallHandle {
         self.0.kind.clone()
     }
 
+    /// 终态已持续多久；非终态返回 `None`。
+    fn terminal_age(&self, now: std::time::Instant) -> Option<std::time::Duration> {
+        let guard = self.0.inner.lock().unwrap_or_else(|p| p.into_inner());
+        guard.terminal_at.map(|t| now.saturating_duration_since(t))
+    }
+
     fn broadcast(&self) {
         let snap = self.snapshot();
         let _ = self.0.tx.send(snap);
@@ -257,7 +266,18 @@ pub struct ProgressField {
     pub current_file_progress: f64,
     pub speed: f64,
     pub steps: Vec<InstallStep>,
+    /// 进入终态（completed/failed/cancelled）的时刻，用于 SSE 时效过滤。
+    /// 非终态为 `None`；状态被重置回非终态时清空。
+    pub terminal_at: Option<std::time::Instant>,
 }
+
+/// 终态任务在进度 SSE 中的保留时长。
+///
+/// `get_all_active` 只要有终态就永久保留，会让 `/progress/stream` 每 300ms
+/// 重新序列化推送全部历史失败/取消任务（长期会话下 SSE 负载单调增长）。
+/// 这里给一个保留窗口：窗口内失败原因照常可见，窗口后不再推送；
+/// 失败详情仍可由 `/instance/{id}/install/progress` 取到（该端点不受本过滤影响）。
+const TERMINAL_RETENTION: std::time::Duration = std::time::Duration::from_secs(300);
 
 impl ProgressField {
     fn to_progress(&self, instance_id: &str, kind: &str, is_paused: bool) -> InstallProgress {
@@ -280,6 +300,15 @@ impl ProgressField {
     }
 
     pub fn set_status(&mut self, status: InstallStatus) {
+        // 终态时刻由唯一的状态入口维护：进入终态打点，回到非终态清空。
+        // 集中在这里，调用点无需各自记得维护 terminal_at。
+        if status.is_terminal() {
+            if self.terminal_at.is_none() {
+                self.terminal_at = Some(std::time::Instant::now());
+            }
+        } else {
+            self.terminal_at = None;
+        }
         self.status = status.as_str().to_string();
     }
 
@@ -370,6 +399,7 @@ impl InstallState {
                 current_file_progress: 0.0,
                 speed: 0.0,
                 steps: Vec::new(),
+                terminal_at: None,
             }),
             cancelled: AtomicBool::new(false),
             paused: AtomicBool::new(false),
@@ -394,6 +424,20 @@ fn classify_outcome(cancelled: bool, outcome: &InstallOutcome) -> InstallStatus 
             Ok(()) => InstallStatus::Completed,
             Err(_) => InstallStatus::Failed,
         }
+    }
+}
+
+/// 是否应把该任务继续放进进度 SSE 的 `installs` 载荷。
+///
+/// - `completed`：排除（前端靠端点回查补正终态）。
+/// - `failed` / `cancelled`：只在 [`TERMINAL_RETENTION`] 窗口内保留，
+///   让失败原因可见；超窗剔除，使 SSE 载荷不随历史任务数增长（#229）。
+/// - 其余（进行中）：保留。`age` 为进入终态后的时长，非终态传 `None`。
+fn should_keep_in_active(status: &str, age: Option<std::time::Duration>) -> bool {
+    match status {
+        "completed" => false,
+        "failed" | "cancelled" => age.is_some_and(|a| a <= TERMINAL_RETENTION),
+        _ => true,
     }
 }
 
@@ -596,13 +640,24 @@ impl InstallTracker {
 
     /// 列出全部活动任务进度（对应源 `GetAllActiveStates`）。
     ///
-    /// ⚠️ 仅剔除 `completed`：failed/cancelled（含 error 消息）仍保留，否则失败任务
-    /// 会从 SSE 消失、前端看不到失败原因。
+    /// 剔除 `completed`；failed/cancelled 在 [`TERMINAL_RETENTION`] 窗口内保留
+    /// （否则失败任务会立刻从 SSE 消失、前端看不到失败原因），窗口后一并剔除。
+    /// 这样 SSE 载荷不再随历史任务数单调增长。
+    ///
+    /// 失败详情在窗口后仍可查：`/instance/{id}/install/progress` 直接用
+    /// `get_state`，不经过本过滤。
     pub fn get_all_active(&self) -> Vec<InstallProgress> {
+        let now = std::time::Instant::now();
         self.clone_handles()
             .into_iter()
-            .map(|h| h.snapshot())
-            .filter(|p| p.status != "completed")
+            .filter_map(|h| {
+                let snapshot = h.snapshot();
+                if should_keep_in_active(&snapshot.status, h.terminal_age(now)) {
+                    Some(snapshot)
+                } else {
+                    None
+                }
+            })
             .collect()
     }
 
@@ -690,6 +745,7 @@ mod tests {
             current_file_progress: 0.0,
             speed: 0.0,
             steps: Vec::new(),
+            terminal_at: None,
         }
     }
 
@@ -844,5 +900,63 @@ mod tests {
         assert_eq!(json2["steps"][0]["id"], "fetch-json");
         assert_eq!(json2["steps"][0]["status"], "active");
         assert_eq!(json2["steps"][0]["percent"], 30.0);
+    }
+
+    /// 回归（#229）：终态必须打点 `terminal_at`，供 SSE 时效过滤；
+    /// 回到非终态则清空（避免任务被复用后带着旧时刻被立刻剪掉）。
+    #[test]
+    fn terminal_at_is_set_and_cleared_by_set_status() {
+        let mut f = field();
+        assert!(f.terminal_at.is_none(), "非终态不应有时刻");
+
+        f.set_status(InstallStatus::Failed);
+        let first = f.terminal_at.expect("失败必须打点终态时刻");
+
+        // 已是终态时重复 set 不刷新时刻（保留首次进入终态的时间）
+        f.set_status(InstallStatus::Failed);
+        assert_eq!(f.terminal_at, Some(first), "重复置终态不应刷新时刻");
+
+        // 回到非终态必须清空
+        f.set_status(InstallStatus::Downloading);
+        assert!(f.terminal_at.is_none(), "回到非终态必须清空时刻");
+
+        // completed / cancelled 同样打点
+        f.set_status(InstallStatus::Completed);
+        assert!(f.terminal_at.is_some());
+        f.set_status(InstallStatus::Cancelled);
+        assert!(f.terminal_at.is_some());
+    }
+
+    /// 回归（#229）：`should_keep_in_active` 是 `get_all_active` 的唯一判据。
+    /// 覆盖三种终态与进行中，以及窗口边界的取舍。
+    #[test]
+    fn active_filter_prunes_terminal_states() {
+        let fresh = Some(std::time::Duration::from_secs(1));
+        let stale = Some(TERMINAL_RETENTION + std::time::Duration::from_secs(1));
+
+        // completed 恒排除
+        assert!(!should_keep_in_active("completed", fresh));
+        assert!(!should_keep_in_active("completed", None));
+
+        // failed / cancelled：窗口内保留（失败原因可见），超窗剔除
+        assert!(should_keep_in_active("failed", fresh));
+        assert!(should_keep_in_active("cancelled", fresh));
+        assert!(!should_keep_in_active("failed", stale));
+        assert!(!should_keep_in_active("cancelled", stale));
+        // 边界：恰好等于窗口仍保留
+        assert!(should_keep_in_active("failed", Some(TERMINAL_RETENTION)));
+        // 终态却拿不到时刻（不应发生）：保守按超窗处理，避免永久滞留
+        assert!(!should_keep_in_active("failed", None));
+
+        // 进行中一律保留
+        for s in [
+            "queued",
+            "installing",
+            "downloading",
+            "extracting",
+            "finishing",
+        ] {
+            assert!(should_keep_in_active(s, None), "{s} 应在 SSE 中保留");
+        }
     }
 }

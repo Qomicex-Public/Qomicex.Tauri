@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use arc_swap::ArcSwap;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post};
@@ -86,11 +87,7 @@ fn java_data(shared: &SharedState) -> Arc<JavaStateData> {
             Arc::new(JavaStateData {
                 core: core.clone(),
                 store: store.clone(),
-                download: JavaDownloadService::new(
-                    core,
-                    store,
-                    shared.download_manager.load_full(),
-                ),
+                download: JavaDownloadService::new(core, store, shared.download_manager.clone()),
             })
         })
         .clone()
@@ -305,7 +302,10 @@ impl JavaRuntimeStore {
 struct JavaDownloadService {
     core: Arc<GameCore>,
     store: Arc<JavaRuntimeStore>,
-    manager: Arc<DownloadManager>,
+    /// 共享的下载管理器句柄：**每次使用现取**，不能在构造时抓快照。
+    /// `PUT /settings` 会热替换管理器（代理 / HTTP3 / 线程数），抓快照会让
+    /// Java 下载永久沿用旧设置（#228）。
+    manager: Arc<ArcSwap<DownloadManager>>,
     tasks: Mutex<HashMap<String, JavaDownloadTaskState>>,
 }
 
@@ -313,7 +313,7 @@ impl JavaDownloadService {
     fn new(
         core: Arc<GameCore>,
         store: Arc<JavaRuntimeStore>,
-        manager: Arc<DownloadManager>,
+        manager: Arc<ArcSwap<DownloadManager>>,
     ) -> Arc<Self> {
         Arc::new(Self {
             core,
@@ -321,6 +321,11 @@ impl JavaDownloadService {
             manager,
             tasks: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// 当前生效的下载管理器（热替换后自动跟随）。
+    fn manager(&self) -> Arc<DownloadManager> {
+        self.manager.load_full()
     }
 
     fn get_catalog(&self) -> JavaDownloadCatalogResponse {
@@ -440,10 +445,11 @@ impl JavaDownloadService {
         *tmp_dir = Some(tmp.clone());
         let archive_path = tmp.join(&file_name);
 
-        let mut rx = self.manager.subscribe();
-        let dl_id = self
-            .manager
-            .add(DownloadTask::new(url, archive_path.clone()));
+        // subscribe 与 add 必须落在**同一个**管理器实例上，否则收不到该任务的
+        // 事件；这里现取一次，热替换后新发起的任务即用新管理器。
+        let mgr = self.manager();
+        let mut rx = mgr.subscribe();
+        let dl_id = mgr.add(DownloadTask::new(url, archive_path.clone()));
         self.update_task(task_id, |t| t.dl_task_id = Some(dl_id));
 
         loop {
@@ -527,7 +533,7 @@ impl JavaDownloadService {
             t.dl_task_id
         };
         if let Some(id) = dl_id {
-            let _ = self.manager.cancel(id).await;
+            let _ = self.manager().cancel(id).await;
         }
         true
     }
@@ -545,7 +551,7 @@ impl JavaDownloadService {
             t.dl_task_id
         };
         if let Some(id) = dl_id {
-            if let Err(e) = self.manager.pause(id).await {
+            if let Err(e) = self.manager().pause(id).await {
                 eprintln!("[JavaDownloadService] pause failed: {e}");
             }
         }
@@ -565,7 +571,7 @@ impl JavaDownloadService {
             t.dl_task_id
         };
         if let Some(id) = dl_id {
-            if let Err(e) = self.manager.resume(id).await {
+            if let Err(e) = self.manager().resume(id).await {
                 eprintln!("[JavaDownloadService] resume failed: {e}");
             }
         }

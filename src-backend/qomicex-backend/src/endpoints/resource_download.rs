@@ -11,7 +11,6 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::extract::{Path as AxumPath, State};
@@ -111,6 +110,8 @@ pub(crate) struct TaskSnapshot {
     pub(crate) speed: u64,
     pub(crate) error: Option<String>,
     pub(crate) file_name: Option<String>,
+    /// 进入终态的时刻（#229）：`None` = 进行中。用于终态条目的时效回收。
+    pub(crate) terminal_at: Option<std::time::Instant>,
 }
 
 /// Snapshot of all tracked download tasks (id -> snapshot), for the progress
@@ -122,6 +123,24 @@ pub(crate) fn download_snapshots() -> Vec<(u64, TaskSnapshot)> {
         .iter()
         .map(|(id, s)| (*id, s.clone()))
         .collect()
+}
+
+/// 终态快照在注册表里的保留时长（#229）。
+///
+/// 该注册表以 `TaskId` 为键，**每个下载任务一条、此前只增不删**，长期会话下会
+/// 随任务数线性增长（且被 `download_snapshots()` 每 300ms 全量喂给进度 SSE）。
+/// 终态条目超过本窗口即回收；窗口内保留是为了让下载中心的已结束任务仍能显示
+/// 终态与失败原因，并覆盖前端「SSE 先剔除、再回查 progress」的竞态窗口。
+const TERMINAL_SNAPSHOT_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// 清理超过保留窗口的终态快照。在写入新条目时顺带调用（无独立定时器，
+/// 避免为清理引入常驻任务）；条目数即任务数，清理成本可忽略。
+fn prune_terminal_snapshots(reg: &mut HashMap<TaskId, TaskSnapshot>) {
+    let now = std::time::Instant::now();
+    reg.retain(|_, s| match s.terminal_at {
+        Some(t) => now.saturating_duration_since(t) <= TERMINAL_SNAPSHOT_TTL,
+        None => true,
+    });
 }
 
 fn task_registry() -> &'static Mutex<HashMap<TaskId, TaskSnapshot>> {
@@ -239,6 +258,7 @@ fn finish_extract(id: TaskId, error: Option<String>) {
     let mut reg = task_registry().lock().unwrap();
     if let Some(s) = reg.get_mut(&id) {
         s.speed = 0;
+        s.terminal_at = Some(std::time::Instant::now());
         match error {
             None => {
                 s.status = status_of(TaskState::Completed).to_string();
@@ -288,13 +308,30 @@ fn spawn_extract(id: TaskId, intent: ExtractIntent) {
     });
 }
 
-static WATCHER_STARTED: AtomicBool = AtomicBool::new(false);
+/// 已订阅的下载管理器标识（`Arc::as_ptr` 地址）。
+///
+/// 不能只用 `AtomicBool` 记「订阅过」：`PUT /settings` 热替换管理器后，
+/// 新实例没有订阅者，之后的资源下载在下载中心会永远停在 `queued`
+/// （`progress_sse` 的快照依赖本 watcher 更新）——#228。
+/// 故按管理器身份记：传入的实例与已订阅的不是同一个就重新起一个 watcher。
+fn subscribed_manager() -> &'static Mutex<Option<usize>> {
+    static SUBSCRIBED: OnceLock<Mutex<Option<usize>>> = OnceLock::new();
+    SUBSCRIBED.get_or_init(|| Mutex::new(None))
+}
 
-/// Install the one-off background subscriber that mirrors downloader events
-/// into the task registry. Returns immediately if already installed.
+/// Install the background subscriber that mirrors downloader events into the
+/// task registry. Subscribes once per manager instance; a hot-swapped manager
+/// gets its own watcher. Returns immediately if this manager is subscribed.
 fn ensure_watcher(manager: Arc<DownloadManager>) {
-    if WATCHER_STARTED.swap(true, Ordering::SeqCst) {
-        return;
+    let identity = Arc::as_ptr(&manager) as usize;
+    {
+        let mut guard = subscribed_manager()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if *guard == Some(identity) {
+            return;
+        }
+        *guard = Some(identity);
     }
     tokio::spawn(async move {
         let mut rx = manager.subscribe();
@@ -368,6 +405,8 @@ fn ensure_watcher(manager: Arc<DownloadManager>) {
                             TaskState::Completed | TaskState::Failed | TaskState::Cancelled
                         ) {
                             s.speed = 0;
+                            // 打点终态时刻，供 prune_terminal_snapshots 回收（#229）
+                            s.terminal_at = Some(std::time::Instant::now());
                         }
                     }
                 }
@@ -544,6 +583,7 @@ async fn start(
     let file_name = req.file_name.clone();
     {
         let mut reg = task_registry().lock().unwrap();
+        prune_terminal_snapshots(&mut reg);
         reg.insert(
             id,
             TaskSnapshot {
@@ -553,6 +593,7 @@ async fn start(
                 speed: 0,
                 error: None,
                 file_name: Some(file_name.clone()),
+                terminal_at: None,
             },
         );
     }
@@ -648,6 +689,7 @@ async fn download_to(
     let path = target.to_string_lossy().into_owned();
     {
         let mut reg = task_registry().lock().unwrap();
+        prune_terminal_snapshots(&mut reg);
         reg.insert(
             id,
             TaskSnapshot {
@@ -657,6 +699,7 @@ async fn download_to(
                 speed: 0,
                 error: None,
                 file_name: Some(file_name.clone()),
+                terminal_at: None,
             },
         );
     }

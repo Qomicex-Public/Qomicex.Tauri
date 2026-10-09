@@ -54,7 +54,11 @@ pub struct AppState {
     pub core: Arc<GameCore>,
     /// 下载管理器（复用 qomicex-downloader）。用 `ArcSwap` 支持运行时热替换
     /// （切换 HTTP/3 开关时重建并替换，旧管理器进行中的任务被取消）。
-    pub download_manager: ArcSwap<DownloadManager>,
+    ///
+    /// 外层再套 `Arc`：长驻服务（如 Java 下载）必须在**每次使用时**重新
+    /// `load_full()`，而不能在初始化时抓一份快照 —— 否则热替换后那些链路
+    /// 会永久停在旧管理器的设置上（#228）。
+    pub download_manager: Arc<ArcSwap<DownloadManager>>,
     /// 数据目录（AppPaths.BaseDir）。
     pub data_dir: PathBuf,
     /// CurseForge API Key。
@@ -277,7 +281,7 @@ impl AppState {
 
         Self {
             core,
-            download_manager: ArcSwap::from(download_manager),
+            download_manager: Arc::new(ArcSwap::from(download_manager)),
             data_dir: settings::resolve_base_dir(),
             curse_forge_api_key,
             http_client,
@@ -458,3 +462,49 @@ fn embedded_ms_client_id() -> String {
 }
 
 pub type SharedState = Arc<AppState>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归（#228）：下载管理器句柄必须是**共享**的，长驻服务每次使用都要能
+    /// 看到热替换后的新实例。
+    ///
+    /// 旧实现让服务（Java 下载 / 整合包）在初始化时 `load_full()` 抓一份快照，
+    /// 热替换后那些链路永久沿用旧管理器的代理 / HTTP3 / 线程数设置。
+    #[tokio::test]
+    async fn shared_download_manager_handle_follows_hot_swap() {
+        let settings = SettingsResponse::default();
+        let shared: Arc<ArcSwap<DownloadManager>> =
+            Arc::new(ArcSwap::from(new_download_manager(&settings)));
+
+        // 模拟长驻服务持有共享句柄（修复后的形态）
+        let service_handle = shared.clone();
+        let before = service_handle.load_full();
+
+        // 热替换
+        let replacement = new_download_manager(&settings);
+        let replacement_ptr = Arc::as_ptr(&replacement) as usize;
+        shared.store(replacement);
+
+        let after = service_handle.load_full();
+        assert_eq!(
+            Arc::as_ptr(&after) as usize,
+            replacement_ptr,
+            "持有共享句柄的服务必须看到热替换后的新实例"
+        );
+        assert_ne!(
+            Arc::as_ptr(&before) as usize,
+            Arc::as_ptr(&after) as usize,
+            "替换前后应为不同实例"
+        );
+
+        // 对照：旧形态（初始化时抓快照）永远停在旧实例 —— 这正是被修的 bug
+        let captured_snapshot = before.clone();
+        assert_ne!(
+            Arc::as_ptr(&captured_snapshot) as usize,
+            replacement_ptr,
+            "抓快照的形态看不到热替换（旧 bug 的机制）"
+        );
+    }
+}

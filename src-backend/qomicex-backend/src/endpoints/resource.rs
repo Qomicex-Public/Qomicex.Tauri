@@ -1,12 +1,12 @@
 //! Resource endpoints (source: Endpoints/ResourceEndpoints.cs).
 //!
 //! Implements resource completion checks and install kick-off against the
-//! core version facade, plus a static progress placeholder.
+//! core version facade.
 
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::post;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
@@ -40,26 +40,12 @@ struct MessageResponse {
     version_id: Option<String>,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ProgressResponse {
-    task_id: String,
-    percentage: u32,
-    downloaded: u64,
-    total: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    current_file: Option<String>,
-    status: String,
-}
-
 // =====================================================================
 // Router
 // =====================================================================
 
 pub fn router() -> Router<SharedState> {
-    Router::new()
-        .route("/resources/complete", post(complete))
-        .route("/resources/complete/progress", get(complete_progress))
+    Router::new().route("/resources/complete", post(complete))
 }
 
 // =====================================================================
@@ -98,16 +84,4 @@ async fn complete(
         }),
     )
         .into_response())
-}
-
-/// GET /resources/complete/progress: static progress placeholder.
-async fn complete_progress() -> ApiResult<Json<ProgressResponse>> {
-    Ok(Json(ProgressResponse {
-        task_id: "resource-complete".to_string(),
-        percentage: 0,
-        downloaded: 0,
-        total: 0,
-        current_file: None,
-        status: "started".to_string(),
-    }))
 }
