@@ -171,7 +171,7 @@ import { x } from './baz'        // 错误 — Vite 会报错
 - UI 组件在 `packages/plugin-ui/src/components/`，`src/components/ui/` 只是 re-export barrel
 - 图标按钮必须 `Tooltip`；`Select` 用 `Select`/`SelectOption`，不用原生 `<select>`
 - 图标↔图标切换用 `MorphIcon`；copy 反馈用 `CopyActionIcon`；异步操作用 `MorphActionIcon`。禁止手写 ternary 切换
-- 路由：`BrowserRouter` → `MessageBoxProvider` → `Layout.tsx` → 12 条路由；`SplashScreen` 轮询 `/api/health` 成功后渲染
+- 路由：`BrowserRouter` → `MessageBoxProvider` → `Layout.tsx` → 13 条路由（+ 1 条 `*` 通配 fallback）；`SplashScreen` 轮询 `/api/health` 成功后渲染。**路由仅在 `backendState === 'ready'` 时才注册**，否则渲染空 div
 
 ### 后端约定
 
@@ -228,7 +228,7 @@ Windows / Linux / macOS 都要支持。
 
 ## 7. 文档（docs/）
 
-- **ADR 索引**：`docs/junsi-dev-docs/README.md`；编号由**文件名**承载，正文首行标题须与文件名一致；新增从 **086** 起（015/085 已占，084 扫描缓存、085 更新通道）
+- **ADR 索引**：`docs/junsi-dev-docs/README.md`；编号由**文件名**承载，正文首行标题须与文件名一致；新增从 **109** 起（当前最大 108）。**注意存量编号异常**：`015` 与 `102` 各占两个文件；`003`/`041`/`056`/`057`/`058` 空缺 —— 立项新 ADR 前先核对文件名，不要只按"最大号 +1"
 - **`4-编码规范/CSharp-规范.md` 已废止**（后端已重写为 Rust，仓库内无 `.cs`）
 - **`2-架构设计/技术选型.md`**：顶部是当前栈，`### 2026-08-09 更新` 是历史快照，改技术栈只改顶部
 - **Issue 模板字段名**改动前必读 `docs/junsi-dev-docs/8-部署运维/GitHub-Issue-模板与自动分类.md`（`issue-triage.yml` 是精确字符串匹配，改字段名会静默失效）
@@ -238,11 +238,11 @@ Windows / Linux / macOS 都要支持。
 
 ## 8. 工具链现状（基线）
 
-- **Clippy 存量**：后端 138、Tauri 11（2026-09 基线，1.95.0）。CI advisory（`continue-on-error`），清到 0 后改阻断
-- **ESLint 存量**：63 error / 116 warning。清理期间不进 CI 阻断
-- **Prettier**：仓库尚未全量格式化（`src/` 172/181 不符）。**不要顺手 `pnpm run format`**，格式化必须是一次独立的 `style:` 提交，全量重排单独排期
+- **Clippy 存量**：后端 **157**（`qomicex-backend` bin；另 `qomicex-core-rust` lib 1 条），2026-10-09 实测，1.95.0。CI advisory（`continue-on-error`），清到 0 后改阻断
+- **ESLint 存量**：**30 error / 105 warning**（2026-10-09 实测 `pnpm run lint` 全仓）。清理期间不进 CI 阻断
+- **Prettier**：仓库**全量未格式化**（2026-10-09 实测 `prettier --check .` 有 **522** 个文件不符，另有 2 个 YAML 解析报错）。**不要顺手 `pnpm run format`**，格式化必须是一次独立的 `style:` 提交，全量重排单独排期
 - **无前端单测框架**：`playwright` 仅用于 `scripts/harness/`
-- **hook 历史写法**：`src/pages/Settings.tsx:523,568` 与 `src/plugins/plugin-loader.tsx:152` 存在 hook 在非组件函数里调用，属阶段 3 待修项
+- **hook 历史写法**：`src/pages/Settings.tsx:665,710`（`useExpandAnimation` 在 `map` 回调内）与 `src/plugins/plugin-loader.tsx:152`（`useWebview` 命名像 hook 但在非组件函数里定义/调用）存在 hook 违规，属待修项
 
 ---
 
