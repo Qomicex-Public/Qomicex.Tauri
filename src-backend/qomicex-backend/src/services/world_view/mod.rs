@@ -72,6 +72,21 @@ impl Sessions {
         self.lru.retain(|k| k != key);
         self.lru.push_back(key.to_string());
     }
+
+    /// 插入/覆盖一个会话槽位，把它标记为最近使用，并淘汰超限的最久未用槽位。
+    ///
+    /// 生产路径（`WorldViewService::open`）与回归测试都走这里，避免测试自己重写
+    /// 一份淘汰循环 —— 那样生产逻辑若停止淘汰或淘汰错槽位，测试仍会通过。
+    fn insert(&mut self, key: String, session: WorldSession) {
+        self.map.insert(key.clone(), session);
+        self.lru.retain(|k| k != &key);
+        self.lru.push_back(key);
+        while self.lru.len() > MAX_SESSIONS {
+            if let Some(evicted) = self.lru.pop_front() {
+                self.map.remove(&evicted);
+            }
+        }
+    }
 }
 
 /// 同时保留的会话数上限。
@@ -116,17 +131,7 @@ impl WorldViewService {
         let cache = Arc::new(TileCache::new(pal, CACHE_CAPACITY));
         {
             let mut sessions = self.sessions.lock().unwrap_or_else(|p| p.into_inner());
-            sessions
-                .map
-                .insert(key.clone(), WorldSession { world: w, cache });
-            // 触碰 LRU 并淘汰超限的槽位
-            sessions.lru.retain(|k| k != &key);
-            sessions.lru.push_back(key.clone());
-            while sessions.lru.len() > MAX_SESSIONS {
-                if let Some(evicted) = sessions.lru.pop_front() {
-                    sessions.map.remove(&evicted);
-                }
-            }
+            sessions.insert(key, WorldSession { world: w, cache });
         }
         // 新会话要读的 region 文件可能与缓存中的句柄不同（换了存档/维度），
         // 且打开动作本身可能发生在存档文件变化之后。
@@ -340,7 +345,10 @@ mod tests {
         assert!(svc.sessions.lock().unwrap().map.is_empty());
     }
 
-    /// `open` 的 LRU 淘汰：超过 MAX_SESSIONS 时移除最久未用槽位（避免缓存无界增长）。
+    /// `sessions.insert` 的 LRU 淘汰：超过 MAX_SESSIONS 时移除最久未用槽位。
+    ///
+    /// 直接调用生产用的 `Sessions::insert`（而非测试内自行重写淘汰循环），
+    /// 因此生产逻辑若停止淘汰或淘汰错槽位，本测试会失败。
     #[test]
     fn sessions_are_evicted_by_lru_cap() {
         let svc = WorldViewService::new();
@@ -348,18 +356,16 @@ mod tests {
             let mut g = svc.sessions.lock().unwrap();
             for i in 0..(MAX_SESSIONS + 3) {
                 let k = format!("k{i}");
-                g.map.insert(k.clone(), stub_session(&k));
-                g.lru.push_back(k);
-            }
-            // 与 WorldViewService::open 内的淘汰逻辑一致
-            while g.lru.len() > MAX_SESSIONS {
-                if let Some(evicted) = g.lru.pop_front() {
-                    g.map.remove(&evicted);
-                }
+                g.insert(k.clone(), stub_session(&k));
             }
             assert_eq!(g.map.len(), MAX_SESSIONS, "必须按上限淘汰");
             assert!(!g.map.contains_key("k0"), "最久未用的应被淘汰");
             assert!(g.map.contains_key(&format!("k{}", MAX_SESSIONS + 2)));
+            // 重复插入同一 key 不应占两个槽位
+            let n = g.map.len();
+            g.insert("k0".to_string(), stub_session("k0"));
+            assert_eq!(g.map.len(), n, "同一 key 覆盖而非新增");
+            assert_eq!(g.lru.len(), n, "LRU 不得长于实际槽位数");
         }
     }
 
