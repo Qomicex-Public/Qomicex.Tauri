@@ -308,113 +308,132 @@ fn spawn_extract(id: TaskId, intent: ExtractIntent) {
     });
 }
 
-/// 已订阅的下载管理器标识（`Arc::as_ptr` 地址）。
+/// 订阅状态：`(管理器代号, watcher 任务句柄)`。
+type WatcherSubscription = (u64, tokio::task::JoinHandle<()>);
+
+/// 已订阅的下载管理器代号与其 watcher 任务句柄。
 ///
-/// 不能只用 `AtomicBool` 记「订阅过」：`PUT /settings` 热替换管理器后，
-/// 新实例没有订阅者，之后的资源下载在下载中心会永远停在 `queued`
-/// （`progress_sse` 的快照依赖本 watcher 更新）——#228。
-/// 故按管理器身份记：传入的实例与已订阅的不是同一个就重新起一个 watcher。
-fn subscribed_manager() -> &'static Mutex<Option<usize>> {
-    static SUBSCRIBED: OnceLock<Mutex<Option<usize>>> = OnceLock::new();
+/// 不能只用 `AtomicBool` 记「订阅过」：`PUT /settings` 热替换管理器后，新实例没有
+/// 订阅者，之后的资源下载在下载中心会永远停在 `queued`（progress_sse 的快照依赖
+/// 本 watcher 更新）—— #228。故按管理器**代号**记，见
+/// [`crate::state::download_manager_generation`]。
+///
+/// 不用 `Arc::as_ptr` 做身份：旧管理器释放后新分配可能复用同一地址，会把新管理器
+/// 误判为「已订阅」而不再起 watcher。
+///
+/// 保存句柄是为了**主动 abort** 旧 watcher：downloader 的 `start_aggregator`
+/// 自己起了一个持有 `events` 发送端的常驻任务（`DownloadManager` 没有 `Drop`
+/// 去中止它），所以丢弃旧管理器后频道**不会**关闭，旧 rx 收不到 `Closed`，
+/// watcher 会永久驻留并继续往 task_registry 写旧任务状态。
+fn subscribed_generation() -> &'static Mutex<Option<WatcherSubscription>> {
+    static SUBSCRIBED: OnceLock<Mutex<Option<WatcherSubscription>>> = OnceLock::new();
     SUBSCRIBED.get_or_init(|| Mutex::new(None))
 }
 
 /// Install the background subscriber that mirrors downloader events into the
-/// task registry. Subscribes once per manager instance; a hot-swapped manager
-/// gets its own watcher. Returns immediately if this manager is subscribed.
-fn ensure_watcher(manager: Arc<DownloadManager>) {
-    let identity = Arc::as_ptr(&manager) as usize;
+/// task registry. 每个管理器代号只订阅一次；热替换后为新管理器重建。
+///
+/// 只把 `broadcast::Receiver` 移进任务，**不把 `Arc<DownloadManager>` 移进去**
+/// （否则任务独占地延长旧管理器寿命）；旧 watcher 由下一次调用显式 `abort()`。
+fn ensure_watcher(manager: Arc<DownloadManager>, generation: u64) {
+    let mut rx = manager.subscribe();
     {
-        let mut guard = subscribed_manager()
+        let mut guard = subscribed_generation()
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        if *guard == Some(identity) {
-            return;
-        }
-        *guard = Some(identity);
-    }
-    tokio::spawn(async move {
-        let mut rx = manager.subscribe();
-        loop {
-            match rx.recv().await {
-                Ok(DownloadEvent::Progress {
-                    id,
-                    downloaded,
-                    total,
-                    speed_bps,
-                    ..
-                }) => {
-                    let mut reg = task_registry().lock().unwrap();
-                    if let Some(s) = reg.get_mut(&id) {
-                        s.downloaded = downloaded;
-                        s.total = total;
-                        s.speed = speed_bps;
-                        if total > 0 {
-                            s.status = status_of(TaskState::Downloading).to_string();
-                        }
-                    }
-                }
-                Ok(DownloadEvent::StateChanged { id, state, detail }) => {
-                    // #162：下载完成且登记了解压意图 → 转交解压，状态先保持
-                    // 「完成」直到解压有结果由 finish_extract 回写（失败置 failed）。
-                    // 这里必须在上面的快照更新之前抢走 Completed，否则会先被写成
-                    // completed，解压失败也来不及反映。
-                    if state == TaskState::Completed {
-                        let intent = extract_intents().lock().unwrap().remove(&id);
-                        if let Some(intent) = intent {
-                            // 进入解压前先把快照收到「下载 100%、速度 0」：下载已
-                            // 完成，若保持最后一次进度 tick 的值，下载中心会在解压
-                            // 期间显示一个未满的进度条与虚假速度（CodeRabbit 评审
-                            // 指出）。解压结束由 finish_extract 写终态。
-                            {
-                                let mut reg = task_registry().lock().unwrap();
-                                if let Some(s) = reg.get_mut(&id) {
-                                    s.speed = 0;
-                                    if s.total > 0 {
-                                        s.downloaded = s.total;
-                                    }
-                                }
-                            }
-                            spawn_extract(id, intent);
-                            continue;
-                        }
-                    } else if matches!(state, TaskState::Failed | TaskState::Cancelled) {
-                        // 下载没成功就谈不上解压：清掉意图。否则条目会随失败/取消的
-                        // 任务滞留在 map 里（这些 id 虽然不会复用，但残留会一直占用
-                        // 内存，且语义上是「永远不会执行的意图」）。
-                        extract_intents().lock().unwrap().remove(&id);
-                    }
-                    let status = status_of(state).to_string();
-                    let error = if state == TaskState::Failed {
-                        detail
-                    } else {
-                        None
-                    };
-                    if let Some(s) = task_registry().lock().unwrap().get_mut(&id) {
-                        s.status = status;
-                        s.error = error;
-                        // 完成时把已下载字节同步为总大小（最后一个进度 tick 可能与
-                        // 完成存在节流竞态，导致快照停在未满值）。
-                        if state == TaskState::Completed && s.total > 0 {
-                            s.downloaded = s.total;
-                        }
-                        // 终态下速度必须归零，否则快照会永久残留最后一次的瞬时速度，
-                        // 每个 SSE 消费者都得各自在客户端补这一下。
-                        if matches!(
-                            state,
-                            TaskState::Completed | TaskState::Failed | TaskState::Cancelled
-                        ) {
-                            s.speed = 0;
-                            // 打点终态时刻，供 prune_terminal_snapshots 回收（#229）
-                            s.terminal_at = Some(std::time::Instant::now());
-                        }
-                    }
-                }
-                Ok(DownloadEvent::GlobalProgress { .. } | DownloadEvent::Log { .. }) => {}
-                Err(_) => break,
+        if let Some((g, _)) = guard.as_ref() {
+            if *g == generation {
+                return;
             }
         }
-    });
+        // 热替换：先停掉旧 watcher，避免它在旧管理器的事件上继续写入快照。
+        if let Some((_, old)) = guard.take() {
+            old.abort();
+        }
+        let handle = tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(DownloadEvent::Progress {
+                        id,
+                        downloaded,
+                        total,
+                        speed_bps,
+                        ..
+                    }) => {
+                        let mut reg = task_registry().lock().unwrap();
+                        if let Some(s) = reg.get_mut(&id) {
+                            s.downloaded = downloaded;
+                            s.total = total;
+                            s.speed = speed_bps;
+                            if total > 0 {
+                                s.status = status_of(TaskState::Downloading).to_string();
+                            }
+                        }
+                    }
+                    Ok(DownloadEvent::StateChanged { id, state, detail }) => {
+                        // #162：下载完成且登记了解压意图 → 转交解压，状态先保持
+                        // 「完成」直到解压有结果由 finish_extract 回写（失败置 failed）。
+                        // 这里必须在上面的快照更新之前抢走 Completed，否则会先被写成
+                        // completed，解压失败也来不及反映。
+                        if state == TaskState::Completed {
+                            let intent = extract_intents().lock().unwrap().remove(&id);
+                            if let Some(intent) = intent {
+                                // 进入解压前先把快照收到「下载 100%、速度 0」：下载已
+                                // 完成，若保持最后一次进度 tick 的值，下载中心会在解压
+                                // 期间显示一个未满的进度条与虚假速度（CodeRabbit 评审
+                                // 指出）。解压结束由 finish_extract 写终态。
+                                {
+                                    let mut reg = task_registry().lock().unwrap();
+                                    if let Some(s) = reg.get_mut(&id) {
+                                        s.speed = 0;
+                                        if s.total > 0 {
+                                            s.downloaded = s.total;
+                                        }
+                                    }
+                                }
+                                spawn_extract(id, intent);
+                                continue;
+                            }
+                        } else if matches!(state, TaskState::Failed | TaskState::Cancelled) {
+                            // 下载没成功就谈不上解压：清掉意图。否则条目会随失败/取消的
+                            // 任务滞留在 map 里（这些 id 虽然不会复用，但残留会一直占用
+                            // 内存，且语义上是「永远不会执行的意图」）。
+                            extract_intents().lock().unwrap().remove(&id);
+                        }
+                        let status = status_of(state).to_string();
+                        let error = if state == TaskState::Failed {
+                            detail
+                        } else {
+                            None
+                        };
+                        if let Some(s) = task_registry().lock().unwrap().get_mut(&id) {
+                            s.status = status;
+                            s.error = error;
+                            // 完成时把已下载字节同步为总大小（最后一个进度 tick 可能与
+                            // 完成存在节流竞态，导致快照停在未满值）。
+                            if state == TaskState::Completed && s.total > 0 {
+                                s.downloaded = s.total;
+                            }
+                            // 终态下速度必须归零，否则快照会永久残留最后一次的瞬时速度，
+                            // 每个 SSE 消费者都得各自在客户端补这一下。
+                            if matches!(
+                                state,
+                                TaskState::Completed | TaskState::Failed | TaskState::Cancelled
+                            ) {
+                                s.speed = 0;
+                                // 打点终态时刻，供 prune_terminal_snapshots 回收（#229）
+                                s.terminal_at = Some(std::time::Instant::now());
+                            }
+                        }
+                    }
+                    Ok(DownloadEvent::GlobalProgress { .. } | DownloadEvent::Log { .. }) => {}
+                    Err(_) => break,
+                }
+            }
+        });
+        // 句柄留待下一次热替换 abort。
+        *guard = Some((generation, handle));
+    }
 }
 
 /// Map a downloader TaskState to the C# session status strings.
@@ -494,7 +513,10 @@ async fn start(
     State(state): State<SharedState>,
     Json(req): Json<StartDownloadRequest>,
 ) -> ApiResult<Json<DownloadStartResponse>> {
-    ensure_watcher(state.download_manager.load_full());
+    ensure_watcher(
+        state.download_manager.load_full(),
+        crate::state::download_manager_generation().load(std::sync::atomic::Ordering::SeqCst),
+    );
 
     let cat = match req.category.as_deref().map(|c| c.to_lowercase()).as_deref() {
         Some("resourcepacks" | "resourcepack") => "resourcepacks",
@@ -610,7 +632,10 @@ async fn download_to(
     State(state): State<SharedState>,
     Json(req): Json<DownloadToRequest>,
 ) -> ApiResult<Json<DownloadToResponse>> {
-    ensure_watcher(state.download_manager.load_full());
+    ensure_watcher(
+        state.download_manager.load_full(),
+        crate::state::download_manager_generation().load(std::sync::atomic::Ordering::SeqCst),
+    );
 
     let target = PathBuf::from(req.target_path.trim());
     let target_dir = target
@@ -1398,5 +1423,85 @@ mod tests {
         )
         .unwrap();
         assert_eq!(world.world_name.as_deref(), Some("MyMap"));
+    }
+
+    /// 回归（#228 的后续）：热替换必须**主动停掉**旧 watcher。
+    ///
+    /// 不能依赖频道关闭来退出：downloader 的 `start_aggregator` 自起一个持有
+    /// events 发送端的常驻任务，且 `DownloadManager` 没有 `Drop` 去中止它，因此
+    /// 丢弃旧管理器后频道**不会**关闭（下面的断言固定这一事实）。若不 abort，
+    /// 每次热替换都会留下一个永不退出的 watcher。
+    #[tokio::test]
+    async fn hot_swap_aborts_previous_watcher() {
+        let mgr_a = Arc::new(DownloadManager::new(
+            qomicex_downloader::DownloadOptions::default(),
+            1,
+        ));
+        let mgr_b = Arc::new(DownloadManager::new(
+            qomicex_downloader::DownloadOptions::default(),
+            1,
+        ));
+
+        // 先固定前提：丢弃管理器后频道仍开着（聚合器持有发送端）
+        {
+            let mut rx = mgr_a.subscribe();
+            let probe = Arc::clone(&mgr_a);
+            drop(mgr_a);
+            let got = tokio::time::timeout(std::time::Duration::from_millis(300), rx.recv()).await;
+            assert!(
+                matches!(got, Ok(Ok(DownloadEvent::GlobalProgress { .. }))),
+                "聚合器应仍持有发送端（频道不随管理器丢弃而关闭），实际 {got:?}"
+            );
+            drop(probe);
+        }
+
+        let mut rx_a = mgr_b.subscribe();
+        // 用序号区分两次订阅；第二次必须 abort 掉第一次的 watcher
+        let gen_a = crate::state::download_manager_generation()
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        ensure_watcher(Arc::clone(&mgr_b), gen_a);
+        let first_handle = {
+            let guard = subscribed_generation()
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            match guard.as_ref() {
+                Some((g, h)) => {
+                    assert_eq!(*g, gen_a);
+                    Some(h.abort_handle())
+                }
+                None => None,
+            }
+        };
+        let first_handle = first_handle.expect("首次订阅后应记录 watcher 句柄");
+
+        let gen_b = crate::state::download_manager_generation()
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        ensure_watcher(Arc::clone(&mgr_b), gen_b);
+
+        // abort 是异步生效的，给它一点时间
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(
+            first_handle.is_finished(),
+            "热替换后旧 watcher 必须已被 abort，否则每次换设置都会泄漏一个常驻任务"
+        );
+
+        // 代号必须已更新为新值
+        {
+            let guard = subscribed_generation()
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            assert_eq!(guard.as_ref().map(|(g, _)| *g), Some(gen_b));
+        }
+        let _ = rx_a.recv().await;
+    }
+
+    /// 管理器代号必须单调递增，watcher 才能区分「同一个」与「热替换后的新实例」。
+    #[test]
+    fn manager_generation_is_monotonic() {
+        let a = crate::state::download_manager_generation();
+        let before = a.load(std::sync::atomic::Ordering::SeqCst);
+        a.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let after = a.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(after > before, "代号必须严格递增（{before} -> {after}）");
     }
 }

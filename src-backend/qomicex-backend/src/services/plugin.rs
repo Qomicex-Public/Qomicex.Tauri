@@ -225,10 +225,18 @@ fn version_parse(version: &str) -> Vec<i32> {
 /// `manifest.id` 会被用作文件系统路径（安装目录名），两个安装入口共用本校验：
 /// 非空、≤128、不含 `..`、只允许 `[A-Za-z0-9._-]`（白名单同时挡住分隔符、
 /// 盘符与绝对路径）。
+///
+/// 额外拒绝**以 `.` 开头或结尾**的 id：
+/// - 单独的 `"."` 经 `Path::join` 解析后就是 `plugins_dir` 本身（不是某个插件目录），
+///   且 `scan_plugins` 会跳过以 `.` 开头的目录 —— 这种 id 既非法又会污染 plugins 根；
+/// - 结尾的 `.` 在 Windows 上会被文件系统折叠（`plugins/foo.` 即 `plugins/foo`），
+///   可借此覆盖同名插件目录。
 fn validate_plugin_id(id: &str) -> Result<(), ApiError> {
     let safe = !id.is_empty()
         && id.len() <= 128
         && !id.contains("..")
+        && !id.starts_with('.')
+        && !id.ends_with('.')
         && id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
@@ -1009,6 +1017,9 @@ mod tests {
 
     /// 回归（#225）：`install_from_dir` 过去只做 `plugins_dir.join(&manifest.id)`，
     /// 没有 `install_from_package` 那套 id 校验 → 恶意 manifest 可把内容写到 plugins/ 之外。
+    ///
+    /// 含 `.` 与 `foo.`：`plugins_dir.join(".")` 解析后就是 plugins 根目录本身，
+    /// 结尾的 `.` 在 Windows 上会被文件系统折叠（可覆盖 `foo` 插件）。
     #[test]
     fn install_from_dir_rejects_path_traversal_id() {
         for id in [
@@ -1019,6 +1030,9 @@ mod tests {
             "a/b",
             "a\\b",
             "",
+            ".",
+            "foo.",
+            ".foo",
         ] {
             let (tmp, _guard) = make_temp_root();
             let src = tmp.join("src");

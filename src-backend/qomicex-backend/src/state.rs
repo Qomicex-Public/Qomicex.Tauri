@@ -315,7 +315,19 @@ impl AppState {
     /// 旧管理器在无引用后释放，其进行中的任务被取消。
     pub fn replace_download_manager(&self, settings: &SettingsResponse) {
         self.download_manager.store(new_download_manager(settings));
+        // 递增代号：资源下载的 watcher 据此判断「当前管理器是否已有订阅者」。
+        // 用单调递增而非 Arc 地址：地址会被复用。
+        download_manager_generation().fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
+}
+
+/// 当前下载管理器代号（初值 0，每次热替换 +1）。
+///
+/// 供 `resource_download::ensure_watcher` 判定是否需要为新管理器重建订阅者：
+/// 热替换后新实例没有订阅者，不重建的话资源下载会永远停在 `queued`。
+pub fn download_manager_generation() -> &'static std::sync::atomic::AtomicU64 {
+    static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    &GENERATION
 }
 
 /// 按来源自动路由：这些「按连接限速」的 CDN 主机强制走 HTTP/1.1 并行连接，其余源
