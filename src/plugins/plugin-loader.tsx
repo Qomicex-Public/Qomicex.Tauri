@@ -9,6 +9,8 @@ import { PluginSlot } from './PluginSlot.tsx'
 import type { SlotId } from './slots.tsx'
 import { NavItem } from '../components/Sidebar.tsx'
 import { PluginIcon } from '../components/PluginIcon.tsx'
+import { useSidebarExpanded } from '../components/sidebarExpansion.tsx'
+import { cn } from '../lib/utils.ts'
 import { API_BASE } from '../api/client.ts'
 import { reportPluginError } from '../lib/telemetry.ts'
 import { registerPluginIconTheme, unregisterPluginIconTheme } from '../theme/index.ts'
@@ -331,16 +333,35 @@ function OverlaySidebarButton({ pluginId, item, overlay }: { pluginId: string; i
     })
   }
 
+  const { expanded } = useSidebarExpanded()
+
+  const button = (
+    <button
+      onClick={handleClick}
+      aria-label={item.label}
+      className={cn(
+        'relative flex h-11 items-center overflow-hidden rounded-lg text-muted-foreground transition-colors duration-200 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+        expanded ? 'w-full' : 'w-11'
+      )}
+    >
+      <span className="flex h-11 w-11 shrink-0 items-center justify-center text-lg">
+        <PluginIcon pluginId={pluginId} icon={resolvePluginAssetUrl(pluginId, item.icon ?? '')} fallback={item.label[0]} />
+      </span>
+      <span
+        aria-hidden
+        className={cn(
+          'min-w-0 flex-1 truncate whitespace-nowrap text-sm transition-opacity duration-200 anim-transition',
+          expanded ? 'opacity-100' : 'opacity-0'
+        )}
+      >
+        {item.label}
+      </span>
+    </button>
+  )
+
   return (
-    <li className="w-full flex justify-center relative">
-      <Tooltip content={item.label} side="right">
-        <button
-          onClick={handleClick}
-          className="flex h-11 w-11 items-center justify-center rounded-lg text-lg transition-all duration-200 text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
-          <PluginIcon pluginId={pluginId} icon={resolvePluginAssetUrl(pluginId, item.icon ?? '')} fallback={item.label[0]} />
-        </button>
-      </Tooltip>
+    <li className="relative flex w-full justify-center">
+      {expanded ? button : <Tooltip content={item.label} side="right">{button}</Tooltip>}
     </li>
   )
 }
