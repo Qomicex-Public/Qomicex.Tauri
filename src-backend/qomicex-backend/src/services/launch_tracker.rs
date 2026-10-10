@@ -228,15 +228,93 @@ pub fn process_alive(pid: i32) -> bool {
     sys.process(syspid).is_some()
 }
 
-/// 终止进程（对应源 `ProcessState.Kill`，尽力而为）。
+/// 终止进程树（对应源 `ProcessState.Kill`，尽力而为）。
+///
+/// 必须杀**整个进程树**：Minecraft 的 Java 主进程常派生 JVM 子进程（部分 mod /
+/// 启动器包装），只杀主进程会留下 `javaw.exe` 残留继续占用内存与文件句柄，
+/// 用户点了「取消启动」却仍看得见它，重装/改实例文件时还会撞上文件占用。
+/// 语义与 `POST /api/launch/{pid}/kill`（core `kill`：Windows `taskkill /T /F`、
+/// Unix 从叶子到根 `kill -9`）保持一致，两条路径不再各有一套实现。
+///
+/// 注意：本函数是**同步**的（走 `std::process::Command`），与 core 的 async 版
+/// 各自独立实现但语义相同；调用点分布在同步上下文（`LaunchTracker::stop`）与
+/// 异步 handler 中，故不改为 async。
 pub fn kill_process(pid: i32) {
     if pid <= 0 {
         return;
     }
-    let mut sys = sysinfo::System::new();
-    let syspid = sysinfo::Pid::from_u32(pid as u32);
-    sys.refresh_process(syspid);
-    if let Some(p) = sys.process(syspid) {
-        let _ = p.kill();
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
     }
+    #[cfg(unix)]
+    {
+        // 先收集后代（含孙进程），从叶子到根 kill -9，再杀主进程。
+        // `ps` 不可用/输出异常时降级为只杀主进程（保守，不误杀无关进程）。
+        for child in collect_descendants(pid) {
+            let _ = std::process::Command::new("kill")
+                .args(["-9", &child.to_string()])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
+/// Unix 进程树收集：解析 `ps -eo pid=,ppid=`，返回目标进程的全部后代
+/// （深度降序 == 叶子优先，先杀子进程再杀父进程）。
+///
+/// 解析失败返回空列表，调用方退化为「只杀主进程」。
+#[cfg(unix)]
+fn collect_descendants(root_pid: i32) -> Vec<i32> {
+    let out = std::process::Command::new("ps")
+        .args(["-eo", "pid=,ppid="])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+
+    let mut children: HashMap<i32, Vec<i32>> = HashMap::new();
+    for line in out.lines() {
+        let mut it = line.split_whitespace();
+        if let (Some(child), Some(parent)) = (
+            it.next().and_then(|v| v.parse::<i32>().ok()),
+            it.next().and_then(|v| v.parse::<i32>().ok()),
+        ) {
+            children.entry(parent).or_default().push(child);
+        }
+    }
+
+    // BFS 收集全部后代，并记录深度；按深度降序输出（叶子优先）
+    let mut with_depth: Vec<(i32, usize)> = Vec::new();
+    let mut queue: Vec<(i32, usize)> = children
+        .get(&root_pid)
+        .map(|v| v.iter().map(|c| (*c, 1usize)).collect())
+        .unwrap_or_default();
+    let mut seen: std::collections::HashSet<i32> = std::collections::HashSet::new();
+    while let Some((pid, depth)) = queue.pop() {
+        if !seen.insert(pid) {
+            continue; // 防御 ps 输出异常造成的环
+        }
+        with_depth.push((pid, depth));
+        if let Some(kids) = children.get(&pid) {
+            for k in kids {
+                queue.push((*k, depth + 1));
+            }
+        }
+    }
+    with_depth.sort_by(|a, b| b.1.cmp(&a.1));
+    with_depth.into_iter().map(|(pid, _)| pid).collect()
 }

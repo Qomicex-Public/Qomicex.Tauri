@@ -127,7 +127,6 @@ export default function Layout() {
 
   useEffect(() => {
     const s = getSettings()
-    document.documentElement.style.setProperty('--radius', `${s.cornerRadius ?? 8}px`)
     prevBgRef.current = { image: s.backgroundImage, random: s.backgroundRandom }
     resolveBg()
     return onSettingsChange((s) => {
@@ -135,7 +134,8 @@ export default function Layout() {
       setBlur(s.bgBlur ?? 0)
       setBgAnim(s.backgroundAnimationsEnabled !== false)
       setBgVideo(s.backgroundVideoEnabled === true)
-      document.documentElement.style.setProperty('--radius', `${s.cornerRadius ?? 8}px`)
+      // `--radius` 由 applySettingsToDom（App/Settings 共用实现）负责写入；
+      // 此处不再重复设置，避免第三份「裸设置值 → CSS 变量」的拷贝（#238）。
       const prev = prevBgRef.current
       if (s.backgroundImage !== prev.image || s.backgroundRandom !== prev.random) {
         prevBgRef.current = { image: s.backgroundImage, random: s.backgroundRandom }

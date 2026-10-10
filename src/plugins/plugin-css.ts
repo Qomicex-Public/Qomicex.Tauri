@@ -199,7 +199,18 @@ window.addEventListener('message', function (e) {
 const themeSyncTargets = new Set<HTMLIFrameElement>()
 let themeObserver: MutationObserver | null = null
 
+/// iframe → 注销函数。WeakMap 以 iframe 为键，不阻止 iframe 被回收。
+///
+/// `registerThemeSync` 的返回值在 onload 回调 / React effect 这类调用点上很容易
+/// 被丢弃（#236），丢弃后 iframe 会永久留在 `themeSyncTargets` 里 —— 每次插件
+/// 启用/禁用都泄漏一个 iframe 及其整棵 DOM，主题变化还会向已卸载的 iframe
+/// postMessage。故把注销函数登记在此，并提供 `unregisterThemeSync` 供那些
+/// 不方便接住返回值的调用点使用。
+const themeSyncUnsubscribers = new WeakMap<HTMLIFrameElement, () => void>()
+
 export function registerThemeSync(iframe: HTMLIFrameElement) {
+  // 同一 iframe 重复注册（如 iframe 二次 onload）先注销旧的，避免叠加多个监听
+  unregisterThemeSync(iframe)
   themeSyncTargets.add(iframe)
   const push = () => {
     const vars = getThemeVars()
@@ -216,11 +227,27 @@ export function registerThemeSync(iframe: HTMLIFrameElement) {
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
   }
   push()
-  return () => {
+  const unsubscribe = () => {
     themeSyncTargets.delete(iframe)
     if (themeSyncTargets.size === 0 && themeObserver) {
       themeObserver.disconnect()
       themeObserver = null
     }
   }
+  themeSyncUnsubscribers.set(iframe, unsubscribe)
+  return unsubscribe
+}
+
+/// 注销某 iframe 的主题同步（幂等）。供未接住 `registerThemeSync` 返回值的调用点使用。
+export function unregisterThemeSync(iframe: HTMLIFrameElement) {
+  const unsubscribe = themeSyncUnsubscribers.get(iframe)
+  if (unsubscribe) {
+    themeSyncUnsubscribers.delete(iframe)
+    unsubscribe()
+  }
+}
+
+/// 当前被主题同步持有的 iframe 数量（测试/诊断用）。
+export function themeSyncTargetCount(): number {
+  return themeSyncTargets.size
 }

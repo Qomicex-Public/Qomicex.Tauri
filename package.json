@@ -18,7 +18,8 @@
     "harness": "node scripts/harness/run.mjs",
     "test:update-channel": "node scripts/test-update-channel.mjs",
     "test:deep-link": "node scripts/test-deep-link-parse.mjs",
-    "test:i18n-steps": "node scripts/test-i18n-step-keys.mjs"
+    "test:i18n-steps": "node scripts/test-i18n-step-keys.mjs",
+    "test:plugin-theme-sync": "node scripts/test-plugin-theme-sync.mjs"
   },
   "dependencies": {
     "@fortawesome/free-brands-svg-icons": "^7.3.1",

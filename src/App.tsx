@@ -39,6 +39,7 @@ import { fetchUpdatePlan, fetchAutoInstallState, clearPendingInstall as clearPen
 import { resolveChannel, stagedChannelMatchesCurrent } from './lib/updateChannel.ts'
 import { APP_INFO } from './constants/credits.ts'
 import { applyThemeColor } from './lib/themeColor.ts'
+import { applySettingsToDom, applyThemePreset } from './lib/applySettingsToDom.ts'
 import { restoreSavedTheme } from './theme/index.ts'
 
 import { loadCustomRuntimes, scanRuntimes, getRuntimes, hasAnyRuntimes } from './stores/javaStore.ts'
@@ -618,68 +619,18 @@ Console - Qomicex Launcher ======================================`)
     }
     mql.addEventListener('change', onSystemThemeChange)
 
-    function applyFont(family: string | undefined) {
-      const root = document.documentElement
-      if (family && family.trim()) {
-        root.style.setProperty('--app-font', `'${family.replace(/['"]/g, '')}', sans-serif`)
-      } else {
-        root.style.removeProperty('--app-font')
-      }
-    }
-    function applyThemePreset(preset: AppSettings['themePreset'] | undefined) {
-      const root = document.documentElement
-      // 后端缺 themePreset（旧后端丢弃该字段）时回退到前端本地存储，避免切页即回默认。
-      const effective = preset ?? (localStorage.getItem('qomicex-theme-preset') as AppSettings['themePreset'] | null) ?? 'default'
-      if (effective && effective !== 'default') root.dataset.theme = effective
-      else delete root.dataset.theme
-    }
-    function applyGlassMaterial(material: string | undefined, blur: number | undefined) {
-      const root = document.documentElement
-      root.dataset.material = material ?? 'default'
-      root.style.setProperty('--glass-blur', `${Math.max(0, blur ?? 18)}px`)
-    }
-    function applyCardStyle(opacity: number | undefined, borderColor: string | undefined, borderWidth: number | undefined) {
-      const root = document.documentElement
-      // 透明度：0-100 → 0-1；默认 50（半透明）
-      const o = Math.min(100, Math.max(0, opacity ?? 50))
-      root.style.setProperty('--card-opacity', String(o / 100))
-      // 边框颜色：合法 hex 才覆盖，否则回退主题边框色
-      if (borderColor && /^#?[0-9a-fA-F]{3}$|^#?[0-9a-fA-F]{6}$/.test(borderColor.trim())) {
-        root.style.setProperty('--card-border-color', borderColor.trim())
-      } else {
-        root.style.removeProperty('--card-border-color')
-      }
-      // 边框厚度：默认 1px 时移除变量回退；其余（含 0）覆盖
-      const w = Math.max(0, borderWidth ?? 1)
-      if (w === 1) root.style.removeProperty('--card-border-width')
-      else root.style.setProperty('--card-border-width', `${w}px`)
-    }
-    function applyDialogOpacity(opacity: number | undefined) {
-      // 对话框透明度：0-100 → 0-1；默认 75（半透明，独立于卡片材质）
-      const o = Math.min(100, Math.max(0, opacity ?? 75))
-      document.documentElement.style.setProperty('--dialog-opacity', String(o / 100))
-    }
     // 初始设置不在这里加载：backend 可能尚未监听（Tauri release 冷启动要先解压
     // + spawn），fetch 失败会让 UI 用默认值渲染。加载移到 AppContent 中
     // backendState==='ready' 之后；首次加载成功会触发下方 listener 完成初始应用。
     const unsub = onSettingsChange((s: AppSettings) => {
-      const enabled = s.animationsEnabled !== false
-      const speed = s.animationSpeed ?? 1
-      const maxFps = s.maxFrameRate ?? 0
-      const fpsScale = maxFps > 0 ? 60 / maxFps : 1
-      document.documentElement.dataset.animEnabled = String(enabled)
-      document.documentElement.dataset.animGpu = String(s.gpuAcceleration !== false)
-      document.documentElement.dataset.maxFps = String(maxFps)
-      document.documentElement.style.setProperty('--anim-duration-multiplier', String((1 / speed) * fpsScale))
+      // 全部 CSS 变量 / dataset 的写入集中在 applySettingsToDom（唯一实现，见 #238）
+      applySettingsToDom(s)
       window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
       setConsoleLevel(s.logLevel ?? 'info')
       setTheme(s.theme ?? 'dark')
       applyThemePreset(s.themePreset)
-      applyFont(s.fontFamily)
-      applyThemeColor(s.themeColor)
-      applyGlassMaterial(s.componentMaterial, s.glassBlur)
-      applyCardStyle(s.cardOpacity, s.cardBorderColor, s.cardBorderWidth)
-      applyDialogOpacity(s.dialogOpacity)
+      // 主题色取色是异步的，单独调用
+      void applyThemeColor(s.themeColor)
     })
     return () => {
       unsub()

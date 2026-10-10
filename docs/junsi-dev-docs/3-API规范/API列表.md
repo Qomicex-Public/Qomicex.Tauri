@@ -819,37 +819,19 @@ Yggdrasil.MinecraftToken.Create Yggdrasil.Server.Join`。
 
 **分组前缀：** `/api/launch`
 
-### POST `/api/launch`
-
-直接启动（不通过实例管理）。
-
-```json
-{
-  "instanceId": "...",
-  "versionId": "1.20.1-Forge-47.1.0",
-  "javaPath": "C:\\java\\bin\\javaw.exe",
-  "maxMemory": 4096,
-  "jvmArgs": "-XX:+UseG1GC",
-  "versionIsolation": false,
-  "authUuid": "...",
-  "authName": "Player",
-  "authToken": "...",
-  "joinServer": "localhost",
-  "joinWorld": "world"
-}
-```
-
-**响应：** `LaunchResultDto`
-
 ### POST `/api/launch/{pid}/kill`
 
-通过进程 ID 强制结束游戏进程。
+通过进程 ID 强制结束游戏进程（杀整个进程树：Windows `taskkill /T /F`，Unix 从叶子到根 `kill -9`）。
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | pid | int | path，进程 ID |
 
 **响应：** `{ "message": "..." }`
+
+> **已移除：`POST /api/launch`**（#237）。它与 `POST /api/instance/{id}/launch` 行为不一致
+> （缺 `stage` 字段、恒用 `AuthMode::Offline` 跳过账号令牌刷新、无 license 校验），
+> 且前端无任何调用者。启动统一走实例路径。
 
 ---
 
@@ -1696,9 +1678,9 @@ technic **纳入聚合源**（`source=all` + `category=modpack`）：接受其�
 
 `checkOnly: true` 时仅检查是否已安装。
 
-### GET `/api/resources/complete/progress`
-
-查询补全进度。
+> **已移除：`GET /api/resources/complete/progress`**（#230）。它返回的是硬编码占位值
+> （percentage 恒 0），与 `complete` 的 fire-and-forget `install_version` 之间没有联动，
+> 且前端无任何调用者。真实安装进度请用 `GET /api/instance/{id}/install/progress`。
 
 ---
 
@@ -2586,6 +2568,12 @@ Yggdrasil 外置登录的 **ALI（API 地址指示）** 解析：把用户输入
 ### POST /api/instance/{id}/world/close
 
 关闭会话并释放区块缓存。204，无响应体。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `key` | string，query，可选 | 只关闭该 `key` 的会话槽位。多窗口分别预览不同存档时不会误关其他窗口的会话（#233）。省略则关闭全部会话（兼容旧调用方） |
+
+会话按 `key` 分槽（上限 4 个，LRU 淘汰；每个会话约 78 MB 区块缓存），因此多窗口同时预览不同存档互不影响。
 
 ### 前端瓦片缓存键
 

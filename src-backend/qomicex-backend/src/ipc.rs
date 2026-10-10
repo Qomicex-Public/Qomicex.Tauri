@@ -17,12 +17,23 @@ use http_body_util::BodyExt;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tower::Service;
 
-/// 单请求 body 上限（导出包等大文件场景），防御异常连接撑爆内存。
+/// 单帧读取上限（导出包等大文件场景），防御异常连接撑爆内存。
 const MAX_FRAME_BODY: u32 = 1 << 30;
 
-/// 单帧读取超时：防御慢速/恶意客户端只发长度前缀后挂起（read_exact 永久等待
-/// 剩余字节会占用一个连接直到客户端断开）。正常请求远快于此阈值。
-const FRAME_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// 帧读取的**空闲**超时：两次读到数据之间允许的最大间隔。
+///
+/// 不能对整个 `read_exact` 施加总时限。此前用「30s 总超时」覆盖整帧，
+/// 与 1 GiB 的 `MAX_FRAME_BODY` 直接冲突：要在 30s 内读完 1 GiB 需要持续
+/// ≈34 MB/s 的管道吞吐，而请求体由用户可控（`.qplugin` 上传、整合包导入，
+/// GTNH 包 595MB），慢机器/杀软扫描/慢盘很容易掉到该阈值以下 —— 表现是
+/// 「上传到一半断开」，且错误只报超时，与「体积超限」无法区分。
+///
+/// 改为按字节空闲超时后：持续有数据在流动就不会超时（只受总吞吐限制），
+/// 真正卡死的连接（声明长度后一个字节都不再发）仍在此时限内被回收。
+const FRAME_READ_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// 每块读取大小：既让空闲超时能频繁重置，又避免为 1 GiB 帧发起兆级次系统调用。
+const FRAME_READ_CHUNK: usize = 1 << 20;
 
 #[cfg(windows)]
 pub async fn serve(
@@ -84,6 +95,7 @@ pub async fn serve(
     }
 }
 
+#[derive(Debug)]
 struct QipcRequest {
     method: Method,
     path: String,
@@ -92,6 +104,16 @@ struct QipcRequest {
 }
 
 async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<Option<QipcRequest>> {
+    read_frame_with(r, FRAME_READ_IDLE_TIMEOUT, FRAME_READ_CHUNK).await
+}
+
+/// [`read_frame`] 的可注入版本：`idle_timeout` / `chunk_size` 可调，供回归测试
+/// 用毫秒级时限覆盖**完整的**帧解析路径（而不是只测其中一段 helper）。
+async fn read_frame_with<R: AsyncRead + Unpin>(
+    r: &mut R,
+    idle_timeout: std::time::Duration,
+    chunk_size: usize,
+) -> std::io::Result<Option<QipcRequest>> {
     // total_len 为 0 或 EOF：客户端未发请求即断开，静默结束
     let total = match read_u32(r).await? {
         None => return Ok(None),
@@ -105,11 +127,9 @@ async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<Option<Q
         ));
     }
     let mut buf = vec![0u8; total as usize];
-    // 超时防御：客户端声明长度后不发送剩余字节（截断帧）时，read_exact 会
-    // 永久挂起占用连接。加超时后超时即断开，释放连接。
-    tokio::time::timeout(FRAME_READ_TIMEOUT, r.read_exact(&mut buf))
-        .await
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "frame read timeout"))??;
+    // 分块读取 + 每块重置空闲超时：只要数据在持续流动就不会超时，避免大帧
+    // 在整帧总时限下被误杀（见 FRAME_READ_IDLE_TIMEOUT 注释）。
+    read_frame_body_with(r, &mut buf, idle_timeout, chunk_size).await?;
     let mut cur = &buf[..];
 
     let method_len = read_u8(&mut cur)? as usize;
@@ -178,6 +198,38 @@ async fn read_u32<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<Option<u32
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(None),
         Err(e) => Err(e),
     }
+}
+
+/// 分块把整帧读入 `buf`，**每块之间**重置空闲超时。
+///
+/// 语义：单次停顿超过 `idle_timeout` 即判超时断开；持续有数据流动则不限总时长
+/// （大帧只受吞吐限制）。参数化超时与块大小便于用毫秒级时限做回归测试。
+async fn read_frame_body_with<R: AsyncRead + Unpin>(
+    r: &mut R,
+    buf: &mut [u8],
+    idle_timeout: std::time::Duration,
+    chunk_size: usize,
+) -> std::io::Result<()> {
+    let chunk_size = chunk_size.max(1);
+    let mut filled = 0usize;
+    while filled < buf.len() {
+        let end = (filled + chunk_size).min(buf.len());
+        let chunk = &mut buf[filled..end];
+        let n = tokio::time::timeout(idle_timeout, r.read(chunk))
+            .await
+            .map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::TimedOut, "frame read idle timeout")
+            })??;
+        if n == 0 {
+            // 对端在帧中途关闭
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "frame truncated: peer closed mid-frame",
+            ));
+        }
+        filled += n;
+    }
+    Ok(())
 }
 
 async fn handle_conn<S>(app: Router, mut io: S) -> std::io::Result<()>
@@ -256,6 +308,98 @@ mod tests {
     use axum::routing::get;
     use axum::Json;
     use futures::stream;
+
+    /// 回归（#235）：慢速但**持续有数据**的大帧不得因整帧总超时被误杀。
+    ///
+    /// 旧实现用 30s 覆盖整个 `read_exact`：1 GiB 需要 ≈34 MB/s，慢管道必然超时。
+    /// 这里用「时限 200ms + 分 10 块、每块间隔 40ms」模拟：总耗时约 400ms
+    /// （> 200ms 总时限），但每块间隔 < 200ms 空闲时限 → 修复后应成功。
+    #[tokio::test]
+    async fn slow_but_progressing_frame_is_not_timed_out() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut client, mut server) = tokio::io::duplex(1024);
+        // 构造一个合法的完整请求帧（长度前缀 + method/path/headers/body），
+        // 通过 read_frame_with 走**真实**的帧解析路径（而非只测其中的 helper），
+        // 这样即便有人把 read_frame 改回整帧总超时，本测试也会失败。
+        let frame = build_request("GET", "/api/ping", &[], b"");
+        let expect = frame.clone();
+
+        tokio::spawn(async move {
+            // 逐字节、每字节间隔 40ms：总耗时远超下面的总时限，但每次间隔都短于空闲时限
+            for b in frame {
+                client.write_all(&[b]).await.unwrap();
+                tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+            }
+        });
+
+        let r = read_frame_with(
+            &mut server,
+            std::time::Duration::from_millis(200),
+            1, // 每字节一次 read，逐块重置空闲超时
+        )
+        .await;
+        let req = r.expect("持续有数据的慢帧不应超时").expect("应有请求");
+        assert_eq!(req.path, "/api/ping");
+        assert!(expect.len() > 9, "帧应足够长以跨越总时限");
+    }
+
+    /// 反向护栏：真正卡死的连接（声明长度后不再发字节）必须被空闲超时回收。
+    #[tokio::test]
+    async fn stalled_frame_is_timed_out() {
+        use tokio::io::AsyncWriteExt;
+        let (mut client, mut server) = tokio::io::duplex(64);
+        tokio::spawn(async move {
+            // 声明 16 字节的帧，但只发长度前缀后就挂起
+            client.write_all(&16u32.to_le_bytes()).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        });
+
+        let r = read_frame_with(&mut server, std::time::Duration::from_millis(150), 1).await;
+        let err = r.expect_err("卡死的帧必须超时");
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    /// 对端在帧中途关闭 → 立即报截断，不等超时。
+    #[tokio::test]
+    async fn peer_closed_mid_frame_is_truncated() {
+        use tokio::io::AsyncWriteExt;
+        let (mut client, mut server) = tokio::io::duplex(64);
+        tokio::spawn(async move {
+            client.write_all(&16u32.to_le_bytes()).await.unwrap();
+            client.write_all(&[1, 2, 3]).await.unwrap();
+            drop(client); // 关闭
+        });
+
+        let r = read_frame_with(&mut server, std::time::Duration::from_millis(5000), 1).await;
+        let err = r.expect_err("中途关闭必须报错");
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+    }
+
+    /// 正向护栏：正常快帧仍应被完整解析（method / path / headers / body）。
+    #[tokio::test]
+    async fn complete_frame_round_trips_through_real_parser() {
+        use tokio::io::AsyncWriteExt;
+        let (mut client, mut server) = tokio::io::duplex(4096);
+        let frame = build_request(
+            "POST",
+            "/api/x",
+            &[("content-type", "application/json")],
+            b"{}",
+        );
+        tokio::spawn(async move {
+            client.write_all(&frame).await.unwrap();
+        });
+
+        let req = read_frame_with(&mut server, std::time::Duration::from_secs(5), 1 << 20)
+            .await
+            .expect("应解析成功")
+            .expect("应有请求");
+        assert_eq!(req.method, axum::http::Method::POST);
+        assert_eq!(req.path, "/api/x");
+        assert_eq!(req.headers.len(), 1);
+        assert_eq!(req.body, b"{}");
+    }
 
     fn test_app() -> Router {
         async fn ping() -> Json<serde_json::Value> {

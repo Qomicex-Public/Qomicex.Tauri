@@ -586,13 +586,17 @@ async fn rollback(
 /// GET /api/plugins/{id}/files/{*path} — static plugin assets (no-cache).
 async fn plugin_file(AxumPath((id, path)): AxumPath<(String, String)>) -> ApiResult<Response> {
     let plugins_root = settings::plugins_dir();
-    let base = plugins_root.join(&id);
-    if !base.starts_with(&plugins_root) {
+    if !is_plugin_dir_name(&id) {
         return Err(ApiError::not_found(
             "PLUGIN_FILE_NOT_FOUND",
             "File not found",
         ));
     }
+    let base = plugins_root.join(&id);
+    // 注意：不能用 `base.parent()` / `starts_with` 做边界判定 —— 二者都是**词法**
+    // （组件）比较，不解析 `..`：`plugins_root.join("..").parent()` 仍返回
+    // plugins_root，`starts_with` 也仍为真，两类守卫都会对 `id=".."` 失效。
+    // 唯一可靠的判据是 id 本身必须是单个普通文件名（`is_plugin_dir_name`）。
     let file_path = resolve_plugin_asset(&base, &path);
     let Some(file_path) = file_path else {
         return Err(ApiError::not_found(
@@ -616,6 +620,21 @@ async fn plugin_file(AxumPath((id, path)): AxumPath<(String, String)>) -> ApiRes
         .unwrap())
 }
 
+/// 插件目录名必须恰好是 `plugins/` 下的一个普通文件名：拒绝空、`.`、`..`
+/// 以及任何分隔符 / 盘符 / 绝对路径形态。
+///
+/// 不能改用 `Path::starts_with` 判定：它按**组件**比较前缀，`plugins_root.join("..")`
+/// 在组件层面仍以 `plugins_root` 的组件序列开头（`..` 是末位组件，不会回退），
+/// 于是 `id=".."` 恒为真，守卫形同虚设。
+fn is_plugin_dir_name(id: &str) -> bool {
+    !id.is_empty()
+        && id != "."
+        && id != ".."
+        && !id.contains('/')
+        && !id.contains('\\')
+        && !id.contains(':')
+}
+
 /// Resolve a plugin asset under `base`, refusing any traversal outside it.
 fn resolve_plugin_asset(base: &std::path::Path, rel: &str) -> Option<PathBuf> {
     if rel.is_empty() {
@@ -630,6 +649,8 @@ fn resolve_plugin_asset(base: &std::path::Path, rel: &str) -> Option<PathBuf> {
         return None;
     }
     let joined = base.join(rel_path);
+    // rel_path 已排除绝对路径与 ParentDir，此处 starts_with 只需再挡住带盘符前缀
+    // 的形态（Windows 下 `C:foo` 不是绝对路径，但 join 会替换掉 base）。
     if !joined.starts_with(base) {
         return None;
     }
@@ -1685,6 +1706,44 @@ mod tests {
         assert!(is_private("100.64.0.1"));
         assert!(is_private("::1"));
         assert!(is_private("fc00::1"));
+    }
+
+    /// 回归（#226）：`plugin_file` 的路径守卫原先用 `base.starts_with(&plugins_root)`，
+    /// 而该 API 按**组件**比较前缀 —— `join("..")` 的结果在组件层面仍以 plugins_root
+    /// 开头，于是 `id=".."` 恒为真，守卫不生效。
+    #[test]
+    fn plugin_file_guard_rejects_parent_dir_id() {
+        let root = std::path::Path::new("/tmp/qomicex-plugins");
+        // 组件语义：这正是旧实现被绕过的原因，先固定这个前提
+        assert!(root.join("..").starts_with(root));
+        assert!(root.join("../..").starts_with(root));
+        // 新守卫必须拒绝
+        assert!(!is_plugin_dir_name(".."));
+        assert!(!is_plugin_dir_name("../.."));
+        assert!(!is_plugin_dir_name("a/b"));
+        assert!(!is_plugin_dir_name("a\\b"));
+        assert!(!is_plugin_dir_name("C:\\Windows"));
+        assert!(!is_plugin_dir_name(""));
+        assert!(!is_plugin_dir_name("."));
+        // 合法插件目录名仍放行
+        assert!(is_plugin_dir_name("com.qomicex.demo"));
+        assert!(is_plugin_dir_name("my_plugin-1.0"));
+    }
+
+    /// 回归（#226）：记录「词法路径守卫对 `..` 无效」这一事实，防止日后重新引入
+    /// `base.parent()` / `base.starts_with(root)` 这类看似正确、实则恒真的伪守卫。
+    #[test]
+    fn lexical_path_guards_do_not_stop_parent_dir() {
+        let root = std::path::Path::new("/tmp/qomicex-plugins");
+        for id in ["..", "../..", "a/../.."] {
+            let base = root.join(id);
+            assert!(base.starts_with(root), "id={id}: starts_with 对 .. 恒真");
+        }
+        // parent() 同样不可靠：单个 `..` 会被词法消解回 root，多级则留在 root 之下
+        assert_eq!(root.join("..").parent(), Some(root));
+        assert_ne!(root.join("../..").parent(), Some(root));
+        // 唯一可靠的判据是 id 形态本身
+        assert!(is_plugin_dir_name("com.qomicex.demo"));
     }
 
     #[test]

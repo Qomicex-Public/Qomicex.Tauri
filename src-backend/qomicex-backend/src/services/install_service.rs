@@ -472,14 +472,47 @@ pub async fn run_install_pipeline(
     let hc_c = http_client.clone();
     let key_c = curse_forge_api_key.to_string();
     let addons_c = std::mem::take(&mut resolved_addons);
+    // 加载器必装 addon（fabric-api / qsl）：这些解析失败必须让安装失败，
+    // 否则会产出「报成功但缺 fabric-api」的实例（见 resolve_addons 注释）。
+    let required_addons: Vec<String> = loader
+        .as_deref()
+        .map(default_loader_addons)
+        .unwrap_or(&[])
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     let branch_addons = async move {
         if addons_c.is_empty() {
             return Ok(());
         }
         h_c.mark_step("download-addons", "active");
         h_c.set_stage("downloading-addons");
-        let all_additional_files =
+        let (all_additional_files, failed_addons) =
             resolve_addons(&hc_c, &addons_c, &gv_c, download_source_id).await;
+
+        let missing_required: Vec<&String> = failed_addons
+            .iter()
+            .filter(|f| {
+                required_addons
+                    .iter()
+                    .any(|r| r.eq_ignore_ascii_case(f.as_str()))
+            })
+            .collect();
+        if !missing_required.is_empty() {
+            let names = missing_required
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!("必装前置模组解析失败: {names}"));
+        }
+        // 非必装 addon 失败只记警告：不阻断安装，但在日志里留有模块名与原因。
+        if !failed_addons.is_empty() {
+            tracing::warn!(
+                addons = %failed_addons.join(", "),
+                "部分可选 addon 解析失败，已跳过"
+            );
+        }
 
         if !all_additional_files.is_empty() {
             h_c.set_stage("downloading-additional-files");
@@ -964,13 +997,18 @@ fn merge_addons(user_addons: &[String], loader: Option<&str>) -> Vec<String> {
 
 /// 解析 addon 列表为 AdditionalFile（源 `ResolveAddonsAsync`；Modrinth slug 查询 +
 /// OptiFine 特例格式 `optifine:{mc}:{type}-{patch}`）。
+///
+/// 返回 `(解析结果, 失败的 slug)`。**不再静默吞错**：调用方据此对必装 addon
+/// （`default_loader_addons`，如 fabric-api / qsl）判断是否让安装失败 —— 否则会
+/// 产出「安装报成功但缺少 fabric-api」的实例，启动后大量 mod 报错且无任何线索。
 async fn resolve_addons(
     http_client: &reqwest::Client,
     addon_ids: &[String],
     game_version: &str,
     download_source_id: i32,
-) -> Vec<AdditionalFile> {
+) -> (Vec<AdditionalFile>, Vec<String>) {
     let mut result = Vec::new();
+    let mut failed = Vec::new();
     let mut slug_list = Vec::new();
 
     for id in addon_ids {
@@ -1001,6 +1039,9 @@ async fn resolve_addons(
                     identifier: url,
                     relative_path: format!("mods/{filename}"),
                 });
+            } else {
+                tracing::warn!(addon = %id, "OptiFine addon 格式非法，已跳过");
+                failed.push(id.clone());
             }
             continue;
         }
@@ -1008,25 +1049,43 @@ async fn resolve_addons(
     }
 
     if slug_list.is_empty() {
-        return result;
+        return (result, failed);
     }
 
     // 查询 Modrinth（源并发 12，这里顺序查询足够）。
     for slug in &slug_list {
         let url = format!("https://api.modrinth.com/v2/project/{slug}/version");
         let text = match http_client.get(&url).send().await {
-            Ok(resp) => match resp.text().await {
+            Ok(resp) if resp.status().is_success() => match resp.text().await {
                 Ok(t) => t,
-                Err(_) => continue,
+                Err(e) => {
+                    tracing::warn!(addon = %slug, error = %e, "addon 版本请求体读取失败");
+                    failed.push(slug.clone());
+                    continue;
+                }
             },
-            Err(_) => continue,
+            Ok(resp) => {
+                tracing::warn!(addon = %slug, status = %resp.status(), "addon 版本请求失败");
+                failed.push(slug.clone());
+                continue;
+            }
+            Err(e) => {
+                tracing::warn!(addon = %slug, error = %e, "addon 版本请求发送失败");
+                failed.push(slug.clone());
+                continue;
+            }
         };
         let Ok(versions) = serde_json::from_str::<Value>(&text) else {
+            tracing::warn!(addon = %slug, "addon 版本响应不是合法 JSON");
+            failed.push(slug.clone());
             continue;
         };
         let Some(arr) = versions.as_array() else {
+            tracing::warn!(addon = %slug, "addon 版本响应不是数组");
+            failed.push(slug.clone());
             continue;
         };
+        let mut resolved = false;
         for v in arr {
             let matches_game = v["game_versions"]
                 .as_array()
@@ -1047,13 +1106,19 @@ async fn resolve_addons(
                         identifier: file_url.to_string(),
                         relative_path: format!("mods/{filename}"),
                     });
+                    resolved = true;
                 }
             }
             break;
         }
+        if !resolved {
+            // 有响应但没有匹配 game_version 的文件：等价于没解析出这个 addon。
+            tracing::warn!(addon = %slug, game_version = %game_version, "addon 无匹配游戏版本的文件");
+            failed.push(slug.clone());
+        }
     }
 
-    result
+    (result, failed)
 }
 
 /// 判断 URL 是否属于 CurseForge 域名（源 `IsCfDomain`）。

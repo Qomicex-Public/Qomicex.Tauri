@@ -59,20 +59,6 @@ export interface JavaDownloadProgressResponse {
   error: string | null
 }
 
-export interface LauncherRequest {
-  version: string
-  gameDir: string
-  maxMemory: string
-  additionalParam?: string
-  devideVersion: boolean
-  accountName?: string
-  accountUuid?: string
-  accessToken?: string
-  javaPath?: string
-  javaVersionId: number
-  launcherName?: string
-}
-
 export interface Account {
   name: string
   uuid: string

@@ -54,7 +54,11 @@ pub struct AppState {
     pub core: Arc<GameCore>,
     /// 下载管理器（复用 qomicex-downloader）。用 `ArcSwap` 支持运行时热替换
     /// （切换 HTTP/3 开关时重建并替换，旧管理器进行中的任务被取消）。
-    pub download_manager: ArcSwap<DownloadManager>,
+    ///
+    /// 外层再套 `Arc`：长驻服务（如 Java 下载）必须在**每次使用时**重新
+    /// `load_full()`，而不能在初始化时抓一份快照 —— 否则热替换后那些链路
+    /// 会永久停在旧管理器的设置上（#228）。
+    pub download_manager: Arc<ArcSwap<DownloadManager>>,
     /// 数据目录（AppPaths.BaseDir）。
     pub data_dir: PathBuf,
     /// CurseForge API Key。
@@ -184,11 +188,15 @@ impl AppState {
         let download_manager = new_download_manager(&settings_now);
 
         // 插件 proxy 客户端（对应命名 HttpClient "PluginProxy"）。
+        // `redirect(none)`：`/plugins/proxy` 只在发起请求前对**初始** host 做一次私网
+        // 校验（`validate_target`），reqwest 若自动跟随 302 则不会回调该校验，于是
+        // 「公网 URL → 302 到 127.0.0.1」可绕开全部 SSRF 防护。策略必须与下方
+        // `plugin_download_client` 一致；确需跟随重定向时应逐跳重校验目标。
         let proxy_client = {
             let mut b = reqwest::Client::builder()
                 .timeout(Duration::from_secs(60))
                 .user_agent(user_agent.clone())
-                .redirect(reqwest::redirect::Policy::limited(10));
+                .redirect(reqwest::redirect::Policy::none());
             if ignore_ssl {
                 b = b.danger_accept_invalid_certs(true);
             }
@@ -273,7 +281,7 @@ impl AppState {
 
         Self {
             core,
-            download_manager: ArcSwap::from(download_manager),
+            download_manager: Arc::new(ArcSwap::from(download_manager)),
             data_dir: settings::resolve_base_dir(),
             curse_forge_api_key,
             http_client,
@@ -307,7 +315,19 @@ impl AppState {
     /// 旧管理器在无引用后释放，其进行中的任务被取消。
     pub fn replace_download_manager(&self, settings: &SettingsResponse) {
         self.download_manager.store(new_download_manager(settings));
+        // 递增代号：资源下载的 watcher 据此判断「当前管理器是否已有订阅者」。
+        // 用单调递增而非 Arc 地址：地址会被复用。
+        download_manager_generation().fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
+}
+
+/// 当前下载管理器代号（初值 0，每次热替换 +1）。
+///
+/// 供 `resource_download::ensure_watcher` 判定是否需要为新管理器重建订阅者：
+/// 热替换后新实例没有订阅者，不重建的话资源下载会永远停在 `queued`。
+pub fn download_manager_generation() -> &'static std::sync::atomic::AtomicU64 {
+    static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    &GENERATION
 }
 
 /// 按来源自动路由：这些「按连接限速」的 CDN 主机强制走 HTTP/1.1 并行连接，其余源
@@ -454,3 +474,49 @@ fn embedded_ms_client_id() -> String {
 }
 
 pub type SharedState = Arc<AppState>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归（#228）：下载管理器句柄必须是**共享**的，长驻服务每次使用都要能
+    /// 看到热替换后的新实例。
+    ///
+    /// 旧实现让服务（Java 下载 / 整合包）在初始化时 `load_full()` 抓一份快照，
+    /// 热替换后那些链路永久沿用旧管理器的代理 / HTTP3 / 线程数设置。
+    #[tokio::test]
+    async fn shared_download_manager_handle_follows_hot_swap() {
+        let settings = SettingsResponse::default();
+        let shared: Arc<ArcSwap<DownloadManager>> =
+            Arc::new(ArcSwap::from(new_download_manager(&settings)));
+
+        // 模拟长驻服务持有共享句柄（修复后的形态）
+        let service_handle = shared.clone();
+        let before = service_handle.load_full();
+
+        // 热替换
+        let replacement = new_download_manager(&settings);
+        let replacement_ptr = Arc::as_ptr(&replacement) as usize;
+        shared.store(replacement);
+
+        let after = service_handle.load_full();
+        assert_eq!(
+            Arc::as_ptr(&after) as usize,
+            replacement_ptr,
+            "持有共享句柄的服务必须看到热替换后的新实例"
+        );
+        assert_ne!(
+            Arc::as_ptr(&before) as usize,
+            Arc::as_ptr(&after) as usize,
+            "替换前后应为不同实例"
+        );
+
+        // 对照：旧形态（初始化时抓快照）永远停在旧实例 —— 这正是被修的 bug
+        let captured_snapshot = before.clone();
+        assert_ne!(
+            Arc::as_ptr(&captured_snapshot) as usize,
+            replacement_ptr,
+            "抓快照的形态看不到热替换（旧 bug 的机制）"
+        );
+    }
+}

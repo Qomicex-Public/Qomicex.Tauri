@@ -31,33 +31,3 @@ export function usePageAnimation() {
   return ref
 }
 
-export function useStaggerAnimation(deps: unknown[] = []) {
-  const ref = useRef<HTMLDivElement>(null)
-
-  useGSAP(() => {
-    const el = ref.current
-    if (!el) return
-    const s = getSettings()
-    const enabled = s.animationsEnabled !== false
-    const speed = s.animationSpeed ?? 1
-    const maxFps = s.maxFrameRate ?? 0
-    const fpsScale = maxFps > 0 ? 60 / maxFps : 1
-    if (!enabled) return
-
-    const children = el.children
-    if (children.length === 0) return
-
-    gsap.from(children, {
-      autoAlpha: 0,
-      y: 8,
-      scale: 0.97,
-      duration: 0.3 / speed * fpsScale,
-      stagger: Math.min(0.06, 0.3 / children.length) / speed * fpsScale,
-      ease: 'power3.out',
-      force3D: s.gpuAcceleration !== false,
-      clearProps: 'all',
-    })
-  }, { scope: ref, dependencies: deps })
-
-  return ref
-}
