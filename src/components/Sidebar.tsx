@@ -188,6 +188,7 @@ export default function Sidebar() {
                 type="button"
                 variant="ghost"
                 size="icon"
+                className="anim-transition"
                 onClick={() => applyExpanded(!expanded)}
                 aria-label={toggleLabel}
                 aria-expanded={expanded}

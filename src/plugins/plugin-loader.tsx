@@ -340,7 +340,7 @@ function OverlaySidebarButton({ pluginId, item, overlay }: { pluginId: string; i
       onClick={handleClick}
       aria-label={item.label}
       className={cn(
-        'relative flex h-11 items-center overflow-hidden rounded-lg text-muted-foreground transition-colors duration-200 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+        'relative flex h-11 items-center overflow-hidden rounded-lg text-muted-foreground transition-colors duration-200 anim-transition hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
         expanded ? 'w-full' : 'w-11'
       )}
     >
