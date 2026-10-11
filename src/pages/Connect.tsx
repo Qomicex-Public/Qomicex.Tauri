@@ -494,8 +494,19 @@ export default function Connect() {
       unknown: { variant: 'secondary' },
     }
     const c = cfg[natType.type] ?? { variant: 'secondary' as const }
+    // 公网映射地址由 STUN 探测得到，作为 tooltip 的补充信息展示便于自助排查
+    const mapped = natType.publicIp
+      ? `${natType.publicIp}${natType.publicPort ? `:${natType.publicPort}` : ''}`
+      : null
+    const tip = (
+      <div className="space-y-1">
+        <div>{t(`connect.natTypes.${natType.type}.tooltip`)}</div>
+        {mapped && <div className="text-muted-foreground">{t('connect.natPublicAddr', { addr: mapped })}</div>}
+        {natType.reason && <div className="text-muted-foreground">{natType.reason}</div>}
+      </div>
+    )
     return (
-      <Tooltip content={t(`connect.natTypes.${natType.type}.tooltip`)}>
+      <Tooltip content={tip}>
         <Badge variant={c.variant}>{t(`connect.natTypes.${natType.type}.label`)}</Badge>
       </Tooltip>
     )

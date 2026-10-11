@@ -1148,6 +1148,8 @@ export interface MultiMcImportRequest {
 
 export interface NatTypeResult {
   type: 'cone' | 'symmetric' | 'blocked' | 'unknown'
+  /** 判定依据（诊断信息，如端点无关映射 / 服务器全部无响应） */
+  reason: string
   publicIp: string | null
   publicPort: number | null
 }

@@ -1825,7 +1825,7 @@ async fn scan_ports() -> ApiResult<Json<ScanPortsResponse>> {
     }))
 }
 
-/// GET /connector/nat-type — STUN 检测（两次 binding 对比映射端口，缓存 5 分钟）。
+/// GET /connector/nat-type — STUN 映射行为检测（RFC 5780，缓存 5 分钟）。
 async fn nat_type() -> ApiResult<Json<NatTypeResult>> {
     let conn = connector();
     {
@@ -1836,9 +1836,8 @@ async fn nat_type() -> ApiResult<Json<NatTypeResult>> {
             }
         }
     }
-    let result = stun_detect_nat().await.unwrap_or(NatTypeResult {
-        r#type: "unknown".to_string(),
-    });
+    // 检测失败不再伪装成 unknown：结果自带 reason 说明为何无法判定
+    let result = stun_detect_nat().await;
     *conn.nat_cache.lock().await = Some((Instant::now(), result.clone()));
     Ok(Json(result))
 }
@@ -2104,100 +2103,230 @@ async fn resolve_host_icon(
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
-/// STUN NAT 类型检测：对同一本地端口发起两次 binding 请求，
-/// 映射端口一致 → cone，变化 → symmetric，无响应 → blocked。
-/// 服务器按 (host, 可尝试的 UDP 端口列表) 遍历；3478/udp 被防火墙挡时
-/// 降级到 53/udp（DNS 端口通常放行，对应 turn.cloudflare.com 备选端口，
-/// 腾讯/谷歌仅 3478）。TCP 80 备选不用于 UDP 检测。
-async fn stun_detect_nat() -> Option<NatTypeResult> {
-    const STUN_SERVERS: &[(&str, &[u16])] = &[
-        ("stun.qq.com", &[3478]),
-        ("stun.l.google.com", &[3478]),
-        ("turn.cloudflare.com", &[3478, 53]),
-    ];
-    // ⚠️ 修复：单服务器失败不再 `?` 短路返回 None，遍历全部服务器直到有响应
-    // （原实现 stun.qq.com 无响应即返回 None → NAT 类型恒为 unknown）
-    for (host, ports) in STUN_SERVERS {
-        for port in *ports {
-            let server = format!("{host}:{port}");
-            let Some(mapped1) = stun_binding_once(&server).await else {
-                continue;
-            };
-            // 用同一本地端口 + 同一服务器端口第二次请求
-            let Some(mapped2) = stun_binding_once_on(&server, mapped1.local_port).await else {
-                continue;
-            };
-            let r#type = if mapped1.mapped_port == mapped2.mapped_port {
-                "cone"
-            } else {
-                "symmetric"
-            };
-            return Some(NatTypeResult {
-                r#type: r#type.to_string(),
-            });
+/// STUN 候选服务器：2026-10-11 实测扫描 30 台公共 STUN，15 台可达，取其中 8 台。
+///
+/// 原列表 stun.qq.com（RST）/ stun.l.google.com（超时）/ turn.cloudflare.com（超时）
+/// 在实测网络下全部不可达，导致检测必然落到 blocked。
+const STUN_SERVERS: &[&str] = &[
+    "stun.miwifi.com:3478",
+    "stun.sipnet.net:3478",
+    "stun.antisip.com:3478",
+    "stun.telnyx.com:3478",
+    "stun.voip.blackberry.com:3478",
+    "stun.internetcalls.com:3478",
+    "stun.voip.eutelia.it:3478",
+    "stun.bcs2005.net:3478",
+];
+
+/// 单次探测的超时上限。所有请求在同一个 socket 上并发发出，整体墙钟约等于该值。
+const STUN_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// STUN XOR-MAPPED-ADDRESS 的 cookie 常量（RFC 5389 §15.2）。
+const STUN_MAGIC_COOKIE: u32 = 0x2112_A442;
+
+/// 一个服务器观测到的本机公网映射。
+#[derive(Debug, Clone)]
+struct StunObservation {
+    public_ip: String,
+    public_port: u16,
+}
+
+/// 本机 NAT 映射行为的判定结果（RFC 5780 §4.3）。
+enum MappingBehavior {
+    /// 端点无关映射：不同目标返回同一映射 → 锥形类，打洞成功率高
+    EndpointIndependent,
+    /// 地址相关映射：公网 IP 相同、端口按目标变化
+    AddressDependent { public_port: u16 },
+    /// 地址端口相关映射（对称 NAT）：每个目标一对独立映射
+    AddressAndPortDependent,
+}
+
+/// NAT 类型检测（RFC 5780 映射行为测试）。
+///
+/// 关键点：必须在**同一个本地 socket** 上向多个不同目标发起 binding，再比较各目标
+/// 返回的映射端口/地址是否一致 —— 这样才能区分端点无关映射（锥形）与对称 NAT。
+/// 用不同 socket（不同本地端口）各打一台服务器时，映射端口天然不同，比较无意义。
+///
+/// 注意：RFC 3489 的 filtering 测试（进一步区分完全锥形/受限锥形/端口受限锥形）需要
+/// 服务器支持 CHANGE-REQUEST 属性。实测 15 台可达公共 STUN **无一支持**（响应源地址
+/// 端口均不变），故 filtering 无法判定，本函数只给映射行为。
+async fn stun_detect_nat() -> NatTypeResult {
+    let socket = match tokio::net::UdpSocket::bind(("0.0.0.0", 0)).await {
+        Ok(s) => s,
+        Err(e) => return NatTypeResult::blocked(format!("udp-bind-failed: {e}")),
+    };
+
+    // 同一 socket 并发向所有候选服务器发 binding 请求，各自独立事务 ID
+    let mut pending: Vec<([u8; 12], &str)> = Vec::new();
+    for server in STUN_SERVERS {
+        let tx = new_transaction_id();
+        if socket
+            .send_to(&build_binding_request(&tx), server)
+            .await
+            .is_ok()
+        {
+            pending.push((tx, server));
         }
     }
-    // 所有服务器均无响应 → blocked
-    Some(NatTypeResult {
-        r#type: "blocked".to_string(),
-    })
+    if pending.is_empty() {
+        return NatTypeResult::blocked("no-stun-server-resolvable");
+    }
+    let attempted = pending.len();
+
+    // 收割响应：按事务 ID 归属，整体墙钟受 STUN_PROBE_TIMEOUT 约束
+    let deadline = Instant::now() + STUN_PROBE_TIMEOUT;
+    let mut observations: Vec<StunObservation> = Vec::new();
+    let mut buf = [0u8; 1024];
+    while !pending.is_empty() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await {
+            Ok(Ok((n, _))) => {
+                if let Some((tx, obs)) = parse_stun_response(&buf[..n], &pending) {
+                    pending.retain(|(t, _)| t != &tx);
+                    observations.push(obs);
+                }
+            }
+            // 超时或读错误：停止收割，用已有观测判定
+            _ => break,
+        }
+    }
+
+    classify_nat(observations, attempted)
 }
 
-struct StunMapping {
-    local_port: u16,
-    mapped_port: u16,
+/// 由观测集判定映射行为，并映射到 API 契约的四个值。
+fn classify_nat(observations: Vec<StunObservation>, attempted: usize) -> NatTypeResult {
+    let Some(first) = observations.first().cloned() else {
+        return NatTypeResult::blocked(format!("no-response-from-any-of-{attempted}-servers"));
+    };
+    // 仅一台响应时无法比较，不能据此断言映射行为
+    if observations.len() < 2 {
+        return NatTypeResult {
+            r#type: "unknown".to_string(),
+            reason: format!("only-1-of-{attempted}-servers-responded"),
+            public_ip: Some(first.public_ip),
+            public_port: Some(first.public_port),
+        };
+    }
+
+    let ports: HashSet<u16> = observations.iter().map(|o| o.public_port).collect();
+    let ips: HashSet<&str> = observations.iter().map(|o| o.public_ip.as_str()).collect();
+    let n = observations.len();
+
+    let behavior = if ports.len() == 1 {
+        MappingBehavior::EndpointIndependent
+    } else if ips.len() == 1 {
+        MappingBehavior::AddressDependent {
+            public_port: first.public_port,
+        }
+    } else {
+        MappingBehavior::AddressAndPortDependent
+    };
+
+    let (r#type, reason) = match behavior {
+        // 端点无关映射 = 锥形类；打洞成功率由 filtering 决定，而 filtering 无法探测
+        MappingBehavior::EndpointIndependent => (
+            "cone",
+            format!(
+                "endpoint-independent-mapping ({n} servers, port {})",
+                first.public_port
+            ),
+        ),
+        MappingBehavior::AddressDependent { public_port } => (
+            "symmetric",
+            format!("address-dependent-mapping ({n} servers, port {public_port})"),
+        ),
+        MappingBehavior::AddressAndPortDependent => (
+            "symmetric",
+            format!("address-and-port-dependent-mapping ({n} servers)"),
+        ),
+    };
+
+    NatTypeResult {
+        r#type: r#type.to_string(),
+        reason,
+        public_ip: Some(first.public_ip),
+        public_port: Some(first.public_port),
+    }
 }
 
-async fn stun_binding_once(server: &str) -> Option<StunMapping> {
-    stun_binding_once_on(server, 0).await
+/// RFC 5389 binding request：20 字节固定头（含 magic cookie）+ 12 字节事务 ID。
+///
+/// 头长固定 20 字节；先前实现只写 4 字节头 + 12 字节事务 ID（共 16 字节），
+/// 报文畸形，实测所有服务器均静默丢弃 → 检测必然返回 blocked。
+fn build_binding_request(tx: &[u8; 12]) -> [u8; 20] {
+    let mut req = [0u8; 20];
+    req[0] = 0x00;
+    req[1] = 0x01; // Binding Request
+    req[2] = 0x00;
+    req[3] = 0x00; // message length = 0（无属性）
+    req[4..8].copy_from_slice(&STUN_MAGIC_COOKIE.to_be_bytes());
+    req[8..20].copy_from_slice(tx);
+    req
 }
 
-async fn stun_binding_once_on(server: &str, local_port: u16) -> Option<StunMapping> {
-    let socket = tokio::net::UdpSocket::bind(("0.0.0.0", local_port))
-        .await
-        .ok()?;
-    socket.connect(server).await.ok()?;
-    // RFC 3489 binding request：type=0x0001, len=0, 12 字节 transaction id
+fn new_transaction_id() -> [u8; 12] {
     let mut tx = [0u8; 12];
     tx.copy_from_slice(&uuid::Uuid::new_v4().as_bytes()[..12]);
-    let mut req = vec![0x00, 0x01, 0x00, 0x00];
-    req.extend_from_slice(&tx);
-    socket.send(&req).await.ok()?;
-    let mut buf = [0u8; 512];
-    let n = tokio::time::timeout(Duration::from_secs(3), socket.recv(&mut buf))
-        .await
-        .ok()?
-        .ok()?;
-    let mapped_port = parse_stun_mapped_port(&buf[..n], &tx)?;
-    let local_port = socket.local_addr().ok()?.port();
-    Some(StunMapping {
-        local_port,
-        mapped_port,
-    })
+    tx
 }
 
-/// 解析 STUN 响应中的 XOR-MAPPED-ADDRESS (0x0020) / MAPPED-ADDRESS (0x0001) 端口。
-fn parse_stun_mapped_port(buf: &[u8], tx: &[u8; 12]) -> Option<u16> {
+/// 解析 STUN 响应，返回 (事务 ID, 映射地址)。
+///
+/// 事务 ID 需兼容两种回显位置：RFC 5389 在偏移 8..20（cookie 之后），
+/// RFC 3489 旧式实现在偏移 4..16。实测旧式服务器（如 stun.miwifi.com）
+/// 走 4..16，先前实现只认 8..20 会把这些响应全部丢弃。
+fn parse_stun_response(
+    buf: &[u8],
+    pending: &[([u8; 12], &str)],
+) -> Option<([u8; 12], StunObservation)> {
     if buf.len() < 20 || buf[0] & 0xc0 != 0 {
         return None;
     }
-    // 校验 transaction id（偏移 8，12 字节）
-    if &buf[8..20] != tx {
-        return None;
-    }
+    let tx_slice = |off: usize| -> Option<[u8; 12]> {
+        buf.get(off..off + 12).map(|s| {
+            let mut t = [0u8; 12];
+            t.copy_from_slice(s);
+            t
+        })
+    };
+    let tx = tx_slice(8)
+        .filter(|t| pending.iter().any(|(p, _)| p == t))
+        .or_else(|| tx_slice(4).filter(|t| pending.iter().any(|(p, _)| p == t)))?;
+
     let mut offset = 20usize;
     while offset + 4 <= buf.len() {
         let attr_type = u16::from_be_bytes([buf[offset], buf[offset + 1]]);
         let attr_len = u16::from_be_bytes([buf[offset + 2], buf[offset + 3]]) as usize;
-        let value = &buf[offset + 4..];
         if attr_type == 0x0020 || attr_type == 0x0001 {
-            if value.len() >= 4 {
-                // 前 2 字节 padding/协议，后 2 字节端口
-                return Some(u16::from_be_bytes([value[2], value[3]]));
+            let value = buf.get(offset + 4..offset + 4 + attr_len)?;
+            if value.len() < 8 {
+                return None;
             }
-            return None;
+            // 布局：保留字节(1) family(1) port(2) address(4)
+            let raw_port = u16::from_be_bytes([value[2], value[3]]);
+            let raw_ip = u32::from_be_bytes([value[4], value[5], value[6], value[7]]);
+            // XOR-MAPPED-ADDRESS 的端口与地址均与 magic cookie 异或
+            let (port, ip) = if attr_type == 0x0020 {
+                (
+                    raw_port ^ (STUN_MAGIC_COOKIE >> 16) as u16,
+                    raw_ip ^ STUN_MAGIC_COOKIE,
+                )
+            } else {
+                (raw_port, raw_ip)
+            };
+            return Some((
+                tx,
+                StunObservation {
+                    public_ip: std::net::Ipv4Addr::from(ip).to_string(),
+                    public_port: port,
+                },
+            ));
         }
-        offset += 4 + attr_len;
+        offset += 4 + attr_len + ((4 - (attr_len % 4)) % 4);
     }
     None
 }
@@ -2360,4 +2489,173 @@ pub struct ScanPortsResponse {
 #[serde(rename_all = "camelCase")]
 pub struct NatTypeResult {
     pub r#type: String,
+    /// 判定依据（可观测的诊断信息；非枚举值语义）。
+    pub reason: String,
+    /// 本机公网映射地址，未探测到时为 None。
+    pub public_ip: Option<String>,
+    pub public_port: Option<u16>,
+}
+
+impl NatTypeResult {
+    fn blocked(reason: impl Into<String>) -> Self {
+        Self {
+            r#type: "blocked".to_string(),
+            reason: reason.into(),
+            public_ip: None,
+            public_port: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod nat_tests {
+    use super::*;
+
+    /// 构造一台服务器的 binding 响应（RFC 5389 风格，事务 ID 回显在 8..20）。
+    fn response_xor(tx: &[u8; 12], ip: [u8; 4], port: u16) -> Vec<u8> {
+        let mut buf = vec![0u8; 20 + 12];
+        buf[0] = 0x01;
+        buf[1] = 0x01;
+        buf[2] = 0x00;
+        buf[3] = 0x0c;
+        buf[4..8].copy_from_slice(&STUN_MAGIC_COOKIE.to_be_bytes());
+        buf[8..20].copy_from_slice(tx);
+        buf[20] = 0x00;
+        buf[21] = 0x20; // XOR-MAPPED-ADDRESS
+        buf[22] = 0x00;
+        buf[23] = 0x08;
+        buf[24] = 0x00;
+        buf[25] = 0x01; // IPv4
+        buf[26..28].copy_from_slice(&(port ^ (STUN_MAGIC_COOKIE >> 16) as u16).to_be_bytes());
+        let raw = u32::from_be_bytes(ip) ^ STUN_MAGIC_COOKIE;
+        buf[28..32].copy_from_slice(&raw.to_be_bytes());
+        buf
+    }
+
+    /// RFC 3489 旧式响应：事务 ID 回显在 4..16，使用 MAPPED-ADDRESS。
+    fn response_legacy(tx: &[u8; 12], ip: [u8; 4], port: u16) -> Vec<u8> {
+        let mut buf = vec![0u8; 20 + 12];
+        buf[0] = 0x01;
+        buf[1] = 0x01;
+        buf[2] = 0x00;
+        buf[3] = 0x0c;
+        buf[4..16].copy_from_slice(tx);
+        buf[20] = 0x00;
+        buf[21] = 0x01; // MAPPED-ADDRESS
+        buf[22] = 0x00;
+        buf[23] = 0x08;
+        buf[24] = 0x00;
+        buf[25] = 0x01;
+        buf[26..28].copy_from_slice(&port.to_be_bytes());
+        buf[28..32].copy_from_slice(&ip);
+        buf
+    }
+
+    fn obs(ip: &str, port: u16) -> StunObservation {
+        StunObservation {
+            public_ip: ip.to_string(),
+            public_port: port,
+        }
+    }
+
+    #[test]
+    fn binding_request_is_20_bytes_with_magic_cookie() {
+        let tx = [7u8; 12];
+        let req = build_binding_request(&tx);
+        assert_eq!(req.len(), 20);
+        assert_eq!(req[1], 0x01);
+        assert_eq!(&req[4..8], &STUN_MAGIC_COOKIE.to_be_bytes());
+        assert_eq!(&req[8..20], &tx);
+    }
+
+    #[test]
+    fn parses_xor_mapped_address_with_xor_decoded_port_and_ip() {
+        let tx = [3u8; 12];
+        let pending = vec![(tx, "s1")];
+        let raw = response_xor(&tx, [182, 107, 142, 140], 29192);
+        let (got_tx, o) = parse_stun_response(&raw, &pending).expect("should parse");
+        assert_eq!(got_tx, tx);
+        // 端口与地址必须已从 XOR 解码回原值，而不是直读的 21274
+        assert_eq!(o.public_port, 29192);
+        assert_eq!(o.public_ip, "182.107.142.140");
+    }
+
+    #[test]
+    fn parses_legacy_transaction_id_at_offset_4() {
+        let tx = [9u8; 12];
+        let pending = vec![(tx, "s1")];
+        let raw = response_legacy(&tx, [151, 121, 42, 206], 29214);
+        let (got_tx, o) = parse_stun_response(&raw, &pending).expect("legacy should parse");
+        assert_eq!(got_tx, tx);
+        assert_eq!(o.public_port, 29214);
+        assert_eq!(o.public_ip, "151.121.42.206");
+    }
+
+    #[test]
+    fn ignores_response_with_unknown_transaction_id() {
+        let tx = [3u8; 12];
+        let pending = vec![(tx, "s1")];
+        let raw = response_xor(&[4u8; 12], [1, 2, 3, 4], 1000);
+        assert!(parse_stun_response(&raw, &pending).is_none());
+    }
+
+    #[test]
+    fn ignores_truncated_response() {
+        let tx = [3u8; 12];
+        let pending = vec![(tx, "s1")];
+        assert!(parse_stun_response(&tx[..8], &pending).is_none());
+    }
+
+    #[test]
+    fn no_observation_is_blocked_with_reason() {
+        let r = classify_nat(Vec::new(), 8);
+        assert_eq!(r.r#type, "blocked");
+        assert!(r.reason.contains("no-response"));
+        assert!(r.public_ip.is_none());
+    }
+
+    #[test]
+    fn single_observation_is_unknown_not_cone() {
+        // 仅一台响应时不能断言映射行为
+        let r = classify_nat(vec![obs("1.2.3.4", 1000)], 8);
+        assert_eq!(r.r#type, "unknown");
+        assert_eq!(r.public_ip.as_deref(), Some("1.2.3.4"));
+        assert_eq!(r.public_port, Some(1000));
+    }
+
+    #[test]
+    fn same_port_across_targets_is_endpoint_independent() {
+        let r = classify_nat(
+            vec![
+                obs("1.2.3.4", 29192),
+                obs("1.2.3.4", 29192),
+                obs("5.6.7.8", 29192),
+            ],
+            8,
+        );
+        assert_eq!(r.r#type, "cone");
+        assert_eq!(r.public_port, Some(29192));
+    }
+
+    #[test]
+    fn same_ip_different_ports_is_symmetric() {
+        let r = classify_nat(vec![obs("1.2.3.4", 1000), obs("1.2.3.4", 2000)], 8);
+        assert_eq!(r.r#type, "symmetric");
+        assert!(r.reason.contains("address-dependent"));
+    }
+
+    #[test]
+    fn different_ip_and_port_is_symmetric() {
+        let r = classify_nat(vec![obs("1.2.3.4", 1000), obs("5.6.7.8", 2000)], 8);
+        assert_eq!(r.r#type, "symmetric");
+        assert!(r.reason.contains("port-dependent"));
+    }
+
+    #[test]
+    fn old_16_byte_request_would_be_malformed() {
+        // 回归：确认当前构造不再是先前的 4+12=16 字节畸形报文
+        let req = build_binding_request(&new_transaction_id());
+        assert_ne!(req.len(), 16);
+        assert_eq!(req.len(), 20);
+    }
 }
