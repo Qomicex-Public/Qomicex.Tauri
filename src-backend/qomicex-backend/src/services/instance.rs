@@ -493,6 +493,45 @@ impl InstanceService {
     pub fn sync_from_disk(&self, scanned: &[ScannedVersionInfo]) -> Vec<GameInstance> {
         let global_isolation = crate::settings::get_global_version_isolation();
         let mut json_instances = self.get_all();
+        // 本次同步开始时的已知 id：用于区分「被判定为残留」与「并发期间新建」的记录。
+        let known_ids: std::collections::HashSet<String> =
+            json_instances.iter().map(|i| i.id.clone()).collect();
+
+        // 1a. 身份迁移：存量记录的 `name` 可能是版本 JSON 的 `id`（旧前端按扫描结果补建
+        // 记录时写入的就是 `ScannedVersion.name`）。若扫描结果给出了该 id 对应的**版本
+        // 目录名**且目录真实存在，先把记录迁移成目录名身份 —— 否则第 1 步会拿 id 去拼
+        // `versions/{id}` 判定「目录不存在」，把设置完好的记录当残留删掉（issue #244 评审）。
+        // 目标目录不存在时不迁移：宁可按原逻辑走宽限期，也不把记录名改成不存在的目录。
+        let alias: HashMap<(String, String), String> = scanned
+            .iter()
+            .filter_map(|s| {
+                s.dir_name
+                    .as_ref()
+                    .map(|d| ((s.game_dir.clone(), s.name.clone()), d.clone()))
+            })
+            .collect();
+        for inst in json_instances.iter_mut() {
+            let Some(dir) = alias.get(&(inst.game_dir.clone(), inst.name.clone())) else {
+                continue;
+            };
+            if dir == &inst.name {
+                continue;
+            }
+            if std::path::Path::new(&inst.game_dir)
+                .join("versions")
+                .join(dir)
+                .is_dir()
+            {
+                tracing::info!(
+                    from = %inst.name,
+                    to = %dir,
+                    "scan: migrating instance name to version dir name"
+                );
+                inst.name = dir.clone();
+            }
+        }
+        // 迁移后可能出现同 (game_dir, name) 的重复记录：保留字段更完整的一条。
+        Self::dedup_instances(&mut json_instances);
 
         // 1. 清理残留：版本隔离开启 + 版本目录不存在 → 删除记录
         //
@@ -657,17 +696,111 @@ impl InstanceService {
         }
 
         // 6. 写回 JSON
+        //
+        // ⚠️ 不能直接 `*guard = result`：`result` 基于第 0 步的 `get_all()` 快照算出，
+        // 扫描期间用户可能正在实例设置里改 JVM/内存（PUT /instance/{id}），整体覆盖会把
+        // 这些并发修改回退掉（issue #244 评审）。故写回前做一次合并（见
+        // `merge_concurrent_writeback`）。
         {
             let mut guard = match self.instances.lock() {
                 Ok(g) => g,
                 Err(p) => p.into_inner(),
             };
+            Self::merge_concurrent_writeback(&json_instances, &known_ids, &guard, &mut result);
             *guard = result.clone();
             drop(guard);
             self.save_to_file();
         }
 
         result
+    }
+
+    /// 写回前的并发合并：把同步期间发生的用户改动与并发新建搬到 `result` 上。
+    ///
+    /// `result` 由第 0 步的 `snapshot` 算出；`current` 是加锁后的实际列表。两者差异
+    /// 即同步期间的并发写入：
+    /// - `current` 有而 `snapshot` 无，且不在 `known_ids`（本次同步开始前已知的 id）
+    ///   → 并发新建，保留（不因整表替换而丢；被判残留清掉的 id 在 `known_ids` 内，不会救回）。
+    /// - 两边都有但**用户可编辑字段**不同 → 把当前值搬到 `result` 对应记录。
+    ///
+    /// 只搬用户字段、绝不动 `name`：`name` 由身份迁移与改名路径管理，用旧值覆盖会撤销
+    /// 第 1a 步的身份迁移。
+    fn merge_concurrent_writeback(
+        snapshot: &[GameInstance],
+        known_ids: &std::collections::HashSet<String>,
+        current: &[GameInstance],
+        result: &mut Vec<GameInstance>,
+    ) {
+        let snapshot_by_id: HashMap<String, &GameInstance> =
+            snapshot.iter().map(|i| (i.id.clone(), i)).collect();
+        let mut concurrent_new: Vec<GameInstance> = Vec::new();
+        for cur in current {
+            match snapshot_by_id.get(&cur.id) {
+                None => {
+                    if !known_ids.contains(&cur.id) && !result.iter().any(|r| r.id == cur.id) {
+                        concurrent_new.push(cur.clone());
+                    }
+                }
+                Some(orig) => {
+                    if let Some(slot) = result.iter_mut().find(|r| r.id == cur.id) {
+                        Self::carry_user_edits(orig, cur, slot);
+                    }
+                }
+            }
+        }
+        result.extend(concurrent_new);
+    }
+
+    /// 把并发写入的用户可编辑字段从 `cur`（当前实际值）搬到 `slot`（本次同步算出的值）。
+    /// 只处理用户能改的字段；`name`/`game_version`/`loader`/整合包元数据由同步与业务
+    /// 路径管理，不在此覆盖（否则会撤销身份迁移或磁盘校正）。
+    fn carry_user_edits(orig: &GameInstance, cur: &GameInstance, slot: &mut GameInstance) {
+        // 仅当相对快照有变化时才搬，避免无谓的字段重写。
+        if cur.jvm_args != orig.jvm_args {
+            slot.jvm_args = cur.jvm_args.clone();
+        }
+        if cur.max_memory != orig.max_memory {
+            slot.max_memory = cur.max_memory;
+        }
+        if cur.java_path != orig.java_path {
+            slot.java_path = cur.java_path.clone();
+        }
+        if cur.remark != orig.remark {
+            slot.remark = cur.remark.clone();
+        }
+        if cur.custom_group_ids != orig.custom_group_ids {
+            slot.custom_group_ids = cur.custom_group_ids.clone();
+        }
+        if cur.is_hidden != orig.is_hidden {
+            slot.is_hidden = cur.is_hidden;
+        }
+        if cur.version_isolation != orig.version_isolation {
+            slot.version_isolation = cur.version_isolation;
+        }
+        if cur.skip_integrity_check != orig.skip_integrity_check {
+            slot.skip_integrity_check = cur.skip_integrity_check;
+        }
+        if cur.account_name != orig.account_name {
+            slot.account_name = cur.account_name.clone();
+        }
+        if cur.account_uuid != orig.account_uuid {
+            slot.account_uuid = cur.account_uuid.clone();
+        }
+        if cur.access_token != orig.access_token {
+            slot.access_token = cur.access_token.clone();
+        }
+        if cur.icon != orig.icon {
+            slot.icon = cur.icon.clone();
+        }
+        if cur.icon_data != orig.icon_data {
+            slot.icon_data = cur.icon_data.clone();
+        }
+        if cur.last_played != orig.last_played {
+            slot.last_played = cur.last_played.clone();
+        }
+        if cur.play_time != orig.play_time {
+            slot.play_time = cur.play_time;
+        }
     }
 
     /// 去重：按 (game_dir, name) 去重，保留字段更完整的记录。
@@ -1028,6 +1161,119 @@ mod tests {
             None => std::env::remove_var("QOMICEX_HOME"),
         }
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 回归（Issue #244 评审）：存量记录的 `name` 可能是版本 JSON 的 id（旧前端按扫描
+    /// 结果补建时写入的就是 ScannedVersion.name）。此时记录的目录其实存在（真名是目录
+    /// 名），若不做身份迁移，第 1 步会拿 id 去拼 `versions/{id}` 判「不存在」并把记录
+    /// 当残留删掉，设置随之丢失。扫描给出 id→目录名映射时必须迁移。
+    #[test]
+    fn sync_from_disk_migrates_legacy_record_named_by_json_id() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home =
+            std::env::temp_dir().join(format!("qomicex-issue244-alias-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&home);
+        let old_home = std::env::var_os("QOMICEX_HOME");
+        std::env::set_var("QOMICEX_HOME", &home);
+
+        let game_dir = home.join("games").join("mc");
+        std::fs::create_dir_all(game_dir.join("versions").join("GTNH 2.8.4")).unwrap();
+
+        let service = InstanceService::new();
+        // 存量记录：name 是 JSON id，且没有 createdAt（宽限期豁免不生效）
+        let mut inst = make_instance("GT New Horizons", game_dir.to_str().unwrap(), Some(true));
+        inst.game_version = "1.7.10".to_string();
+        inst.max_memory = 8192;
+        inst.jvm_args = Some("-XX:+UseG1GC".into());
+        let created = service.create(inst);
+        {
+            let mut cur = service.get_by_id(&created.id).unwrap();
+            cur.created_at = None;
+            service.update(&created.id, cur);
+        }
+
+        // 扫描给出映射：id="GT New Horizons" → 目录名 "GTNH 2.8.4"（目录真实存在）
+        let scanned = vec![ScannedVersionInfo {
+            name: "GT New Horizons".to_string(),
+            dir_name: Some("GTNH 2.8.4".to_string()),
+            game_version: "1.7.10".to_string(),
+            game_dir: game_dir.to_str().unwrap().to_string(),
+            loader: Some("Forge".to_string()),
+            loader_version: Some("1.7.10-10.13.4.1614-1.7.10".to_string()),
+            icon_data: None,
+            modpack_name: None,
+            modpack_version: None,
+            modpack_author: None,
+            modpack_summary: None,
+        }];
+        let result = service.sync_from_disk(&scanned);
+
+        let kept = result
+            .iter()
+            .find(|i| i.id == created.id)
+            .unwrap_or_else(|| panic!("存量记录（name 为 JSON id）被当残留清掉: {result:?}"));
+        assert_eq!(kept.name, "GTNH 2.8.4", "记录名应迁移为版本目录名");
+        assert_eq!(kept.jvm_args, created.jvm_args, "JVM 参数不得丢失");
+        assert_eq!(kept.max_memory, 8192, "内存设置不得丢失");
+        assert_eq!(
+            result
+                .iter()
+                .filter(|i| i.game_dir == game_dir.to_str().unwrap())
+                .count(),
+            1,
+            "迁移后不得出现重复实例: {result:?}"
+        );
+
+        match old_home {
+            Some(v) => std::env::set_var("QOMICEX_HOME", v),
+            None => std::env::remove_var("QOMICEX_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 回归（Issue #244 评审）：扫描期间用户改了 JVM/内存（PUT /instance/{id}），
+    /// 写回合并不得用旧快照把它覆盖回去；同时并发新建的记录不得被整表替换丢掉，
+    /// 而被判定为残留清掉的记录也不能被「救回」。
+    ///
+    /// 直接测合并函数，才能构造真正的交错时序（`sync_from_disk` 内部先取快照再写回，
+    /// 从外部无法在两者之间插入改动）。
+    #[test]
+    fn merge_concurrent_writeback_keeps_user_edits() {
+        let snapshot = vec![
+            make_instance("GTNH 2.8.4", "C:/mc", Some(true)), // 将被并发修改
+            make_instance("Stale", "C:/mc", Some(true)),      // 被判残留清掉
+        ];
+        let known_ids: std::collections::HashSet<String> =
+            snapshot.iter().map(|i| i.id.clone()).collect();
+
+        // 同步期间的实际状态：第 1 条被改了内存/JVM；Stale 已不在（残留清理）；
+        // 外加一条并发新建的记录。
+        let mut edited = snapshot[0].clone();
+        edited.max_memory = 12288;
+        edited.jvm_args = Some("--add-opens java.base/java.lang=ALL-UNNAMED".into());
+        let mut concurrent_new = make_instance("NewlyCreated", "C:/mc", Some(true));
+        concurrent_new.max_memory = 2048;
+        let current = vec![edited, concurrent_new];
+
+        // result：同步算出的结果（第 1 条仍是旧值，Stale 已被清掉）
+        let mut result = vec![snapshot[0].clone()];
+        InstanceService::merge_concurrent_writeback(&snapshot, &known_ids, &current, &mut result);
+
+        let kept = result.iter().find(|i| i.id == snapshot[0].id).unwrap();
+        assert_eq!(kept.max_memory, 12288, "并发改的内存不得被同步回退");
+        assert_eq!(
+            kept.jvm_args.as_deref(),
+            Some("--add-opens java.base/java.lang=ALL-UNNAMED"),
+            "并发改的 JVM 参数不得被同步回退"
+        );
+        assert!(
+            result.iter().any(|i| i.name == "NewlyCreated"),
+            "并发新建的记录不得被整表替换丢掉: {result:?}"
+        );
+        assert!(
+            !result.iter().any(|i| i.id == snapshot[1].id),
+            "被判定为残留清掉的记录不得被合并救回: {result:?}"
+        );
     }
 
     /// 回归：幽灵实例防线。try_delete 正常删目录 → Ok；删除失败 → Err 且记录恢复
