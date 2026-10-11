@@ -575,16 +575,19 @@ impl InstanceService {
         let mut seen_keys: HashMap<(String, String), usize> = HashMap::new();
 
         for scanned in scanned {
-            // 身份键用**目录名**（回退 name，兼容旧前端）：记录的 name 恒为目录名，
-            // 而 scanned.name 是版本 JSON 的 id，二者漂移时用 name 会导致匹配失败
-            // （记录被判残留 → Default 重建 → JVM 设置丢失，issue #244）。
-            let key = (
-                scanned.game_dir.clone(),
-                scanned
-                    .dir_name
-                    .clone()
+            // 身份键用**目录名**：记录的 name 恒为目录名，而 scanned.name 是版本 JSON
+            // 的 id，二者漂移时用 name 会导致匹配失败（记录被判残留 → Default 重建 →
+            // JVM 设置丢失，issue #244）。
+            //
+            // `dir_name` 缺失（旧前端）时不能直接回退 `name`：那会在 JSON id 这个键下
+            // 新建一条默认记录，同时保留原有的目录名记录，同一版本出现两条（其中一条
+            // 设置已被重置）。故先把 `name` 当作 id 反查真实目录名。
+            let dir_name = match scanned.dir_name.clone() {
+                Some(d) => d,
+                None => Self::resolve_dir_name_for_id(&scanned.game_dir, &scanned.name)
                     .unwrap_or_else(|| scanned.name.clone()),
-            );
+            };
+            let key = (scanned.game_dir.clone(), dir_name.clone());
 
             if let Some(&json_idx) = json_index.get(&key) {
                 // JSON 中已有记录，合并（磁盘信息 + JSON 元数据）
@@ -713,6 +716,41 @@ impl InstanceService {
         }
 
         result
+    }
+
+    /// 反查「版本 JSON id → 版本目录名」。
+    ///
+    /// 仅用于 `dir_name` 缺失的旧客户端兼容：旧前端按扫描结果补建记录时把
+    /// `ScannedVersion.name`（= JSON id）写进了记录的 `name`，无法据此拼目录路径。
+    /// 做法是列出 `{gameDir}/versions/` 下的目录，读出各自 `{dir}/{dir}.json` 的 `id`，
+    /// 找到 `id == 传入 id` 的那个目录名。查不到返回 `None`，调用方回退原行为。
+    ///
+    /// 只在 `dir_name` 缺失时调用（旧客户端），常规路径不付这个代价。
+    fn resolve_dir_name_for_id(game_dir: &str, id: &str) -> Option<String> {
+        let versions_dir = std::path::Path::new(game_dir).join("versions");
+        // 目录名恰好等于 id 是最常见情形，先直接命中，避免读盘。
+        if versions_dir.join(id).is_dir() {
+            return Some(id.to_string());
+        }
+        let entries = std::fs::read_dir(&versions_dir).ok()?;
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let dir_name = entry.file_name().to_string_lossy().into_owned();
+            let json_path = dir.join(format!("{dir_name}.json"));
+            let Ok(bytes) = std::fs::read(&json_path) else {
+                continue;
+            };
+            let Ok(root) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+                continue;
+            };
+            if root.get("id").and_then(|v| v.as_str()) == Some(id) {
+                return Some(dir_name);
+            }
+        }
+        None
     }
 
     /// 写回前的并发合并：把同步期间发生的用户改动与并发新建搬到 `result` 上。
@@ -1223,6 +1261,76 @@ mod tests {
             1,
             "迁移后不得出现重复实例: {result:?}"
         );
+
+        match old_home {
+            Some(v) => std::env::set_var("QOMICEX_HOME", v),
+            None => std::env::remove_var("QOMICEX_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 回归（Issue #244 评审）：旧前端不带 `dirName` 提交扫描结果，且版本 JSON 的
+    /// `id` 与目录名不同。若直接回退用 `name`（JSON id）当身份键，会在该键下新建一条
+    /// 默认记录、同时保留原有目录名记录 —— 同一版本出现两条，其中一条设置已重置。
+    /// 应反查真实目录名后按目录名匹配。
+    #[test]
+    fn sync_from_disk_resolves_dir_name_when_dir_name_absent() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home =
+            std::env::temp_dir().join(format!("qomicex-issue244-nodir-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&home);
+        let old_home = std::env::var_os("QOMICEX_HOME");
+        std::env::set_var("QOMICEX_HOME", &home);
+
+        let game_dir = home.join("games").join("mc");
+        let version_dir = game_dir.join("versions").join("GTNH 2.8.4");
+        std::fs::create_dir_all(&version_dir).unwrap();
+        // 目录名 GTNH 2.8.4，但其版本 JSON 的 id 是 GT New Horizons
+        std::fs::write(
+            version_dir.join("GTNH 2.8.4.json"),
+            r#"{"id":"GT New Horizons","inheritsFrom":"1.7.10"}"#,
+        )
+        .unwrap();
+
+        let service = InstanceService::new();
+        let mut inst = make_instance("GTNH 2.8.4", game_dir.to_str().unwrap(), Some(true));
+        inst.game_version = "1.7.10".to_string();
+        inst.max_memory = 8192;
+        inst.jvm_args = Some("-XX:+UseG1GC".into());
+        let created = service.create(inst);
+
+        // 旧前端：dir_name 缺失，只给 name（= JSON id）
+        let scanned = vec![ScannedVersionInfo {
+            name: "GT New Horizons".to_string(),
+            dir_name: None,
+            game_version: "1.7.10".to_string(),
+            game_dir: game_dir.to_str().unwrap().to_string(),
+            loader: Some("Forge".to_string()),
+            loader_version: Some("1.7.10-10.13.4.1614-1.7.10".to_string()),
+            icon_data: None,
+            modpack_name: None,
+            modpack_version: None,
+            modpack_author: None,
+            modpack_summary: None,
+        }];
+        let result = service.sync_from_disk(&scanned);
+
+        let same_dir: Vec<&GameInstance> = result
+            .iter()
+            .filter(|i| i.game_dir == game_dir.to_str().unwrap())
+            .collect();
+        assert_eq!(
+            same_dir.len(),
+            1,
+            "同一版本不得出现两条记录（其中一条设置被重置）: {result:?}"
+        );
+        let kept = result
+            .iter()
+            .find(|i| i.id == created.id)
+            .expect("原记录应保留");
+        assert_eq!(kept.name, "GTNH 2.8.4");
+        assert_eq!(kept.jvm_args, created.jvm_args, "JVM 参数不得丢失");
+        assert_eq!(kept.max_memory, 8192, "内存设置不得丢失");
 
         match old_home {
             Some(v) => std::env::set_var("QOMICEX_HOME", v),
