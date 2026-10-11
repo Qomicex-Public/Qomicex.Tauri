@@ -14,6 +14,7 @@
 use arc_swap::ArcSwap;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
+use std::net::{SocketAddr, SocketAddrV4};
 use std::pin::Pin;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{Duration, Instant};
@@ -155,8 +156,11 @@ struct ConnectorState {
     room_mods: Arc<RwLock<Option<Vec<GameModEntry>>>>,
     /// 匹配扫描缓存：instance_id → (扫描时间, mods sha1 集合)；sha1 不常变，避免每次进房重扫
     instance_mods_cache: Arc<RwLock<HashMap<String, (Instant, HashSet<String>)>>>,
-    /// NAT 检测缓存（5 分钟）
-    nat_cache: tokio::sync::Mutex<Option<(Instant, NatTypeResult)>>,
+    /// NAT 检测缓存（5 分钟）+ 写入该条目的探测序号
+    nat_cache: tokio::sync::Mutex<Option<(Instant, NatTypeResult, u64)>>,
+    /// NAT 探测序号发号器（单调递增）。探测前取号、写缓存前比对，
+    /// 防止并发探测乱序完成时旧结果覆盖新结果。
+    nat_probe_seq: std::sync::atomic::AtomicU64,
 }
 
 static CONNECTOR: OnceLock<Arc<ConnectorState>> = OnceLock::new();
@@ -325,6 +329,7 @@ fn connector() -> &'static Arc<ConnectorState> {
             room_mods: Arc::new(RwLock::new(None)),
             instance_mods_cache: Arc::new(RwLock::new(HashMap::new())),
             nat_cache: tokio::sync::Mutex::new(None),
+            nat_probe_seq: std::sync::atomic::AtomicU64::new(0),
         })
     })
 }
@@ -1830,15 +1835,29 @@ async fn nat_type() -> ApiResult<Json<NatTypeResult>> {
     let conn = connector();
     {
         let cache = conn.nat_cache.lock().await;
-        if let Some((at, result)) = cache.as_ref() {
+        if let Some((at, result, _)) = cache.as_ref() {
             if at.elapsed() < Duration::from_secs(300) {
                 return Ok(Json(result.clone()));
             }
         }
     }
-    // 检测失败不再伪装成 unknown：结果自带 reason 说明为何无法判定
+
+    // 取号早于探测：并发探测乱序完成时，只有序号更大的结果才可写入缓存，
+    // 避免较早的探测覆盖较新的结果并重置 5 分钟生命周期。
+    let seq = conn
+        .nat_probe_seq
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        + 1;
     let result = stun_detect_nat().await;
-    *conn.nat_cache.lock().await = Some((Instant::now(), result.clone()));
+
+    let mut cache = conn.nat_cache.lock().await;
+    // 期间已有更新的探测写入 → 丢弃自己的结果，返回缓存中的较新值
+    if let Some((_, newer, cached_seq)) = cache.as_ref() {
+        if *cached_seq > seq {
+            return Ok(Json(newer.clone()));
+        }
+    }
+    *cache = Some((Instant::now(), result.clone(), seq));
     Ok(Json(result))
 }
 
@@ -2121,6 +2140,9 @@ const STUN_SERVERS: &[&str] = &[
 /// 单次探测的超时上限。所有请求在同一个 socket 上并发发出，整体墙钟约等于该值。
 const STUN_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// 收割阶段允许的连续读错误上限（超过则放弃等待剩余响应）。
+const MAX_CONSECUTIVE_RECV_ERRORS: u32 = 16;
+
 /// STUN XOR-MAPPED-ADDRESS 的 cookie 常量（RFC 5389 §15.2）。
 const STUN_MAGIC_COOKIE: u32 = 0x2112_A442;
 
@@ -2131,37 +2153,63 @@ struct StunObservation {
     public_port: u16,
 }
 
-/// 本机 NAT 映射行为的判定结果（RFC 5780 §4.3）。
-enum MappingBehavior {
-    /// 端点无关映射：不同目标返回同一映射 → 锥形类，打洞成功率高
-    EndpointIndependent,
-    /// 地址相关映射：公网 IP 相同、端口按目标变化
-    AddressDependent { public_port: u16 },
-    /// 地址端口相关映射（对称 NAT）：每个目标一对独立映射
-    AddressAndPortDependent,
-}
-
 /// NAT 类型检测（RFC 5780 映射行为测试）。
 ///
 /// 关键点：必须在**同一个本地 socket** 上向多个不同目标发起 binding，再比较各目标
 /// 返回的映射端口/地址是否一致 —— 这样才能区分端点无关映射（锥形）与对称 NAT。
 /// 用不同 socket（不同本地端口）各打一台服务器时，映射端口天然不同，比较无意义。
 ///
+/// DNS 解析（并行）与请求收发共用同一 `STUN_PROBE_TIMEOUT` 预算，避免慢 DNS 把
+/// 端点耗时推高到声明上限之外。
+///
 /// 注意：RFC 3489 的 filtering 测试（进一步区分完全锥形/受限锥形/端口受限锥形）需要
 /// 服务器支持 CHANGE-REQUEST 属性。实测 15 台可达公共 STUN **无一支持**（响应源地址
 /// 端口均不变），故 filtering 无法判定，本函数只给映射行为。
 async fn stun_detect_nat() -> NatTypeResult {
+    let deadline = tokio::time::Instant::now() + STUN_PROBE_TIMEOUT;
+
+    // 并行解析、只取 IPv4：socket 绑定的是 IPv4，双栈主机名（实测 stun.antisip.com /
+    // stun.bcs2005.net）首个解析地址可能是 IPv6，直接按主机名发送会在该 socket 上失败，
+    // 白白跳过一台本可用的服务器。
+    let resolve_all = futures::future::join_all(
+        STUN_SERVERS
+            .iter()
+            .map(|server| async move { (*server, resolve_ipv4(server).await) }),
+    );
+    let targets: Vec<(&str, SocketAddrV4)> =
+        match tokio::time::timeout_at(deadline, resolve_all).await {
+            Ok(resolved) => resolved
+                .into_iter()
+                .filter_map(|(s, a)| a.map(|a| (s, a)))
+                .collect(),
+            // 解析整体超预算：没有可用目标，直接判定
+            Err(_) => {
+                return NatTypeResult::blocked(NatReason::ResolveTimeout {
+                    servers: STUN_SERVERS.len(),
+                })
+            }
+        };
+    if targets.is_empty() {
+        return NatTypeResult::blocked(NatReason::NoServerResolvable {
+            servers: STUN_SERVERS.len(),
+        });
+    }
+
     let socket = match tokio::net::UdpSocket::bind(("0.0.0.0", 0)).await {
         Ok(s) => s,
-        Err(e) => return NatTypeResult::blocked(format!("udp-bind-failed: {e}")),
+        Err(e) => {
+            return NatTypeResult::blocked(NatReason::UdpBindFailed {
+                error: e.to_string(),
+            })
+        }
     };
 
-    // 同一 socket 并发向所有候选服务器发 binding 请求，各自独立事务 ID
+    // 同一 socket 向全部可用目标发 binding 请求，各自独立事务 ID
     let mut pending: Vec<([u8; 12], &str)> = Vec::new();
-    for server in STUN_SERVERS {
+    for (server, addr) in &targets {
         let tx = new_transaction_id();
         if socket
-            .send_to(&build_binding_request(&tx), server)
+            .send_to(&build_binding_request(&tx), addr)
             .await
             .is_ok()
         {
@@ -2169,44 +2217,111 @@ async fn stun_detect_nat() -> NatTypeResult {
         }
     }
     if pending.is_empty() {
-        return NatTypeResult::blocked("no-stun-server-resolvable");
+        return NatTypeResult::blocked(NatReason::ProbeSendFailed {
+            servers: targets.len(),
+        });
     }
     let attempted = pending.len();
 
-    // 收割响应：按事务 ID 归属，整体墙钟受 STUN_PROBE_TIMEOUT 约束
-    let deadline = Instant::now() + STUN_PROBE_TIMEOUT;
+    // 收割响应：按事务 ID 归属，整体墙钟受同一 deadline 约束
     let mut observations: Vec<StunObservation> = Vec::new();
     let mut buf = [0u8; 1024];
+    // 连续读错误计数：错误可能被反复立即返回（如 ICMP 端口不可达），
+    // 不设上限会变成到 deadline 为止的忙等。
+    let mut consecutive_errors = 0u32;
     while !pending.is_empty() {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            break;
-        }
-        match tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await {
+        match tokio::time::timeout_at(deadline, socket.recv_from(&mut buf)).await {
             Ok(Ok((n, _))) => {
+                consecutive_errors = 0;
                 if let Some((tx, obs)) = parse_stun_response(&buf[..n], &pending) {
                     pending.retain(|(t, _)| t != &tx);
                     observations.push(obs);
                 }
             }
-            // 超时或读错误：停止收割，用已有观测判定
-            _ => break,
+            // 单次读错误（如某目标不可达触发 ICMP，Windows 表现为 ConnectionReset）
+            // 不应中断收割：继续等其余目标的响应。设上限避免忙等。
+            Ok(Err(_)) => {
+                consecutive_errors += 1;
+                if consecutive_errors >= MAX_CONSECUTIVE_RECV_ERRORS {
+                    break;
+                }
+                continue;
+            }
+            // 到点未收到：停止收割，用已有观测判定
+            Err(_) => break,
         }
     }
 
     classify_nat(observations, attempted)
 }
 
+/// 解析主机名（`host:port`）并返回首个 IPv4 地址。
+///
+/// 只取 IPv4：检测 socket 绑定 IPv4，双栈主机名若先返回 IPv6 会导致该服务器被跳过。
+async fn resolve_ipv4(server: &str) -> Option<SocketAddrV4> {
+    tokio::net::lookup_host(server)
+        .await
+        .ok()?
+        .find_map(|addr| match addr {
+            SocketAddr::V4(v4) => Some(v4),
+            SocketAddr::V6(_) => None,
+        })
+}
+
+/// 判定依据/失败原因的结构化表示。
+///
+/// 不下发英文散文：原因需要按用户所选语言呈现，故只给稳定 code + 参数，
+/// 由前端 `connect.natReasons.*` 查表翻译（`#[serde(tag = "code")]`）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "code", rename_all = "camelCase")]
+pub enum NatReason {
+    /// 端点无关映射（映射端口在各目标间一致）
+    #[serde(rename_all = "camelCase")]
+    EndpointIndependentMapping { servers: usize, port: u16 },
+    /// 地址相关映射：公网 IP 一致、端口随目标变化
+    #[serde(rename_all = "camelCase")]
+    AddressDependentMapping { servers: usize, port: u16 },
+    /// 地址端口相关映射（对称 NAT）
+    #[serde(rename_all = "camelCase")]
+    AddressAndPortDependentMapping { servers: usize },
+    /// 仅一台服务器响应，不足以比较映射行为
+    #[serde(rename_all = "camelCase")]
+    SingleServerResponded { servers: usize, responded: usize },
+    /// 全部候选服务器均无响应
+    #[serde(rename_all = "camelCase")]
+    NoServerResponded { servers: usize },
+    /// 候选服务器主机名全部无法解析出 IPv4
+    #[serde(rename_all = "camelCase")]
+    NoServerResolvable { servers: usize },
+    /// 主机名解析整体超出探测预算
+    #[serde(rename_all = "camelCase")]
+    ResolveTimeout { servers: usize },
+    /// 本地 UDP socket 绑定失败
+    #[serde(rename_all = "camelCase")]
+    UdpBindFailed { error: String },
+    /// 解析成功但全部发送失败
+    #[serde(rename_all = "camelCase")]
+    ProbeSendFailed { servers: usize },
+}
+
 /// 由观测集判定映射行为，并映射到 API 契约的四个值。
 fn classify_nat(observations: Vec<StunObservation>, attempted: usize) -> NatTypeResult {
     let Some(first) = observations.first().cloned() else {
-        return NatTypeResult::blocked(format!("no-response-from-any-of-{attempted}-servers"));
+        return NatTypeResult {
+            r#type: "blocked".to_string(),
+            reason: NatReason::NoServerResponded { servers: attempted },
+            public_ip: None,
+            public_port: None,
+        };
     };
     // 仅一台响应时无法比较，不能据此断言映射行为
     if observations.len() < 2 {
         return NatTypeResult {
             r#type: "unknown".to_string(),
-            reason: format!("only-1-of-{attempted}-servers-responded"),
+            reason: NatReason::SingleServerResponded {
+                servers: attempted,
+                responded: observations.len(),
+            },
             public_ip: Some(first.public_ip),
             public_port: Some(first.public_port),
         };
@@ -2216,33 +2331,28 @@ fn classify_nat(observations: Vec<StunObservation>, attempted: usize) -> NatType
     let ips: HashSet<&str> = observations.iter().map(|o| o.public_ip.as_str()).collect();
     let n = observations.len();
 
-    let behavior = if ports.len() == 1 {
-        MappingBehavior::EndpointIndependent
-    } else if ips.len() == 1 {
-        MappingBehavior::AddressDependent {
-            public_port: first.public_port,
-        }
-    } else {
-        MappingBehavior::AddressAndPortDependent
-    };
-
-    let (r#type, reason) = match behavior {
+    let (r#type, reason) = if ports.len() == 1 {
         // 端点无关映射 = 锥形类；打洞成功率由 filtering 决定，而 filtering 无法探测
-        MappingBehavior::EndpointIndependent => (
+        (
             "cone",
-            format!(
-                "endpoint-independent-mapping ({n} servers, port {})",
-                first.public_port
-            ),
-        ),
-        MappingBehavior::AddressDependent { public_port } => (
+            NatReason::EndpointIndependentMapping {
+                servers: n,
+                port: first.public_port,
+            },
+        )
+    } else if ips.len() == 1 {
+        (
             "symmetric",
-            format!("address-dependent-mapping ({n} servers, port {public_port})"),
-        ),
-        MappingBehavior::AddressAndPortDependent => (
+            NatReason::AddressDependentMapping {
+                servers: n,
+                port: first.public_port,
+            },
+        )
+    } else {
+        (
             "symmetric",
-            format!("address-and-port-dependent-mapping ({n} servers)"),
-        ),
+            NatReason::AddressAndPortDependentMapping { servers: n },
+        )
     };
 
     NatTypeResult {
@@ -2276,9 +2386,12 @@ fn new_transaction_id() -> [u8; 12] {
 
 /// 解析 STUN 响应，返回 (事务 ID, 映射地址)。
 ///
-/// 事务 ID 需兼容两种回显位置：RFC 5389 在偏移 8..20（cookie 之后），
-/// RFC 3489 旧式实现在偏移 4..16。实测旧式服务器（如 stun.miwifi.com）
-/// 走 4..16，先前实现只认 8..20 会把这些响应全部丢弃。
+/// 事务 ID 回显位置按服务器实现分两类，两类都要认：
+/// - RFC 5389 服务器回显请求的 8..20（magic cookie 之后）—— 本实现发出的请求格式，
+///   实测 miwifi / sipnet / antisip / telnyx 均走此偏移；
+/// - 少数严格按 RFC 3489 的老式实现把 16 字节事务 ID 整体回显在 4..16。本实现不生成
+///   该格式（RFC 5389 兼容头固定为 cookie + 12 字节），此分支仅作防御，避免老式实现
+///   按自身约定回显时响应被丢弃。
 fn parse_stun_response(
     buf: &[u8],
     pending: &[([u8; 12], &str)],
@@ -2489,18 +2602,19 @@ pub struct ScanPortsResponse {
 #[serde(rename_all = "camelCase")]
 pub struct NatTypeResult {
     pub r#type: String,
-    /// 判定依据（可观测的诊断信息；非枚举值语义）。
-    pub reason: String,
+    /// 判定依据/失败原因（结构化 code + 参数，由前端按语言翻译）。
+    pub reason: NatReason,
     /// 本机公网映射地址，未探测到时为 None。
     pub public_ip: Option<String>,
     pub public_port: Option<u16>,
 }
 
 impl NatTypeResult {
-    fn blocked(reason: impl Into<String>) -> Self {
+    /// 无法完成探测时的结果（类型统一为 blocked，具体原因由 `reason` 承载）。
+    fn blocked(reason: NatReason) -> Self {
         Self {
             r#type: "blocked".to_string(),
-            reason: reason.into(),
+            reason,
             public_ip: None,
             public_port: None,
         }
@@ -2610,7 +2724,10 @@ mod nat_tests {
     fn no_observation_is_blocked_with_reason() {
         let r = classify_nat(Vec::new(), 8);
         assert_eq!(r.r#type, "blocked");
-        assert!(r.reason.contains("no-response"));
+        assert!(matches!(
+            r.reason,
+            NatReason::NoServerResponded { servers: 8 }
+        ));
         assert!(r.public_ip.is_none());
     }
 
@@ -2619,6 +2736,13 @@ mod nat_tests {
         // 仅一台响应时不能断言映射行为
         let r = classify_nat(vec![obs("1.2.3.4", 1000)], 8);
         assert_eq!(r.r#type, "unknown");
+        assert!(matches!(
+            r.reason,
+            NatReason::SingleServerResponded {
+                servers: 8,
+                responded: 1
+            }
+        ));
         assert_eq!(r.public_ip.as_deref(), Some("1.2.3.4"));
         assert_eq!(r.public_port, Some(1000));
     }
@@ -2635,20 +2759,73 @@ mod nat_tests {
         );
         assert_eq!(r.r#type, "cone");
         assert_eq!(r.public_port, Some(29192));
+        assert!(matches!(
+            r.reason,
+            NatReason::EndpointIndependentMapping {
+                servers: 3,
+                port: 29192
+            }
+        ));
+    }
+
+    /// 诊断原因必须能序列化成结构化 code + 参数，前端才可按语言翻译；
+    /// 不得把英文散文下发给前端渲染。
+    #[test]
+    fn reason_serializes_to_structured_code_and_params() {
+        let r = classify_nat(vec![obs("1.2.3.4", 1000), obs("1.2.3.4", 2000)], 8);
+        let json = serde_json::to_value(&r.reason).expect("reason should serialize");
+        assert_eq!(json["code"], "addressDependentMapping");
+        assert_eq!(json["servers"], 2);
+        assert_eq!(json["port"], 1000);
+        // 不应出现面向用户的英文散文
+        let text = json.to_string();
+        assert!(
+            !text.contains("mapping ("),
+            "reason 不应内联英文散文: {text}"
+        );
+    }
+
+    /// 主机名解析必须只取 IPv4：socket 绑定 IPv4，IPv6 地址会在其上发送失败，
+    /// 导致双栈服务器（实测 stun.antisip.com / stun.bcs2005.net）被白白跳过。
+    #[test]
+    fn resolve_ipv4_picks_ipv4_for_dual_stack_host() {
+        let resolved = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(resolve_ipv4("stun.miwifi.com:3478"));
+        // 该主机名只解析出 IPv4；断言解出的确实是 IPv4（而非被丢弃）
+        assert!(resolved.is_some(), "stun.miwifi.com 应能解析出 IPv4");
+    }
+
+    #[test]
+    fn resolve_ipv4_returns_none_for_unresolvable_host() {
+        let r = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(resolve_ipv4("this-host-does-not-exist.invalid:3478"));
+        assert!(r.is_none());
     }
 
     #[test]
     fn same_ip_different_ports_is_symmetric() {
         let r = classify_nat(vec![obs("1.2.3.4", 1000), obs("1.2.3.4", 2000)], 8);
         assert_eq!(r.r#type, "symmetric");
-        assert!(r.reason.contains("address-dependent"));
+        assert!(matches!(
+            r.reason,
+            NatReason::AddressDependentMapping { servers: 2, .. }
+        ));
     }
 
     #[test]
     fn different_ip_and_port_is_symmetric() {
         let r = classify_nat(vec![obs("1.2.3.4", 1000), obs("5.6.7.8", 2000)], 8);
         assert_eq!(r.r#type, "symmetric");
-        assert!(r.reason.contains("port-dependent"));
+        assert!(matches!(
+            r.reason,
+            NatReason::AddressAndPortDependentMapping { servers: 2 }
+        ));
     }
 
     #[test]

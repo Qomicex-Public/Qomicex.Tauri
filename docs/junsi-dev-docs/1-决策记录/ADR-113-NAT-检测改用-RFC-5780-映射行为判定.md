@@ -51,11 +51,37 @@ issue #198 报告 NAT 检测『速度慢、结果可信度不高，100% 返回�
 - 缺点：实测 15 台可达公共 STUN 无一支持 CHANGE-REQUEST，6 值细分在现有服务器生态下不可能实现
 - 为何不选：依赖服务器支持 CHANGE-REQUEST 属性，实测无一台支持，方案不可行
 
+## 评审后修订（v1.1）
+
+PR #246 评审提出 5 条，逐条实测核验后修复 4 条、驳回 1 条：
+
+1. **缓存竞态（成立）**：并发探测乱序完成时，较早的探测会覆盖较新的结果并重置 5 分钟缓存。
+   现在 `nat_cache` 携带单调探测序号，只有序号更大的结果可写入；发现已有更新的结果时直接返回它。
+2. **DNS 超出探测预算（成立）**：原实现用 `send_to(&str)` 隐式解析，串行解析发生在 deadline 计时之前。
+   现改为 `lookup_host` 并行解析，且解析与请求收发共用同一 3s 预算（`timeout_at`）。
+3. **IPv6 优先解析导致跳过服务器（成立，实测印证）**：候选 8 台里 `stun.antisip.com` 与
+   `stun.bcs2005.net` 首个解析地址为 IPv6，而检测 socket 绑定 IPv4，直接按主机名发送必然失败。
+   这解释了修复前的端到端观测「8 台仅 6 台响应」。现只取解析出的 IPv4 地址发送；
+   复测该两台已稳定参与判定。
+4. **`reason` 忽略语言（成立）**：原实现下发英文散文，非英语用户看到英文。
+   现改为结构化 `NatReason { code, ...参数 }`，前端按 `connect.natReasons.*` 翻译（7 语言 9 个 code）。
+5. **旧式 16 字节事务 ID 响应被忽略（误报，驳回）**：用生产字节（cookie@4..8 + tx@8..20）
+   实测打 4 台服务器，响应**全部在 8..20 回显并被现有 `parse_stun_response` 正确识别**；
+   服务器按请求格式回显，故 `4..16` 分支在真实流量中不会命中。该分支保留为防御性兼容，
+   已在注释说明其真实作用。
+
+另修复收割循环的一处健壮性缺陷：原 `_ => break` 会在任一次读错误（如某目标不可达触发 ICMP
+端口不可达，Windows 表现为 ConnectionReset）时中断全部剩余响应的收割；现改为跳过单次错误
+继续等待（设连续错误上限避免忙等）。
+
+> **残余观测**：端到端复测响应台数在 6–8 台间波动，且每轮缺失的服务器不同，属公共 STUN
+> 服务器的丢包/限速，非判定逻辑缺陷。映射行为判定只需 ≥2 台一致即可成立。
+
 ## 影响
-- src-backend/qomicex-backend/src/endpoints/connector.rs：stun_detect_nat 重写、parse_stun_response / classify_nat / build_binding_request 新增，NatTypeResult 扩展 3 字段，新增 11 条单测
-- src/types/index.ts：NatTypeResult 补 reason 字段（publicIp/publicPort 此前已声明但后端缺失，现已对齐）
-- src/pages/Connect.tsx：NAT Badge tooltip 展示公网映射地址与判定依据
-- qomicex-tauri-i18n：7 语言 connect.ts 删掉未测量的 TCP 结论、新增 natPublicAddr（需在 i18n 仓库单独提交推送）
+- src-backend/qomicex-backend/src/endpoints/connector.rs：stun_detect_nat 重写、resolve_ipv4 / parse_stun_response / classify_nat / build_binding_request 新增，nat_cache 加探测序号，NatTypeResult 扩展 reason/publicIp/publicPort，新增 14 条单测
+- src/types/index.ts：NatTypeResult 补 reason（结构化 NatReason 类型；publicIp/publicPort 此前已声明但后端缺失，现已对齐）
+- src/pages/Connect.tsx：NAT Badge tooltip 展示公网映射地址与按语言翻译的判定依据
+- qomicex-tauri-i18n：7 语言 connect.ts 删掉未测量的 TCP 结论、新增 natPublicAddr 与 natReasons.*（需在 i18n 仓库单独提交推送）
 - docs/junsi-dev-docs/3-API规范/API列表.md：补充响应字段与判定语义表
 - 性能：最差 18s → 约 3s；精度：可正确识别对称 NAT（原实现必然漏判）
 
@@ -63,3 +89,4 @@ issue #198 报告 NAT 检测『速度慢、结果可信度不高，100% 返回�
 | 日期 | 版本 | 修改内容 | 修改人 |
 |---|---|---|---|
 | 2026-10-11 | v1.0 | 初版创建 | AI Agent |
+| 2026-10-11 | v1.1 | PR #246 评审修复：缓存序号保护、DNS/IPv4 解析与探测预算、reason 结构化本地化、收割循环健壮性；驳回旧式事务 ID 一条（实测误报） | AI Agent |

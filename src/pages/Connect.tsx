@@ -498,11 +498,18 @@ export default function Connect() {
     const mapped = natType.publicIp
       ? `${natType.publicIp}${natType.publicPort ? `:${natType.publicPort}` : ''}`
       : null
+    // 后端只下发结构化 code + 参数，文案在此按当前语言翻译
+    const { code, servers, responded, port, error } = natType.reason
+    const reasonParams: Record<string, string | number> = {}
+    if (servers !== undefined) reasonParams.servers = servers
+    if (responded !== undefined) reasonParams.responded = responded
+    if (port !== undefined) reasonParams.port = port
+    if (error !== undefined) reasonParams.error = error
     const tip = (
       <div className="space-y-1">
         <div>{t(`connect.natTypes.${natType.type}.tooltip`)}</div>
         {mapped && <div className="text-muted-foreground">{t('connect.natPublicAddr', { addr: mapped })}</div>}
-        {natType.reason && <div className="text-muted-foreground">{natType.reason}</div>}
+        <div className="text-muted-foreground">{t(`connect.natReasons.${code}`, reasonParams)}</div>
       </div>
     )
     return (

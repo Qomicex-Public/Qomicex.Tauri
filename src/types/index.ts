@@ -1148,10 +1148,28 @@ export interface MultiMcImportRequest {
 
 export interface NatTypeResult {
   type: 'cone' | 'symmetric' | 'blocked' | 'unknown'
-  /** 判定依据（诊断信息，如端点无关映射 / 服务器全部无响应） */
-  reason: string
+  /** 判定依据/失败原因：结构化 code + 参数，由前端按语言翻译（不下发英文散文） */
+  reason: NatReason
   publicIp: string | null
   publicPort: number | null
+}
+
+/** NAT 判定原因（对应后端 NatReason 枚举，`code` 用于 i18n 查表） */
+export interface NatReason {
+  code:
+    | 'endpointIndependentMapping'
+    | 'addressDependentMapping'
+    | 'addressAndPortDependentMapping'
+    | 'singleServerResponded'
+    | 'noServerResponded'
+    | 'noServerResolvable'
+    | 'resolveTimeout'
+    | 'udpBindFailed'
+    | 'probeSendFailed'
+  servers?: number
+  responded?: number
+  port?: number
+  error?: string
 }
 
 export interface SkinProfile {
