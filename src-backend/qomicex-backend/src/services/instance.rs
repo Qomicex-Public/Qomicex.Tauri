@@ -493,9 +493,17 @@ impl InstanceService {
     pub fn sync_from_disk(&self, scanned: &[ScannedVersionInfo]) -> Vec<GameInstance> {
         let global_isolation = crate::settings::get_global_version_isolation();
         let mut json_instances = self.get_all();
-        // 本次同步开始时的已知 id：用于区分「被判定为残留」与「并发期间新建」的记录。
+        // 本次同步开始时的已知 id：用于区分「被判定为残留 / 被并发删除」与「并发新建」。
         let known_ids: std::collections::HashSet<String> =
             json_instances.iter().map(|i| i.id.clone()).collect();
+        // 迁移前的名字快照：并发改名的判定基准。
+        // ⚠️ 不能用迁移后的 `json_instances` 当基准 —— 身份迁移只改这份本地副本，没改
+        // 共享列表，此时「迁移后的新名」与「实际仍是的旧名」必然不等，会把自己的迁移
+        // 当成并发改名给撤销掉。
+        let names_before_migration: HashMap<String, String> = json_instances
+            .iter()
+            .map(|i| (i.id.clone(), i.name.clone()))
+            .collect();
 
         // 1a. 身份迁移：存量记录的 `name` 可能是版本 JSON 的 `id`（旧前端按扫描结果补建
         // 记录时写入的就是 `ScannedVersion.name`）。若扫描结果给出了该 id 对应的**版本
@@ -709,7 +717,13 @@ impl InstanceService {
                 Ok(g) => g,
                 Err(p) => p.into_inner(),
             };
-            Self::merge_concurrent_writeback(&json_instances, &known_ids, &guard, &mut result);
+            Self::merge_concurrent_writeback(
+                &json_instances,
+                &known_ids,
+                &names_before_migration,
+                &guard,
+                &mut result,
+            );
             *guard = result.clone();
             drop(guard);
             self.save_to_file();
@@ -753,22 +767,31 @@ impl InstanceService {
         None
     }
 
-    /// 写回前的并发合并：把同步期间发生的用户改动与并发新建搬到 `result` 上。
+    /// 写回前的并发合并：把同步期间发生的用户改动、并发改名与并发新建搬到 `result` 上，
+    /// 并剔除同步期间被并发删除的记录。
     ///
     /// `result` 由第 0 步的 `snapshot` 算出；`current` 是加锁后的实际列表。两者差异
     /// 即同步期间的并发写入：
     /// - `current` 有而 `snapshot` 无，且不在 `known_ids`（本次同步开始前已知的 id）
     ///   → 并发新建，保留（不因整表替换而丢；被判残留清掉的 id 在 `known_ids` 内，不会救回）。
-    /// - 两边都有但**用户可编辑字段**不同 → 把当前值搬到 `result` 对应记录。
+    /// - `known_ids` 里有、`current` 里没有 → 同步期间被并发删除，从 `result` 剔除；
+    ///   否则 `*guard = result` 会把已删记录写回（隔离关闭时第 1 步不会清理它，实例永久复活）。
+    /// - 两边都有但**用户可编辑字段**或**名字**不同 → 把当前值搬到 `result` 对应记录。
     ///
-    /// 只搬用户字段、绝不动 `name`：`name` 由身份迁移与改名路径管理，用旧值覆盖会撤销
-    /// 第 1a 步的身份迁移。
+    /// `names_before_migration` 是第 1a 步身份迁移**之前**的 id→name 快照，作为并发改名的
+    /// 判定基准：迁移只改本地副本，用迁移后的值当基准会把自己的迁移误判为并发改名而撤销。
     fn merge_concurrent_writeback(
         snapshot: &[GameInstance],
         known_ids: &std::collections::HashSet<String>,
+        names_before_migration: &HashMap<String, String>,
         current: &[GameInstance],
         result: &mut Vec<GameInstance>,
     ) {
+        let current_ids: std::collections::HashSet<&str> =
+            current.iter().map(|c| c.id.as_str()).collect();
+        // 并发删除：本次同步开始前存在、现在已不在 → 不得写回。
+        result.retain(|r| !known_ids.contains(&r.id) || current_ids.contains(r.id.as_str()));
+
         let snapshot_by_id: HashMap<String, &GameInstance> =
             snapshot.iter().map(|i| (i.id.clone(), i)).collect();
         let mut concurrent_new: Vec<GameInstance> = Vec::new();
@@ -780,7 +803,14 @@ impl InstanceService {
                     }
                 }
                 Some(orig) => {
+                    // 并发改名基准用「迁移前」的名字，避免误判：用户改名后 cur 是新名、
+                    // 迁移前快照仍是旧名 → 判定为并发改名；反之若只是第 1a 步迁移，
+                    // 迁移前快照与 cur 相同 → 不判定，迁移得以保留。
+                    let base_name = names_before_migration.get(&cur.id);
                     if let Some(slot) = result.iter_mut().find(|r| r.id == cur.id) {
+                        if base_name.map(|b| b != &cur.name).unwrap_or(false) {
+                            slot.name = cur.name.clone();
+                        }
                         Self::carry_user_edits(orig, cur, slot);
                     }
                 }
@@ -1353,6 +1383,10 @@ mod tests {
         ];
         let known_ids: std::collections::HashSet<String> =
             snapshot.iter().map(|i| i.id.clone()).collect();
+        let names_before: HashMap<String, String> = snapshot
+            .iter()
+            .map(|i| (i.id.clone(), i.name.clone()))
+            .collect();
 
         // 同步期间的实际状态：第 1 条被改了内存/JVM；Stale 已不在（残留清理）；
         // 外加一条并发新建的记录。
@@ -1365,7 +1399,13 @@ mod tests {
 
         // result：同步算出的结果（第 1 条仍是旧值，Stale 已被清掉）
         let mut result = vec![snapshot[0].clone()];
-        InstanceService::merge_concurrent_writeback(&snapshot, &known_ids, &current, &mut result);
+        InstanceService::merge_concurrent_writeback(
+            &snapshot,
+            &known_ids,
+            &names_before,
+            &current,
+            &mut result,
+        );
 
         let kept = result.iter().find(|i| i.id == snapshot[0].id).unwrap();
         assert_eq!(kept.max_memory, 12288, "并发改的内存不得被同步回退");
@@ -1382,6 +1422,113 @@ mod tests {
             !result.iter().any(|i| i.id == snapshot[1].id),
             "被判定为残留清掉的记录不得被合并救回: {result:?}"
         );
+    }
+
+    /// 回归（Issue #244 评审）：同步期间用户把实例**改名**（PUT 先 rename_version_dir
+    /// 再更新 name）。若合并时不带上新名，`result` 会保留旧目录名；下次同步时旧目录已
+    /// 不存在，记录被当残留删除、新目录被扫成 Default 记录 —— 正是 #244 的故障形态。
+    #[test]
+    fn merge_concurrent_writeback_keeps_concurrent_rename() {
+        let snapshot = vec![make_instance("OldName", "C:/mc", Some(true))];
+        let known_ids: std::collections::HashSet<String> =
+            snapshot.iter().map(|i| i.id.clone()).collect();
+        let names_before: HashMap<String, String> = snapshot
+            .iter()
+            .map(|i| (i.id.clone(), i.name.clone()))
+            .collect();
+
+        // 并发改名后的实际状态
+        let mut renamed = snapshot[0].clone();
+        renamed.name = "NewName".to_string();
+        let current = vec![renamed];
+
+        // result 里仍是同步算出的旧名
+        let mut result = vec![snapshot[0].clone()];
+        InstanceService::merge_concurrent_writeback(
+            &snapshot,
+            &known_ids,
+            &names_before,
+            &current,
+            &mut result,
+        );
+
+        let kept = result.iter().find(|i| i.id == snapshot[0].id).unwrap();
+        assert_eq!(
+            kept.name, "NewName",
+            "并发改名不得被同步回退（否则下次同步丢设置）"
+        );
+    }
+
+    /// 回归（Issue #244 评审）：同步期间用户**删除**了实例（try_delete 从共享列表移除）。
+    /// `result` 是更早的快照算出的、仍含该 id；若直接写回，已删记录会复活
+    /// （隔离关闭时第 1 步不会清理它，实例永久存在）。
+    #[test]
+    fn merge_concurrent_writeback_drops_concurrently_deleted() {
+        let snapshot = vec![
+            make_instance("Keep", "C:/mc", Some(true)),
+            make_instance("Deleted", "C:/mc", Some(false)), // 隔离关闭 → 第 1 步不清它
+        ];
+        let known_ids: std::collections::HashSet<String> =
+            snapshot.iter().map(|i| i.id.clone()).collect();
+        let names_before: HashMap<String, String> = snapshot
+            .iter()
+            .map(|i| (i.id.clone(), i.name.clone()))
+            .collect();
+
+        // 并发删除：current 里只剩 Keep
+        let current = vec![snapshot[0].clone()];
+        // result 仍含两条（快照算出的）
+        let mut result = snapshot.clone();
+        InstanceService::merge_concurrent_writeback(
+            &snapshot,
+            &known_ids,
+            &names_before,
+            &current,
+            &mut result,
+        );
+
+        assert!(
+            !result.iter().any(|i| i.id == snapshot[1].id),
+            "并发删除的记录不得被写回复活: {result:?}"
+        );
+        assert!(
+            result.iter().any(|i| i.id == snapshot[0].id),
+            "未删的记录应保留"
+        );
+    }
+
+    /// 回归：身份迁移不得被并发合并撤销。迁移只改本地快照，共享列表里仍是旧名；
+    /// 若以迁移后的名字当基准判定「并发改名」，就会把自己的迁移撤销掉。
+    #[test]
+    fn merge_concurrent_writeback_does_not_undo_identity_migration() {
+        // 迁移前名字（names_before_migration）
+        let mut pre = make_instance("GT New Horizons", "C:/mc", Some(true));
+        pre.max_memory = 8192;
+        let names_before: HashMap<String, String> =
+            [(pre.id.clone(), pre.name.clone())].into_iter().collect();
+        let known_ids: std::collections::HashSet<String> = [pre.id.clone()].into_iter().collect();
+
+        // 迁移后（本地快照）与共享列表（仍是旧名）一致：用户没改名
+        let mut migrated = pre.clone();
+        migrated.name = "GTNH 2.8.4".to_string();
+        let snapshot = vec![migrated.clone()];
+        let current = vec![pre.clone()];
+
+        let mut result = vec![migrated.clone()];
+        InstanceService::merge_concurrent_writeback(
+            &snapshot,
+            &known_ids,
+            &names_before,
+            &current,
+            &mut result,
+        );
+
+        let kept = result.iter().find(|i| i.id == pre.id).unwrap();
+        assert_eq!(
+            kept.name, "GTNH 2.8.4",
+            "第 1a 步的身份迁移不得被并发合并撤销: {result:?}"
+        );
+        assert_eq!(kept.max_memory, 8192, "迁移记录的设置不得丢失");
     }
 
     /// 回归：幽灵实例防线。try_delete 正常删目录 → Ok；删除失败 → Err 且记录恢复
