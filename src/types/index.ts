@@ -324,6 +324,9 @@ export interface ScanMeta {
 
 export interface ScannedVersion {
   name: string
+  /** 版本目录名（= 实例记录的 name / VersionDirName）。`name` 是版本 JSON 的 id，
+   *  二者可不同（issue #244 GTNH）；实例匹配与目录拼接必须用本字段。 */
+  dirName?: string
   gameVersion: string
   state: string
   stateDescribe: string

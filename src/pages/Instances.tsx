@@ -535,7 +535,8 @@ export default function Instances() {
     if (existing) return existing
     try {
       const inst = await createInstance({
-        name: v.name,
+        // 记录的 name 是版本目录名（路径基座），不是版本 JSON 的 id
+        name: v.dirName ?? v.name,
         gameVersion: v.gameVersion,
         loader: firstRealLoader(v).type,
         loaderVersion: firstRealLoader(v).version,
@@ -622,7 +623,8 @@ export default function Instances() {
 
     try {
       const created = await createInstance({
-        name: v.name,
+        // 记录的 name 是版本目录名（路径基座）
+        name: v.dirName ?? v.name,
         gameVersion: v.gameVersion,
         loader: firstRealLoader(v).type,
         loaderVersion: firstRealLoader(v).version,
@@ -646,7 +648,8 @@ export default function Instances() {
     if (!inst) {
       try {
         inst = await createInstance({
-          name: v.name,
+          // 记录的 name 是版本目录名（路径基座）
+          name: v.dirName ?? v.name,
           gameVersion: v.gameVersion,
           loader: firstRealLoader(v).type,
           loaderVersion: firstRealLoader(v).version,
@@ -1030,7 +1033,9 @@ export default function Instances() {
   }
 
   function getInstanceForVersion(v: ScannedVersion): GameInstance | undefined {
-    return backedInstances.find((i) => i.gameDir === currentDir && i.name === v.name)
+    // 实例记录的 name 是版本目录名；v.name 是版本 JSON 的 id，二者可不同（issue #244）。
+    const dir = v.dirName ?? v.name
+    return backedInstances.find((i) => i.gameDir === currentDir && i.name === dir)
   }
 
   /** 删除实例：二次确认后调用后端（后端会删除版本隔离目录，破坏性操作）。 */
@@ -1052,7 +1057,8 @@ export default function Instances() {
   function buildInstanceContextItems(v: ScannedVersion): ContextMenuItem[] {
     const inst = getInstanceForVersion(v)
     const running = inst ? runningInstances.some((r) => r.instanceId === inst.id) : false
-    const versionDir = `${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.name}`
+    // 浏览路径必须用版本目录名（v.name 是版本 JSON 的 id，指向的目录可能不存在）
+    const versionDir = `${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.dirName ?? v.name}`
     return [
       { label: t('instances.launchGame'), onClick: () => handleLaunch(v), disabled: running },
       { label: t('instances.testGame'), onClick: () => handleTestGame(v), disabled: running },
@@ -1527,7 +1533,7 @@ export default function Instances() {
                       </Tooltip>
                     )})()}
                     <Tooltip content={t('instances.openFolder')}>
-                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); openFolder(`${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.name}`).catch(() => {}) }}><FolderOpen className="h-3.5 w-3.5" /></Button>
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); openFolder(`${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.dirName ?? v.name}`).catch(() => {}) }}><FolderOpen className="h-3.5 w-3.5" /></Button>
                     </Tooltip>
                   </div>
                   </div>
@@ -1589,7 +1595,7 @@ export default function Instances() {
                     </Tooltip>
                   )})()}
                    <Tooltip content={t('instances.openFolder')}>
-                        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openFolder(`${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.name}`).catch(() => {})}><FolderOpen className="h-3.5 w-3.5" /></Button>
+                        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openFolder(`${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.dirName ?? v.name}`).catch(() => {})}><FolderOpen className="h-3.5 w-3.5" /></Button>
 </Tooltip>
                  </div>
                </div>

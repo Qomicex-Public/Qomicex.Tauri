@@ -19,6 +19,8 @@ export const syncScan = hookable('syncScan', async (gameDir: string, versions: S
       const realLoader = v.loaders?.find(l => l.type && l.type !== 'Vanilla' && l.type !== 'Unknown')
       return {
         name: v.name,
+        // 身份键：后端按目录名匹配实例记录（`name` 是版本 JSON 的 id，可与之不同）
+        dirName: v.dirName ?? v.name,
         gameVersion: v.gameVersion,
         loader: realLoader?.type,
         loaderVersion: realLoader?.version,

@@ -129,6 +129,10 @@ struct SyncScanRequest {
 #[serde(rename_all = "camelCase")]
 struct SyncScanVersion {
     name: String,
+    /// 版本目录名（= 实例记录的身份键）。前端从 `ScannedVersion.dirName` 回传；
+    /// 旧前端缺失时回退 `name`（旧行为，issue #244 修复点）。
+    #[serde(default)]
+    dir_name: Option<String>,
     game_version: String,
     #[serde(default)]
     loader: Option<String>,
@@ -270,6 +274,7 @@ async fn sync_scan(
         .into_iter()
         .map(|v| crate::services::instance::ScannedVersionInfo {
             name: v.name,
+            dir_name: v.dir_name,
             game_version: v.game_version,
             game_dir: req.game_dir.clone(),
             loader: v.loader,
