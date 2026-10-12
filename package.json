@@ -19,7 +19,8 @@
     "test:update-channel": "node scripts/test-update-channel.mjs",
     "test:deep-link": "node scripts/test-deep-link-parse.mjs",
     "test:i18n-steps": "node scripts/test-i18n-step-keys.mjs",
-    "test:plugin-theme-sync": "node scripts/test-plugin-theme-sync.mjs"
+    "test:plugin-theme-sync": "node scripts/test-plugin-theme-sync.mjs",
+    "test:dependency-install-plan": "node scripts/test-dependency-install-plan.mjs"
   },
   "dependencies": {
     "@fortawesome/free-brands-svg-icons": "^7.3.1",
