@@ -1,6 +1,6 @@
 # API 端点参考
 
-> 更新日期：2026-10-04
+> 更新日期：2026-10-10
 
 后端基础地址：`http://localhost:5000`。前端 Vite 代理将 `/api/*` 转发到此地址。
 
@@ -630,6 +630,21 @@ Yggdrasil.MinecraftToken.Create Yggdrasil.Server.Join`。
 | type | string | query | 可填 fabric / forge / neoforge / quilt / cleanroom / babric 等 |
 
 **响应：** `List<LoaderVersionInfo>`
+
+### POST `/api/instance/sync-scan`
+
+把前端 `GET /api/versions/scan` 的结果回写为实例列表（实例列表的核心同步入口），返回同步后的实例列表。
+
+**请求体：** `{ "gameDir": "...", "versions": [ { "name": "...", "dirName": "...", "gameVersion": "...", "loader": "...", "loaderVersion": "...", "iconData": null, "modpackName": null, "modpackVersion": null, "modpackAuthor": null, "modpackSummary": null } ] }`
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `name` | 是 | 版本 JSON 的 `id`（扫描响应同名，用于显示） |
+| `dirName` | 否 | **版本目录名**（= 实例记录的 `name` / `VersionDirName`）。后端以此为身份键匹配实例记录。缺省（旧客户端）时回退用 `name`，但名字与目录名不一致的实例会丢失设置（issue #244） |
+
+**同步语义（issue #244）**：身份键是 `(gameDir, dirName)`，**不是** `name`。扫描产出的 `name` 取自版本 JSON 的 `id`，与目录名可以不同（如目录 `GTNH 2.8.4` 的 JSON `id` 为 `GT New Horizons`）；旧实现按 `name` 匹配，名字漂移时记录被判为「磁盘残留」删除、再用默认值重建，导致 `jvmArgs`/`maxMemory`/整合包元数据丢失且 `id` 被更换。此外，只要 `{gameDir}/versions/{记录.name}` 目录真实存在，该记录就不会被当作残留丢弃（判残留的依据是目录在不在，而非名字对不对得上）。
+
+**响应：** `List<GameInstance>`
 
 ---
 
@@ -1914,6 +1929,8 @@ API 透传路径与文件路径是不同路由，测 API 不能证明文件路�
 |---|---|---|
 | `gameDir` | — | 游戏根目录（其下 `versions/` 为实际扫描目标） |
 | `mode` | `fast` | `fast`：命中扫描缓存的版本直接复用 jar 级结果，未命中的先走 JSON 链（毫秒级返回）；`full`：给未命中的条目补算 jar 级探测并写缓存 |
+
+响应每个版本条目含 `name` 与 `dirName`：**`name`** 是版本 JSON 的 `id`；**`dirName`** 是版本目录名（= 实例记录的 `name` / `VersionDirName`）。二者可以不同（如目录 `GTNH 2.8.4` 的 JSON `id` 为 `GT New Horizons`），实例匹配与目录拼接必须用 `dirName`。
 
 响应多一个 `refineRequired`（布尔）：有版本目录还没算过 jar 级探测（首次扫描、刚装好）时为 `true`，前端应再发一次 `?mode=full` 回填 `gameVersion`。
 

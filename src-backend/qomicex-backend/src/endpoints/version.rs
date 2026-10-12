@@ -43,6 +43,10 @@ const MAX_SCAN_WORKERS: usize = 6;
 #[serde(rename_all = "camelCase")]
 struct ScannedVersionEntry {
     name: String,
+    /// 版本**目录名**（= `VersionDirName`）。`name` 是版本 JSON 的 `id`，与目录名
+    /// 可以不同（issue #244 的 GTNH）。实例记录的身份键是目录名，故必须单独回传，
+    /// 供 `sync_scan` 匹配记录、前端拼浏览路径。
+    dir_name: String,
     game_version: String,
     state: String,
     state_describe: String,
@@ -354,6 +358,7 @@ fn scan_one_version(
         return Some(ScanOutcome {
             entry: ScannedVersionEntry {
                 name: name.to_string(),
+                dir_name: name.to_string(),
                 game_version: name.to_string(),
                 state: "Corrupted".to_string(),
                 state_describe: "版本文件缺失".to_string(),
@@ -424,6 +429,7 @@ fn scan_one_version(
         return Some(ScanOutcome {
             entry: ScannedVersionEntry {
                 name: id,
+                dir_name: name.to_string(),
                 game_version,
                 state: "Available".to_string(),
                 state_describe: String::new(),
@@ -437,6 +443,7 @@ fn scan_one_version(
         return Some(ScanOutcome {
             entry: ScannedVersionEntry {
                 name: id,
+                dir_name: name.to_string(),
                 game_version: hit.game_version,
                 state: "Available".to_string(),
                 state_describe: String::new(),
@@ -482,6 +489,7 @@ fn scan_one_version(
     Some(ScanOutcome {
         entry: ScannedVersionEntry {
             name: id,
+            dir_name: name.to_string(),
             game_version,
             state: "Available".to_string(),
             state_describe: String::new(),
@@ -1010,7 +1018,9 @@ fn fix_instance_game_versions(
         if inst.game_dir != game_dir {
             continue;
         }
-        let Some(scanned_version) = scanned.iter().find(|s| s.name == inst.name) else {
+        // 按**目录名**匹配（记录的 name 恒为目录名；`s.name` 是版本 JSON 的 id，
+        // 二者漂移时会漏改甚至改错实例，issue #244）。
+        let Some(scanned_version) = scanned.iter().find(|s| s.dir_name == inst.name) else {
             continue;
         };
         // Corrupted 条目的 game_version 是目录名占位（非探测结果），写回会把
@@ -1043,7 +1053,7 @@ fn fix_instance_loaders(
         if inst.game_dir != game_dir {
             continue;
         }
-        let Some(scanned_version) = scanned.iter().find(|s| s.name == inst.name) else {
+        let Some(scanned_version) = scanned.iter().find(|s| s.dir_name == inst.name) else {
             continue;
         };
         let Some(first) = scanned_version.loaders.as_ref().and_then(|l| l.first()) else {
@@ -1096,6 +1106,8 @@ mod tests {
     fn entry(name: &str, game_version: &str, state: &str) -> ScannedVersionEntry {
         ScannedVersionEntry {
             name: name.to_string(),
+            // 测试夹具默认目录名 = name（两者一致的常规情形）
+            dir_name: name.to_string(),
             game_version: game_version.to_string(),
             state: state.to_string(),
             state_describe: String::new(),
