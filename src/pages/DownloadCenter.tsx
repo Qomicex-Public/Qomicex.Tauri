@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import { ArrowRight, Box, CheckCircle2, Coffee, Download, Hammer, ListChecks, Package, RotateCw, Square, Trash2, ChevronDown } from 'lucide-react'
 import { RotateCw as RotateCwData, Trash2 as Trash2Data } from 'lucide'

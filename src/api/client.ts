@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 export let API_BASE = 'http://127.0.0.1:5000/api'
 
 /** IPC 探测成功后由 initApiTransport 调用；ESM live binding 对全部导入方生效 */

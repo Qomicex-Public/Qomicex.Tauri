@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // qomicex doctor — 环境诊断（纯只读，零副作用）：Node/pnpm/项目/manifest/plugin-ui/
 // vite/签名环境/后端/store/harness。--json 可选供脚本消费。
 import { existsSync, readFileSync } from 'node:fs'

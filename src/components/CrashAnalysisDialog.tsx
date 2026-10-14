@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Bug, Copy, Link, Loader2, TriangleAlert, X } from 'lucide-react'

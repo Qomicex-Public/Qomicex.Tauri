@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Runtime schematic preview assets — extract a per-palette *subset* of the
 //! vanilla block assets (blockstate JSONs, block models incl. parent closure,
 //! block textures as base64 PNG) from the **user's own game files** (the

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useMemo } from 'react'
 import { Pencil } from 'lucide-react'
 import { usePluginStore } from '../stores/pluginStore.ts'

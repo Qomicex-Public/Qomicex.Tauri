@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // ponytail: global in-memory cache, invalidate on mutations, no eviction — LRU if memory matters
 const store = new Map<string, { data: unknown; timestamp: number }>()
 const FRESH_TTL = 30_000

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { Check as CheckData, Copy as CopyData } from 'lucide'
 import type { IconNode } from 'lucide'
 import { MorphIcon } from 'morphicons/react'

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 整合包原地更新 —— 检查与预览（issue #118，方案 C）。
 //!
 //! 本模块**只读**：不修改实例文件，只回答「能不能更新」「有哪些更新」

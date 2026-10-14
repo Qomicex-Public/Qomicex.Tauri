@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 赞助者鸣谢端点（对应前端「设置 → 关于 → 鸣谢（赞助者）」）。
 //!
 //! 转发 Qomicex Web 后端 `GET https://api.qomicex.top/api/client/sponsors`

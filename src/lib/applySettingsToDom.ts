@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 把设置映射到 DOM（CSS 变量 / dataset）的唯一实现。
 //
 // 此前这段逻辑在 `App.tsx`（onSettingsChange 回调）与 `pages/Settings.tsx`

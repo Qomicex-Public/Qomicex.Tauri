@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // qomicex verify — manifest 合法性 + 权限最小化 + 长循环告警 + 签名检查。
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'

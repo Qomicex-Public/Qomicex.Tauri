@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { BatchToolbar } from '../components/ui'
 import { useI18n } from '../i18n/index.tsx'
 import type { ReactNode } from 'react'

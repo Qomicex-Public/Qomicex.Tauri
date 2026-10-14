@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 商店 API 客户端（只读参考契约，不改 store 接口）。
 // API base: https://plugins.qomicex.top/api/v1（可用 QOMICEX_STORE_API 覆盖，本地测试指向 wrangler dev）
 import { sleep } from './io.ts'

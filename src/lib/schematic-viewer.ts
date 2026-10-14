@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Deepslate-based 3D schematic viewer (ported interaction from
 // EndingCredits/litematic-viewer, adapted to deepslate 0.26 API).
 //

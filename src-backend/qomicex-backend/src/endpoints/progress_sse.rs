@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Progress SSE endpoint (maps to Endpoints/ProgressSseEndpoints.cs).
 //!
 //! Route: `/progress/stream` (mounted under `/api` => `/api/progress/stream`).

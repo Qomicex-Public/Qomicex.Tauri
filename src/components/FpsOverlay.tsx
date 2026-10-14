@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useState, useRef } from 'react'
 import { getSettings, onSettingsChange } from '../api/settings.ts'
 import { createRafThrottle } from '../lib/fps-limiter.ts'

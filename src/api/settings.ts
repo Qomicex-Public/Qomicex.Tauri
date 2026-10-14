@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { get, put, post, setDefaultRequestTimeout } from './client.ts'
 
 interface CustomJavaEntry {

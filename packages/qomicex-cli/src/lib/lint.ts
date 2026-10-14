@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // lint 增强静态检查：相对 import 缺扩展名 + entry/contributes 引用文件存在性，
 // 复用 verify 的 manifest / 权限最小化 / 长循环检查（更严的发布前静态门禁）。
 import { existsSync, readFileSync } from 'node:fs'

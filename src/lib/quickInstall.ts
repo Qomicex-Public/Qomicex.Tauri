@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { startResourceDownload, cancelBatch } from '../api/resource-download.ts'
 import { deleteMod } from '../api/instance-files.ts'
 import { addTask, updateTask } from '../stores/downloadStore.ts'

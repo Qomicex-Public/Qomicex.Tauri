@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 整合包导出服务：把已安装实例打包为 CurseForge zip 或 Modrinth mrpack。
 //!
 //! 两种格式都生成 `overrides/` 内容目录；mods 通过哈希反查填充清单：

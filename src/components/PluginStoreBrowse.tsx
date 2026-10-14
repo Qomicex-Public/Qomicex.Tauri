@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useCallback, useEffect, useState } from 'react'
 import { CloudDownload, Search, Star } from 'lucide-react'
 import { RotateCw as RotateCwData } from 'lucide'

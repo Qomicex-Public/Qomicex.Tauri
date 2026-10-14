@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import type { JavaRuntime } from '../types/index.ts'
 import { searchJava, getCustomJavaRuntimes, type JavaSearchMode } from '../api/java.ts'
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // qomicex bump — 递增 manifest.json 版本号（major/minor/patch）。
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'

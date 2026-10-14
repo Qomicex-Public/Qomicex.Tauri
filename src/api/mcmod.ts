@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { get, post } from './client.ts'
 
 /** `/mcmod/lookup` 响应：中文名 + mcmod.cn 词条 id（任一可能为 null）。 */

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 商店认证会话持久化：~/.qomicex/auth.json（跨项目复用登录态，0600）。
 // access token 15 分钟 / refresh token 30 天（store /auth/refresh 旋转式），
 // 因此持久化 refreshToken，publish 时经 /auth/refresh 续期后复用。

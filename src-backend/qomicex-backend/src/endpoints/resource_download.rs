@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Resource download endpoints (source: Endpoints/ResourceDownloadEndpoints.cs).
 //!
 //! Implements download task start, progress, cancel and batch-cancel for

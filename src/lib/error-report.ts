@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 严重错误日志上报（前端侧）。
 //
 // 白名单（只报"影响运行的恶性 bug"，其余一律不上报，仅作上下文附带）：

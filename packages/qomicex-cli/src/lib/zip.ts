@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 极简 ZIP 读写（无依赖）：node:zlib deflateRaw + 手写 CRC32/目录结构。
 // 仅覆盖 .qplugin 需要的子集：无加密、无目录条目、UTF-8 文件名、deflate/存储。
 import { deflateRawSync, inflateRawSync } from 'node:zlib'

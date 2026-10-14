@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 pub fn has_permission(permissions: &[String], required: &str) -> bool {
     permissions.iter().any(|p| p == required)
 }

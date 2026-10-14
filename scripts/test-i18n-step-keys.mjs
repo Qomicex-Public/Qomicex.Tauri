@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 护栏：下载中心渲染的「后端标识」必须在 i18n 里有词条，否则界面直接显示键名。
 //
 // 查两类：

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `run_updater` Tauri command: prepare and spawn Qomicex.Updater, then let
 //! the caller exit the app. The updater binary is embedded at build time
 //! (release) or resolved from `QOMICEX_UPDATER_PATH` (dev).

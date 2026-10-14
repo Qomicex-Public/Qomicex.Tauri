@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 整合包托管文件清单（issue #118 原地更新的基线）。
 //!
 //! ## 为什么需要这份清单

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Version 端点（对应源 Endpoints/VersionEndpoints.cs）。
 //! 版本清单/最新/已安装/远程/扫描（loader 探测 + 6 级回退）/元数据/安装/卸载。
 //!

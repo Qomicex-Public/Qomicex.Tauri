@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use crate::plugin_gateway::config;
 use crate::plugin_gateway::loader::PluginRuntime;
 use std::sync::Arc;

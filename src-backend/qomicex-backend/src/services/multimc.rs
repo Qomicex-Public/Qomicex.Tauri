@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MultiMC 实例/整合包通用导入（对齐 HMCL `MultiMCModpackInstallTask` /
 //! `MultiMCInstancePatch` 的 MultiMC scheme → 官方 Version scheme 转换）。
 //!

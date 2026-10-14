@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { get } from './client.ts'
 
 /** 后端 /api/update/check 响应（含 required 强制更新标记） */

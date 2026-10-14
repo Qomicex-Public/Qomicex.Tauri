@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useParams } from 'react-router-dom'
 import { usePluginStore } from '../stores/pluginStore.ts'
 import { getInstance, getWebviewInstance } from '../plugins/sandbox.ts'

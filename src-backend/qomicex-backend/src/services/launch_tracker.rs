@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 启动进程跟踪服务（对应源 Services/LaunchTracker.cs + ProcessState）。
 //!
 //! 维护三类 map：

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! CurseForge 版本异步拉取服务（对应 C# CurseForgeVersionFetchService）。
 //!
 //! 前端调 `POST /resources/{id}/versions/start-fetch` 启动后台分页拉取，

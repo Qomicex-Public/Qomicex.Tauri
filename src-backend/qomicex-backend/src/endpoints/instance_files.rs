@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Instance files endpoints (source: Endpoints/InstanceFilesEndpoints.cs).
 //!
 //! Provides per-instance local file management for a single instance's

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 插件包 Ed25519 签名验证（ADR-050 三级信任链）。
 //!
 //! 信任链：包内 signature.json + signature.cert.json（商店根钥签发的开发者公钥证书）

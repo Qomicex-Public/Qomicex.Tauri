@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 共享的 zip 解压实现（#162）。
 //!
 //! 整合包（`endpoints/modpack.rs`）与地图存档（`endpoints/resource_download.rs`）

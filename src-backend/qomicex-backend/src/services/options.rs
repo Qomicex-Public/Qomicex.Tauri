@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 游戏设置（options.txt）读写服务。
 //!
 //! 对应 C# 侧 `OptionsHelper`（InstanceController.CreateGameSettingsOptions）与

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 全局主题强调色工具。
 //
 // 主题色（accent）本质是 index.css 里的 `--primary` / `--ring` / `--primary-foreground`

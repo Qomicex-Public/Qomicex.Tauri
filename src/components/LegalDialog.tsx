@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // src/components/LegalDialog.tsx
 import ReactMarkdown from 'react-markdown'
 import rehypeRaw from 'rehype-raw'

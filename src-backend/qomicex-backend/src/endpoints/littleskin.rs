@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! LittleSkin OAuth 设备代码流登录（issue #145，决策见 ADR-098）。
 //!
 //! LittleSkin 支持通过 OAuth（Yggdrasil Connect）获取访问 Yggdrasil API 的

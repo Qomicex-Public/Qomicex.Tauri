@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! dev.test.wasm — WASM 网关测试插件。
 //!
 //! 供 `src-tauri/src/plugin_gateway/mod.rs` 的集成测试使用：

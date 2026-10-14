@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 404 统一兜底封装。
 //!
 //! 对应 C# `ErrorHandlingMiddleware` 的兜底 + ASP.NET 未匹配路由返回的 404。

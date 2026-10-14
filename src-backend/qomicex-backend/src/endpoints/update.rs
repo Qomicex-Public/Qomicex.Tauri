@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Update endpoints (translated from Endpoints/UpdateEndpoints.cs +
 //! Services/UpdateService.cs).
 //!

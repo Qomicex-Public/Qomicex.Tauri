@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 安装任务跟踪服务（对应源 Services/InstallTracker.cs + InstallState.cs）。
 //!
 //! ⚠️ 范围说明（本批移植决策）：

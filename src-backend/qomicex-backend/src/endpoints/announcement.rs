@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Announcement endpoints (corresponding source: Endpoints/AnnouncementEndpoints.cs).
 //!
 //! Source registers the route directly via `app.MapGet("/api/client/announcements", ...)`

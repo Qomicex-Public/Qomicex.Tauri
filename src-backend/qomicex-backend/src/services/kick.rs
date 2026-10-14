@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 房主踢人 + 已踢玩家重连审核（**调用方功能，非 SCF 协议**）。
 //!
 //! 经 connector 公开拓展接口实现，库内零业务代码：

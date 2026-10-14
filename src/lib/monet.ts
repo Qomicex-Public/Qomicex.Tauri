@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 莫奈式（Material You 风格）背景主色提取 —— 实用型实现。
 //
 // 不做完整 HCT/CAM16 色调板，而是：

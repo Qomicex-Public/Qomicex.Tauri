@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Skin endpoints (source: Endpoints/SkinEndpoints.cs + Services/SkinService.cs).
 //!
 //! Mounted at `/api/skin`. Provides player profile fetch (Mojang / Yggdrasil /

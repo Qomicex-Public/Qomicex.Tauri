@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 世界预览端点（存档地图瓦片）。
 //!
 //! 移植自独立工具 world-viewer 的 Tauri 命令 + `tile://` 自定义协议，改为后端

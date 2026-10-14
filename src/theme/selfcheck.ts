@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /**
  * 自检：.qtheme 解析器 + 校验器的可运行验证。
  * 运行（Node 24+ 支持 type stripping）：

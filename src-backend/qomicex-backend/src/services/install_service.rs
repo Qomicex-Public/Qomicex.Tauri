@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 加载器安装流水线（对应源 `InstallTracker.RunInstallAsync` + `InstallLoader` +
 //! `GetMissLoaderLibraries` + `ResolveAddonsAsync`）。
 //!

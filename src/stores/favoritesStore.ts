@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useMemo } from 'react'
 import { create } from 'zustand'
 import type { ResourceFavorite, ResourceFavoriteFolder, ResourceItem } from '../types/index.ts'

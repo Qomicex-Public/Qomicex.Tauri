@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 世界预览（存档地图瓦片渲染）。
 //!
 //! 从独立工具 world-viewer（Tauri + Leaflet）移植的领域层，改为后端服务形态：

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { API_BASE } from '../api/client.ts'
 import { openStream, createSseParser, uploadFile } from '../api/ipc.ts'
 import { addTask } from '../stores/downloadStore.ts'

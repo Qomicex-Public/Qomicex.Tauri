@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 系统信息采集（对应源 SystemEndpoints 的 SysInfo 辅助 + SystemMemoryHelper）。
 //!
 //! 系统显示名：Windows/macOS 经 sysinfo 读平台注册表/系统版本（Windows 自动区分

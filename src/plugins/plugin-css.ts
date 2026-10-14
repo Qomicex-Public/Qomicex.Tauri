@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 export const pluginCss = `
 :root{color-scheme:light dark}
 *{margin:0;padding:0;box-sizing:border-box}

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /**
  * Tauri 的 window 插件 IPC 入口（与 tauri/src/window/scripts/drag.js 同一条通道）。
  * 刻意不 import `@tauri-apps/api/window`：plugin-ui 是对外发布的共享包，不能为此

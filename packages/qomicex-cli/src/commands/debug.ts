@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // qomicex debug — 启动启动器开放 CDP 调试端口 + 实时 tail 启动器日志。
 // 供第三方开发者（无需启动器源码）用 Playwright / Chrome DevTools connectOverCDP
 // 自动化调试，实时查看后端/插件日志。

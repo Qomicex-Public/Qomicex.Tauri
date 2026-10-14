@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Loader 端点（对应源 Endpoints/LoaderEndpoints.cs）。
 //!
 //! 提供模组加载器（Forge / NeoForge / Fabric / Quilt / LiteLoader / OptiFine /

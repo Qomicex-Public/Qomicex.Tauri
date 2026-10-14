@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw as RefreshCwData } from 'lucide'
 import { MorphActionIcon } from './MorphActionIcon.tsx'

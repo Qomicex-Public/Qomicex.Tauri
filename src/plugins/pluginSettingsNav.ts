@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /**
  * 插件设置页跳转协调：`openPluginSettings` API 的 pending 目标 + 全局事件。
  * pending 兜底挂载时序——Settings/PluginStoreTab/PluginSettingsTab 未挂载时

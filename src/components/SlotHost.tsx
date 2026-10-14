@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { Fragment } from 'react'
 import { usePluginStore } from '../stores/pluginStore.ts'
 import { getSlotContent } from '../plugins/slots.tsx'

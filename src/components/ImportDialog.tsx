@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useState, useRef, useEffect } from 'react'
 import { Download, FileDown, FolderOpen, RotateCw } from 'lucide-react'
 import { listen } from '@tauri-apps/api/event'

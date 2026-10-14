@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useState } from 'react'
 import { CloudDownload, ListChecks, Puzzle, SlidersHorizontal, User } from 'lucide-react'
 import { Tabs } from './ui'

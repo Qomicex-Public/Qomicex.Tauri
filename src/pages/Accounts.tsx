@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import type { DragEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'

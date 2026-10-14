@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { get, del, post, put, ApiError, API_BASE } from './client.ts'
 import { uploadFile } from './ipc.ts'
 import type { FileEntry, ModMetadata, ModEnrichEntry, ModUpdateEntry, ResourcePackMetadata, ShaderMetadata, SaveMetadata, SaveSettings, ScreenshotMetadata, DataPackMetadata, ServerEntry, ServerState, LanGameEntry, SchematicAssetsBundle } from '../types/index.ts'

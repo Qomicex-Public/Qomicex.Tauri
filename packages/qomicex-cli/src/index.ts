@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // qomicex CLI 入口：create / dev / pack / verify / bump / publish / login / logout / lint / doctor / debug
 import { createCommand } from './commands/create.ts'
 import { devCommand } from './commands/dev.ts'

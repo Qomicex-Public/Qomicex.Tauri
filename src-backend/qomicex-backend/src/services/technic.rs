@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Technic SingleZip 整合包探测与元数据解析（issue #123 期1）。
 //!
 //! SingleZip：单个 zip，zip 根目录内容**就是** minecraft 目录（`bin/`、`mods/`、
