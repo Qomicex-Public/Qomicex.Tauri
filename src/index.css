@@ -309,6 +309,15 @@
     }
   }
 
+  /* 侧边栏宽度过渡：只针对 width，避免与行内部件的过渡互相干扰。
+     与 .anim-transition 配合，动画开关/系统 reduced-motion 由上面的
+     `transition: none !important` 直接兜住，宽度变化立即完成。 */
+  .sidebar-expand-transition {
+    transition-property: width;
+    transition-duration: calc(var(--anim-duration, 150ms) * var(--anim-duration-multiplier, 1));
+    transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
   .scroll-fade-mask {
     -webkit-mask-image: linear-gradient(to bottom, black 95%, transparent 100%);
     mask-image: linear-gradient(to bottom, black 95%, transparent 100%);
