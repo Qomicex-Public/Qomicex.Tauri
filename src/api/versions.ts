@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { get } from './client.ts'
 import { hookable } from '../plugins/hookable.ts'
 import type { ScannedVersion, RemoteVersionInfo, LoaderVersionInfo, LoaderAddonInfo, ScanVersionsResponse, ScanMeta } from '../types/index.ts'

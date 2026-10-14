@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useState } from 'react'
 import { FileText, Search, Trash2, AlertTriangle, AlertCircle, Info, XCircle, CheckCircle2 } from 'lucide-react'
 import { Button } from '../components/ui'

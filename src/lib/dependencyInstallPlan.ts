@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /**
  * 模组快捷安装的**前置安装计划**（issue #249）。
  *

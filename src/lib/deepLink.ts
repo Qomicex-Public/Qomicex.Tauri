@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /**
  * `qomicex-launcher://` OS 级深链（issue #127）的解析与动作分发。
  *

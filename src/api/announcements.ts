@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // src/api/announcements.ts
 import { APP_INFO } from '../constants/credits.ts'
 import { trainOf } from '../lib/updateChannel.ts'

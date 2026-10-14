@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Minecraft 日志/崩溃报告分析引擎（移植自 C# `Qomicex.Core.Modules.Helpers.LogAnalysis`）。
 //!
 //! 职责：

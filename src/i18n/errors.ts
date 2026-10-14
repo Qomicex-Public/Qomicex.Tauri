@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 后端错误码 → 翻译 key 映射（前端统一映射，后端零改动）
 import type { ApiError } from '../api/client.ts'
 import { RESOURCES } from '../../qomicex-tauri-i18n/src/index.ts'

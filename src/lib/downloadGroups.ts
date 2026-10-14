@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 下载中心「按资源类型分组」的归一化、分组推导、顺序配置与折叠状态持久化。
 //
 // 集中放在这里的原因：分类别名（`shaderpack` / `shaderpacks` / `shader`…）散落在各

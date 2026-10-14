@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 应用全局状态，在启动时组装（对应 Program.cs 的 DI/Singleton 注册项）。
 //!
 //! 本阶段先承载：GameCore（复用 qomicex-core）、DownloadManager（复用

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { GridLayout, useContainerWidth, noCompactor } from 'react-grid-layout'
 import type { Layout } from 'react-grid-layout'

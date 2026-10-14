@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react'
 import { Box, Copy, RotateCw, TriangleAlert, WandSparkles, X } from 'lucide-react'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Button, Tooltip } from './ui/index.ts'

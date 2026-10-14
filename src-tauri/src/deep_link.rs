@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `qomicex-launcher://` 深链（OS 级 URL 协议唤起）的接收与分发。
 //!
 //! # 与 `ipc.rs` 的 `qomicex://` 无关

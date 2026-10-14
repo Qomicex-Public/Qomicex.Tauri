@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 设置持久化 + 数据目录解析（对应源 Common/AppPaths.cs + JsonContext/SettingsResponse）。
 //!
 //! BaseDir 解析顺序（与源 ResolveBaseDir 一致）：

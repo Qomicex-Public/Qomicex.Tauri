@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, type RefObject, type CSSProperties } from 'react'
 
 interface FloatingOptions {

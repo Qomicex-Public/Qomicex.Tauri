@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { Dialog, DialogHeader, DialogTitle, DialogBody } from './ui'
 import { capeDisplayName } from '../lib/cape-names.ts'
 import { useI18n } from '../i18n/index.tsx'

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! System 端点（对应源 Endpoints/SystemEndpoints.cs）。
 //! 自包含切片：无需额外服务注入，用于验证框架/错误封装/设置持久化/CORS/HTTP ping。
 

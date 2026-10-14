@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 权限目录（与 src/plugins/types.ts PERMISSION_CATALOG 保持一致，供 verify 使用）
 export interface PermissionInfo {
   id: string

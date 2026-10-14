@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import type { DownloadTask } from '../types/index.ts'
 
 const STORAGE_KEY = 'qomicex-download-tasks'

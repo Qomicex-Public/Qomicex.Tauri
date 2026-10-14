@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 账号持久化服务（对应源 Services/AccountService.cs + Services/CryptHelper.cs）。
 //!
 //! ⚠️ 范围说明：源 `AccountService.cs` 的全部公开成员都是**账号存储的 CRUD 与默认账号

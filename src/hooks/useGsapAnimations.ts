@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useLayoutEffect, useRef, RefObject } from 'react'
 import gsap from 'gsap'
 import { getSettings } from '../api/settings.ts'

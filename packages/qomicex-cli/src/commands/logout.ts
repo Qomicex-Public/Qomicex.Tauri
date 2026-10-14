@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // qomicex logout — 清除本地持久化的商店登录会话。
 import { clearAuth } from '../lib/auth.ts'
 import { info, warn } from '../lib/io.ts'

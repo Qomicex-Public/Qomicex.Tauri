@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useState, useCallback } from 'react'
 import { RotateCw } from 'lucide-react'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'

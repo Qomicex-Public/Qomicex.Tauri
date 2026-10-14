@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Windows 原生拖放接管：让「文本拖拽」也能进来。
 //!
 //! ## 为什么需要这个模块

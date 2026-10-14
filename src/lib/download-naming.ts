@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /**
  * 下载资源文件命名格式（ENH-10）。
  * 模板占位符：{cn} = 中文名，{name} = 英文名，{version} = 版本号。

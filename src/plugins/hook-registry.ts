@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /**
  * 通用 Hook 系统核心 —— 主窗口 HookRegistry + iframe 桥协议。
  *

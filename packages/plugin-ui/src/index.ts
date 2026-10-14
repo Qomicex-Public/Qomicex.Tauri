@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 拖动区 / 触控板手势 / 滚动抑制（ADR-086 / ADR-087）。
 // 供启动器与所有插件运行时复用：宿主入口调用一次 installDragRegions() 即可。
 export {

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 语言解析纯函数（无 React 依赖，供 I18nProvider 与插件桥共用）
 import type { Lang } from './types.ts'
 

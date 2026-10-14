@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // src/lib/updateChannel.ts
 //
 // 启动器版本 → 发布通道（train）的唯一解析源。

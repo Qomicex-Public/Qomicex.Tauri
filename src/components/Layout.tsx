@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useState, useRef, useMemo, type CSSProperties } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import gsap from 'gsap'

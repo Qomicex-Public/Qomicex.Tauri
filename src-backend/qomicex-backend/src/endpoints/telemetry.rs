@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Telemetry endpoints（方案 §3.3 灰度自动暂停：匿名插件错误遥测转发）。
 //!
 //! POST /api/telemetry/plugin-error

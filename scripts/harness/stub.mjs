@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /**
  * 插件调试 harness 后端 stub（纯 node:http，无框架）。
  *

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 整合包原地更新的**执行引擎**（issue #118，方案 C）。
 //!
 //! ## 与「新建实例」的根本区别

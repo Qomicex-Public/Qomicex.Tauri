@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 资源（mod 文件 CDN）下载源重写。
 //!
 //! 按「文件下载源」设置（`settings.file_download_source`）把 Modrinth / CurseForge 的

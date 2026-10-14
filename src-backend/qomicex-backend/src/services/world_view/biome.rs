@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Biome tint resolution.
 //!
 //! Vanilla colours a handful of block categories by multiplying their (grey)

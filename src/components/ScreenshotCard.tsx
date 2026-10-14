@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { Expand, Trash2, Ellipsis } from 'lucide-react'
 import { Tooltip, Popover, Checkbox } from './ui'

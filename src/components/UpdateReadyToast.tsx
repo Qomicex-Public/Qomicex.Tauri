@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { createPortal } from 'react-dom'
 import { Check, X } from 'lucide-react'
 import { Tooltip } from './ui'

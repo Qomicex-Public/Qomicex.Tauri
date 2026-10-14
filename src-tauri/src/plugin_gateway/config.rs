@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use std::path::PathBuf;
 
 pub const PORT_FILE: &str = ".gateway_port";

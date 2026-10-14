@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Resource center endpoints (source: Endpoints/ResourceCenterEndpoints.cs).
 //!
 //! Implements multi-platform resource browsing (Modrinth / CurseForge / FTB):

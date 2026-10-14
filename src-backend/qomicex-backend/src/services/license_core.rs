@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Closed license core (source: the closed-source LicenseCore.cs, ported with
 //! the owner's authorization for this launcher's Rust backend).
 //!

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 翻译服务（对应 C# Neo `Services/Translation/`：ITranslationService + 三个实现 +
 //! TextProtector）。
 //!

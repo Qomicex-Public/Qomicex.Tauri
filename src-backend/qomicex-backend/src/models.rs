@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! System/Diagnostics 域 DTO（对应源 JsonContext 中相关 record）。
 
 use serde::{Deserialize, Serialize};

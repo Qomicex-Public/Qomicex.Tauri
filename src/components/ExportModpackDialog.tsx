@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Dialog, DialogBody, DialogHeader, DialogTitle, Tooltip } from '../components/ui'
 import { Button } from '../components/ui'

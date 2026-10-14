@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! QIPC 管道传输层：Windows 命名管道 / Unix domain socket。
 //!
 //! 协议（一连接一请求，全部小端长度前缀）：

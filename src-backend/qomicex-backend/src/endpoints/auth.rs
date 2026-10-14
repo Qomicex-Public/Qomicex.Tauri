@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Auth endpoints (port of Endpoints/AuthEndpoints.cs).
 //!
 //! Handles offline / Microsoft (device-code + poll + info + refresh) /

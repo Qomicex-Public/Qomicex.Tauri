@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { get, post, put, del, API_BASE, ApiError } from './client.ts'
 import { uploadFile } from './ipc.ts'
 import { MODPACK_REQUEST_TIMEOUT_MS } from './drop-install.ts'

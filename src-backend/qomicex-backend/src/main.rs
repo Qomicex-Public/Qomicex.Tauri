@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 mod app;
 // 开发期 `.env` 加载（issue #159 / PR #170）：`#[cfg]` 限定为 debug 专属，
 // release 的凭据由 CI/发布流水线在构建期经 `CURSEFORGE_API_KEY` 注入并编译进产物，

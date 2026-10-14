@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { post } from './client.ts'
 
 export type PluginErrorType = 'launch_crash' | 'plugin_load_failed' | 'plugin_runtime_error'

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /**
  * hookable() —— 把启动器任意方法包装成可被插件 hook 的方法。
  *

@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 插件签名密钥对生成器（ADR-050 Ed25519 三级信任链）
 //
 // 用法：

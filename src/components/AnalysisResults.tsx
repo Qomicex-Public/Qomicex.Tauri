@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { Card, CardHeader, CardTitle, CardContent } from './ui'
 import { Badge } from './ui'
 import { Separator } from './ui'

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 实时游戏日志服务。
 //!
 //! 订阅核心子模块（qomicex-core-rust）的游戏输出总线（`subscribe_game_log`，

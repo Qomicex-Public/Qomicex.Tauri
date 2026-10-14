@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 实例自定义分组服务（独立 groups.json 持久化）。
 //!
 //! 分组定义 `{id, name, color}` 存 `{BaseDir}/data/groups.json`；

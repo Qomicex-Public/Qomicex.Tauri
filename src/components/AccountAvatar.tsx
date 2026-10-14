@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useState, useEffect } from 'react'
 import { tryGetCachedAvatar, fetchAndCacheAvatar } from '../api/skin.ts'
 import type { Account } from '../types/index.ts'

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 版本扫描指纹缓存服务（扫描性能优化的核心）。
 //!
 //! ## 背景

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { ApiError, get, post } from './client.ts'
 import type { ConnectorStatus, EasyTierStatus, NatTypeResult } from '../types/index.ts'
 

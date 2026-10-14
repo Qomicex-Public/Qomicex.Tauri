@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 内存 trace 缓冲 + dump + 日志级别。
 //!
 //! 对应 C# `Diagnostics/TraceBufferStore.cs`、`Diagnostics/BufferedTraceListener.cs`、

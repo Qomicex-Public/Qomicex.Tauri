@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Connector endpoints（联机）：SCF 协议 + EasyTier 组网（qomicex-connector crate）。
 //!
 //! 对应前端 `src/api/connector.ts` 的 11 个端点（Connect.tsx 页面）：

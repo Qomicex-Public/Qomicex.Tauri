@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 导出任务跟踪：`POST /modpack/export` 创建异步导出任务（返回 taskId），
 //! `GET /modpack/export/task/{taskId}` 轮询进度，`POST .../cancel` 取消
 //! （`AtomicBool` 标志，build_export_zip 在反查批次/逐文件处检查并尽快中断），

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Plugin domain services (source: Services/PluginStore.cs, PluginPackageService.cs,
 //! FileAuthService.cs, PluginVersion.cs, PluginGatewayClient.cs + Models/PluginManifest.cs).
 //!

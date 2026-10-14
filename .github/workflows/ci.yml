@@ -172,6 +172,9 @@ jobs:
       # 快捷安装前置计划的护栏（issue #249）：已安装的前置不得进入删除名单。
       # 该判定此前用本地文件名与上游文件名比较，两域必然不等 → 已装前置被删且不补下载。
       - run: pnpm run test:dependency-install-plan
+      # 版权头护栏（issue #248）：源文件须带 GPL-3.0-or-later 的 SPDX 声明。
+      # 缺头就失败，避免新增文件再次无声明（CLI 模板与 plugins-dev 为有意例外，见脚本）。
+      - run: pnpm run license:check
       # lint 尚未进阻断：存量见 AGENTS.md「Lint 现状」，清零后再去掉 continue-on-error。
       - name: ESLint
         continue-on-error: true

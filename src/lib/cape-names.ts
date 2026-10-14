@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /** 微软披风 id → 中文名本地化映射（未知 id 回落原名）。 */
 const CAPE_NAMES: Record<string, string> = {
   migrator: '迁移者披风',

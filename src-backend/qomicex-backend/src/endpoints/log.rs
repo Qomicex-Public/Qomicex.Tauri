@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Log endpoints (translated from Endpoints/LogEndpoints.cs).
 //!
 //! The C# source operates purely on files under `{BaseDir}/logs`: listing,

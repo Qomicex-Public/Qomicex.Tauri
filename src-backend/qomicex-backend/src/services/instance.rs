@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 游戏实例模型与实例服务（对应源 Models/GameInstance.cs + Services/InstanceService.cs）。
 
 use std::collections::HashMap;

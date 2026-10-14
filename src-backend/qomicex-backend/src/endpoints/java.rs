@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Java 端点（对应源 Endpoints/JavaEndpoints.cs + Services/JavaRuntimeStore.cs + Services/JavaDownloadService.cs）。
 //!
 //! 挂 `/api/java`，含搜索 / 自定义运行时持久化 / 合并列表 / 校验 / 需求版本 /

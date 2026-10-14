@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // src/plugins/plugin-css.ts 主题同步注册/注销配对的回归测试（issue #236）。
 //
 // 为什么需要它：`registerThemeSync(iframe)` 的返回值在 onload 回调 / React effect

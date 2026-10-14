@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // src/lib/dependencyInstallPlan.ts 的回归测试（issue #249）。
 //
 // 为什么不是一个测试框架：AGENTS.md「无前端单测框架」一节把测试框架的引入排在后面，

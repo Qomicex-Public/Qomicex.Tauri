@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import type { PluginManifest } from '../plugins/types.ts'
 import { PERMISSION_CATALOG } from '../plugins/types.ts'
 import { Dialog, DialogHeader, DialogBody, DialogFooter, DialogTitle, DialogDescription } from './ui'

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Tauri 主进程日志：`{BaseDir}/logs/qomicex-tauri.log` 追加写入。
 //!
 //! 后端有自己的 tracing + 文件日志；这里只覆盖 Tauri 主进程自身的

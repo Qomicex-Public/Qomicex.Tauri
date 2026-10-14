@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use std::io::{BufRead, BufReader};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;

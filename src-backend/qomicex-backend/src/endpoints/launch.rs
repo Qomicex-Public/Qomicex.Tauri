@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Launch endpoints (translated from Endpoints/LaunchEndpoints.cs).
 //!
 //! POST /api/launch/{pid}/kill      -> kill a game process by pid

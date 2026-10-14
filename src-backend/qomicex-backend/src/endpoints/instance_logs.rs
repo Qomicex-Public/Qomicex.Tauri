@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 实时游戏日志端点（对应「测试游戏」的功能：启动后另开独立日志窗口）。
 //!
 //! - `GET /api/instance/{id}/logs`        — 返回该实例已缓冲的历史日志 `{ lines }`。

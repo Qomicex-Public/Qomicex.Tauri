@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import Markdown from 'react-markdown'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Button } from './ui'

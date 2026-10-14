@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useState, useCallback } from 'react'
 import { Copy, Map as MapIcon, Pen, Play, Save, Settings, Trash2 } from 'lucide-react'
 import { Card, CardContent, Checkbox } from './ui'

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 export function createRafThrottle(maxFps: number) {
   const rafId = { current: 0 }
   if (maxFps <= 0) {

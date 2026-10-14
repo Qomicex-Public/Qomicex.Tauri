@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // CLI 通用 IO：输出 / 退出 / 子进程。
 import { spawn } from 'node:child_process'
 
