@@ -52,6 +52,7 @@ pnpm install --frozen-lockfile
 pnpm --filter @qomicex/plugin-ui build   # dist/ gitignored，改 plugin-ui 后必跑
 pnpm run typecheck
 pnpm run lint
+pnpm run license:check   # 源文件版权头（缺则 pnpm run license:apply 补）
 pnpm run format:check
 pnpm run build
 pnpm run dev          # :1420
