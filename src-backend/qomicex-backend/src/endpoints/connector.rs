@@ -2259,13 +2259,18 @@ async fn stun_detect_nat() -> NatTypeResult {
 ///
 /// 只取 IPv4：检测 socket 绑定 IPv4，双栈主机名若先返回 IPv6 会导致该服务器被跳过。
 async fn resolve_ipv4(server: &str) -> Option<SocketAddrV4> {
-    tokio::net::lookup_host(server)
-        .await
-        .ok()?
-        .find_map(|addr| match addr {
-            SocketAddr::V4(v4) => Some(v4),
-            SocketAddr::V6(_) => None,
-        })
+    pick_ipv4(tokio::net::lookup_host(server).await.ok()?)
+}
+
+/// 从解析结果中挑出首个 IPv4 地址（跳过 IPv6）。
+///
+/// 单独成函数以便确定性地覆盖选择逻辑：整个 `resolve_ipv4` 依赖真实 DNS，
+/// 而部分环境（代理假 IP、企业 DNS）会对任意域名都返回地址，无法断言解析失败。
+fn pick_ipv4(addrs: impl IntoIterator<Item = SocketAddr>) -> Option<SocketAddrV4> {
+    addrs.into_iter().find_map(|addr| match addr {
+        SocketAddr::V4(v4) => Some(v4),
+        SocketAddr::V6(_) => None,
+    })
 }
 
 /// 判定依据/失败原因的结构化表示。
@@ -2787,25 +2792,34 @@ mod nat_tests {
 
     /// 主机名解析必须只取 IPv4：socket 绑定 IPv4，IPv6 地址会在其上发送失败，
     /// 导致双栈服务器（实测 stun.antisip.com / stun.bcs2005.net）被白白跳过。
+    /// 用构造地址覆盖选择逻辑，不依赖真实 DNS（部分环境对任意域名都返回地址）。
     #[test]
-    fn resolve_ipv4_picks_ipv4_for_dual_stack_host() {
-        let resolved = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(resolve_ipv4("stun.miwifi.com:3478"));
-        // 该主机名只解析出 IPv4；断言解出的确实是 IPv4（而非被丢弃）
-        assert!(resolved.is_some(), "stun.miwifi.com 应能解析出 IPv4");
+    fn pick_ipv4_skips_ipv6_and_returns_first_v4() {
+        let addrs = vec![
+            "[2001:41d0:8:8a6d::1]:3478".parse::<SocketAddr>().unwrap(),
+            "212.53.40.43:3478".parse::<SocketAddr>().unwrap(),
+            "192.76.120.66:3478".parse::<SocketAddr>().unwrap(),
+        ];
+        assert_eq!(
+            pick_ipv4(addrs).map(|a| a.to_string()),
+            Some("212.53.40.43:3478".to_string())
+        );
     }
 
+    /// 解析结果全是 IPv6 时不得回退成 IPv6（socket 是 IPv4，只能视为无可用目标）。
     #[test]
-    fn resolve_ipv4_returns_none_for_unresolvable_host() {
-        let r = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(resolve_ipv4("this-host-does-not-exist.invalid:3478"));
-        assert!(r.is_none());
+    fn pick_ipv4_returns_none_when_only_ipv6() {
+        let addrs = vec![
+            "[2001:db8::1]:3478".parse::<SocketAddr>().unwrap(),
+            "[2001:db8::2]:3478".parse::<SocketAddr>().unwrap(),
+        ];
+        assert!(pick_ipv4(addrs).is_none());
+    }
+
+    /// 无解析结果时返回 None。
+    #[test]
+    fn pick_ipv4_returns_none_for_empty() {
+        assert!(pick_ipv4(Vec::new()).is_none());
     }
 
     #[test]
