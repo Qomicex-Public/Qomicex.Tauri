@@ -183,7 +183,7 @@ function TaskCard({ task, t }: { task: DownloadTask; t: TFunc }) {
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="truncate text-sm font-medium">{task.name}</span>
+              <span className="min-w-0 truncate text-sm font-medium">{task.name}</span>
               <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium', cfg.color)}>
                 {t(`downloads.status.${task.status}`)}
               </span>

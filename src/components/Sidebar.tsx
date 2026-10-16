@@ -139,6 +139,12 @@ export default function Sidebar() {
     saveSidebarExpanded(next)
   }, [])
 
+  // 侧边栏宽度暴露为 --sidebar-w（w-16=4rem / w-52=13rem），供 portal 到 body 的
+  // 悬浮层（如 BatchToolbar）相对内容区水平居中，而不是相对整个视口。
+  useEffect(() => {
+    document.documentElement.style.setProperty('--sidebar-w', expanded ? '13rem' : '4rem')
+  }, [expanded])
+
   const expansionValue = useMemo(
     () => ({ expanded, setExpanded: applyExpanded }),
     [expanded, applyExpanded]

@@ -835,7 +835,7 @@ export default function Instances() {
             <Tabs tabs={REMOTE_VERSION_CATEGORIES.map(c => ({ id: c.key, label: t(`instances.category.${c.key}`) }))} activeTab={remoteCategory} onChange={setRemoteCategory} />
           </div>
 
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_112px]">
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_auto]">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input placeholder={t('instances.searchPlaceholder')} value={versionSearch} onChange={(e) => setVersionSearch(e.target.value)} className="pl-9" />
@@ -847,7 +847,7 @@ export default function Instances() {
               ))}
             </Select>
 
-            <button onClick={() => changeRemoteViewMode(remoteViewMode === 'grid' ? 'list' : 'grid')} className={cn('flex h-9 w-9 items-center justify-center rounded-lg border bg-card text-muted-foreground hover:bg-accent hover:text-foreground transition-colors', remoteViewMode === 'grid' ? 'border-primary/30 text-primary' : 'border-input')}>
+            <button onClick={() => changeRemoteViewMode(remoteViewMode === 'grid' ? 'list' : 'grid')} className={cn('flex h-9 w-9 items-center justify-center justify-self-end rounded-lg border bg-card text-muted-foreground hover:bg-accent hover:text-foreground transition-colors', remoteViewMode === 'grid' ? 'border-primary/30 text-primary' : 'border-input')}>
               <MorphIcon icon={remoteViewMode === 'grid' ? GripData : ListData} className="h-3.5 w-3.5" spring="snappy" reducedMotion="user" />
             </button>
           </div>
@@ -1307,11 +1307,11 @@ export default function Instances() {
           <div className="flex border-b border-border">
             <button
               onClick={() => setSettingsTab('basic')}
-              className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${settingsTab === 'basic' ? 'border-b-2 border-primary text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              className={`flex-1 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${settingsTab === 'basic' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
             >{t('instances.basicInfo')}</button>
             <button
               onClick={() => setSettingsTab('repair')}
-              className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${settingsTab === 'repair' ? 'border-b-2 border-primary text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              className={`flex-1 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${settingsTab === 'repair' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
             >{t('instances.repairFiles')}</button>
           </div>
           <div className="p-6">
