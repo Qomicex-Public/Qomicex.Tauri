@@ -99,6 +99,32 @@ pub struct ConnectorGameInfo {
     pub game_version: String,
     pub loader: Option<String>,
     pub loader_version: Option<String>,
+    /// mods 扫描用的「实际游戏加载器」（issue #255）。
+    ///
+    /// 与展示用的 `loader` 分开：`detect_loaders` 按 libraries 顺序入列，OptiFine 常排在
+    /// Forge/NeoForge 之前，直接拿首个非 Vanilla 会把 Forge+OptiFine 宿主判成 OptiFine，
+    /// 使 core 按 Fabric 侧解析双端 jar。本字段只用于选元数据侧，不参与展示。
+    /// `#[serde(default)]` + `skip_serializing`：不进入 qml:game_info 协议负载，保持兼容。
+    #[serde(default, skip_serializing)]
+    pub scan_loader: Option<String>,
+}
+
+/// 从 `detect_loaders` 结果里挑出「实际游戏加载器」，用于 core 的 jar 元数据选侧（issue #255）。
+/// 优先 Forge 系（NeoForge → Forge → Cleanroom），再 Quilt → Fabric；
+/// 只有 OptiFine/LiteLoader 这类附属加载器时返回 None（→ core 走未知加载器分支，保持旧行为）。
+fn pick_game_loader(loaders: &[crate::endpoints::version::ScannedLoaderEntry]) -> Option<&str> {
+    const PRIORITY: [&str; 6] = [
+        "NeoForge",
+        "Forge",
+        "Cleanroom",
+        "Quilt",
+        "Fabric",
+        "LegacyFabric",
+    ];
+    PRIORITY
+        .iter()
+        .find_map(|want| loaders.iter().find(|l| l.r#type == *want))
+        .map(|l| l.r#type.as_str())
 }
 
 enum Mode {
@@ -614,11 +640,16 @@ fn read_host_game_info(root: &str, version: &str) -> Option<ConnectorGameInfo> {
         .find(|l: &&ScannedLoaderEntry| l.r#type != "Vanilla" && l.r#type != "Unknown")
         .map(|l| (Some(l.r#type.clone()), Some(l.version.clone())))
         .unwrap_or((None, None));
+    // issue #255：mods 扫描按「实际游戏加载器」选元数据侧，不能沿用上面的展示 loader——
+    // detect_loaders 按 libraries 顺序入列，OptiFine 常排在 Forge 前，会把 Forge+OptiFine
+    // 宿主当成 OptiFine，从而读到双端 jar 的 Fabric 侧（评审 sourcery 指出）。
+    let scan_loader = pick_game_loader(&loaders).map(str::to_string);
 
     Some(ConnectorGameInfo {
         game_version,
         loader,
         loader_version,
+        scan_loader,
     })
 }
 
@@ -740,6 +771,7 @@ async fn host_port(
             .unwrap_or_else(|| "unknown".to_string()),
         loader: None,
         loader_version: None,
+        scan_loader: None,
     };
     if let (Some(root), Some(version)) = (
         proc_info.as_ref().and_then(|p| p.game_root.as_deref()),
@@ -760,8 +792,8 @@ async fn host_port(
         }
     }
     // loader 先取出：game_info 随即被 move 进 conn.game_info，之后无法再借用
-    // （issue #255：core 解析 jar 元数据需按加载器选侧）
-    let scan_loader = game_info.loader.clone();
+    // （issue #255：core 解析 jar 元数据需按加载器选侧；此处用实际游戏加载器而非展示 loader）
+    let scan_loader = game_info.scan_loader.clone();
     *conn.game_info.write().unwrap() = Some(game_info);
     // host_port 建房无实例上下文：mods 扫描留空（guest 端拿空列表）
     *conn.host_instance.write().unwrap() = None;
@@ -849,10 +881,13 @@ async fn host_instance(
     }
 
     // 发布房主版本信息（guest 端 status.gameInfo 可见）
+    // scan_loader 不参与发布（skip_serializing）：instance 分支的 mods 扫描直接取
+    // instance.loader，本字段只服务于 host_port 分支的进程解析结果
     *conn.game_info.write().unwrap() = Some(ConnectorGameInfo {
         game_version: instance.game_version.clone(),
         loader: instance.loader.clone(),
         loader_version: instance.loader_version.clone(),
+        scan_loader: None,
     });
 
     // 后台：启动实例 → 轮询扫描端口（最长 60s）→ 建房
