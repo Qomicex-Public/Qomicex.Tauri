@@ -42,8 +42,11 @@ export function BatchToolbar({ selectedCount, onClear, onSelectAll, children, cl
   // 水平居中相对内容区而非视口：--sidebar-w 由 Sidebar 按展开态写入
   // documentElement（收起 4rem / 展开 13rem）；left 动画时长与侧边栏
   // .sidebar-expand-transition 保持一致，切换时工具栏平滑跟随。
+  // 回退值取 0：--sidebar-w 未定义时（组件被独立使用）不加偏移，保持视口居中。
+  // duration 里的 multiplier 只覆盖「界面动画」开关；prefers-reduced-motion 由
+  // host 的 .anim-transition 兜住，故两者都要带上。
   return createPortal(
-    <div className={cn('fixed bottom-8 z-50 -translate-x-1/2 left-[calc(50%+var(--sidebar-w,4rem)/2)] transition-[left] duration-[calc(var(--anim-duration,150ms)*var(--anim-duration-multiplier,1))] ease-[cubic-bezier(0.16,1,0.3,1)]', className)}>
+    <div className={cn('anim-transition fixed bottom-8 z-50 -translate-x-1/2 left-[calc(50%+var(--sidebar-w,0rem)/2)] transition-[left] duration-[calc(var(--anim-duration,150ms)*var(--anim-duration-multiplier,1))] ease-[cubic-bezier(0.16,1,0.3,1)]', className)}>
       <div
         key={exiting ? undefined : animKey}
         className={cn(
