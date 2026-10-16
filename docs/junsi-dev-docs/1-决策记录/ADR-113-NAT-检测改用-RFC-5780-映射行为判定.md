@@ -77,8 +77,25 @@ PR #246 评审提出 5 条，逐条实测核验后修复 4 条、驳回 1 条：
 > **残余观测**：端到端复测响应台数在 6–8 台间波动，且每轮缺失的服务器不同，属公共 STUN
 > 服务器的丢包/限速，非判定逻辑缺陷。映射行为判定只需 ≥2 台一致即可成立。
 
+## 评审后修订（v1.2）
+
+CodeRabbit 复审再提 3 条，2 条成立已修、1 条已在 v1.1 处理：
+
+1. **`cone` 判定漏检公网地址（成立）**：`classify_nat` 原在 `ports.len() == 1` 时直接返回
+   `cone`，未检查 `ips`。实测曾出现「同端口、不同公网 IP」的响应
+   （`stun.miwifi.com` → `151.121.42.206:29214` 与 `stun.sipnet.net` → `182.107.142.140:29214`），
+   旧逻辑会误判为 `cone`，与两份文档写明的「映射端口/地址一致」不符。
+   现要求端口与公网地址**都**唯一。同时修正一条编码了该错误行为的既有用例
+   （`same_port_across_targets_is_endpoint_independent` 原用两个不同 IP 却断言 `cone`）。
+2. **单台 DNS 慢导致整轮 `blocked`（成立）**：原 `join_all` + 单个 `timeout_at` 会让一台
+   解析慢过 deadline 就丢掉其余**已解析成功**的服务器。现每台单独 `timeout_at`，
+   且 DNS 仅占一半预算（`STUN_PROBE_TIMEOUT / 2`）为收包阶段留时间。
+   复测响应台数 6 → 8，耗时 3018ms → 1233ms。
+3. **测试依赖真实网络（成立，v1.1 已修）**：`pick_ipv4` 抽为纯函数后用构造地址断言。
+   补充依据：本机 DNS 被代理接管，任意域名都会解析成功，原「断言解析失败」在联网环境下同样失败。
+
 ## 影响
-- src-backend/qomicex-backend/src/endpoints/connector.rs：stun_detect_nat 重写、resolve_ipv4 / parse_stun_response / classify_nat / build_binding_request 新增，nat_cache 加探测序号，NatTypeResult 扩展 reason/publicIp/publicPort，新增 14 条单测
+- src-backend/qomicex-backend/src/endpoints/connector.rs：stun_detect_nat 重写、resolve_ipv4 / pick_ipv4 / parse_stun_response / classify_nat / build_binding_request 新增，nat_cache 加探测序号，NatTypeResult 扩展 reason/publicIp/publicPort，新增 16 条单测
 - src/types/index.ts：NatTypeResult 补 reason（结构化 NatReason 类型；publicIp/publicPort 此前已声明但后端缺失，现已对齐）
 - src/pages/Connect.tsx：NAT Badge tooltip 展示公网映射地址与按语言翻译的判定依据
 - qomicex-tauri-i18n：7 语言 connect.ts 删掉未测量的 TCP 结论、新增 natPublicAddr 与 natReasons.*（需在 i18n 仓库单独提交推送）
@@ -90,3 +107,4 @@ PR #246 评审提出 5 条，逐条实测核验后修复 4 条、驳回 1 条：
 |---|---|---|---|
 | 2026-10-11 | v1.0 | 初版创建 | AI Agent |
 | 2026-10-11 | v1.1 | PR #246 评审修复：缓存序号保护、DNS/IPv4 解析与探测预算、reason 结构化本地化、收割循环健壮性；驳回旧式事务 ID 一条（实测误报） | AI Agent |
+| 2026-10-11 | v1.2 | CodeRabbit 复审修复：cone 判定补公网地址一致性校验；单台 DNS 慢不再导致整轮 blocked；测试去网络依赖 | AI Agent |
