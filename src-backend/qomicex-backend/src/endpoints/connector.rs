@@ -489,6 +489,7 @@ async fn scan_host_mods(state: &SharedState, instance: &crate::services::instanc
         &instance.game_dir,
         &instance.name,
         isolated,
+        instance.loader.as_deref(),
     )
     .await;
     *connector().host_mods.write().unwrap() = Some(entries);
@@ -497,13 +498,19 @@ async fn scan_host_mods(state: &SharedState, instance: &crate::services::instanc
 /// host_port 建房：以进程解析的 `--gameDir`（最终游戏目录）扫描 mods。
 /// gameDir 已是最终目录（隔离时 = `{root}/versions/{version}`，否则 = `{root}`），
 /// 故 version_segmented 传 false，mods 目录 = `{gameDir}/mods`。
-async fn scan_host_mods_from_game_dir(state: &SharedState, game_dir: &str, version_name: &str) {
+async fn scan_host_mods_from_game_dir(
+    state: &SharedState,
+    game_dir: &str,
+    version_name: &str,
+    loader: Option<&str>,
+) {
     let entries = scan_mods_to_entries(
         &state.core,
         &state.curse_forge_api_key,
         game_dir,
         version_name,
         false,
+        loader,
     )
     .await;
     *connector().host_mods.write().unwrap() = Some(entries);
@@ -516,12 +523,14 @@ async fn scan_mods_to_entries(
     game_dir: &str,
     version: &str,
     version_segmented: bool,
+    loader: Option<&str>,
 ) -> Vec<GameModEntry> {
     let mods = core.local_resource_provider().create_mods(
         &abs_game_dir(game_dir),
         version,
         version_segmented,
         api_key,
+        loader,
     );
     match mods.get_mod_list(None).await {
         Ok(list) => list
@@ -750,6 +759,9 @@ async fn host_port(
             );
         }
     }
+    // loader 先取出：game_info 随即被 move 进 conn.game_info，之后无法再借用
+    // （issue #255：core 解析 jar 元数据需按加载器选侧）
+    let scan_loader = game_info.loader.clone();
     *conn.game_info.write().unwrap() = Some(game_info);
     // host_port 建房无实例上下文：mods 扫描留空（guest 端拿空列表）
     *conn.host_instance.write().unwrap() = None;
@@ -762,7 +774,13 @@ async fn host_port(
         let scan_game_dir = game_dir.to_string();
         let scan_version = version.to_string();
         tokio::spawn(async move {
-            scan_host_mods_from_game_dir(&scan_state, &scan_game_dir, &scan_version).await;
+            scan_host_mods_from_game_dir(
+                &scan_state,
+                &scan_game_dir,
+                &scan_version,
+                scan_loader.as_deref(),
+            )
+            .await;
         });
     } else {
         *conn.host_mods.write().unwrap() = Some(Vec::new());
@@ -1533,6 +1551,7 @@ async fn match_instances(
                         &inst.name,
                         isolated,
                         &api_key,
+                        inst.loader.as_deref(),
                     );
                     let hashes: HashSet<String> = match mods.get_mod_list_light().await {
                         Ok(list) => list

@@ -307,7 +307,10 @@ const MODS_CACHE_EMPTY_TTL_SECS: i64 = 5 * 60;
 /// `fabric-api` 的子模块判成缺失，造成误报，必须一并失效。
 /// v4：mcmod.info 世代（1.12.2）补全 modId / requiredMods / @Mod 注解硬依赖——
 /// 旧缓存的 modId/dependencies 恒为空，必须失效重扫。
-const MODS_CACHE_SCHEMA: u32 = 4;
+/// v5：jar 元数据解析按实例 loader 选侧（issue #255）——旧缓存里 Forge 实例的
+/// dependencies 取自 fabric.mod.json，含着 `fabric`/`fabricloader` 等 Fabric 侧依赖，
+/// 不失效就会继续误报「缺少 fabric 前置」。
+const MODS_CACHE_SCHEMA: u32 = 5;
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -510,6 +513,7 @@ async fn refresh_mods_cache(
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
+        r.loader.as_deref(),
     );
     let mut list = mods.get_mod_list(None).await.map_err(map_core_error)?;
     mods.enrich_mod_ids(&mut list).await;
@@ -714,6 +718,9 @@ struct Resolved {
     game_dir: PathBuf,
     version: String,
     isolated: bool,
+    /// 实例加载器（issue #255）：core 解析 jar 元数据时按它选侧——多端模组单 jar 内含
+    /// fabric 与 forge 两套元数据，取错一侧会报出另一端的依赖（如 Forge 实例报缺 `fabric`）。
+    loader: Option<String>,
 }
 
 fn resolve(id: &str, state: &crate::state::AppState) -> ApiResult<Resolved> {
@@ -740,6 +747,7 @@ fn resolve(id: &str, state: &crate::state::AppState) -> ApiResult<Resolved> {
         game_dir: to_absolute(&base),
         version: inst.name,
         isolated,
+        loader: inst.loader,
     })
 }
 
@@ -1328,6 +1336,7 @@ async fn refresh_mod_updates(
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
+        r.loader.as_deref(),
     );
     let list = mods.get_mod_list_light().await.map_err(map_core_error)?;
 
@@ -1618,6 +1627,7 @@ async fn enable_mod(
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
+        r.loader.as_deref(),
     );
     mods.enable_mod(&path);
     Ok(StatusCode::OK)
@@ -1639,6 +1649,7 @@ async fn disable_mod(
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
+        r.loader.as_deref(),
     );
     mods.disable_mod(&path);
     Ok(StatusCode::OK)
@@ -1669,6 +1680,7 @@ async fn batch_enable_mods(
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
+        r.loader.as_deref(),
     );
     for name in names {
         let path = dir.join(&name).to_string_lossy().into_owned();
@@ -1689,6 +1701,7 @@ async fn batch_disable_mods(
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
+        r.loader.as_deref(),
     );
     for name in names {
         let path = dir.join(&name).to_string_lossy().into_owned();
