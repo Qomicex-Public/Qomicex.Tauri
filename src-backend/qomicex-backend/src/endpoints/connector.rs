@@ -2343,8 +2343,10 @@ fn classify_nat(observations: Vec<StunObservation>, attempted: usize) -> NatType
     let ips: HashSet<&str> = observations.iter().map(|o| o.public_ip.as_str()).collect();
     let n = observations.len();
 
-    let (r#type, reason) = if ports.len() == 1 {
-        // 端点无关映射 = 锥形类；打洞成功率由 filtering 决定，而 filtering 无法探测
+    let (r#type, reason) = if ports.len() == 1 && ips.len() == 1 {
+        // 端点无关映射要求**端口与公网地址都一致**：只比端口时，各目标返回不同公网
+        // 地址（多出口/多线接入）也会被误判成 cone。
+        // 锥形类；打洞成功率由 filtering 决定，而 filtering 无法探测
         (
             "cone",
             NatReason::EndpointIndependentMapping {
@@ -2760,12 +2762,13 @@ mod nat_tests {
     }
 
     #[test]
-    fn same_port_across_targets_is_endpoint_independent() {
+    fn same_port_and_ip_across_targets_is_endpoint_independent() {
+        // 端点无关映射：各目标的公网地址与映射端口都一致
         let r = classify_nat(
             vec![
                 obs("1.2.3.4", 29192),
                 obs("1.2.3.4", 29192),
-                obs("5.6.7.8", 29192),
+                obs("1.2.3.4", 29192),
             ],
             8,
         );
@@ -2842,6 +2845,19 @@ mod nat_tests {
     #[test]
     fn different_ip_and_port_is_symmetric() {
         let r = classify_nat(vec![obs("1.2.3.4", 1000), obs("5.6.7.8", 2000)], 8);
+        assert_eq!(r.r#type, "symmetric");
+        assert!(matches!(
+            r.reason,
+            NatReason::AddressAndPortDependentMapping { servers: 2 }
+        ));
+    }
+
+    /// 端点无关映射要求端口与公网地址**都**一致。只比端口时，各目标返回不同公网地址
+    /// （多出口/多线接入）会被误判成 cone —— 实测曾出现同端口不同 IP 的响应。
+    #[test]
+    fn same_port_but_different_ip_is_not_cone() {
+        let r = classify_nat(vec![obs("1.2.3.4", 29214), obs("5.6.7.8", 29214)], 8);
+        assert_ne!(r.r#type, "cone", "端口相同但公网 IP 不同，不应判为 cone");
         assert_eq!(r.r#type, "symmetric");
         assert!(matches!(
             r.reason,
