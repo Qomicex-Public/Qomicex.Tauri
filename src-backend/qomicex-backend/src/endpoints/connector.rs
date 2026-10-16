@@ -2167,31 +2167,38 @@ struct StunObservation {
 /// 端口均不变），故 filtering 无法判定，本函数只给映射行为。
 async fn stun_detect_nat() -> NatTypeResult {
     let deadline = tokio::time::Instant::now() + STUN_PROBE_TIMEOUT;
+    // DNS 只占一半预算，给收包阶段留时间；每台单独设超时，单台慢解析不影响其他服务器。
+    // lookup_host 底层是阻塞 getaddrinfo，失效域名常需 5s+ 才返回，若不单台限制，
+    // 一个坏域名就会让整次探测丢掉其余已解析成功的服务器判为 blocked（并被缓存 5 分钟）。
+    let dns_deadline = tokio::time::Instant::now() + STUN_PROBE_TIMEOUT / 2;
 
     // 并行解析、只取 IPv4：socket 绑定的是 IPv4，双栈主机名（实测 stun.antisip.com /
     // stun.bcs2005.net）首个解析地址可能是 IPv6，直接按主机名发送会在该 socket 上失败，
     // 白白跳过一台本可用的服务器。
-    let resolve_all = futures::future::join_all(
-        STUN_SERVERS
-            .iter()
-            .map(|server| async move { (*server, resolve_ipv4(server).await) }),
-    );
-    let targets: Vec<(&str, SocketAddrV4)> =
-        match tokio::time::timeout_at(deadline, resolve_all).await {
-            Ok(resolved) => resolved
-                .into_iter()
-                .filter_map(|(s, a)| a.map(|a| (s, a)))
-                .collect(),
-            // 解析整体超预算：没有可用目标，直接判定
-            Err(_) => {
-                return NatTypeResult::blocked(NatReason::ResolveTimeout {
-                    servers: STUN_SERVERS.len(),
-                })
-            }
-        };
+    let resolved: Vec<(&str, Option<SocketAddrV4>)> =
+        futures::future::join_all(STUN_SERVERS.iter().map(|server| async move {
+            let addr = tokio::time::timeout_at(dns_deadline, resolve_ipv4(server))
+                .await
+                .ok()
+                .flatten();
+            (*server, addr)
+        }))
+        .await;
+    let targets: Vec<(&str, SocketAddrV4)> = resolved
+        .into_iter()
+        .filter_map(|(s, a)| a.map(|a| (s, a)))
+        .collect();
+    // 全都没解出来：区分「DNS 超预算」与「域名本身不可解析」，便于排障
     if targets.is_empty() {
-        return NatTypeResult::blocked(NatReason::NoServerResolvable {
-            servers: STUN_SERVERS.len(),
+        let timed_out = tokio::time::Instant::now() >= dns_deadline;
+        return NatTypeResult::blocked(if timed_out {
+            NatReason::ResolveTimeout {
+                servers: STUN_SERVERS.len(),
+            }
+        } else {
+            NatReason::NoServerResolvable {
+                servers: STUN_SERVERS.len(),
+            }
         });
     }
 
