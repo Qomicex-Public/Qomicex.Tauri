@@ -2919,3 +2919,61 @@ Query：`allowUnsigned=true` 时跳过强制签名校验（前端风险确认后
 | 无 `Content-Length` + 上限压至 1 KiB（抽掉头部预检的探针） | — | **400 `INSTALL_URL_TOO_LARGE`**（拦截来自逐块累加本身） |
 | 回环 `http://127.0.0.1:1/…` | 400 `PROXY_PRIVATE_ADDRESS` | 400 `PROXY_PRIVATE_ADDRESS`（回归不变） |
 
+
+
+### 2026-10-11 更新
+### GET `/api/connector/nat-type`
+
+检测本机 NAT 映射行为（STUN，RFC 5780 映射行为测试；结果缓存 5 分钟）。后端在**同一个本地 UDP socket** 上向多台候选 STUN 服务器并发发起 binding 请求，比较各目标返回的映射端口/地址是否一致来判定映射行为。
+
+实现要点：
+
+- 候选主机名**并行解析且只取 IPv4**：socket 绑定 IPv4，双栈主机名若首个解析地址为 IPv6，直接按主机名发送会在该 socket 上失败、白白跳过可用服务器。DNS 解析与请求收发**共用同一 3s 预算**。
+- 缓存写入带**单调探测序号**：并发探测乱序完成时只有序号更大的结果可写入，避免较早的探测覆盖较新的结果并重置 5 分钟生命周期。
+
+**响应：** `NatTypeResult`
+
+| 字段 | 类型 | 说明 |
+|:---|:---|:---|
+| `type` | `"cone" \| "symmetric" \| "blocked" \| "unknown"` | 类型判定（见下表） |
+| `reason` | `NatReason` | 判定依据/失败原因，**结构化** `{ code, ...参数 }`，由前端按当前语言翻译 |
+| `publicIp` | `string \| null` | 探测到的本机公网映射 IP；未探测到为 `null` |
+| `publicPort` | `int \| null` | 探测到的本机公网映射端口；未探测到为 `null` |
+
+**`type` 判定语义：**
+
+| 值 | 判定条件 | 含义 |
+|:---|:---|:---|
+| `cone` | 所有响应的映射端口/地址一致（端点无关映射） | 锥形类，打洞成功率高 |
+| `symmetric` | 映射端口随目标变化（地址相关/地址端口相关映射） | 对称 NAT，打洞困难 |
+| `blocked` | 全部候选服务器解析失败、发送失败或无响应 | 无法完成探测 |
+| `unknown` | 仅 1 台服务器响应，不足以比较 | 映射行为未知 |
+
+**`reason` 结构化 code：**
+
+| code | 参数 | 含义 |
+|:---|:---|:---|
+| `endpointIndependentMapping` | `servers`, `port` | 端点无关映射 |
+| `addressDependentMapping` | `servers`, `port` | 地址相关映射 |
+| `addressAndPortDependentMapping` | `servers` | 地址端口相关映射（对称 NAT） |
+| `singleServerResponded` | `servers`, `responded` | 仅部分服务器响应，不足以判定 |
+| `noServerResponded` | `servers` | 全部无响应 |
+| `noServerResolvable` | `servers` | 全部无法解析 |
+| `resolveTimeout` | `servers` | 解析超时 |
+| `udpBindFailed` | `error` | 本地 UDP 绑定失败 |
+| `probeSendFailed` | `servers` | 全部发送失败 |
+
+**响应示例：**
+
+```json
+{
+  "type": "cone",
+  "reason": { "code": "endpointIndependentMapping", "servers": 6, "port": 29192 },
+  "publicIp": "182.107.142.140",
+  "publicPort": 29192
+}
+```
+
+**已知限制：** RFC 3489 的 filtering 测试（进一步区分完全锥形/受限锥形/端口受限锥形）依赖服务器支持 `CHANGE-REQUEST` 属性。实测扫描 30 台公共 STUN 服务器、15 台可达，**无一支持**该属性，故 filtering 无法判定，本端点只返回映射行为结论。`blocked` 表示探测未获响应，不等同于「UDP 被防火墙阻断」——`reason.code` 用于区分具体原因。
+
+---

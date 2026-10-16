@@ -1,5 +1,5 @@
 # 项目文档索引
-最后更新：2026-10-14 18:09
+最后更新：2026-10-15 22:30
 
 ## 1-决策记录
 
@@ -114,6 +114,7 @@
 - [ADR-110：保持 tauri identifier 为模板值 com.tauri-app.qomicex-launcher（issue #238）](1-决策记录/ADR-110-保持tauri-identifier为模板值-com-tauri-app-qomicex-launcher-issue-238.md)
 - [ADR-111：实例身份键改用版本目录名（dirName），修复扫描覆盖导致的 JVM 设置丢失（issue #244）](1-决策记录/ADR-111-实例身份键改用版本目录名-dirName-修复扫描覆盖导致的-JVM-设置丢失-issue-244.md)
 - [ADR-112：快捷安装前置计划抽为纯函数并停止误删已安装前置（issue #249）](1-决策记录/ADR-112-快捷安装前置计划抽为纯函数并停止误删已安装前置-issue-249.md)
+- [ADR-113：NAT 检测改用 RFC 5780 映射行为判定（issue #198）](1-决策记录/ADR-113-NAT-检测改用-RFC-5780-映射行为判定.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 
