@@ -939,8 +939,10 @@ fn classify_zip(path: &Path, is_mrpack_ext: bool) -> (&'static str, Option<PackM
     // 代价是「探测」与「可读性」解耦：本地头损坏的条目以前会被 by_index() skip、整个包落到
     // 别的分类或 unknown；现在它仍会被探测到并归类（例如 modpack），classify 带着缺失的元数据
     // 成功返回，真正的失败由随后的解析/安装处以明确错误报告——比误分类成 unknown 更好排查。
-    for name in archive.file_names() {
-        match name {
+    // zip 9：`file_names()` 每项是 `ZipResult<Cow<str>>`，解码失败的条目名跳过
+    for name in archive.file_names().flatten() {
+        // zip 9 给出 `Cow<str>`，统一按 &str 处理
+        match name.as_ref() {
             "modrinth.index.json" => has_mr = true,
             "qmodpack.index.json" => has_qml = true,
             "manifest.json" => has_cf_manifest = true,
@@ -1027,8 +1029,10 @@ fn multimc_pack_meta(
     // 找一遍，避免 by_index() 逐条目 seek（issue #119）。
     let mmc_path = match mmc_entry {
         Some(p) => p.to_string(),
+        // zip 9：`file_names()` 每项是 `ZipResult<Cow<str>>`，解码失败的条目名跳过
         None => archive
             .file_names()
+            .flatten()
             .find(|n| *n == "mmc-pack.json" || n.ends_with("/mmc-pack.json"))?
             .to_string(),
     };

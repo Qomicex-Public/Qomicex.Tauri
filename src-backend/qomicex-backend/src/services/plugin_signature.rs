@@ -195,7 +195,10 @@ pub fn verify_package_signature(
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().to_string();
+        let name = entry
+            .name()
+            .map(|n| n.into_owned())
+            .unwrap_or_else(|_| String::new());
         if name == SIGNATURE_FILE || name == CERT_FILE {
             continue;
         }
@@ -344,7 +347,7 @@ mod tests {
             let mut archive = zip::ZipArchive::new(std::io::Cursor::new(pkg)).unwrap();
             for i in 0..archive.len() {
                 let mut entry = archive.by_index(i).unwrap();
-                let name = entry.name().to_string();
+                let name = entry.name().unwrap().to_string();
                 let mut buf = Vec::new();
                 entry.read_to_end(&mut buf).unwrap();
                 out.start_file(&name, opts).unwrap();
