@@ -118,7 +118,7 @@ function httpStream(path: string, onChunk: (text: string) => void, opts?: Stream
   const done = (async () => {
     const res = await fetch(`${API_BASE}${path}`, {
       method: opts?.method ?? 'GET',
-      headers: { 'Content-Type': 'application/json', ...opts?.headers },
+      headers: withDefaultContentType(opts?.headers),
       body: opts?.body,
       signal: controller.signal,
     })
@@ -146,6 +146,30 @@ interface StreamEvent {
 // 否则后端 404，SSE 消费者（下载进度/游戏日志/插件流）与 multipart 上传全部静默失效。
 function ipcApiPath(path: string): string {
   return new URL(API_BASE).pathname.replace(/\/$/, '') + path
+}
+
+/**
+ * 给流式请求头补默认 Content-Type。
+ *
+ * HTTP 头名大小写不敏感：调用方写成 content-type / Content-type 时必须覆盖默认值
+ * 而不是并存两个；连调用方自己同时给出多个大小写变体时也只保留第一个，否则下游
+ * 服务端可能取到冲突值。
+ */
+function withDefaultContentType(headers?: Record<string, string>): Record<string, string> {
+  const merged: Record<string, string> = { 'Content-Type': 'application/json' }
+  let seenContentType = false
+  for (const [key, value] of Object.entries(headers ?? {})) {
+    if (key.toLowerCase() === 'content-type') {
+      // 第一个调用方变体覆盖默认值；后续变体丢弃（避免同一头出现多个值）
+      if (seenContentType) continue
+      seenContentType = true
+      delete merged['Content-Type']
+      merged[key] = value
+    } else {
+      merged[key] = value
+    }
+  }
+  return merged
 }
 
 function ipcStream(path: string, onChunk: (text: string) => void, opts?: StreamOptions): StreamHandle {
@@ -188,7 +212,11 @@ function ipcStream(path: string, onChunk: (text: string) => void, opts?: StreamO
         req: {
           method: opts?.method,
           path: ipcApiPath(path),
-          headers: opts?.headers ?? {},
+          // 与 httpStream 保持一致：默认补 Content-Type。Axum 的 Json 提取器要求它，
+          // 缺了直接 415；IPC 帧不会像浏览器 fetch 那样自动生成（issue #262）。
+          // 按大小写不敏感去重：调用方写 content-type / Content-type 时不能同时存在
+          // 两个 Content-Type（HTTP 头名大小写不敏感，重复会让部分服务端取错值）。
+          headers: withDefaultContentType(opts?.headers),
           body: opts?.body ? Array.from(new TextEncoder().encode(opts.body)) : undefined,
         },
         onEvent: channel,
