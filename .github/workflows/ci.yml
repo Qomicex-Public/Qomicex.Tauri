@@ -178,6 +178,9 @@ jobs:
       # l4 桥监听器安装的回滚语义：部分失败必须解绑已成功的，否则重试会重复注册，
       # 同一个 plugin-l4-api-call 被处理两次（非幂等操作产生重复副作用）。
       - run: pnpm run test:plugin-l4-bridge-init
+      # 流式通道请求头（issue #262）：IPC 分支不像 fetch 那样自动生成 Content-Type，
+      # 缺了后端 Json 提取器恒 415，插件的流式能力会静默失效。
+      - run: pnpm run test:plugin-ipc-stream-headers
       # 快捷安装前置计划的护栏（issue #249）：已安装的前置不得进入删除名单。
       # 该判定此前用本地文件名与上游文件名比较，两域必然不等 → 已装前置被删且不补下载。
       - run: pnpm run test:dependency-install-plan
