@@ -283,14 +283,11 @@ export function createL4NodeBridge(bus: RegistryBus, invokeLocal: (pluginId: str
   /**
    * 本窗口所属插件 id：注册/注销/代调用的身份一律用它，不采信 iframe 自报的 id。
    *
-   * 未显式配置时从窗口 URL 读（真实运行路径）。两者都取不到说明调用方式有误：
-   * 此时身份为空会让回执被路由到 main，表现为调用超时，因此直接抛错更易排查。
+   * 未显式配置时从窗口 URL 读（真实运行路径）。两者都取不到属于调用方配置错误：
+   * 返回 null 由各入口转成可观测的失败（注册类静默跳过、调用类 reject），
+   * 而不是在 message 回调栈里同步抛出（调用方无法兜底，且会打断整条消息处理）。
    */
-  const selfPluginId = (): string => {
-    const id = options.selfPluginId ?? l4SelfPluginIdFromUrl()
-    if (!id) throw new Error('l4 节点桥缺少自身插件 id（需传 options.selfPluginId 或窗口 URL 带 pluginId）')
-    return id
-  }
+  const selfPluginId = (): string | null => options.selfPluginId ?? l4SelfPluginIdFromUrl() ?? null
   const pending = new Map<string, PendingCall>()
 
   const settle = (callId: string, error: string | undefined, result: unknown) => {
@@ -318,26 +315,46 @@ export function createL4NodeBridge(bus: RegistryBus, invokeLocal: (pluginId: str
     }),
   ]
 
+  /** 身份缺失时的统一失败：注册类事件直接跳过并告警，调用类 reject。 */
+  const requireSelfPluginId = (): string | null => {
+    const id = selfPluginId()
+    if (!id) console.warn('[plugin] l4 节点桥缺少自身插件 id（需 options.selfPluginId 或窗口 URL 带 pluginId）')
+    return id
+  }
+
   return {
+    // 身份一律取本窗口所属插件 id：不信任调用方传入的 pluginId。l4 窗口会把 iframe
+    // 消息里的 pluginId 原样转发过来，恶意插件可伪造成别人的 id 发 unregister，
+    // 删掉对方的登记。
+    register: (_pluginId, method) => {
+      const self = requireSelfPluginId()
+      if (self) bus.send(L4_REGISTRY_EVENTS.register, { pluginId: self, method }, 'main')
+    },
+    unregister: (_pluginId) => {
+      const self = requireSelfPluginId()
+      if (self) bus.send(L4_REGISTRY_EVENTS.unregister, { pluginId: self }, 'main')
+    },
+    ready: (_pluginId) => {
+      const self = requireSelfPluginId()
+      if (self) bus.send(L4_REGISTRY_EVENTS.windowReady, { pluginId: self }, 'main')
+    },
     /**
-     * 上报注册。**不信任调用方传入的 pluginId**：l4 窗口会把 iframe 消息里的
-     * pluginId 原样转发过来，恶意插件可以伪造成别人的 id 发 unregister，把对方登记
-     * 删掉。这里一律以本窗口所属插件 id 为准。
-     */
-    register: (pluginId, method) => bus.send(L4_REGISTRY_EVENTS.register, { pluginId: selfPluginId() || pluginId, method }, 'main'),
-    unregister: (pluginId) => bus.send(L4_REGISTRY_EVENTS.unregister, { pluginId: selfPluginId() || pluginId }, 'main'),
-    ready: (pluginId) => bus.send(L4_REGISTRY_EVENTS.windowReady, { pluginId: selfPluginId() || pluginId }, 'main'),    /**
-     * @param selfPluginId 兼容保留：身份一律取本窗口所属插件 id（见 options.selfPluginId），
-     *   传入值不再影响回执路由，避免伪造身份者把回执引到别的窗口。
+     * 转发给主窗口代调用。发起方身份同样取本窗口所属插件 id，不由调用方指定，
+     * 避免伪造身份者把回执引到别的窗口。
      */
     callRemote: (targetPluginId, method, args) => new Promise((resolve, reject) => {
+      const self = requireSelfPluginId()
+      if (!self) {
+        reject(new Error('l4 节点桥缺少自身插件 id，无法代调用其他插件'))
+        return
+      }
       const callId = newCallId()
       const timer = setTimeout(() => {
         pending.delete(callId)
         reject(new Error(`插件 ${targetPluginId} 的方法 ${method} 调用超时（主窗口无响应）`))
       }, timeoutMs)
       pending.set(callId, { resolve, reject, timer })
-      bus.send(L4_REGISTRY_EVENTS.proxyCall, { callId, pluginId: selfPluginId(), targetPluginId, method, args }, 'main')
+      bus.send(L4_REGISTRY_EVENTS.proxyCall, { callId, pluginId: self, targetPluginId, method, args }, 'main')
     }),
     dispose: () => {
       for (const off of offs) off()

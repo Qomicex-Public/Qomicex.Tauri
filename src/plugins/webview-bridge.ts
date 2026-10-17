@@ -103,10 +103,17 @@ export function initL4Bridge(): Promise<void> {
     return registry._callWithinWindow(pluginId, method, args)
   })
 
-  initPromise = Promise.all(pendingListeners.map((p) => p.catch((e) => {
-    // 监听器装不起来等于该事件永远收不到：只吞不报会让「调用一直超时」无从排查
-    console.warn('[plugin] l4 桥监听器注册失败，相关事件将无法收到', e)
-  }))).then(() => {
+  initPromise = Promise.allSettled(pendingListeners).then((results) => {
+    const failed = results.filter((r) => r.status === 'rejected')
+    if (failed.length > 0) {
+      // 监听器缺失时装配桥等于「永远收不到回执」：宁可让调用方走本地 registry 快速失败，
+      // 也不要静默等 30s 超时。重置 initPromise 以便下次调用重试。
+      for (const r of failed) {
+        console.warn('[plugin] l4 桥监听器注册失败，本次不启用 l4 注册表桥', (r as PromiseRejectedResult).reason)
+      }
+      initPromise = null
+      return
+    }
     setL4HostBridge(hostBridge)
   })
 

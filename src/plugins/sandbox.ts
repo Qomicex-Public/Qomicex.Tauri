@@ -321,6 +321,10 @@ export function createSandbox(plugin: PluginInfo, hiddenMount = false): SandboxI
       sandboxes.delete(plugin.manifest.id)
       // 标记销毁：unmountSandbox 据此跳过「退回 body」，避免把宿主重新挂回文档
       host.dataset.pluginDestroyed = '1'
+      // 显式清空 srcdoc 并摘除 iframe：只 remove 宿主不保证浏览上下文被销毁，
+      // 插件侧的 window 监听会继续存活（#260 停用后的资源残留）
+      iframe.srcdoc = ''
+      iframe.remove()
       host.remove()
     }
   }
@@ -370,6 +374,8 @@ export function createSlotSandbox(plugin: PluginInfo, file: string): SandboxInst
         if (list.length === 0) slotSandboxes.delete(plugin.manifest.id)
       }
       host.dataset.pluginDestroyed = '1'
+      iframe.srcdoc = ''
+      iframe.remove()
       host.remove()
     }
   }

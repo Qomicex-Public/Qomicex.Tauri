@@ -220,10 +220,10 @@ try {
     mountHost(h, page)
     // 中间态校验：mount 后必须真的挂进目标容器，否则「循环结束无残留」这条断言
     // 在 mount/unmount 全坏掉时也会通过（恒为 0），起不到防护作用
-    check(`第 ${i} 次 mount 后父节点是页面容器`, h.parentElement, page)
+    checkNode(`第 ${i} 次 mount 后父节点是页面容器`, h.parentElement, page)
     check(`第 ${i} 次 mount 后处于显示态`, h.style.cssText, MOUNTED_HOST_STYLE)
     unmountHost(h)
-    check(`第 ${i} 次 unmount 后父节点回到 body`, h.parentElement, body)
+    checkNode(`第 ${i} 次 unmount 后父节点回到 body`, h.parentElement, body)
     check(`第 ${i} 次 unmount 后恢复隐藏态`, h.style.cssText, HIDDEN_HOST_STYLE)
     h.remove()
   }
