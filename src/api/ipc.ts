@@ -118,7 +118,7 @@ function httpStream(path: string, onChunk: (text: string) => void, opts?: Stream
   const done = (async () => {
     const res = await fetch(`${API_BASE}${path}`, {
       method: opts?.method ?? 'GET',
-      headers: { 'Content-Type': 'application/json', ...opts?.headers },
+      headers: withDefaultContentType(opts?.headers),
       body: opts?.body,
       signal: controller.signal,
     })
@@ -148,8 +148,24 @@ function ipcApiPath(path: string): string {
   return new URL(API_BASE).pathname.replace(/\/$/, '') + path
 }
 
-function ipcStream(path: string, onChunk: (text: string) => void, opts?: StreamOptions): StreamHandle {
-  let closeFn: (() => void) | null = null
+/**
+ * 给流式请求头补默认 Content-Type：HTTP 头名大小写不敏感，调用方写成 content-type /
+ * Content-type 时必须覆盖默认值而不是并存两个。
+ */
+function withDefaultContentType(headers?: Record<string, string>): Record<string, string> {
+  const merged: Record<string, string> = { 'Content-Type': 'application/json' }
+  for (const [key, value] of Object.entries(headers ?? {})) {
+    if (key.toLowerCase() === 'content-type') {
+      delete merged['Content-Type']
+      merged[key] = value
+    } else {
+      merged[key] = value
+    }
+  }
+  return merged
+}
+
+function ipcStream(path: string, onChunk: (text: string) => void, opts?: StreamOptions): StreamHandle {  let closeFn: (() => void) | null = null
   const done = (async () => {
     const { invoke, Channel } = await import('@tauri-apps/api/core')
     const id = Math.random().toString(36).slice(2)
@@ -190,7 +206,9 @@ function ipcStream(path: string, onChunk: (text: string) => void, opts?: StreamO
           path: ipcApiPath(path),
           // 与 httpStream 保持一致：默认补 Content-Type。Axum 的 Json 提取器要求它，
           // 缺了直接 415；IPC 帧不会像浏览器 fetch 那样自动生成（issue #262）。
-          headers: { 'Content-Type': 'application/json', ...opts?.headers },
+          // 按大小写不敏感去重：调用方写 content-type / Content-type 时不能同时存在
+          // 两个 Content-Type（HTTP 头名大小写不敏感，重复会让部分服务端取错值）。
+          headers: withDefaultContentType(opts?.headers),
           body: opts?.body ? Array.from(new TextEncoder().encode(opts.body)) : undefined,
         },
         onEvent: channel,

@@ -245,15 +245,28 @@ where
     let uri: Uri = req.path.parse().map_err(|e| bad("uri", e))?;
     // 逐跳头由传输层重建，请求/响应两个方向都不透传：帧里本来就没有 content-length
     // （客户端 encode_request 会过滤），若调用方硬塞过期值会导致提取器读错长度。
+    //
+    // 除固定的四个外，RFC 9110 要求把 `Connection` 里**点名**的字段也视为逐跳
+    // （如 `Connection: x-ipc-only` 表示 x-ipc-only 只对当前连接有意义），否则它们
+    // 会越过 IPC 重建边界泄漏给后端路由。
     const HOP_BY_HOP: [&str; 4] = [
         "content-length",
         "transfer-encoding",
         "connection",
         "keep-alive",
     ];
+    let nominated: Vec<String> = req
+        .headers
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case("connection"))
+        .flat_map(|(_, v)| v.split(','))
+        .map(|name| name.trim().to_ascii_lowercase())
+        .filter(|name| !name.is_empty())
+        .collect();
     let mut builder = Request::builder().method(req.method.clone()).uri(uri);
     for (k, v) in &req.headers {
-        if HOP_BY_HOP.contains(&k.to_lowercase().as_str()) {
+        let lower = k.to_lowercase();
+        if HOP_BY_HOP.contains(&lower.as_str()) || nominated.contains(&lower) {
             continue;
         }
         builder = builder.header(k.as_str(), v.as_str());
@@ -607,6 +620,69 @@ mod tests {
         assert_eq!(
             status, 415,
             "缺 content-type 时 Json 提取器应返回 415（issue #262 的真实根因）"
+        );
+
+        server.abort();
+    }
+
+    /// 回归（issue #262 评审）：`Connection` 里点名的字段属于逐跳头，不得越过 IPC 边界。
+    ///
+    /// RFC 9110 §7.6.1：`Connection: x-foo` 表示 x-foo 只对当前连接有意义，转发时必须
+    /// 一并删除。只过滤 `Connection` 本身会让 x-foo 泄漏给后端路由。
+    #[tokio::test]
+    async fn connection_nominated_headers_are_not_forwarded() {
+        use std::sync::{Arc, Mutex};
+
+        let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen_in_handler = seen.clone();
+        let app = Router::new().route(
+            "/api/headers",
+            axum::routing::get(move |headers: axum::http::HeaderMap| {
+                let seen = seen_in_handler.clone();
+                async move {
+                    let names: Vec<String> = headers
+                        .keys()
+                        .map(|k| k.as_str().to_ascii_lowercase())
+                        .collect();
+                    *seen.lock().unwrap() = names;
+                    Json(serde_json::json!({ "ok": true }))
+                }
+            }),
+        );
+
+        let name = pipe_name();
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let server = tokio::spawn(serve(app, name.clone(), shutdown_rx));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let mut conn = Conn::open(&name).await;
+        conn.write_all(&build_request(
+            "GET",
+            "/api/headers",
+            &[
+                ("x-ipc-only", "leak"),
+                ("x-kept", "yes"),
+                ("connection", "x-ipc-only"),
+            ],
+            b"",
+        ))
+        .await
+        .unwrap();
+        let (status, _, _) = read_response(&mut conn).await;
+        assert_eq!(status, 200);
+
+        let forwarded = seen.lock().unwrap().clone();
+        assert!(
+            !forwarded.contains(&"x-ipc-only".to_string()),
+            "Connection 点名的头不应转发，实际: {forwarded:?}"
+        );
+        assert!(
+            !forwarded.contains(&"connection".to_string()),
+            "Connection 本身不应转发，实际: {forwarded:?}"
+        );
+        assert!(
+            forwarded.contains(&"x-kept".to_string()),
+            "未点名的头应正常转发，实际: {forwarded:?}"
         );
 
         server.abort();
