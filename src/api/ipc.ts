@@ -149,13 +149,20 @@ function ipcApiPath(path: string): string {
 }
 
 /**
- * 给流式请求头补默认 Content-Type：HTTP 头名大小写不敏感，调用方写成 content-type /
- * Content-type 时必须覆盖默认值而不是并存两个。
+ * 给流式请求头补默认 Content-Type。
+ *
+ * HTTP 头名大小写不敏感：调用方写成 content-type / Content-type 时必须覆盖默认值
+ * 而不是并存两个；连调用方自己同时给出多个大小写变体时也只保留第一个，否则下游
+ * 服务端可能取到冲突值。
  */
 function withDefaultContentType(headers?: Record<string, string>): Record<string, string> {
   const merged: Record<string, string> = { 'Content-Type': 'application/json' }
+  let seenContentType = false
   for (const [key, value] of Object.entries(headers ?? {})) {
     if (key.toLowerCase() === 'content-type') {
+      // 第一个调用方变体覆盖默认值；后续变体丢弃（避免同一头出现多个值）
+      if (seenContentType) continue
+      seenContentType = true
       delete merged['Content-Type']
       merged[key] = value
     } else {
@@ -165,7 +172,8 @@ function withDefaultContentType(headers?: Record<string, string>): Record<string
   return merged
 }
 
-function ipcStream(path: string, onChunk: (text: string) => void, opts?: StreamOptions): StreamHandle {  let closeFn: (() => void) | null = null
+function ipcStream(path: string, onChunk: (text: string) => void, opts?: StreamOptions): StreamHandle {
+  let closeFn: (() => void) | null = null
   const done = (async () => {
     const { invoke, Channel } = await import('@tauri-apps/api/core')
     const id = Math.random().toString(36).slice(2)

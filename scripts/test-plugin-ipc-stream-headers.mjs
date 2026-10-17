@@ -97,6 +97,17 @@ try {
     check('混合大小写的值生效', merged[keys[0]], 'application/xml')
   }
 
+  // ---- 调用方自己给了多个大小写变体：只保留第一个，不能都发出去 ----
+  {
+    const merged = withDefaultContentType({
+      'content-type': 'text/plain',
+      'Content-Type': 'application/json',
+    })
+    const keys = Object.keys(merged).filter((k) => k.toLowerCase() === 'content-type')
+    check('调用方多大小写变体时只保留一个', keys.length, 1)
+    check('保留调用方的第一个变体值', merged[keys[0]], 'text/plain')
+  }
+
   // ---- 其它头与默认头并存 ----
   {
     const merged = withDefaultContentType({ Authorization: 'Bearer x' })

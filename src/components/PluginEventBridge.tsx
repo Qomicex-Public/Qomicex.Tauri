@@ -1,12 +1,12 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { listen } from '@tauri-apps/api/event'
 import { useMessageBox } from './ui'
 import { usePluginStore } from '../stores/pluginStore.ts'
-import { registerSlot } from '../plugins/slots.tsx'
+import { getSlotContent, registerSlot } from '../plugins/slots.tsx'
 import { NavItem } from './Sidebar.tsx'
 import { PluginIcon } from './PluginIcon.tsx'
 
@@ -18,8 +18,6 @@ export function PluginEventBridge() {
   const navigate = useNavigate()
   const { notify } = useMessageBox()
   const plugins = usePluginStore(s => s.plugins)
-  /** 运行时追加的菜单项去重键（跨 effect 重建保持）。 */
-  const dynamicMenuSeen = useRef(new Set<string>())
 
   useEffect(() => {
     let unlisten: (() => void) | undefined
@@ -55,14 +53,11 @@ export function PluginEventBridge() {
     /**
      * 插件运行时追加侧边栏入口（addMenuItem）。
      *
-     * 复用激活期已有的 slot 机制（`registerSlot`），不新增 store 状态：
+     * 复用激活期已有的 slot 机制（`registerSlot`，push 语义，同一插件可注册多条）：
      * - 只接受插件给自己加入口（`detail.pluginId` 由桥注入，插件无法伪造他人身份）
-     * - 按 pluginId + path 去重，避免反复调用堆积重复条目
-     * - 插件停用时 `unregisterPluginSlots` 会一并清掉
-     *
-     * TODO(#264): 当前 registerSlot 以 pluginId 为 key 覆盖式注册，同一插件追加第二个
-     * 入口会顶掉第一个。manifest 静态 menuItems 是逐个 registerSlot 的，运行时追加需要
-     * slot 层支持多条目，改动面较大，留待专门处理。
+     * - 去重以**注册表当前内容**为准，不额外维护「已见」集合：插件停用时
+     *   `unregisterPluginSlots` 会清空其条目，重新启用后再次调用自然能恢复
+     * - `registerSlot` 会触发订阅版本，侧边栏立刻重渲染
      */
     function handleAddMenuItem(e: Event) {
       const detail = (e as CustomEvent<{ pluginId?: string; item?: { path?: string; label?: string; icon?: string } }>).detail
@@ -71,15 +66,26 @@ export function PluginEventBridge() {
       if (!pluginId || !item?.label) return
       const plugin = plugins.find((p) => p.manifest.id === pluginId)
       if (!plugin || plugin.state !== 'active') return
-      if (dynamicMenuSeen.current.has(`${pluginId}|${item.path ?? ''}|${item.label}`)) return
-      dynamicMenuSeen.current.add(`${pluginId}|${item.path ?? ''}|${item.label}`)
-      registerSlot(pluginId, 'sidebar:bottom', () => (
-        <NavItem
-          to={item.path ?? `/plugins/p/${pluginId}`}
-          label={item.label!}
-          icon={<PluginIcon pluginId={pluginId} icon={item.icon ?? ''} fallback={item.label![0]} />}
-        />
-      ))
+      const path = item.path ?? `/plugins/p/${pluginId}`
+      const label = item.label
+      const dedupeKey = `menu:${path}|${label}`
+      // 以注册表为准去重：同一插件同类入口已存在就不再追加
+      const exists = getSlotContent('sidebar:bottom').some(
+        (reg) => reg.pluginId === pluginId && reg.dedupeKey === dedupeKey,
+      )
+      if (exists) return
+      registerSlot(
+        pluginId,
+        'sidebar:bottom',
+        () => (
+          <NavItem
+            to={path}
+            label={label}
+            icon={<PluginIcon pluginId={pluginId} icon={item.icon ?? ''} fallback={label[0]} />}
+          />
+        ),
+        dedupeKey,
+      )
     }
     function handleKeyDown(e: KeyboardEvent) {
       const activePlugins = plugins.filter(p => p.state === 'active')
