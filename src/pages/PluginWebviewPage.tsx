@@ -7,6 +7,9 @@ import { fetchPlugin } from '../api/plugins.ts'
 import { convertScriptSrcs, convertCssLinks, getFileUrl, buildPluginDoc } from '../plugins/sandbox.ts'
 import { getThemeVars, getThemeScheme } from '../plugins/plugin-css.ts'
 import { initApiTransport } from '../api/ipc.ts'
+import { createL4NodeBridge } from '../plugins/l4-registry-bridge.ts'
+import type { RegistryBus } from '../plugins/l4-registry-bridge.ts'
+import { setL4NodeBridge } from '../plugins/l4-registry.ts'
 
 /**
  * l4 独立窗口页：由主窗口 `createRemoteWebview` 以 `/plugins/p/:id?pluginWebview=1`
@@ -60,6 +63,23 @@ export default function PluginWebviewPage({ pluginId }: { pluginId: string }) {
 
         const { listen, emitTo } = await import('@tauri-apps/api/event')
 
+        // l4 窗口侧注册表总线：统一发到 `main`，接收主窗口按需转发的事件。
+        const eventBus = (): RegistryBus => ({
+          send: (event, payload, target) => { void emitTo(target, event, payload) },
+          on: (event, handler) => {
+            let disposed = false
+            let unlisten: (() => void) | null = null
+            void listen(event, (e) => handler(e.payload)).then((fn) => {
+              if (disposed) fn()
+              else unlisten = fn
+            })
+            return () => {
+              disposed = true
+              if (unlisten) { unlisten(); unlisten = null }
+            }
+          },
+        })
+
         // 插件桥 → 主窗口：仅转发 API 调用（协议消息体原样，传输层换成跨窗口事件）
         const forward = (e: MessageEvent) => {
           if (e.source !== iframe.contentWindow) return
@@ -78,6 +98,22 @@ export default function PluginWebviewPage({ pluginId }: { pluginId: string }) {
         unlistens.push(await listen('plugin-l4-api-response', (e) => {
           iframe.contentWindow?.postMessage(e.payload, '*')
         }))
+
+        // l4 注册表节点桥：把本窗口里插件注册的方法报给主窗口，并接住主窗口转来的
+        // 方法调用。此前只在窗口内部登记，主窗口的 callPlugin 永远查不到（#260）。
+        const nodeBridge = createL4NodeBridge(eventBus(), (targetPluginId, method, callArgs) => {
+          const registry = (window as unknown as {
+            __pluginRegistry?: { _callWithinWindow: (p: string, m: string, a: unknown[]) => Promise<unknown> }
+          }).__pluginRegistry
+          return registry
+            ? registry._callWithinWindow(targetPluginId, method, callArgs)
+            : Promise.reject(new Error('Plugin registry not initialized'))
+        })
+        setL4NodeBridge(nodeBridge)
+        unlistens.push(() => {
+          nodeBridge.dispose()
+          setL4NodeBridge(null)
+        })
 
         iframe.onload = () => {
           // 主题一次性推送（本窗口无完整主题管线，取计算样式同步一次即可）

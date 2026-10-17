@@ -1,7 +1,8 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useEffect, useRef } from 'react'
+import { useLayoutEffect, useRef } from 'react'
+import { mountSandbox, unmountSandbox } from './sandbox.ts'
 import type { SandboxInstance } from './sandbox.ts'
 
 interface PluginSlotProps {
@@ -15,16 +16,16 @@ interface PluginSlotProps {
 export function PluginSlot({ slotId, sandbox, width, height }: PluginSlotProps) {
   const containerRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const container = containerRef.current
     if (!container) return
 
-    container.appendChild(sandbox.iframe)
+    mountSandbox(sandbox, container)
 
     return () => {
-      if (sandbox.iframe.parentElement === container) {
-        container.removeChild(sandbox.iframe)
-      }
+      // 槽位/设置页沙箱卸载即脱离文档（它们只服务当前可见 UI），由持有者在插件
+      // 停用时销毁；常驻主沙箱则退回隐藏位置，见 unmountSandbox。
+      unmountSandbox(sandbox)
     }
   }, [sandbox])
 

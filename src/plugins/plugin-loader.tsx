@@ -73,6 +73,16 @@ function useWebview(plugin: PluginInfo): boolean {
 }
 
 /**
+ * 是否发布页面入口（`menuItems[].action !== 'overlay'`）。无页面入口的插件是库插件：
+ * 用户永远导航不到它的页面，iframe 没有宿主容器，必须在激活时隐藏挂载，否则
+ * `srcdoc` 不执行、`registerMethod` 不注册（issue #260）。
+ */
+function hasPageEntry(plugin: PluginInfo): boolean {
+  const items = plugin.manifest.contributes?.menuItems ?? []
+  return items.some((item) => item.action !== 'overlay')
+}
+
+/**
  * l4 创建去重：label → in-flight Promise<void>。`activatePlugin` 并发调用同一插件时
  * 返回同一个 promise，避免窗口未注册前重复执行生命周期/菜单注入（非原子竞态）。
  */
@@ -87,7 +97,8 @@ const pendingWebviews = new Map<string, Promise<void>>()
 export async function createRemoteWebview(plugin: PluginInfo): Promise<void> {
   const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
   if (!isTauri) {
-    createSandbox(plugin)
+    // 纯浏览器降级：无页面入口的库插件同样需要隐藏挂载，否则降级路径上方法不注册
+    createSandbox(plugin, !hasPageEntry(plugin))
     return
   }
 
@@ -113,7 +124,10 @@ export async function createRemoteWebview(plugin: PluginInfo): Promise<void> {
   initL4Bridge()
 
   const win = new WebviewWindow(label, {
-    url: `/plugins/p/${encodeURIComponent(plugin.manifest.id)}?pluginWebview=1`,
+    // pluginId 必须显式带上：App.tsx 用 `pluginWebview=1&pluginId=<id>` 判定 l4 窗口模式
+    // 并把 id 传给 PluginWebviewPage。缺它时该参数是空串，窗口里 fetchPlugin('') 失败，
+    // l4 插件页永远加载不出来。
+    url: `/plugins/p/${encodeURIComponent(plugin.manifest.id)}?pluginWebview=1&pluginId=${encodeURIComponent(plugin.manifest.id)}`,
     title: plugin.manifest.name,
     width: 1200,
     height: 800,
@@ -135,7 +149,7 @@ export async function createRemoteWebview(plugin: PluginInfo): Promise<void> {
     win.once('tauri://error', (e) => {
       pendingWebviews.delete(label)
       console.error('[plugin] l4 webview 创建失败，降级为 iframe', plugin.manifest.id, e)
-      if (!getInstance(plugin.manifest.id)) createSandbox(plugin)
+      if (!getInstance(plugin.manifest.id)) createSandbox(plugin, !hasPageEntry(plugin))
       resolve()
     })
   })
@@ -155,13 +169,16 @@ export async function activatePlugin(plugin: PluginInfo) {
 
   const useSandbox = plugin.manifest.render !== 'inline'
   const useWebviewRender = useWebview(plugin)
+  // 库插件（无页面入口）用户永远导航不到，必须激活即隐藏挂载；有页面的插件保持
+  // 懒加载，避免启动就执行所有 UI 前端（#260）。
+  const hiddenMount = !hasPageEntry(plugin)
 
   if (plugin.manifest.entry.frontend) {
     try {
       if (useWebviewRender) {
         await createRemoteWebview(plugin)
       } else if (useSandbox) {
-        createSandbox(plugin)
+        createSandbox(plugin, hiddenMount)
       } else {
         renderInline(plugin)
       }

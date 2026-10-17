@@ -1,0 +1,245 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+/**
+ * l4 插件（独立 WebviewWindow）与主窗口之间的插件注册表桥。
+ *
+ * 为什么需要：l4 插件的前端跑在独立窗口里，`plugin-registry.ts` 在那个窗口把自己当
+ * host，方法只登记进该窗口自己的 `__pluginSources`。主窗口查不到 → `callPlugin` 报
+ * 「未提供方法」；反向（l4 插件调别的插件）同样出不了那个窗口。
+ *
+ * 本模块只描述协议与状态机，不依赖 Tauri：传输层由调用方注入（生产是
+ * `emitTo`/`listen`，测试是内存总线），因此可以脱离 Tauri 运行时验证往返、
+ * 错误传播与超时。
+ *
+ * 消息流向：
+ *   l4 窗口 --register/unregister--> 主窗口（登记「哪些方法在这个窗口」）
+ *   主窗口 --call--> l4 窗口 --result--> 主窗口
+ *   l4 窗口 --proxyCall--> 主窗口 --proxyResult--> l4 窗口（l4 调第三方插件）
+ */
+
+export const L4_REGISTRY_EVENTS = {
+  /** l4 → main：某插件在某些方法上已注册 */
+  register: 'plugin-l4-registry-register',
+  /** l4 → main：插件卸载，清空登记 */
+  unregister: 'plugin-l4-registry-unregister',
+  /** main → l4：调用该窗口内的插件方法 */
+  call: 'plugin-l4-registry-call',
+  /** l4 → main：调用结果（result 或 error 二选一） */
+  result: 'plugin-l4-registry-result',
+  /** l4 → main：l4 插件要求主窗口代为调用其他插件 */
+  proxyCall: 'plugin-l4-registry-proxy-call',
+  /** main → l4：代调用结果 */
+  proxyResult: 'plugin-l4-registry-proxy-result',
+} as const
+
+/** l4 窗口的 window label（由 plugin-loader 创建时固定）。 */
+export function l4WindowLabel(pluginId: string): string {
+  return `plugin-webview-${pluginId}`
+}
+
+const DEFAULT_TIMEOUT_MS = 30_000
+
+/**
+ * 各 l4 窗口注册的插件方法。`null` 表示该插件已在 l4 窗口激活但尚未注册任何方法
+ * （例如刚打开、前端还在加载），此时 `callPlugin` 应给出「界面正在加载」而不是
+ * 「未提供方法」。
+ */
+export interface L4RegistrySnapshot {
+  readonly plugins: ReadonlyMap<string, ReadonlySet<string>>
+}
+
+/** 传输层抽象。`target` 由发送方给出：主窗口发到具体 l4 窗口 label，l4 窗口发给 `main`。 */
+export interface RegistryBus {
+  send(event: string, payload: unknown, target: string): void
+  on(event: string, handler: (payload: unknown) => void): () => void
+}
+
+export interface L4BridgeOptions {
+  /** 单次调用超时（毫秒）。l4 窗口被直接关闭时不会有回执，必须兜底。 */
+  timeoutMs?: number
+}
+
+interface PendingCall {
+  resolve: (value: unknown) => void
+  reject: (reason: Error) => void
+  timer: ReturnType<typeof setTimeout>
+}
+
+interface CallResultPayload {
+  callId: string
+  pluginId: string
+  result?: unknown
+  error?: string
+}
+
+interface ProxyCallPayload {
+  callId: string
+  /** 发起代调用的插件（l4 窗口里的那个），用于定位回执目标窗口 */
+  pluginId: string
+  targetPluginId: string
+  method: string
+  args: unknown[]
+}
+
+function newCallId(): string {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36)
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+/** 主窗口侧：登记 l4 窗口的方法，代 l4 窗口调用其他插件。 */
+export interface L4HostBridge {
+  /** 该插件是否由某个已注册的 l4 窗口提供服务。 */
+  has(pluginId: string): boolean
+  /** 调用 l4 窗口内的插件方法；未登记时与本地 registry 一样 reject。 */
+  call(pluginId: string, method: string, args: unknown[]): Promise<unknown>
+  dispose(): void
+}
+
+/**
+ * @param invoke 主窗口的通用调用入口（含 iframe 内插件），供 l4 插件代调用其他插件；
+ *               必须能解析到本桥之外的目标，否则会形成回环。
+ */
+export function createL4HostBridge(bus: RegistryBus, invoke: (pluginId: string, method: string, args: unknown[]) => Promise<unknown>, options: L4BridgeOptions = {}): L4HostBridge {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const plugins = new Map<string, Map<string, string>>() // pluginId → method → label
+  const pending = new Map<string, PendingCall>()
+
+  const settle = (callId: string, error: string | undefined, result: unknown) => {
+    const call = pending.get(callId)
+    if (!call) return
+    pending.delete(callId)
+    clearTimeout(call.timer)
+    if (error !== undefined) call.reject(new Error(error))
+    else call.resolve(result)
+  }
+
+  const offs = [
+    bus.on(L4_REGISTRY_EVENTS.register, (raw) => {
+      const payload = raw as { pluginId?: string; method?: string }
+      if (!payload?.pluginId || !payload.method) return
+      const methods = plugins.get(payload.pluginId) ?? new Map<string, string>()
+      methods.set(payload.method, l4WindowLabel(payload.pluginId))
+      plugins.set(payload.pluginId, methods)
+    }),
+    bus.on(L4_REGISTRY_EVENTS.unregister, (raw) => {
+      const pluginId = (raw as { pluginId?: string })?.pluginId
+      if (pluginId) plugins.delete(pluginId)
+    }),
+    bus.on(L4_REGISTRY_EVENTS.result, (raw) => {
+      const payload = raw as CallResultPayload
+      if (!payload?.callId) return
+      settle(payload.callId, payload.error, payload.result)
+    }),
+    // l4 插件要求主窗口代为调用其他插件（它自己看不到主窗口的注册表）。
+    // 只在本窗口派发，防止「l4 → 主窗口 → 另一个 l4」被再次转发形成回环。
+    bus.on(L4_REGISTRY_EVENTS.proxyCall, (raw) => {
+      const payload = raw as ProxyCallPayload
+      if (!payload?.callId || !payload.targetPluginId) return
+      // 回执要发给发起方所在的 l4 窗口，而不是固定发给 main。
+      // 必须用 `Promise.resolve().then(...)` 起链：同步抛错的实现若直接进 `.then`，
+      // 回执永远发不出去，调用方只能等到超时（#260）。
+      const replyTo = payload.pluginId ? l4WindowLabel(payload.pluginId) : 'main'
+      Promise.resolve().then(() => invoke(payload.targetPluginId, payload.method, payload.args ?? [])).then(
+        (result) => bus.send(L4_REGISTRY_EVENTS.proxyResult, { callId: payload.callId, result }, replyTo),
+        (err) => bus.send(L4_REGISTRY_EVENTS.proxyResult, { callId: payload.callId, error: errorMessage(err) }, replyTo),
+      )
+    }),
+  ]
+
+  return {
+    has: (pluginId) => plugins.has(pluginId),
+    call: (pluginId, method, args) => {
+      const methods = plugins.get(pluginId)
+      if (!methods) return Promise.reject(new Error(`插件 ${pluginId} 未提供方法 ${method}`))
+      const label = methods.get(method)
+      if (!label) return Promise.reject(new Error(`插件 ${pluginId} 未提供方法 ${method}`))
+      return new Promise((resolve, reject) => {
+        const callId = newCallId()
+        const timer = setTimeout(() => {
+          pending.delete(callId)
+          reject(new Error(`插件 ${pluginId} 的方法 ${method} 调用超时（独立窗口无响应）`))
+        }, timeoutMs)
+        pending.set(callId, { resolve, reject, timer })
+        bus.send(L4_REGISTRY_EVENTS.call, { callId, pluginId, method, args }, label)
+      })
+    },
+    dispose: () => {
+      for (const off of offs) off()
+      for (const call of pending.values()) {
+        clearTimeout(call.timer)
+        call.reject(new Error('l4 注册表桥已销毁'))
+      }
+      pending.clear()
+      plugins.clear()
+    },
+  }
+}
+
+/** l4 窗口侧：把自己的方法报给主窗口，并把调用请求落到本地插件。 */
+export interface L4NodeBridge {
+  register(pluginId: string, method: string): void
+  unregister(pluginId: string): void
+  /** 转发给主窗口代调用（l4 插件调其他插件时用）。`selfPluginId` 用于定位回执窗口。 */
+  callRemote(targetPluginId: string, method: string, args: unknown[], selfPluginId?: string): Promise<unknown>
+  dispose(): void
+}
+
+export function createL4NodeBridge(bus: RegistryBus, invokeLocal: (pluginId: string, method: string, args: unknown[]) => Promise<unknown>, options: L4BridgeOptions = {}): L4NodeBridge {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const pending = new Map<string, PendingCall>()
+
+  const settle = (callId: string, error: string | undefined, result: unknown) => {
+    const call = pending.get(callId)
+    if (!call) return
+    pending.delete(callId)
+    clearTimeout(call.timer)
+    if (error !== undefined) call.reject(new Error(error))
+    else call.resolve(result)
+  }
+
+  const offs = [
+    bus.on(L4_REGISTRY_EVENTS.call, (raw) => {
+      const payload = raw as { callId: string; pluginId: string; method: string; args?: unknown[] }
+      if (!payload?.callId) return
+      // 同上：同步抛错也必须回执，否则调用方只能等超时
+      Promise.resolve().then(() => invokeLocal(payload.pluginId, payload.method, payload.args ?? [])).then(
+        (result) => bus.send(L4_REGISTRY_EVENTS.result, { callId: payload.callId, pluginId: payload.pluginId, result }, 'main'),
+        (err) => bus.send(L4_REGISTRY_EVENTS.result, { callId: payload.callId, pluginId: payload.pluginId, error: errorMessage(err) }, 'main'),
+      )
+    }),
+    bus.on(L4_REGISTRY_EVENTS.proxyResult, (raw) => {
+      const payload = raw as { callId: string; result?: unknown; error?: string }
+      if (payload?.callId) settle(payload.callId, payload.error, payload.result)
+    }),
+  ]
+
+  return {
+    register: (pluginId, method) => bus.send(L4_REGISTRY_EVENTS.register, { pluginId, method }, 'main'),
+    unregister: (pluginId) => bus.send(L4_REGISTRY_EVENTS.unregister, { pluginId }, 'main'),
+    /**
+     * @param selfPluginId 发起方插件（本窗口里的那个）。主窗口据此把回执发回本窗口，
+     *   缺省时主窗口会发到 `main`，调用方收不到回执只能等超时。
+     */
+    callRemote: (targetPluginId, method, args, selfPluginId = '') => new Promise((resolve, reject) => {
+      const callId = newCallId()
+      const timer = setTimeout(() => {
+        pending.delete(callId)
+        reject(new Error(`插件 ${targetPluginId} 的方法 ${method} 调用超时（主窗口无响应）`))
+      }, timeoutMs)
+      pending.set(callId, { resolve, reject, timer })
+      bus.send(L4_REGISTRY_EVENTS.proxyCall, { callId, pluginId: selfPluginId, targetPluginId, method, args }, 'main')
+    }),
+    dispose: () => {
+      for (const off of offs) off()
+      for (const call of pending.values()) {
+        clearTimeout(call.timer)
+        call.reject(new Error('l4 注册表桥已销毁'))
+      }
+      pending.clear()
+    },
+  }
+}

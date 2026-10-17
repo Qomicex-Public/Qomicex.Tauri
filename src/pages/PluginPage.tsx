@@ -3,7 +3,8 @@
 
 import { useParams } from 'react-router-dom'
 import { usePluginStore } from '../stores/pluginStore.ts'
-import { getInstance, getWebviewInstance } from '../plugins/sandbox.ts'
+import { getInstance, getWebviewInstance, mountSandbox, unmountSandbox } from '../plugins/sandbox.ts'
+import type { SandboxInstance } from '../plugins/sandbox.ts'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useI18n } from '../i18n/index.tsx'
 
@@ -54,6 +55,7 @@ export default function PluginPage() {
     if (!pluginId) return
     if (plugin?.state !== 'active') return
 
+    let mountedSandbox: SandboxInstance | null = null
     const timer = setInterval(() => {
       const inst = getInstance(pluginId)
       const el = containerRef.current
@@ -61,10 +63,8 @@ export default function PluginPage() {
 
       if ('iframe' in inst) {
         clearInterval(timer)
-        if (inst.iframe.parentElement !== el) {
-          el.innerHTML = ''
-          el.appendChild(inst.iframe)
-        }
+        mountedSandbox = inst
+        mountSandbox(inst, el)
       } else if ('container' in inst) {
         const c = inst.container
         if (c.parentElement !== el) {
@@ -85,7 +85,12 @@ export default function PluginPage() {
       }
     }, 50)
 
-    return () => { clearInterval(timer) }
+    // 页面卸载：iframe 退回隐藏宿主而不是随容器一起丢弃。直接删容器会让插件脚本
+    // 连同已注册的方法一起消失，依赖它的 callPlugin 在用户离开页面后全部失败。
+    return () => {
+      clearInterval(timer)
+      if (mountedSandbox) unmountSandbox(mountedSandbox)
+    }
   }, [pluginId, plugin?.state])
 
   if (!plugin) {

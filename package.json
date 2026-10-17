@@ -20,6 +20,8 @@
     "test:deep-link": "node scripts/test-deep-link-parse.mjs",
     "test:i18n-steps": "node scripts/test-i18n-step-keys.mjs",
     "test:plugin-theme-sync": "node scripts/test-plugin-theme-sync.mjs",
+    "test:plugin-sandbox-host": "node scripts/test-plugin-sandbox-host.mjs",
+    "test:plugin-l4-registry": "node scripts/test-plugin-l4-registry.mjs",
     "test:dependency-install-plan": "node scripts/test-dependency-install-plan.mjs",
     "license:check": "node scripts/add-license-headers.mjs --check",
     "license:apply": "node scripts/add-license-headers.mjs"
