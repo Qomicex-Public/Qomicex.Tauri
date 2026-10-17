@@ -1542,6 +1542,10 @@ pub(crate) async fn download_batch(
     let mut done_ids: HashSet<u64> = HashSet::new();
     let mut failed: Option<String> = None;
     let mut prog: HashMap<u64, (u64, u64)> = HashMap::new();
+    // 每任务**最近一次原始上报**的 downloaded（不做只增钳位）。仅用于 stall 看门狗的
+    // 活跃判定：下载器重试会把计数打回 0，展示值因高水位不变，若用它判活会漏掉
+    // 「正在重下」这一真实活动（见事件处理处注释）。
+    let mut prog_raw: HashMap<u64, u64> = HashMap::new();
     let mut file_name: HashMap<u64, String> = HashMap::new();
     let mut task_speed: HashMap<u64, u64> = HashMap::new();
     for (&id, name) in ids.iter().zip(file_names.iter()) {
@@ -1559,6 +1563,9 @@ pub(crate) async fn download_batch(
     // penalizing cold start.
     let mut last_event = Instant::now() - DOWNLOAD_BATCH_TIMEOUT;
     let mut started = false;
+    // 批次进度累加器：吸收「分母随新任务增长」与「分子被重试清零」两处回退，
+    // 保证同一批次内展示的百分比单调不减（见 BatchProgress 注释）。
+    let mut batch_pct = BatchProgress::default();
 
     loop {
         if handle.is_cancelled() {
@@ -1604,13 +1611,23 @@ pub(crate) async fn download_batch(
                 Ok(DownloadEvent::Progress { id, downloaded, total: t, speed_bps, .. }) => {
                     if id_set.contains(&id) {
                         started = true;
-                        let e = prog.entry(id).or_insert((0, 0));
-                        // 只有真实进展（字节数变化）才算活跃：任务卡在重试/无数据时的
-                        // 0 字节节流上报不得给 stall 看门狗续命
-                        if downloaded > e.0 {
+                        // 活跃判定用**原始上报值**，与展示用的高水位分开：
+                        // 下载器流式路径重试时会把 downloaded 打回 0 再涨回来
+                        // （engine.rs::run_streamed 重试前 stats.downloaded.store(0)）。
+                        // 若拿「只增不减的展示值」判活，重下期间 downloaded 一直不超过
+                        // 旧高水位 → last_event 长时间不刷新 → 重下超过 120s 时
+                        // stall 看门狗会误杀仍在正常传输的任务。故此处比较原始值：
+                        // 只要字节数发生变化就说明在传数据，必须续命。
+                        let prev_raw = prog_raw.entry(id).or_insert(downloaded);
+                        if *prev_raw != downloaded {
                             last_event = Instant::now();
+                            *prev_raw = downloaded;
                         }
-                        e.0 = downloaded;
+                        // 展示用高水位：只增不减，吸收重试清零（「200/300 跳回 100/300」）。
+                        let e = prog.entry(id).or_insert((0, 0));
+                        if downloaded > e.0 {
+                            e.0 = downloaded;
+                        }
                         if t > 0 {
                             e.1 = t;
                         }
@@ -1650,13 +1667,9 @@ pub(crate) async fn download_batch(
             }
             (dl, tot)
         };
-        let pct_in = if done >= total {
-            1.0
-        } else if sum_tot > 0 {
-            (sum_dl as f64 / sum_tot as f64).min(1.0)
-        } else {
-            0.0
-        };
+        // 分母是新任务不断加入的 Σtot：单独用它仍会让百分比回退，故由
+        // BatchProgress 取历史高水位，使批次内进度单调不减。
+        let pct_in = batch_pct.observe(done, total, sum_dl, sum_tot);
         // Current file: the active (not-yet-completed) task whose last speed
         // was highest. If everything is done, clear so the UI shows the final
         // "completed" state without a stale file name.
@@ -1702,6 +1715,55 @@ pub(crate) async fn download_batch(
     match failed {
         Some(e) => Err(e),
         None => Ok(()),
+    }
+}
+
+/// 批次字节进度（0.0-1.0）。
+///
+/// `sum_tot` 会随新任务进入 `prog` 而增长（排队任务尚未进入分母），因此该值本身
+/// 可能回退；调用方需与历史高水位取 max 后再展示（见 [`BatchProgress`]）。
+///
+/// **未完成时不封顶 1.0**：`prog` 只含已发过首个 Progress 的任务，当这批任务全部
+/// 下完而仍有文件排队时，`Σdl == Σtot` 会让本函数返回 1.0；高水位随即把进度锁死在
+/// 100%，直到整批结束（CodeRabbit review）。排队任务的字节数未知、无法计入分母，
+/// 故在 `done < total` 时把上界压到 `PARTIAL_CAP`，批次真正结束（`done >= total`）
+/// 才允许报满。
+fn batch_percent(done: u64, total: u64, sum_dl: u64, sum_tot: u64) -> f64 {
+    /// 未完成阶段允许的最大展示进度：留出「还有文件没下」的余量，避免误报 100%。
+    const PARTIAL_CAP: f64 = 0.99;
+    if total > 0 && done >= total {
+        1.0
+    } else if sum_tot > 0 {
+        (sum_dl as f64 / sum_tot as f64).min(PARTIAL_CAP)
+    } else {
+        0.0
+    }
+}
+
+/// 批次进度累加器：保证展示值在批次内**单调不减**。
+///
+/// 两个回退来源都被吸收：
+/// 1. 分母增长 —— `prog` 只含已发过首个 Progress 的任务，排队任务随调度推进以
+///    (0, total) 进入分母，使 Σtot 变大而分子不动（「99% 跳回 60%」）；
+/// 2. 分子清零 —— 下载器流式路径每次重试前 `stats.downloaded.store(0)`
+///    （engine.rs::run_streamed），单文件已下载字节会归零（「200/300 跳回 100/300」）。
+///
+/// 单任务字节的钳位由事件处理处完成（`e.0` 只增），本结构负责批次级高水位。
+#[derive(Default)]
+struct BatchProgress {
+    /// 已展示过的最大百分比（0.0-1.0）。
+    high_water: f64,
+}
+
+impl BatchProgress {
+    /// 记录一次采样并返回单调化后的百分比（0.0-1.0）。
+    fn observe(&mut self, done: u64, total: u64, sum_dl: u64, sum_tot: u64) -> f64 {
+        // batch_percent 在 done >= total 时已返回 1.0，故取 max 即可：批次结束的
+        // 终态自然封顶 100%，且不会让进度回退。
+        self.high_water = self
+            .high_water
+            .max(batch_percent(done, total, sum_dl, sum_tot));
+        self.high_water
     }
 }
 
@@ -2140,6 +2202,173 @@ mod tests {
             "https://mirror/a.jar"
         )])
         .contains_key(&dedup_key(Path::new("g/a.jar"))));
+    }
+
+    /// 批次进度必须单调：新任务陆续进入分母（Σtot 增长）不得让百分比回退。
+    ///
+    /// 回归场景（安装实例进度条反复横跳、99% 跳回 60%）：分母 `sum_tot` 只统计
+    /// 已发过首个 Progress 的任务，排队任务随调度推进以 (0, total) 进入，使分母变大
+    /// 而分子不动。修复前直接用 Σdl/Σtot，百分比回退。
+    #[test]
+    fn batch_progress_does_not_regress_when_tasks_join_denominator() {
+        let mb = 1024 * 1024u64;
+        let mut bp = BatchProgress::default();
+
+        // 4 个 8MB 任务各完成一半：Σdl=16MB, Σtot=32MB
+        let p1 = bp.observe(0, 8, 16 * mb, 32 * mb);
+        assert!((p1 - 0.5).abs() < 1e-9, "首次采样应为 50%，实际 {p1}");
+
+        // 又有 4 个任务进入分母（Σtot 翻倍），分子不变 → 裸比例会掉到 25%
+        let raw = batch_percent(0, 8, 16 * mb, 64 * mb);
+        assert!(
+            raw < p1,
+            "前提校验：分母增长确实拉低瞬时百分比（{p1} -> {raw}）"
+        );
+
+        // 修复后：展示值保持高水位，不回退
+        let p2 = bp.observe(0, 8, 16 * mb, 64 * mb);
+        assert!(p2 >= p1, "批次展示进度不得回退：{p1} -> {p2}（raw={raw}）");
+        assert_eq!(p2, p1, "回退被高水位吸收，保持峰值 50%");
+    }
+
+    /// 单调性在整批随机采样序列下持续成立（覆盖分母增长 / 分子清零 / 完成）。
+    #[test]
+    fn batch_progress_monotonic_over_sample_sequence() {
+        let mb = 1024 * 1024u64;
+        let mut bp = BatchProgress::default();
+        let mut last = 0.0f64;
+        // (done, total, sum_dl, sum_tot)：模拟 300 文件、并发 64、任务陆续进入分母，
+        // 中间夹带「分子被重试清零」的采样（第 3 项 sum_dl 变小）。
+        let samples: &[(u64, u64, u64, u64)] = &[
+            (0, 300, 10 * mb, 64 * mb),
+            (5, 300, 40 * mb, 128 * mb), // 分母增长
+            (5, 300, 0, 128 * mb),       // 分子被清零（重试）
+            (5, 300, 40 * mb, 128 * mb),
+            (60, 300, 300 * mb, 384 * mb), // 分母再增长
+            (250, 300, 900 * mb, 1024 * mb),
+            (300, 300, 100 * mb, 1024 * mb), // 全部完成但分子偏小
+        ];
+        for &(d, t, dl, tt) in samples {
+            let p = bp.observe(d, t, dl, tt);
+            assert!(
+                p >= last,
+                "进度回退：{last} -> {p} @ sample(done={d}, total={t}, dl={dl}, tot={tt})"
+            );
+            last = p;
+        }
+        assert_eq!(last, 1.0, "末次采样全部完成后必须封顶 100%");
+    }
+
+    /// 单任务 downloaded 被下载器清零（流式路径重试前 `stats.downloaded.store(0)`）
+    /// 时，展示进度不得归零 —— 「200/300 跳回 100/300」的成因。
+    ///
+    /// 复刻事件处理处的钳位（只增不减），并用未修复写法作对照。
+    #[test]
+    fn per_task_downloaded_is_clamped_monotonic() {
+        let totals = 300u64;
+        let seq = [100u64, 200, 0, 100, 300];
+
+        // 修复后：仅当 downloaded > e.0 才更新
+        let mut e0 = 0u64;
+        for dl in seq {
+            if dl > e0 {
+                e0 = dl;
+            }
+        }
+        assert_eq!(e0, 300, "单任务已下载字节必须单调不减");
+
+        // 对照：未修复的无条件赋值会回退到 0
+        let mut hist = Vec::new();
+        let mut bad = 0u64;
+        for dl in seq {
+            bad = dl; // 修复前：`e.0 = downloaded;`
+            hist.push(bad);
+        }
+        assert_eq!(
+            hist,
+            vec![100, 200, 0, 100, 300],
+            "前提校验：未修复时会回退到 0"
+        );
+    }
+
+    /// 全部完成后必须报满：即使分子因重试清零而小于分母，也不得显示 <100%。
+    #[test]
+    fn batch_percent_reaches_full_when_all_done() {
+        // done == total，但分子偏小（模拟个别任务重试清零）
+        assert_eq!(batch_percent(8, 8, 100, 1000), 1.0);
+        // 未完成时不封顶到 1.0，按真实比例
+        assert!(batch_percent(7, 8, 100, 1000) < 1.0);
+        // total 为 0（空批次）不应除零
+        assert_eq!(batch_percent(0, 0, 0, 0), 0.0);
+    }
+
+    /// 回归（CodeRabbit review）：已上报的任务全部下完、但仍有文件排队时，
+    /// 不得把进度锁死 100%。
+    ///
+    /// `prog` 只含已发过首个 Progress 的任务；当这批任务都完成而其余任务仍在队列里，
+    /// `Σdl == Σtot` 会让裸比例达到 1.0，高水位随即把进度钉在 100% 直到整批结束。
+    #[test]
+    fn batch_progress_does_not_lock_hundred_while_tasks_queued() {
+        let mb = 1024 * 1024u64;
+        // 总 300 个文件，但只有 8 个已上报且全部下完（done=8 < total=300）
+        let mut bp = BatchProgress::default();
+        let p = bp.observe(8, 300, 64 * mb, 64 * mb);
+        assert!(
+            p < 1.0,
+            "仍有 {} 个文件排队时不应显示 100%，实际 {p}",
+            300 - 8
+        );
+        // 排队任务随后进入分母：进度可以不增，但绝不能已经停在 100%
+        let p2 = bp.observe(8, 300, 64 * mb, 256 * mb);
+        assert!(p2 < 1.0, "排队任务进入分母后仍不应是 100%，实际 {p2}");
+        assert!(p2 >= p, "高水位语义：不得回退（{p} -> {p2}）");
+        // 真正全部完成才允许 100%
+        let p3 = bp.observe(300, 300, 40 * mb, 256 * mb);
+        assert_eq!(p3, 1.0, "整批完成必须报满");
+    }
+
+    /// 回归（CodeRabbit review）：stall 看门狗的活跃判定必须基于**原始上报值**，
+    /// 不能用只增不减的展示值。
+    ///
+    /// 重试场景：downloaded 打回 0 再涨回，展示值不变；若用它判活，
+    /// `last_event` 在重下期间不刷新，重下超过 120s 会被看门狗误杀。
+    #[test]
+    fn stall_watchdog_activity_uses_raw_value_not_high_water() {
+        // 原始上报序列：涨到 200 → 重试清零 → 重新涨到 200+
+        let raw_seq = [100u64, 200, 0, 50, 200, 300];
+        let mut last_event_updates_with_raw = 0;
+        let mut last_event_updates_with_high_water = 0;
+        let mut raw_prev: Option<u64> = None;
+        let mut display = 0u64;
+
+        for dl in raw_seq {
+            // 新实现：比较原始值
+            if raw_prev != Some(dl) {
+                last_event_updates_with_raw += 1;
+                raw_prev = Some(dl);
+            }
+            // 旧实现（用展示高水位判活）
+            if dl > display {
+                last_event_updates_with_high_water += 1;
+                display = dl;
+            }
+        }
+
+        // 原始值判活：6 次采样全部视为「有变化」→ 每次续命
+        assert_eq!(
+            last_event_updates_with_raw, 6,
+            "原始值判活应捕捉每次字节变化"
+        );
+        // 高水位判活：重试期间（0、50）与回落（200）都不刷新 → 只认出 3 次
+        // （100 / 200 / 300），漏掉重下过程中的真实活动
+        assert_eq!(
+            last_event_updates_with_high_water, 3,
+            "前提校验：高水位判活会漏掉重试期间的活动"
+        );
+        assert!(
+            last_event_updates_with_raw > last_event_updates_with_high_water,
+            "原始值判活必须比高水位判活更灵敏，否则会误杀重下中的任务"
+        );
     }
 
     /// 同一个 dest 的多个重复条目常给出字节相同的 URL，归并表必须去重。
