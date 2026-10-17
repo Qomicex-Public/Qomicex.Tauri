@@ -114,10 +114,11 @@ export default function PluginWebviewPage({ pluginId }: { pluginId: string }) {
         // 报「未提供方法」（窗口已创建、前端还在加载的间隙）。
         nodeBridge.ready(pluginId)
         unlistens.push(() => {
+          // 先注销再销毁：注销要走总线发送，dispose 会解绑自身监听（发送不依赖监听，
+          // 但这个顺序让「窗口消失」与「登记清除」的因果更清楚）
+          nodeBridge.unregister(pluginId)
           nodeBridge.dispose()
           setL4NodeBridge(null)
-          // 窗口卸载（关闭/刷新）时注销登记，避免主窗口继续把调用发往这个 label
-          nodeBridge.unregister(pluginId)
         })
 
         iframe.onload = () => {

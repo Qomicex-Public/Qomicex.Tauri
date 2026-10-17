@@ -280,7 +280,7 @@ if (window === window.top) {
         // 主窗口的注册表；不回执的话 iframe 侧的 Promise 会一直挂着（#260）。
         const l4Node = l4Window ? getL4NodeBridge() : null
         const call = l4Node
-          ? l4Node.callRemote(pluginId, method, args, l4SelfPluginId() ?? '')
+          ? l4Node.callRemote(pluginId, method, args, l4SelfPluginId())
           : (() => {
               // 主窗口：可能是 l4 窗口里的插件
               const l4 = getL4HostBridge()

@@ -3,7 +3,7 @@
 
 import { listen, emitTo } from '@tauri-apps/api/event'
 import { handleApiCall, abortStream } from './sandbox.ts'
-import { createL4HostBridge } from './l4-registry-bridge.ts'
+import { createL4HostBridge, l4WindowLabel } from './l4-registry-bridge.ts'
 import type { RegistryBus } from './l4-registry-bridge.ts'
 import { setL4HostBridge } from './l4-registry.ts'
 
@@ -42,7 +42,7 @@ export function initL4Bridge(): Promise<void> {
   /** 所有 `listen()` 的解析 Promise：初始化完成 = 它们全部就绪。 */
   const pendingListeners: Promise<unknown>[] = []
 
-  const l4Label = (pluginId: string) => `plugin-webview-${pluginId}`
+  const l4Label = l4WindowLabel
 
   // 伪 source：handleApiCall 经 source.postMessage 回传，这里转成发往对应 l4 窗口的事件
   const fakeSource = (pluginId: string) => ({
@@ -101,7 +101,10 @@ export function initL4Bridge(): Promise<void> {
     return registry._callWithinWindow(pluginId, method, args)
   })
 
-  initPromise = Promise.all(pendingListeners.map((p) => p.catch(() => {}))).then(() => {
+  initPromise = Promise.all(pendingListeners.map((p) => p.catch((e) => {
+    // 监听器装不起来等于该事件永远收不到：只吞不报会让「调用一直超时」无从排查
+    console.warn('[plugin] l4 桥监听器注册失败，相关事件将无法收到', e)
+  }))).then(() => {
     setL4HostBridge(hostBridge)
   })
 

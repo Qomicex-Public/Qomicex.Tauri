@@ -11,7 +11,7 @@ import { normalizeHex, THEME_COLOR_MODE_BACKGROUND } from '../lib/themeColor.ts'
 import { getSettings as getAppSettings } from '../api/settings.ts'
 import type { PluginErrorType } from '../api/telemetry.ts'
 import { reportPluginError } from '../lib/telemetry.ts'
-import { attachHost, createHost, mountHost, trackMountTarget, unmountHost } from './sandbox-host.ts'
+import { createIframeHost, mountHost, trackMountTarget, unmountHost } from './sandbox-host.ts'
 
 export interface SandboxInstance {
   iframe: HTMLIFrameElement
@@ -311,11 +311,7 @@ document.addEventListener('DOMContentLoaded', () => {
  * PluginPage 打开时再挂载（有页面入口的插件，避免启动即执行所有 UI 前端）。
  */
 export function createSandbox(plugin: PluginInfo, hiddenMount = false): SandboxInstance {
-  const host = createHost(plugin.manifest.id)
-  const iframe = document.createElement('iframe')
-  iframe.setAttribute('sandbox', 'allow-scripts')
-  iframe.style.cssText = 'border:none;width:100%;height:100%'
-  host.appendChild(iframe)
+  const { host, iframe } = createIframeHost(plugin.manifest.id, hiddenMount)
 
   const instance: SandboxInstance = {
     iframe, host, persistent: true, plugin,
@@ -323,13 +319,13 @@ export function createSandbox(plugin: PluginInfo, hiddenMount = false): SandboxI
       destroyedIframes.add(iframe)
       unregisterThemeSync(iframe)
       sandboxes.delete(plugin.manifest.id)
-      iframe.remove()
+      // 标记销毁：unmountSandbox 据此跳过「退回 body」，避免把宿主重新挂回文档
+      host.dataset.pluginDestroyed = '1'
       host.remove()
     }
   }
 
   sandboxes.set(plugin.manifest.id, instance)
-  if (hiddenMount) attachHost(host)
   loadSandboxContent(plugin, iframe)
   return instance
 }
@@ -349,20 +345,18 @@ export function mountSandbox(instance: SandboxInstance, target: HTMLElement): ()
  * 由 srcdoc 重新加载）。
  */
 export function unmountSandbox(instance: SandboxInstance) {
-  // 宿主已被 destroy() 移除（插件在页面打开期间被停用）：不能再 append 回去，
-  // 否则 body 上会留下一个空宿主。
-  if (!instance.host.isConnected) return
+  // 用显式销毁标记判断，而不是 isConnected：React 卸载顺序不保证 cleanup 早于容器
+  // 脱离文档，那时 isConnected 已为 false，宿主会被留在已脱离的页面容器里，下次
+  // mountHost 又因 parentElement 未变而跳过样式恢复，插件页会停在隐藏态。
+  if (instance.host.dataset.pluginDestroyed === '1') return
   if (instance.persistent) unmountHost(instance.host)
   else instance.host.remove()
 }
 
 /** 创建 UI 槽位 iframe 沙箱：把插件包内任意 HTML 文件以沙箱渲染，供 slots 槽位挂载。 */
 export function createSlotSandbox(plugin: PluginInfo, file: string): SandboxInstance {
-  const host = createHost(plugin.manifest.id)
-  const iframe = document.createElement('iframe')
-  iframe.setAttribute('sandbox', 'allow-scripts')
-  iframe.style.cssText = 'border:none;width:100%;height:100%'
-  host.appendChild(iframe)
+  // 槽位沙箱不常驻：由 PluginSlot 挂进自己的容器
+  const { host, iframe } = createIframeHost(plugin.manifest.id, false)
 
   const instance: SandboxInstance = {
     iframe, host, persistent: false, plugin,
@@ -375,6 +369,7 @@ export function createSlotSandbox(plugin: PluginInfo, file: string): SandboxInst
         if (idx >= 0) list.splice(idx, 1)
         if (list.length === 0) slotSandboxes.delete(plugin.manifest.id)
       }
+      host.dataset.pluginDestroyed = '1'
       host.remove()
     }
   }

@@ -163,11 +163,15 @@ export async function createRemoteWebview(plugin: PluginInfo): Promise<void> {
         destroyWebviewInstance(plugin.manifest.id)
         // 同时清掉注册表登记：否则 has() 恒为 true，调用被发往已关闭的窗口直到超时
         getL4HostBridge()?.unregisterWindow(plugin.manifest.id)
+        // 窗口已消失，期望状态不再有意义（避免与真实状态长期脱节）
+        desiredState.delete(plugin.manifest.id)
       })
       resolve()
     })
     win.once('tauri://error', (e) => {
       pendingWebviews.delete(label)
+      // 窗口没建成：清掉期望状态，避免遗留的 'active' 让后续判断卡在错误分支
+      desiredState.delete(plugin.manifest.id)
       console.error('[plugin] l4 webview 创建失败，降级为 iframe', plugin.manifest.id, e)
       if (!getInstance(plugin.manifest.id)) createSandbox(plugin, !hasPageEntry(plugin))
       resolve()

@@ -82,9 +82,27 @@ try {
     { stdio: 'inherit' },
   )
   const require = createRequire(import.meta.url)
-  const { createL4HostBridge, createL4NodeBridge, l4WindowLabel, L4_REGISTRY_EVENTS } = require(
-    join(outDir, 'l4-registry-bridge.js'),
-  )
+  const modulePath = join(outDir, 'l4-registry-bridge.js')
+  const exports = require(modulePath)
+
+  // 导出契约先校验：改名/删除时报错应指向契约变化，而不是后续调用处的 TypeError
+  for (const name of ['createL4HostBridge', 'createL4NodeBridge', 'l4WindowLabel', 'L4_REGISTRY_EVENTS']) {
+    check(`导出 ${name} 存在`, name in exports, true)
+  }
+  check('createL4HostBridge 是函数', typeof exports.createL4HostBridge, 'function')
+  check('createL4NodeBridge 是函数', typeof exports.createL4NodeBridge, 'function')
+
+  const { createL4HostBridge, createL4NodeBridge, l4WindowLabel, L4_REGISTRY_EVENTS } = exports
+
+  // 事件名是与 l4 窗口之间的线上契约：两侧都 import 同一常量，改名时测试仍会通过，
+  // 因此这里钉住字面量，防止无意改动导致旧窗口收不到事件。
+  check('事件名稳定：register', L4_REGISTRY_EVENTS.register, 'plugin-l4-registry-register')
+  check('事件名稳定：unregister', L4_REGISTRY_EVENTS.unregister, 'plugin-l4-registry-unregister')
+  check('事件名稳定：call', L4_REGISTRY_EVENTS.call, 'plugin-l4-registry-call')
+  check('事件名稳定：result', L4_REGISTRY_EVENTS.result, 'plugin-l4-registry-result')
+  check('事件名稳定：proxyCall', L4_REGISTRY_EVENTS.proxyCall, 'plugin-l4-registry-proxy-call')
+  check('事件名稳定：proxyResult', L4_REGISTRY_EVENTS.proxyResult, 'plugin-l4-registry-proxy-result')
+  check('事件名稳定：windowReady', L4_REGISTRY_EVENTS.windowReady, 'plugin-l4-registry-window-ready')
 
   const PLUGIN = 'top.qomicex.l4demo'
   const label = l4WindowLabel(PLUGIN)

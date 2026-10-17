@@ -142,9 +142,27 @@ try {
   )
   const { body, FakeElement } = installDomStub()
   const require = createRequire(import.meta.url)
-  const { createHost, attachHost, mountHost, unmountHost, HIDDEN_HOST_STYLE, MOUNTED_HOST_STYLE } = require(
-    join(outDir, 'sandbox-host.js'),
-  )
+  const modulePath = join(outDir, 'sandbox-host.js')
+  const exports = require(modulePath)
+
+  /**
+   * 切换 DOM stub 时必须清 require 缓存并重新加载：模块在首次加载时就绑定了当时的
+   * `document`/`Element`，复用缓存会让两个 stub 的状态混在一起，断言通过不代表
+   * 目标路径被验证（例如无 moveBefore 分支其实跑在旧 stub 的 document 上）。
+   */
+  function reloadWithStub(options) {
+    installDomStub(options)
+    delete require.cache[require.resolve(modulePath)]
+    return require(modulePath)
+  }
+
+  // 导出契约先校验：改名/删除时报错应指向契约变化，而不是后续调用处的 TypeError
+  for (const name of ['createHost', 'attachHost', 'mountHost', 'unmountHost', 'trackMountTarget', 'HIDDEN_HOST_STYLE', 'MOUNTED_HOST_STYLE']) {
+    check(`导出 ${name} 存在`, name in exports, true)
+  }
+  check('createHost 是函数', typeof exports.createHost, 'function')
+
+  const { createHost, attachHost, mountHost, unmountHost, HIDDEN_HOST_STYLE, MOUNTED_HOST_STYLE } = exports
 
   // ---- 初始态：隐藏、不可见、带插件标记 ----
   const host = createHost('top.qomicex.markdown')
@@ -200,14 +218,19 @@ try {
     const h = createHost(`plugin-${i}`)
     attachHost(h)
     mountHost(h, page)
+    // 中间态校验：mount 后必须真的挂进目标容器，否则「循环结束无残留」这条断言
+    // 在 mount/unmount 全坏掉时也会通过（恒为 0），起不到防护作用
+    check(`第 ${i} 次 mount 后父节点是页面容器`, h.parentElement, page)
+    check(`第 ${i} 次 mount 后处于显示态`, h.style.cssText, MOUNTED_HOST_STYLE)
     unmountHost(h)
+    check(`第 ${i} 次 unmount 后父节点回到 body`, h.parentElement, body)
+    check(`第 ${i} 次 unmount 后恢复隐藏态`, h.style.cssText, HIDDEN_HOST_STYLE)
     h.remove()
   }
   check(`${N} 次启用/停用后 body 无插件宿主残留`, body.children.filter((c) => c.dataset?.pluginHost).length, 0)
 
   // ---- 不支持 moveBefore（WebKit）：不搬动节点，改用固定定位覆盖；绝不重载 iframe ----
-  installDomStub({ moveBefore: false })
-  const noMove = require(join(outDir, 'sandbox-host.js'))
+  const noMove = reloadWithStub({ moveBefore: false })
   const host2 = noMove.createHost('legacy')
   noMove.attachHost(host2)
   const page2 = globalThis.document.createElement('div')

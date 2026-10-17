@@ -29,6 +29,7 @@ export function createHost(pluginId: string): HTMLDivElement {
 /**
  * 建 iframe 并放进宿主。`hiddenMount` 为 true 时立刻挂进 body：`srcdoc` iframe 只有
  * 进入文档才执行脚本，库插件没有页面宿主，创建时不挂载就等于方法永不注册（#260）。
+ * 由 `sandbox.ts` 的 createSandbox / createSlotSandbox 统一调用，避免各写一份。
  */
 export function createIframeHost(pluginId: string, hiddenMount: boolean) {
   const host = createHost(pluginId)
@@ -78,8 +79,15 @@ const COVER_STYLE =
 /**
  * 无 `moveBefore` 时，宿主用 fixed 覆盖页面容器，需要跟随容器位置变化（窗口缩放、
  * 侧边栏展开/收起、滚动）重新对齐。返回取消函数；有 `moveBefore` 时无需跟踪。
+ *
+ * 对同一 host 去重：重复 mount（切换设置 tab、插件停用再启用）时先取消旧的跟踪器，
+ * 否则 observer 与 scroll 监听会累积。
  */
+const mountTrackers = new WeakMap<HTMLDivElement, () => void>()
+
 export function trackMountTarget(host: HTMLDivElement, target: HTMLElement, isMounted: () => boolean): () => void {
+  mountTrackers.get(host)?.()
+  mountTrackers.delete(host)
   if (supportsMoveBefore()) return () => {}
   const sync = () => {
     if (!isMounted()) return
@@ -91,11 +99,14 @@ export function trackMountTarget(host: HTMLDivElement, target: HTMLElement, isMo
   window.addEventListener('resize', sync)
   window.addEventListener('scroll', sync, true)
   sync()
-  return () => {
+  const stop = () => {
     observer.disconnect()
     window.removeEventListener('resize', sync)
     window.removeEventListener('scroll', sync, true)
+    mountTrackers.delete(host)
   }
+  mountTrackers.set(host, stop)
+  return stop
 }
 
 /** 迁入页面容器并显示。 */
