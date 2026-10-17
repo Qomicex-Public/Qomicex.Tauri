@@ -116,6 +116,7 @@
 - [ADR-112：快捷安装前置计划抽为纯函数并停止误删已安装前置（issue #249）](1-决策记录/ADR-112-快捷安装前置计划抽为纯函数并停止误删已安装前置-issue-249.md)
 - [ADR-113：NAT 检测改用 RFC 5780 映射行为判定（issue #198）](1-决策记录/ADR-113-NAT-检测改用-RFC-5780-映射行为判定.md)
 - [ADR-114：下载批次进度单调化，修复进度条回退](1-决策记录/ADR-114-下载批次进度单调化-修复进度条回退.md)
+- [ADR-115：库插件 iframe 激活即隐藏挂载，页面进出走 moveBefore 搬动（含 l4 注册表桥，issue #260）](1-决策记录/ADR-115-库插件-iframe-激活即隐藏挂载-页面进出走-moveBefore-搬动-issue-260.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 

@@ -11,9 +11,21 @@ import { normalizeHex, THEME_COLOR_MODE_BACKGROUND } from '../lib/themeColor.ts'
 import { getSettings as getAppSettings } from '../api/settings.ts'
 import type { PluginErrorType } from '../api/telemetry.ts'
 import { reportPluginError } from '../lib/telemetry.ts'
+import { createIframeHost, mountHost, trackMountTarget, unmountHost } from './sandbox-host.ts'
 
 export interface SandboxInstance {
   iframe: HTMLIFrameElement
+  /**
+   * iframe 的宿主容器。宿主常驻文档（见 sandbox-host.ts）：srcdoc iframe 未进入
+   * 文档时不执行脚本，宿主脱管就等于插件方法全部不注册（issue #260）。
+   */
+  host: HTMLDivElement
+  /**
+   * 卸载宿主时的行为：`true` = 退回 body 的隐藏位置，插件脚本与已注册方法在页面
+   * 关闭后继续有效（插件主沙箱）；`false` = 直接脱离文档（槽位/设置页沙箱只服务
+   * 当前可见 UI，重新挂载时由 srcdoc 重新加载）。
+   */
+  persistent: boolean
   plugin: PluginInfo
   destroy: () => void
 }
@@ -101,7 +113,13 @@ window.__PLUGIN_API_BASE__ = '__API_BASE_TOKEN__'
     _callLocal: function (method, args) {
       var fn = (__localExports[window.__PLUGIN_ID__] || {})[method]
       if (typeof fn !== 'function') return Promise.reject(new Error('插件 ' + window.__PLUGIN_ID__ + ' 未提供方法 ' + method))
-      return Promise.resolve(fn.apply(null, args))
+      // 同步抛错必须转成 reject：调用方经 postMessage 等回执，异常直接冒泡的话
+      // 回执帧永远发不出去，调用方会一直挂着（#260）。
+      try {
+        return Promise.resolve(fn.apply(null, args))
+      } catch (e) {
+        return Promise.reject(e instanceof Error ? e : new Error(String(e)))
+      }
     }
   }
   // iframe 侧本地 hook 注册表：pluginId -> method -> handler（洋葱管道）
@@ -286,18 +304,28 @@ document.addEventListener('DOMContentLoaded', () => {
 })
 <\/script>`
 
-export function createSandbox(plugin: PluginInfo): SandboxInstance {
-  const iframe = document.createElement('iframe')
-  iframe.setAttribute('sandbox', 'allow-scripts')
-  iframe.style.cssText = 'border:none;width:100%;height:100%'
+/**
+ * 创建插件 iframe 沙箱。
+ * @param hiddenMount `true` = 立即挂进 body 的隐藏宿主（库插件：没有页面入口，
+ * 不挂载则 `srcdoc` 不执行、`registerMethod` 永不注册，issue #260）；`false` = 等
+ * PluginPage 打开时再挂载（有页面入口的插件，避免启动即执行所有 UI 前端）。
+ */
+export function createSandbox(plugin: PluginInfo, hiddenMount = false): SandboxInstance {
+  const { host, iframe } = createIframeHost(plugin.manifest.id, hiddenMount)
 
   const instance: SandboxInstance = {
-    iframe, plugin,
+    iframe, host, persistent: true, plugin,
     destroy: () => {
       destroyedIframes.add(iframe)
       unregisterThemeSync(iframe)
       sandboxes.delete(plugin.manifest.id)
+      // 标记销毁：unmountSandbox 据此跳过「退回 body」，避免把宿主重新挂回文档
+      host.dataset.pluginDestroyed = '1'
+      // 显式清空 srcdoc 并摘除 iframe：只 remove 宿主不保证浏览上下文被销毁，
+      // 插件侧的 window 监听会继续存活（#260 停用后的资源残留）
+      iframe.srcdoc = ''
       iframe.remove()
+      host.remove()
     }
   }
 
@@ -306,14 +334,36 @@ export function createSandbox(plugin: PluginInfo): SandboxInstance {
   return instance
 }
 
+/**
+ * 把插件 iframe 迁入页面容器显示（PluginPage / PluginSlot 调用）。
+ * 返回取消函数：无 `moveBefore` 的环境需要跟随容器几何重新对齐，卸载时应调用。
+ */
+export function mountSandbox(instance: SandboxInstance, target: HTMLElement): () => void {
+  mountHost(instance.host, target)
+  return trackMountTarget(instance.host, target, () => instance.host.isConnected && !instance.host.hasAttribute('aria-hidden'))
+}
+
+/**
+ * 把 iframe 退出页面容器。常驻主沙箱退回 body 的隐藏位置，插件脚本与已注册方法
+ * 保持有效；槽位/设置页沙箱直接脱离文档（它们只服务于当前可见的 UI，重新挂载时
+ * 由 srcdoc 重新加载）。
+ */
+export function unmountSandbox(instance: SandboxInstance) {
+  // 用显式销毁标记判断，而不是 isConnected：React 卸载顺序不保证 cleanup 早于容器
+  // 脱离文档，那时 isConnected 已为 false，宿主会被留在已脱离的页面容器里，下次
+  // mountHost 又因 parentElement 未变而跳过样式恢复，插件页会停在隐藏态。
+  if (instance.host.dataset.pluginDestroyed === '1') return
+  if (instance.persistent) unmountHost(instance.host)
+  else instance.host.remove()
+}
+
 /** 创建 UI 槽位 iframe 沙箱：把插件包内任意 HTML 文件以沙箱渲染，供 slots 槽位挂载。 */
 export function createSlotSandbox(plugin: PluginInfo, file: string): SandboxInstance {
-  const iframe = document.createElement('iframe')
-  iframe.setAttribute('sandbox', 'allow-scripts')
-  iframe.style.cssText = 'border:none;width:100%;height:100%'
+  // 槽位沙箱不常驻：由 PluginSlot 挂进自己的容器
+  const { host, iframe } = createIframeHost(plugin.manifest.id, false)
 
   const instance: SandboxInstance = {
-    iframe, plugin,
+    iframe, host, persistent: false, plugin,
     destroy: () => {
       destroyedIframes.add(iframe)
       unregisterThemeSync(iframe)
@@ -323,7 +373,10 @@ export function createSlotSandbox(plugin: PluginInfo, file: string): SandboxInst
         if (idx >= 0) list.splice(idx, 1)
         if (list.length === 0) slotSandboxes.delete(plugin.manifest.id)
       }
+      host.dataset.pluginDestroyed = '1'
+      iframe.srcdoc = ''
       iframe.remove()
+      host.remove()
     }
   }
 

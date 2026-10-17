@@ -169,6 +169,15 @@ jobs:
       # 插件主题同步的注册/注销配对护栏：registerThemeSync 的返回值丢弃会让已卸载
       # 的 iframe 被模块级 Set 永久持有（每次启用/禁用循环泄漏一个 iframe 及其 DOM）。
       - run: pnpm run test:plugin-theme-sync
+      # 插件 iframe 宿主生命周期（issue #260）：srcdoc iframe 只有进入文档才执行脚本，
+      # 库插件的宿主若不常驻，registerMethod 永不注册、callPlugin 全部静默失败。
+      - run: pnpm run test:plugin-sandbox-host
+      # l4 独立窗口插件的方法注册（issue #260）：窗口自带 top，注册只留在本地，
+      # 主窗口 callPlugin 永远查不到。桥逻辑纯函数化，用内存总线验证往返/超时/同步抛错。
+      - run: pnpm run test:plugin-l4-registry
+      # l4 桥监听器安装的回滚语义：部分失败必须解绑已成功的，否则重试会重复注册，
+      # 同一个 plugin-l4-api-call 被处理两次（非幂等操作产生重复副作用）。
+      - run: pnpm run test:plugin-l4-bridge-init
       # 快捷安装前置计划的护栏（issue #249）：已安装的前置不得进入删除名单。
       # 该判定此前用本地文件名与上游文件名比较，两域必然不等 → 已装前置被删且不补下载。
       - run: pnpm run test:dependency-install-plan
