@@ -5,6 +5,8 @@ import { listen, emitTo } from '@tauri-apps/api/event'
 import { handleApiCall, abortStream } from './sandbox.ts'
 import { createL4HostBridge, l4WindowLabel } from './l4-registry-bridge.ts'
 import type { RegistryBus } from './l4-registry-bridge.ts'
+import { installListeners } from './l4-listener-install.ts'
+import type { ListenerRegistrar } from './l4-listener-install.ts'
 import { setL4HostBridge } from './l4-registry.ts'
 
 /**
@@ -32,15 +34,15 @@ let initPromise: Promise<void> | null = null
  * 抢先发出的 register / call 事件没有接收方会被直接丢弃 —— 主窗口永远不知道插件提供
  * 了哪些方法，调用方只会看到「未提供方法」或超时。
  */
-export function initL4Bridge(): Promise<void> {
+export function initL4Bridge(registrar?: ListenerRegistrar): Promise<void> {
   if (initPromise) return initPromise
   if (!isTauri()) {
     initPromise = Promise.resolve()
     return initPromise
   }
 
-  /** 所有 `listen()` 的解析 Promise：初始化完成 = 它们全部就绪。 */
-  const pendingListeners: Promise<unknown>[] = []
+  const registerListener: ListenerRegistrar = registrar
+    ?? ((event, handler) => listen(event, handler))
 
   const l4Label = l4WindowLabel
 
@@ -51,6 +53,9 @@ export function initL4Bridge(): Promise<void> {
     },
   })
 
+  // 注册表总线只做「发送 + 订阅意图登记」，真正的监听器安装与回滚统一走
+  // installListeners（见 l4-listener-install.ts），确保部分失败时不会留下半套监听器。
+  const subscriptions: Array<{ event: string; handler: (payload: unknown) => void }> = []
   const registryBus: RegistryBus = {
     send: (event, payload, target) => {
       void emitTo(target, event, payload).catch((e) => {
@@ -59,38 +64,16 @@ export function initL4Bridge(): Promise<void> {
       })
     },
     on: (event, handler) => {
-      let disposed = false
-      let unlisten: (() => void) | null = null
-      const ready = listen(event, (e) => handler(e.payload))
-      pendingListeners.push(ready)
-      ready.then((fn) => {
-        // listen 是异步的：解析完成前就退订时立刻解绑，避免监听器泄漏
-        if (disposed) fn()
-        else unlisten = fn
-      }).catch((e) => {
-        console.warn('[plugin] l4 注册表事件监听失败', event, e)
-      })
+      const entry = { event, handler }
+      subscriptions.push(entry)
       return () => {
-        disposed = true
-        if (unlisten) {
-          unlisten()
-          unlisten = null
-        }
+        const idx = subscriptions.indexOf(entry)
+        if (idx >= 0) subscriptions.splice(idx, 1)
       }
     },
   }
 
-  pendingListeners.push(
-    listen('plugin-l4-api-call', (e) => {
-      const { pluginId, id, method, args } = e.payload as { pluginId: string; id: string; method: string; args: unknown[] }
-      handleApiCall(id, method, args, pluginId, fakeSource(pluginId) as unknown as Window)
-    }),
-    listen('plugin-l4-api-abort', (e) => {
-      abortStream((e.payload as { id: string }).id)
-    }),
-  )
-
-  // 构造即同步订阅全部注册表事件（把各自的 listen() 塞进 pendingListeners）
+  // 构造即同步订阅全部注册表事件（写入 subscriptions）
   const hostBridge = createL4HostBridge(registryBus, (pluginId, method, args) => {
     // 注册表要在**回调内部**读取：initL4Bridge 可能在 __pluginRegistry 安装之前执行，
     // 提前取一次会让之后所有代调用都返回「not initialized」。
@@ -103,14 +86,29 @@ export function initL4Bridge(): Promise<void> {
     return registry._callWithinWindow(pluginId, method, args)
   })
 
-  initPromise = Promise.allSettled(pendingListeners).then((results) => {
-    const failed = results.filter((r) => r.status === 'rejected')
-    if (failed.length > 0) {
-      // 监听器缺失时装配桥等于「永远收不到回执」：宁可让调用方走本地 registry 快速失败，
-      // 也不要静默等 30s 超时。重置 initPromise 以便下次调用重试。
-      for (const r of failed) {
-        console.warn('[plugin] l4 桥监听器注册失败，本次不启用 l4 注册表桥', (r as PromiseRejectedResult).reason)
-      }
+  const apiSubscriptions: Array<{ event: string; handler: (payload: unknown) => void }> = [
+    {
+      event: 'plugin-l4-api-call',
+      handler: (payload) => {
+        const { pluginId, id, method, args } = payload as { pluginId: string; id: string; method: string; args: unknown[] }
+        handleApiCall(id, method, args, pluginId, fakeSource(pluginId) as unknown as Window)
+      },
+    },
+    {
+      event: 'plugin-l4-api-abort',
+      handler: (payload) => {
+        abortStream((payload as { id: string }).id)
+      },
+    },
+  ]
+
+  initPromise = installListeners(registerListener, [...apiSubscriptions, ...subscriptions]).then((installed) => {
+    if (!installed.ok) {
+      // 监听器缺失时装配桥等于「永远收不到回执」：宁可让调用方走本地 registry
+      // 快速失败，也不要静默等 30s 超时。installListeners 已回滚已成功的监听器，
+      // 因此这里可以安全地清空初始化状态等待重试（不会叠加两套）。
+      console.warn('[plugin] l4 桥监听器注册失败，本次不启用 l4 注册表桥', installed.error)
+      hostBridge.dispose()
       initPromise = null
       return
     }
