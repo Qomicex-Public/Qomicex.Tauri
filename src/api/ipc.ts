@@ -188,7 +188,9 @@ function ipcStream(path: string, onChunk: (text: string) => void, opts?: StreamO
         req: {
           method: opts?.method,
           path: ipcApiPath(path),
-          headers: opts?.headers ?? {},
+          // 与 httpStream 保持一致：默认补 Content-Type。Axum 的 Json 提取器要求它，
+          // 缺了直接 415；IPC 帧不会像浏览器 fetch 那样自动生成（issue #262）。
+          headers: { 'Content-Type': 'application/json', ...opts?.headers },
           body: opts?.body ? Array.from(new TextEncoder().encode(opts.body)) : undefined,
         },
         onEvent: channel,

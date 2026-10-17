@@ -243,9 +243,25 @@ where
         return Ok(());
     };
     let uri: Uri = req.path.parse().map_err(|e| bad("uri", e))?;
+    // 逐跳头由传输层重建，请求/响应两个方向都不透传：帧里本来就没有 content-length
+    // （客户端 encode_request 会过滤），若调用方硬塞过期值会导致提取器读错长度。
+    const HOP_BY_HOP: [&str; 4] = [
+        "content-length",
+        "transfer-encoding",
+        "connection",
+        "keep-alive",
+    ];
     let mut builder = Request::builder().method(req.method.clone()).uri(uri);
     for (k, v) in &req.headers {
+        if HOP_BY_HOP.contains(&k.to_lowercase().as_str()) {
+            continue;
+        }
         builder = builder.header(k.as_str(), v.as_str());
+    }
+    // 按实际 body 长度补齐：帧协议本身携带长度，但重建的 HTTP 请求需要显式声明。
+    // 非零长度才补，避免 GET 之类空 body 请求多出一个 content-length: 0。
+    if !req.body.is_empty() {
+        builder = builder.header("content-length", req.body.len());
     }
     let request = builder
         .body(Body::from(req.body))
@@ -259,12 +275,6 @@ where
         .unwrap_or_else(|e| match e {});
 
     let (parts, mut body) = response.into_parts();
-    const HOP_BY_HOP: [&str; 4] = [
-        "content-length",
-        "transfer-encoding",
-        "connection",
-        "keep-alive",
-    ];
     let headers: Vec<(String, String)> = parts
         .headers
         .iter()
@@ -408,6 +418,11 @@ mod tests {
         async fn ping() -> Json<serde_json::Value> {
             Json(serde_json::json!({ "pong": true }))
         }
+        // 与 /plugins/proxy 同构：用 Json 提取器读请求体。IPC 帧里没有 Content-Length
+        // 时 Axum 直接 415（issue #262 的失败路径）。
+        async fn echo(Json(v): Json<serde_json::Value>) -> Json<serde_json::Value> {
+            Json(v)
+        }
         // 模拟 SSE：多 chunk 流式 body
         async fn sse() -> axum::response::Response {
             let body = Body::from_stream(stream::iter(vec![
@@ -423,18 +438,31 @@ mod tests {
         }
         Router::new()
             .route("/api/ping", get(ping))
+            .route("/api/echo", axum::routing::post(echo))
             .route("/api/sse", get(sse))
     }
 
+    /// 每个测试独立 pipe 名。
+    ///
+    /// 这些测试都通过 `serve()` 监听真实命名管道。cargo 默认并行跑测试，若共用
+    /// 「进程 id」这一份名字，多个 `#[tokio::test]` 会互相抢同一个管道：客户端连接到
+    /// 另一个测试的 server 上，表现为 `early eof` / `open pipe failed` 的随机失败。
+    /// 用原子计数保证唯一。
     fn pipe_name() -> String {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static SEQ: AtomicU32 = AtomicU32::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
         #[cfg(windows)]
         {
-            format!(r"\\.\pipe\qomicex-qipc-test-{}", std::process::id())
+            format!(r"\\.\pipe\qomicex-qipc-test-{}-{seq}", std::process::id())
         }
         #[cfg(unix)]
         {
             std::env::temp_dir()
-                .join(format!("qomicex-qipc-test-{}.sock", std::process::id()))
+                .join(format!(
+                    "qomicex-qipc-test-{}-{seq}.sock",
+                    std::process::id()
+                ))
                 .to_string_lossy()
                 .into_owned()
         }
@@ -451,19 +479,20 @@ mod tests {
         async fn open(name: &str) -> Self {
             #[cfg(windows)]
             {
-                let _ = name;
-                loop {
-                    match tokio::net::windows::named_pipe::ClientOptions::new().open(pipe_name()) {
-                        Ok(c) => {
-                            return Conn::Win(c);
-                        }
-                        // ERROR_PIPE_BUSY：服务端实例重建间隙，重试
-                        Err(e) if e.raw_os_error() == Some(231) => {
+                // 重试两种「服务端尚未就绪」的错误码：
+                //   2  = ERROR_FILE_NOT_FOUND（server 还没创建首实例）
+                //   231 = ERROR_PIPE_BUSY（实例重建间隙）
+                // 只重试 231 会让「测试先连接、server 后启动」的竞态直接 panic。
+                for _ in 0..100 {
+                    match tokio::net::windows::named_pipe::ClientOptions::new().open(name) {
+                        Ok(c) => return Conn::Win(c),
+                        Err(e) if matches!(e.raw_os_error(), Some(2) | Some(231)) => {
                             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                         }
                         Err(e) => panic!("open pipe failed: {e}"),
                     }
                 }
+                panic!("open pipe timeout: {name}");
             }
             #[cfg(unix)]
             {
@@ -552,6 +581,37 @@ mod tests {
         (status, headers, body)
     }
 
+    /// 回归（issue #262）：缺 Content-Type 时 Json 提取器返回 415。
+    ///
+    /// 这条锁定**真实根因**：`ipcStream` 不透传默认 `Content-Type`，而 `httpStream`
+    /// 会补。前端 `proxyFetchStream` 调 `openStream` 时没给 headers，于是 IPC 模式下
+    /// 请求到后端没有 content-type，`Json` 提取器直接 415 —— 与 Content-Length 无关。
+    #[tokio::test]
+    async fn missing_content_type_reaches_json_extractor_as_415() {
+        let app = test_app();
+        let name = pipe_name();
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let server = tokio::spawn(serve(app, name.clone(), shutdown_rx));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let mut conn = Conn::open(&name).await;
+        conn.write_all(&build_request(
+            "POST",
+            "/api/echo",
+            &[], // 完全没有 content-type
+            br#"{"a":1}"#,
+        ))
+        .await
+        .unwrap();
+        let (status, _, _) = read_response(&mut conn).await;
+        assert_eq!(
+            status, 415,
+            "缺 content-type 时 Json 提取器应返回 415（issue #262 的真实根因）"
+        );
+
+        server.abort();
+    }
+
     #[tokio::test]
     async fn request_response_roundtrip() {
         tracing_subscriber::fmt()
@@ -592,6 +652,80 @@ mod tests {
             String::from_utf8(body).unwrap(),
             "data: 1\n\ndata: 2\n\ndata: 3\n\n"
         );
+
+        server.abort();
+    }
+
+    /// 回归（issue #262）：IPC 帧里没有 Content-Length 时，POST + Json 提取器必须
+    /// 仍能读到 body。
+    ///
+    /// 前端 `proxyFetchStream` 只把调用方显式给的头放进帧（Content-Type、
+    /// Authorization），Content-Length 是逐跳头，客户端 encode_request 会过滤掉。
+    /// handle_conn 重建 Axum 请求时若不按实际 body 长度补回，`Json` 提取器拿不到
+    /// 长度直接返回 415 —— 所有插件的流式能力静默失效。
+    #[tokio::test]
+    async fn post_body_without_content_length_reaches_json_extractor() {
+        let app = test_app();
+        let name = pipe_name();
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let server = tokio::spawn(serve(app, name.clone(), shutdown_rx));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let body = br#"{"model":"x","stream":true}"#;
+        let mut conn = Conn::open(&name).await;
+        // 关键：headers 里只有 content-type，没有 content-length（与前端 IPC 一致）
+        conn.write_all(&build_request(
+            "POST",
+            "/api/echo",
+            &[("content-type", "application/json")],
+            body,
+        ))
+        .await
+        .unwrap();
+        let (status, _, resp_body) = read_response(&mut conn).await;
+        assert_eq!(
+            status, 200,
+            "缺 Content-Length 时 Json 提取器应仍能读 body，实际得到 {status}"
+        );
+        let json: serde_json::Value = serde_json::from_slice(&resp_body).unwrap();
+        assert_eq!(json["stream"], true);
+
+        server.abort();
+    }
+
+    /// 回归（issue #262）：调用方自带的 Content-Length 必须被以实际 body 长度覆盖。
+    ///
+    /// 前端有可能传入过期或被篡改的长度（例如按 UTF-16 计数的字符串长度、代理层
+    /// 改写等）。若直接透传，提取器会按错误长度读取导致 400/415 或读到截断 body。
+    #[tokio::test]
+    async fn stale_content_length_is_replaced_by_actual_body_length() {
+        let app = test_app();
+        let name = pipe_name();
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let server = tokio::spawn(serve(app, name.clone(), shutdown_rx));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let body = br#"{"a":1}"#;
+        let mut conn = Conn::open(&name).await;
+        // 声称 999 字节，实际 7 字节
+        conn.write_all(&build_request(
+            "POST",
+            "/api/echo",
+            &[
+                ("content-type", "application/json"),
+                ("content-length", "999"),
+            ],
+            body,
+        ))
+        .await
+        .unwrap();
+        let (status, _, resp_body) = read_response(&mut conn).await;
+        assert_eq!(
+            status, 200,
+            "过期 Content-Length 应被实际长度覆盖，实际 {status}"
+        );
+        let json: serde_json::Value = serde_json::from_slice(&resp_body).unwrap();
+        assert_eq!(json["a"], 1);
 
         server.abort();
     }
