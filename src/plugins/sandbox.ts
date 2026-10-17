@@ -284,6 +284,14 @@ window.__PLUGIN_API__ = {
       }
       parent.postMessage({ type: '__plugin_api_call', id, method: 'proxyFetchStream', args: [payload] }, '*')
     })
+  },
+  // 文档把这两个写成具名调用（__PLUGIN_API__.callWasm(...)），但桥里原本只有
+  // call() 通道，照文档写会 TypeError。这里补上薄封装，与白名单里的同名方法对齐。
+  callWasm: (pluginId, exportName) => {
+    return window.__PLUGIN_API__.call('callWasm', pluginId, exportName)
+  },
+  listWasmPlugins: () => {
+    return window.__PLUGIN_API__.call('listWasmPlugins')
   }
 }
 document.addEventListener('DOMContentLoaded', () => {
@@ -410,14 +418,22 @@ async function loadSandboxContent(plugin: PluginInfo, iframe: HTMLIFrameElement,
 
     html = buildPluginDoc(plugin, html, entry)
 
+    // 提前登记来源：插件脚本在首次 load 事件之前就会调用 API，若等到 onload 才
+    // sourceMap.set，这段窗口期的调用会查不到 pluginId（表现为调用卡住/被拒）。
+    if (iframe.contentWindow) sourceMap.set(iframe.contentWindow, plugin.manifest.id)
+
     iframe.onload = () => {
       // destroy() 可能先于 onload 触发（见 destroyedIframes 注释），
       // 此时不得再注册主题同步，否则泄漏已卸载的 iframe（#236）。
       if (destroyedIframes.has(iframe)) return
+      // srcdoc 首次导航后 contentWindow 可能换成新对象，这里再登记一次兜底
       if (iframe.contentWindow) sourceMap.set(iframe.contentWindow, plugin.manifest.id)
       registerThemeSync(iframe)
     }
     iframe.srcdoc = html
+    // srcdoc 赋值后 contentWindow 已就位：此刻登记，覆盖「脚本已开始跑、onload 未到」
+    // 的窗口期（插件常在 DOMContentLoaded 里就调 API）。
+    if (iframe.contentWindow) sourceMap.set(iframe.contentWindow, plugin.manifest.id)
   } catch (e) {
     console.error('[sandbox] loadSandboxContent failed for', plugin.manifest.id, e)
     reportPluginError(plugin.manifest.id, plugin.manifest.version, 'plugin_load_failed')
@@ -549,6 +565,13 @@ window.__PLUGIN_API__ = {
       }
       window.postMessage({ type: '__plugin_api_call', id: id, method: 'proxyFetchStream', args: [payload] }, '*')
     })
+  },
+  // 与 iframe 桥对齐：文档把这两个写成具名调用
+  callWasm: function (pluginId, exportName) {
+    return window.__PLUGIN_API__.call('callWasm', pluginId, exportName)
+  },
+  listWasmPlugins: function () {
+    return window.__PLUGIN_API__.call('listWasmPlugins')
   }
 }
 window.addEventListener('error', function () { window.dispatchEvent(new CustomEvent('qomicex:plugin-error', { detail: { pluginId: '${plugin.manifest.id}', pluginVersion: '${plugin.manifest.version}', errorType: 'plugin_runtime_error' } })) })
@@ -604,7 +627,18 @@ window.addEventListener('message', (e) => {
   if (e.data?.type === '__plugin_api_call') {
     const { id, method, args } = e.data
     const pluginId = sourceMap.get(e.source as Window)
-    if (pluginId) handleApiCall(id, method, args, pluginId, e.source as Window)
+    if (pluginId) {
+      handleApiCall(id, method, args, pluginId, e.source as Window)
+    } else if (e.source) {
+      // 来源未登记（iframe onload 尚未跑完、或来源不是插件沙箱）：必须回执错误。
+      // 静默丢弃会让插件侧的 Promise 永久挂起 —— 调用方既看不到失败也没有超时，
+      // 表现为「这个 API 卡住了」，极难定位。
+      ;(e.source as Window).postMessage({
+        type: '__plugin_api_response',
+        id,
+        error: 'Plugin bridge not ready: source window is not registered yet',
+      }, '*')
+    }
   }
   if (e.data?.type === '__plugin_api_abort') {
     abortStream(e.data.id)
@@ -677,6 +711,7 @@ const METHOD_PERMISSIONS: Record<string, string> = {
   registerMethod: 'config:write', callPlugin: 'network:fetch', callWasm: 'wasm:execute', listWasmPlugins: 'wasm:execute',
   readText: 'filesystem:read', readBytes: 'filesystem:read', writeText: 'filesystem:write', writeBytes: 'filesystem:write', deleteFile: 'filesystem:write', execCommand: 'shell:execute',
   navigate: 'config:read', openPluginSettings: 'config:read', showToast: 'ui:toast', log: 'plugin:log', getSystemInfo: 'system:info', openUrl: 'system:notification', listPlugins: 'plugin:list',
+  addMenuItem: 'ui:inject_sidebar',
   getThemeColor: 'config:read', applyThemeOverride: 'config:write', clearThemeOverride: 'config:write',
   'overlay.create': 'ui:sub_window', 'overlay.show': 'ui:sub_window', 'overlay.hide': 'ui:sub_window',
   'overlay.destroy': 'ui:sub_window', 'overlay.setHtml': 'ui:sub_window', 'overlay.setPosition': 'ui:sub_window',
@@ -752,6 +787,7 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     case 'openPluginSettings': bridge.openPluginSettings(args[0] as string | undefined); return
     case 'showToast': bridge.showToast(args[0] as string, args[1] as 'info' | 'error' | 'success' | undefined); return
     case 'log': bridge.log(args[0] as string, args[1] as 'debug' | 'info' | 'warn' | 'error' | undefined); return
+    case 'addMenuItem': bridge.addMenuItem(args[0] as { path: string; label: string; icon?: string }); return
     case 'getThemeColor': return getCurrentThemeColorHex()
     case 'applyThemeOverride': applyThemeOverride(args[0] as Record<string, string>); return
     case 'clearThemeOverride': clearThemeOverride(); return

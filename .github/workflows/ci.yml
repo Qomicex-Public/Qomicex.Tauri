@@ -181,6 +181,9 @@ jobs:
       # 流式通道请求头（issue #262）：IPC 分支不像 fetch 那样自动生成 Content-Type，
       # 缺了后端 Json 提取器恒 415，插件的流式能力会静默失效。
       - run: pnpm run test:plugin-ipc-stream-headers
+      # 插件 API 面（issue #264）：白名单/switch/权限目录/桥具名方法四份清单若漂移，
+      # 插件侧只会看到「方法不存在」或调用挂起，人工测试极难覆盖。
+      - run: pnpm run test:plugin-api-surface
       # 快捷安装前置计划的护栏（issue #249）：已安装的前置不得进入删除名单。
       # 该判定此前用本地文件名与上游文件名比较，两域必然不等 → 已装前置被删且不补下载。
       - run: pnpm run test:dependency-install-plan
