@@ -2274,7 +2274,8 @@ fn is_multimc_zip(zip_path: &std::path::Path) -> bool {
     let Ok(archive) = zip::ZipArchive::new(file) else {
         return false;
     };
-    for name in archive.file_names() {
+    // zip 9：`file_names()` 每项是 `ZipResult<Cow<str>>`，解码失败的条目名跳过
+    for name in archive.file_names().flatten() {
         if name == "mmc-pack.json" || name.ends_with("/mmc-pack.json") {
             return true;
         }
@@ -4043,7 +4044,11 @@ fn release_qml_overrides(
         let mut entry = archive
             .by_index(i)
             .map_err(|e| format!("读取整合包条目失败: {e}"))?;
-        let name = entry.name().to_string();
+        // zip 9：`name()` 返回 `ZipResult<Cow<str>>`（8 之前直接是 &str）
+        let name = entry
+            .name()
+            .map_err(|e| format!("读取整合包条目名失败: {e}"))?
+            .to_string();
         let Some(rel) = name.strip_prefix("overrides/") else {
             continue;
         };
@@ -4445,8 +4450,10 @@ fn parse_local_pack_file(path: &Path) -> Result<LocalPackParse, String> {
     let mut has_qml = false;
     let mut has_mr_overrides = false;
     let mut has_cf_overrides = false;
-    for name in archive.file_names() {
-        match name {
+    // zip 9：`file_names()` 每项是 `ZipResult<Cow<str>>`，解码失败的条目名跳过
+    for name in archive.file_names().flatten() {
+        // zip 9 给出 `Cow<str>`，统一按 &str 处理
+        match name.as_ref() {
             "modrinth.index.json" => has_mr = true,
             "manifest.json" => has_cf = true,
             "qmodpack.index.json" => has_qml = true,
@@ -4455,10 +4462,10 @@ fn parse_local_pack_file(path: &Path) -> Result<LocalPackParse, String> {
         // Modrinth 规范目录名为 `overrides/`（support.modrinth.com/en/articles/8802351），
         // 兼容旧实现/非标准包的 `override/`；CurseForge 由 manifest `overrides` 字段指定
         // （缺省即 `overrides/`）。
-        if name_has_prefix_ci(name, "overrides/") || name_has_prefix_ci(name, "override/") {
+        if name_has_prefix_ci(&name, "overrides/") || name_has_prefix_ci(&name, "override/") {
             has_mr_overrides = true;
         }
-        if name_has_prefix_ci(name, "overrides/") {
+        if name_has_prefix_ci(&name, "overrides/") {
             has_cf_overrides = true;
         }
     }

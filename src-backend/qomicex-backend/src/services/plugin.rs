@@ -588,7 +588,13 @@ pub fn install_from_package(
                 continue;
             }
             // Guard against zip-slip: reject entries escaping the temp root.
-            let rel: PathBuf = PathBuf::from(entry.name());
+            // zip 9：`name()` 返回 `ZipResult<Cow<str>>`
+            let rel: PathBuf = PathBuf::from(
+                entry
+                    .name()
+                    .map_err(|e| ApiError::bad_request("INVALID_PLUGIN_PACKAGE", e.to_string()))?
+                    .as_ref(),
+            );
             if !rel.is_relative()
                 || rel
                     .components()

@@ -1477,7 +1477,8 @@ async fn extract_zip_into(
             if entry.is_dir() {
                 continue;
             }
-            let rel: PathBuf = PathBuf::from(entry.name());
+            // zip 9：`name()` 返回 `ZipResult<Cow<str>>`（8 之前直接是 &str）
+            let rel: PathBuf = PathBuf::from(entry.name()?.as_ref());
             if rel
                 .components()
                 .any(|c| matches!(c, std::path::Component::ParentDir))
