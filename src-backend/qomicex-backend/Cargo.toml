@@ -61,7 +61,7 @@ aes-gcm = { version = "0.10", optional = true }
 base64 = "0.22"
 
 # --- Plugin system ---
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 urlencoding = "2"
 url = "2"
 

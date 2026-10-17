@@ -307,7 +307,10 @@ const MODS_CACHE_EMPTY_TTL_SECS: i64 = 5 * 60;
 /// `fabric-api` 的子模块判成缺失，造成误报，必须一并失效。
 /// v4：mcmod.info 世代（1.12.2）补全 modId / requiredMods / @Mod 注解硬依赖——
 /// 旧缓存的 modId/dependencies 恒为空，必须失效重扫。
-const MODS_CACHE_SCHEMA: u32 = 4;
+/// v5：jar 元数据解析按实例 loader 选侧（issue #255）——旧缓存里 Forge 实例的
+/// dependencies 取自 fabric.mod.json，含着 `fabric`/`fabricloader` 等 Fabric 侧依赖，
+/// 不失效就会继续误报「缺少 fabric 前置」。
+const MODS_CACHE_SCHEMA: u32 = 5;
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -324,6 +327,11 @@ struct ModsCacheEntry {
     /// 写入时的缓存结构版本；缺省/不匹配 = 旧结构（无依赖数据）→ miss。
     #[serde(default)]
     schema: Option<u32>,
+    /// 写入时的实例加载器（issue #255）：jar 元数据按加载器选侧，实例换加载器（如
+    /// Forge → Fabric）后解析结果不同，而目录签名不变、TTL 未到，不校验就会继续返回
+    /// 按旧加载器解析的依赖（评审 sourcery 指出）。缺省 = 未记录 → miss 重扫。
+    #[serde(default)]
+    loader: Option<String>,
 }
 
 static REFRESH_LOCK: LazyLock<Mutex<HashMap<String, ()>>> =
@@ -340,6 +348,7 @@ fn read_mods_cache(
     data_dir: &PathBuf,
     instance_id: &str,
     expected_signature: u64,
+    expected_loader: Option<&str>,
 ) -> Option<Vec<ModMetadataDto>> {
     let path = mods_cache_path(data_dir, instance_id);
     let bytes = std::fs::read(path).ok()?;
@@ -350,6 +359,10 @@ fn read_mods_cache(
     if cache.schema != Some(MODS_CACHE_SCHEMA) {
         return None;
     }
+    // 加载器变了（issue #255）→ 解析侧随之改变，必须重扫；比较时忽略大小写与首尾空白
+    if !loader_matches(cache.loader.as_deref(), expected_loader) {
+        return None;
+    }
     // TTL 内还须目录指纹一致：用户在文件系统增删/改名/移动 mod 后立即失效。
     if now - cache.fetched_at < ttl && cache.dir_signature == Some(expected_signature) {
         Some(cache.entries)
@@ -358,10 +371,29 @@ fn read_mods_cache(
     }
 }
 
+/// 缓存的写入加载器与当前实例加载器是否一致（issue #255）。
+/// 两者都需要按「解析侧」等价比较：core 对 forge/neoforge/cleanroom 分派不同解析顺序，
+/// 而 `fabric` 与未知都归入 Fabric 侧，故不能只做字符串相等。
+fn loader_matches(cached: Option<&str>, current: Option<&str>) -> bool {
+    fn side(loader: Option<&str>) -> &'static str {
+        match loader
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("neoforge") => "neoforge",
+            Some("forge") | Some("cleanroom") => "forge",
+            _ => "fabric",
+        }
+    }
+    side(cached) == side(current)
+}
+
 fn read_mods_cache_stale(
     data_dir: &PathBuf,
     instance_id: &str,
     expected_signature: u64,
+    expected_loader: Option<&str>,
 ) -> Option<Vec<ModMetadataDto>> {
     let path = mods_cache_path(data_dir, instance_id);
     let bytes = std::fs::read(path).ok()?;
@@ -369,6 +401,10 @@ fn read_mods_cache_stale(
     // 结构版本不符 → 连 stale 都不给：依赖数据缺失的列表若先返回再后台刷新，
     // 用户会看到「无缺失依赖」的错误结论，故宁可同步重扫。
     if cache.schema != Some(MODS_CACHE_SCHEMA) {
+        return None;
+    }
+    // 加载器不符 → 同上，宁可同步重扫也不返回按旧加载器解析的依赖（issue #255）
+    if !loader_matches(cache.loader.as_deref(), expected_loader) {
         return None;
     }
     // 仅"目录未动、纯 TTL 过期"走 stale-while-revalidate；
@@ -385,6 +421,7 @@ fn write_mods_cache(
     entries: Vec<ModMetadataDto>,
     ttl_secs: i64,
     dir_signature: u64,
+    loader: Option<&str>,
 ) {
     let path = mods_cache_path(data_dir, instance_id);
     if let Some(dir) = path.parent() {
@@ -398,6 +435,8 @@ fn write_mods_cache(
         ttl_secs: Some(ttl_secs),
         dir_signature: Some(dir_signature),
         schema: Some(MODS_CACHE_SCHEMA),
+        // issue #255：记录解析所用的加载器，命中时比对（实例换加载器即失效）
+        loader: loader.map(str::to_string),
     };
     if let Ok(json) = serde_json::to_vec(&cache) {
         let _ = std::fs::write(path, json);
@@ -510,6 +549,7 @@ async fn refresh_mods_cache(
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
+        r.loader.as_deref(),
     );
     let mut list = mods.get_mod_list(None).await.map_err(map_core_error)?;
     mods.enrich_mod_ids(&mut list).await;
@@ -564,7 +604,14 @@ async fn refresh_mods_cache(
         MODS_CACHE_TTL_SECS
     };
     let sig = mods_dir_signature(&r);
-    write_mods_cache(&state.data_dir, instance_id, result.clone(), ttl, sig);
+    write_mods_cache(
+        &state.data_dir,
+        instance_id,
+        result.clone(),
+        ttl,
+        sig,
+        r.loader.as_deref(),
+    );
     Ok(result)
 }
 
@@ -714,6 +761,9 @@ struct Resolved {
     game_dir: PathBuf,
     version: String,
     isolated: bool,
+    /// 实例加载器（issue #255）：core 解析 jar 元数据时按它选侧——多端模组单 jar 内含
+    /// fabric 与 forge 两套元数据，取错一侧会报出另一端的依赖（如 Forge 实例报缺 `fabric`）。
+    loader: Option<String>,
 }
 
 fn resolve(id: &str, state: &crate::state::AppState) -> ApiResult<Resolved> {
@@ -740,6 +790,7 @@ fn resolve(id: &str, state: &crate::state::AppState) -> ApiResult<Resolved> {
         game_dir: to_absolute(&base),
         version: inst.name,
         isolated,
+        loader: inst.loader,
     })
 }
 
@@ -1024,14 +1075,16 @@ async fn mods_metadata(
     AxumPath(id): AxumPath<String>,
     State(state): State<SharedState>,
 ) -> ApiResult<Response> {
-    // 目录指纹：文件系统变动（增删/改名/移动）立即使磁盘缓存失效。
-    let sig = mods_dir_signature(&resolve(&id, &state)?);
+    // 目录指纹 + 加载器：文件系统变动或实例换加载器立即使磁盘缓存失效（issue #255）。
+    let r = resolve(&id, &state)?;
+    let loader = r.loader.clone();
+    let sig = mods_dir_signature(&r);
     // Disk cache (6h TTL): fresh hit skips scan + network entirely.
-    if let Some(entries) = read_mods_cache(&state.data_dir, &id, sig) {
+    if let Some(entries) = read_mods_cache(&state.data_dir, &id, sig, loader.as_deref()) {
         return Ok(Json(entries).into_response());
     }
     // Stale hit（仅目录未动的纯 TTL 过期）: return stale + spawn background refresh.
-    if let Some(entries) = read_mods_cache_stale(&state.data_dir, &id, sig) {
+    if let Some(entries) = read_mods_cache_stale(&state.data_dir, &id, sig, loader.as_deref()) {
         let state2 = state.clone();
         let id2 = id.clone();
         tokio::spawn(async move {
@@ -1201,14 +1254,16 @@ async fn mods_enrich(
     AxumPath(id): AxumPath<String>,
     State(state): State<SharedState>,
 ) -> ApiResult<Json<Vec<ModEnrichDto>>> {
-    // 目录指纹：文件系统变动立即使磁盘缓存失效（与 mods_metadata 同一语义）。
-    let sig = mods_dir_signature(&resolve(&id, &state)?);
+    // 目录指纹 + 加载器：文件系统变动或实例换加载器立即使磁盘缓存失效（与 mods_metadata 同一语义）。
+    let r = resolve(&id, &state)?;
+    let loader = r.loader.clone();
+    let sig = mods_dir_signature(&r);
     // Disk cache (6h TTL): fresh hit skips scan + network entirely.
-    if let Some(entries) = read_mods_cache(&state.data_dir, &id, sig) {
+    if let Some(entries) = read_mods_cache(&state.data_dir, &id, sig, loader.as_deref()) {
         return Ok(Json(entries_to_enrich(entries)));
     }
     // Stale hit（仅目录未动的纯 TTL 过期）: return stale + spawn background refresh.
-    if let Some(entries) = read_mods_cache_stale(&state.data_dir, &id, sig) {
+    if let Some(entries) = read_mods_cache_stale(&state.data_dir, &id, sig, loader.as_deref()) {
         let state2 = state.clone();
         let id2 = id.clone();
         tokio::spawn(async move {
@@ -1328,6 +1383,7 @@ async fn refresh_mod_updates(
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
+        r.loader.as_deref(),
     );
     let list = mods.get_mod_list_light().await.map_err(map_core_error)?;
 
@@ -1618,6 +1674,7 @@ async fn enable_mod(
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
+        r.loader.as_deref(),
     );
     mods.enable_mod(&path);
     Ok(StatusCode::OK)
@@ -1639,6 +1696,7 @@ async fn disable_mod(
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
+        r.loader.as_deref(),
     );
     mods.disable_mod(&path);
     Ok(StatusCode::OK)
@@ -1669,6 +1727,7 @@ async fn batch_enable_mods(
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
+        r.loader.as_deref(),
     );
     for name in names {
         let path = dir.join(&name).to_string_lossy().into_owned();
@@ -1689,6 +1748,7 @@ async fn batch_disable_mods(
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
+        r.loader.as_deref(),
     );
     for name in names {
         let path = dir.join(&name).to_string_lossy().into_owned();

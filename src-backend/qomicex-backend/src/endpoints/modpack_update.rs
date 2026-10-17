@@ -581,7 +581,8 @@ async fn download_and_read_zip_entry(
         let f = archive
             .by_index(i)
             .map_err(|e| ApiError::internal(format!("读取 zip 条目失败: {e}")))?;
-        if f.name().eq_ignore_ascii_case(entry) {
+        // zip 9：`name()` 返回 `ZipResult<Cow<str>>`，解码失败视为不匹配
+        if f.name().is_ok_and(|n| n.eq_ignore_ascii_case(entry)) {
             found = Some(i);
             break;
         }
@@ -1121,7 +1122,8 @@ async fn fetch_zip_entry_text(
         let f = archive
             .by_index(i)
             .map_err(|e| format!("读取 zip 条目失败: {e}"))?;
-        if f.name().eq_ignore_ascii_case(entry) {
+        // zip 9：`name()` 返回 `ZipResult<Cow<str>>`，解码失败视为不匹配
+        if f.name().is_ok_and(|n| n.eq_ignore_ascii_case(entry)) {
             idx = Some(i);
             break;
         }

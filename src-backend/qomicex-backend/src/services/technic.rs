@@ -118,7 +118,8 @@ pub fn is_technic_zip(zip_path: &Path) -> bool {
     let Ok(archive) = zip::ZipArchive::new(file) else {
         return false;
     };
-    for name in archive.file_names() {
+    // zip 9：`file_names()` 每项是 `ZipResult<Cow<str>>`，解码失败的条目名跳过
+    for name in archive.file_names().flatten() {
         if name == "bin/modpack.jar" || name == "bin/version.json" {
             return true;
         }

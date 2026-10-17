@@ -67,7 +67,11 @@ pub fn extract_archive<R: Read + Seek>(
             return Err(format!(
                 "压缩包内文件过大（{} > {MAX_ENTRY_UNCOMPRESSED} B）：{}",
                 declared,
-                entry.name()
+                // zip 9：`name()` 返回 `ZipResult`；此处仅拼错误文本，取不到时退回占位
+                entry
+                    .name()
+                    .map(|n| n.into_owned())
+                    .unwrap_or_else(|_| "<无法解码的条目名>".to_string())
             ));
         }
         if let Some(parent) = target.parent() {
@@ -90,7 +94,10 @@ pub fn extract_archive<R: Read + Seek>(
             if entry_written > MAX_ENTRY_UNCOMPRESSED {
                 return Err(format!(
                     "压缩包内文件解压后超过上限（> {MAX_ENTRY_UNCOMPRESSED} B）：{}",
-                    entry.name()
+                    entry
+                        .name()
+                        .map(|n| n.into_owned())
+                        .unwrap_or_else(|_| "<无法解码的条目名>".to_string())
                 ));
             }
             total_written += n as u64;
@@ -381,6 +388,42 @@ mod tests {
             !root.join("escaped.txt").exists(),
             "绝不能在目标目录之外写出文件"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// symlink 条目：`archive.rs` 自己的解压只按条目内容写普通文件，从不调用
+    /// `ZipArchive::extract()`，因此不会创建 symlink（RUSTSEC-2026-0367/0368/0369
+    /// 的攻击面都在 `extract()` 建链上）。这里断言「symlink 条目被当作普通文件落盘」，
+    /// 从而在目标目录外不可达——守住的是「不引入建链路径」这条不变式。
+    #[test]
+    fn symlink_entry_is_written_as_regular_file_not_link() {
+        let root = temp_dir("symlink");
+        // 建一个 unix 上带 symlink 权限位的条目，目标指向目录外的敏感路径
+        let path = root.join("symlink.zip");
+        {
+            let file = std::fs::File::create(&path).unwrap();
+            let mut w = zip::ZipWriter::new(file);
+            #[cfg(unix)]
+            let opts = zip::write::SimpleFileOptions::default().unix_permissions(0o120777);
+            #[cfg(not(unix))]
+            let opts = zip::write::SimpleFileOptions::default();
+            w.start_file("link.txt", opts).unwrap();
+            w.write_all(b"/etc/passwd").unwrap();
+            w.finish().unwrap();
+        }
+        let out = root.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        extract_zip_file(&path, &out).unwrap();
+
+        let written = out.join("link.txt");
+        assert!(written.exists(), "条目应作为普通文件落盘");
+        // 关键断言：落盘的是条目内容（普通文件），不是指向目录外的符号链接
+        let meta = std::fs::symlink_metadata(&written).unwrap();
+        assert!(
+            !meta.file_type().is_symlink(),
+            "解压不得创建符号链接（那正是 zip 9 之前 extract() 的提权面）"
+        );
+        assert_eq!(std::fs::read(&written).unwrap(), b"/etc/passwd");
         let _ = std::fs::remove_dir_all(&root);
     }
 
