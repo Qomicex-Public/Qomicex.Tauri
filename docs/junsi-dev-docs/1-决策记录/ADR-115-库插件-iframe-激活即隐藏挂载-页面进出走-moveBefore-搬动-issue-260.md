@@ -45,21 +45,16 @@
 
 搬动优先用 `Element.moveBefore`：它不重建浏览上下文，iframe 不重新加载。实测同一 iframe 用 `appendChild` 搬动会重跑脚本（`contentWindow` 变新、脚本二次执行），而 `moveBefore` 保持同一 `contentWindow`、只执行一次。
 
-WebKit（Safari 与 macOS/iOS 的 WKWebView，MDN 至今标记为不支持）没有 `moveBefore`，只能降级为 `appendChild`，**这条降级并不等价**：
+WebKit（Safari 与 macOS/iOS 的 WKWebView，MDN 至今标记为不支持）没有 `moveBefore`。**不能**退化为 `appendChild` 搬动：那会重建浏览上下文、重跑插件脚本，而且每次进出插件页都会重来一遍（不是一次），期间注册表里残留的旧 window（`closed === true`）会让调用挂起。因此该环境下宿主**不搬家**：iframe 始终留在 body 上，进出页面只切换几何与可见性（`position:fixed` 覆盖到页面容器所占矩形，`ResizeObserver` + `resize`/`scroll` 跟随重算）。
 
-1. iframe 被重新加载，新文档要重新执行前端、重新注册方法；
-2. 在这段窗口内，主窗口注册表里存的仍是**旧文档的 window**，它已 `closed === true`；
-3. 向它 `postMessage` 既不报错也没人接收，调用方 Promise 会**永久挂起**。
+实测（删除 `Element.prototype.moveBefore` 以模拟 WebKit，插件内 `__bootId` 作为是否重载的判据，连续 3 轮进出插件页）：
 
-实测（把 `Element.prototype.moveBefore` 删掉以模拟 WebKit，插件延迟 1500ms 注册）：
-
-| 时点 | 加固前 | 加固后 |
+| 路径 | `__bootId` 三次进出 | 宿主父节点（打开 / 关闭） |
 |:---|:---|:---|
-| 切走页面 500ms 后调用 | `PENDING(>6s 无任何回执)` | `REJECT: 插件 ... 的界面已重新加载，方法 probe 暂不可用` |
-| 新文档注册完成后 | `OK: 4anqg1:1` | `OK: hijpcn:1` |
-| Chromium/WebView2（有 `moveBefore`） | `OK` | `OK` |
+| Chromium/WebView2（有 `moveBefore`） | 同一 id，调用计数 1→6 连续 | `DIV` / `BODY` |
+| 模拟 WebKit（无 `moveBefore`） | 同一 id，调用计数 1→6 连续 | `BODY` / `BODY`（从不搬家） |
 
-因此 `plugin-registry.ts` 在转发调用前检查来源 window 是否已销毁，直接以可读错误 reject，不让调用方无限等待。这是**兜底**，不是修复：WebKit 上「打开过插件页再切走」仍会重建一次 iframe（最多一次，之后宿主退回 body 隐藏位、稳定不再搬动），期间对该插件的调用会短暂失败。
+`plugin-registry.ts` 仍保留「来源 window 已销毁则立即 reject」的兜底：宿主不再重建后这条路径基本走不到，但 iframe 自行导航等外部原因仍可能触发，不能让调用方无限等待。
 
 宿主状态判据：
 
@@ -84,7 +79,7 @@ WebKit（Safari 与 macOS/iOS 的 WKWebView，MDN 至今标记为不支持）没
 - 库插件（无页面入口）在启动时多执行一次前端脚本；无 UI 页面，代价是脚本解析与执行。
 - 有页面入口的插件行为不变：仍是首次导航到插件页时加载。
 - `SandboxInstance` 增加 `host` 与 `persistent` 字段；`PluginPage` / `PluginSlot` 改用 `mountSandbox` / `unmountSandbox`，不再直接操作 `inst.iframe`。
-- 回归测试 `scripts/test-plugin-sandbox-host.mjs`（`pnpm run test:plugin-sandbox-host`）钉住宿主生命周期：常驻不入页面容器也不脱离文档、进出页面走 `moveBefore`、20 次启用/停用循环后 body 无宿主残留、无 `moveBefore` 时降级仍可用。该测试改前失败（`attachHost` 空实现 → 宿主不入文档），改后 26 项断言通过。
+- 回归测试 `scripts/test-plugin-sandbox-host.mjs`（`pnpm run test:plugin-sandbox-host`）钉住宿主生命周期：常驻不入页面容器也不脱离文档、进出页面走 `moveBefore`、20 次启用/停用循环后 body 无宿主残留、无 `moveBefore` 时改用固定定位覆盖且节点不搬家。该测试改前失败（`attachHost` 空实现 → 宿主不入文档），改后 29 项断言通过。
 
 ## 同批修复的相邻缺口：l4 插件的方法注册
 
@@ -103,8 +98,15 @@ l4 插件（`render: "webview"` 或 `layers: ["l4"]`）跑在独立 WebviewWindo
 三处必须同时成立，缺一处就退化成「挂起」而不是「报错」：
 
 1. **回执必须发**：`Promise.resolve().then(() => invoke(...))` 起链。插件方法是同步函数时直接 `invoke(...).then(...)`，同步异常会跳过 `then`，回执永远不发，调用方只能等超时。
-2. **调用要按窗口转发**：l4 窗口收到插件 iframe 的 `__plugin_registry_call` 时，目标不在本窗口就必须经 `proxy-call` 交给主窗口，并在拿到回执后回 `postMessage` 给 iframe。
-3. **超时兜底**：l4 窗口被用户直接关闭时不会有任何回执，`callPlugin` 在 30s 后以「调用超时（独立窗口无响应）」reject。
+2. **调用要按窗口转发**：l4 窗口收到插件 iframe 的 `__plugin_registry_call` 时，目标不在本窗口就必须经 `proxy-call` 交给主窗口，并在拿到回执后回 `postMessage` 给 iframe。跨 l4 窗口（A 调 B）时由主窗口 `_callWithinWindow` 查不到本地后退回 l4 桥转发。
+3. **超时兜底**：l4 窗口被用户直接关闭时不会有任何回执，`callPlugin` 在 30s 后以「调用超时（独立窗口无响应）」reject；`_callWithinWindow` 另有 20s 兜底并清理自己的 message 监听器，避免多次超时累积。
+
+启动间隙与生命周期：
+
+- `createRemoteWebview` 必须 `await initL4Bridge()` 后再建窗口：`listen()` 是异步的，监听器没装好时插件前端抢先发出的 register/call 会被直接丢弃（竞态，评审指出）。
+- 窗口创建完但前端尚未 `registerMethod` 时，调用排队等 `window-ready` 之后的首次注册，超时以「独立窗口界面未就绪」失败，而不是立刻报「未提供方法」。
+- 窗口关闭 / 插件停用 / 被 iframe 回退替换时清掉该窗口的登记：否则 `has()` 恒为 true，调用被发往已关闭的窗口直到超时。
+- 激活期间用户停用插件：`createRemoteWebview` 在 `tauri://created` 时会重查期望状态，已停用就直接关窗，不再注册实例、不再置 active。
 
 端到端实测（两个浏览器页模拟主窗口与 l4 窗口，Tauri 事件总线经 Node 转发）：
 
@@ -117,7 +119,7 @@ l4 插件（`render: "webview"` 或 `layers: ["l4"]`）跑在独立 WebviewWindo
 
 顺带修掉一个使 l4 窗口根本加载不出插件页的既有缺陷：`createRemoteWebview` 生成的 URL 只有 `?pluginWebview=1`，而 `App.tsx` 用 `pluginWebview=1&pluginId=<id>` 判定窗口模式并把 id 传给 `PluginWebviewPage`，缺 `pluginId` 时该参数为空串，`fetchPlugin('')` 必然失败。现在 URL 显式带上 `pluginId`。
 
-回归测试 `scripts/test-plugin-l4-registry.mjs`（`pnpm run test:plugin-l4-registry`）覆盖 17 项断言：往返、反向调用、异步/同步抛错、未注册方法与未登记插件、窗口无响应超时、重复注册不叠加、dispose 让在途调用失败。把 `register` 改成空实现后该测试失败（`host.has` 期望 `true` 实际 `false`），改后通过。
+回归测试 `scripts/test-plugin-l4-registry.mjs`（`pnpm run test:plugin-l4-registry`）覆盖 23 项断言：往返、反向调用、异步/同步抛错、未注册方法与未登记插件、窗口无响应超时、重复注册不叠加、窗口注销后立即失败、启动间隙排队与未就绪超时、跨 l4 窗口转发、dispose 让在途调用失败。把 `register` 改成空实现后该测试失败（`host.has` 期望 `true` 实际 `false`），改后通过。
 
 ## 参考
 

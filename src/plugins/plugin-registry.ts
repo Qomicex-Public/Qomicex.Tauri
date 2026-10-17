@@ -52,6 +52,14 @@ function isDetachedSource(sourceWin: Window): boolean {
  */
 const l4Window = isL4Window()
 
+/**
+ * 窗口内 iframe 调用的兜底超时。
+ *
+ * 比 l4 桥的 30s 短：l4 桥外面还有自己的超时，这里先到点，才能把 message 监听器
+ * 清掉；否则 iframe 不回复时监听器会永久挂在这个 window 上，多次超时不断累积。
+ */
+const IN_WINDOW_CALL_TIMEOUT_MS = 20_000
+
 /** l4 窗口承载的插件 id：由 `createRemoteWebview` 生成的 URL 参数带回。 */
 function l4SelfPluginId(): string {
   try {
@@ -184,26 +192,37 @@ function createRegistry(hostWindow: AnyWindow, isHost: boolean): PluginRegistryA
     _registerLocal: registerLocal,
     _callLocal: callLocal,
     _callWithinWindow: (pluginId, method, args) => {
-      // 主窗口中转来的调用：只在本窗口派发，不再向 l4/其他窗口转发（否则回环）
+      // 主窗口中转来的调用：先在本窗口（iframe / 本地导出）派发；目标若在另一个 l4
+      // 窗口，则交给 l4 桥转发（否则跨 l4 窗口互相调用会被误报「未提供方法」）。
       const sourceWin = (win as any).__pluginSources?.[pluginId]?.[method] as Window | undefined
-      if (sourceWin && sourceWin !== window) {
-        if (isDetachedSource(sourceWin)) {
-          return Promise.reject(new Error(`插件 ${pluginId} 的界面已重新加载，方法 ${method} 暂不可用`))
-        }
-        return new Promise((resolve, reject) => {
-          const callId = Math.random().toString(36).slice(2)
-          const handler = (e: MessageEvent) => {
-            if (e.data?.type === '__plugin_registry_result' && e.data.callId === callId) {
-              window.removeEventListener('message', handler)
-              if (e.data.error) reject(new Error(e.data.error))
-              else resolve(e.data.result)
-            }
-          }
-          window.addEventListener('message', handler)
-          sourceWin.postMessage({ type: '__plugin_registry_call', callId, method, args }, '*')
-        })
+      if (sourceWin && sourceWin === window) return callLocal(pluginId, method, args)
+      if (!sourceWin) {
+        const l4 = getL4HostBridge()
+        if (l4?.has(pluginId)) return l4.call(pluginId, method, args)
+        return callLocal(pluginId, method, args)
       }
-      return callLocal(pluginId, method, args)
+      if (isDetachedSource(sourceWin)) {
+        return Promise.reject(new Error(`插件 ${pluginId} 的界面已重新加载，方法 ${method} 暂不可用`))
+      }
+      return new Promise((resolve, reject) => {
+        const callId = Math.random().toString(36).slice(2)
+        // iframe 不回复时（被重建/冻结）必须自行清理，否则 outer 超时后这个
+        // message 监听器会永久留在这里，多次超时后不断累积。
+        const timer = setTimeout(() => {
+          window.removeEventListener('message', handler)
+          reject(new Error(`插件 ${pluginId} 的方法 ${method} 调用超时`))
+        }, IN_WINDOW_CALL_TIMEOUT_MS)
+        const handler = (e: MessageEvent) => {
+          if (e.data?.type === '__plugin_registry_result' && e.data.callId === callId) {
+            clearTimeout(timer)
+            window.removeEventListener('message', handler)
+            if (e.data.error) reject(new Error(e.data.error))
+            else resolve(e.data.result)
+          }
+        }
+        window.addEventListener('message', handler)
+        sourceWin.postMessage({ type: '__plugin_registry_call', callId, method, args }, '*')
+      })
     },
   }
 

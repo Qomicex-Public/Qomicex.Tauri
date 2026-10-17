@@ -283,6 +283,100 @@ try {
     l4.dispose()
   }
 
+  // ---- 场景 8：窗口关闭/插件停用 → 登记被清掉，后续调用立即明确失败（不是超时）----
+  {
+    const bus = createMemoryBus()
+    const main = bus.forWindow('main')
+    const node = bus.forWindow(label)
+    const host = createL4HostBridge(main, async () => {})
+    const l4 = createL4NodeBridge(node, async () => 'ok')
+
+    l4.register(PLUGIN, 'greet')
+    await flush()
+    check('注销前 host.has 为 true', host.has(PLUGIN), true)
+    host.unregisterWindow(PLUGIN)
+    check('注销窗口后 host.has 为 false', host.has(PLUGIN), false)
+
+    let caught = null
+    try {
+      await host.call(PLUGIN, 'greet', [])
+    } catch (e) {
+      caught = e.message
+    }
+    check('注销后调用立即报未提供方法（不等超时）', caught, `插件 ${PLUGIN} 未提供方法 greet`)
+
+    host.dispose()
+    l4.dispose()
+  }
+
+  // ---- 场景 9：窗口已就绪但方法还没注册 → 排队，注册到达后补发 ----
+  {
+    const bus = createMemoryBus()
+    const main = bus.forWindow('main')
+    const node = bus.forWindow(label)
+    const host = createL4HostBridge(main, async () => {})
+    const l4 = createL4NodeBridge(node, async () => 'late-ok')
+
+    l4.ready(PLUGIN)
+    await flush()
+    const pending = host.call(PLUGIN, 'greet', ['x'])
+    await flush()
+    // 模拟前端加载完成后才注册
+    l4.register(PLUGIN, 'greet')
+    const result = await pending
+    check('启动间隙的调用在注册后补发成功', result, 'late-ok')
+
+    host.dispose()
+    l4.dispose()
+  }
+
+  // ---- 场景 10：窗口已就绪但方法始终不注册 → 排队超时，错误明确 ----
+  {
+    const bus = createMemoryBus()
+    const main = bus.forWindow('main')
+    const node = bus.forWindow(label)
+    const host = createL4HostBridge(main, async () => {}, { timeoutMs: 60 })
+    const l4 = createL4NodeBridge(node, async () => 'ok')
+
+    l4.ready(PLUGIN)
+    await flush()
+    let caught = null
+    try {
+      await host.call(PLUGIN, 'neverRegistered', [])
+    } catch (e) {
+      caught = e.message
+    }
+    check('界面始终未就绪时报「界面未就绪」超时', caught, `插件 ${PLUGIN} 的方法 neverRegistered 调用超时（独立窗口界面未就绪）`)
+
+    host.dispose()
+    l4.dispose()
+  }
+
+  // ---- 场景 11：跨 l4 窗口调用 → 主窗口 invoke 经 registry 回落到 l4 桥转发 ----
+  {
+    const bus = createMemoryBus()
+    const main = bus.forWindow('main')
+    const nodeA = bus.forWindow(l4WindowLabel('plugin.a'))
+    const nodeB = bus.forWindow(l4WindowLabel('plugin.b'))
+    const host = createL4HostBridge(main, async (pluginId, method, args) => {
+      // 模拟 plugin-registry._callWithinWindow 回落到 l4 桥
+      if (host.has(pluginId)) return host.call(pluginId, method, args)
+      return Promise.reject(new Error(`插件 ${pluginId} 未提供方法 ${method}`))
+    })
+    const l4a = createL4NodeBridge(nodeA, async () => 'ok')
+    const l4b = createL4NodeBridge(nodeB, async (p, m, a) => `b:${p}:${m}:${a.join(',')}`)
+
+    l4b.register('plugin.b', 'serve')
+    await flush()
+    // plugin.a 反向调用 plugin.b（活在另一个 l4 窗口）
+    const result = await l4a.callRemote('plugin.b', 'serve', ['arg'], 'plugin.a')
+    check('跨 l4 窗口调用能到达目标窗口', result, 'b:plugin.b:serve:arg')
+
+    host.dispose()
+    l4a.dispose()
+    l4b.dispose()
+  }
+
   // ---- 场景 7：dispose 后不再处理事件，挂起的调用被 reject（插件禁用/窗口关闭）----
   {
     const bus = createMemoryBus()

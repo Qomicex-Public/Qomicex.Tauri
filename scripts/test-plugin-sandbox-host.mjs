@@ -115,6 +115,17 @@ function installDomStub({ moveBefore = true } = {}) {
     documentElement,
     createElement: (tag) => new FakeElement(tag),
   }
+  // sandbox-host 通过 Element.prototype 探测 moveBefore 是否可用
+  globalThis.Element = FakeElement
+  // 无 moveBefore 的路径会挂几何跟踪；stub 里给最小实现
+  globalThis.ResizeObserver = class {
+    observe() {}
+    disconnect() {}
+  }
+  globalThis.window = {
+    addEventListener() {},
+    removeEventListener() {},
+  }
   return { body, documentElement, FakeElement }
 }
 
@@ -194,18 +205,22 @@ try {
   }
   check(`${N} 次启用/停用后 body 无插件宿主残留`, body.children.filter((c) => c.dataset?.pluginHost).length, 0)
 
-  // ---- 不支持 moveBefore（WebKit）：退化为 appendChild，功能不变 ----
+  // ---- 不支持 moveBefore（WebKit）：不搬动节点，改用固定定位覆盖；绝不重载 iframe ----
   installDomStub({ moveBefore: false })
   const noMove = require(join(outDir, 'sandbox-host.js'))
   const host2 = noMove.createHost('legacy')
   noMove.attachHost(host2)
   const page2 = globalThis.document.createElement('div')
+  page2.getBoundingClientRect = () => ({ left: 64, top: 100, width: 800, height: 600 })
   globalThis.document.body.appendChild(page2)
   noMove.mountHost(host2, page2)
-  checkNode('无 moveBefore 时仍迁入页面容器', host2.parentElement, page2)
-  check('无 moveBefore 时为显示态', host2.style.cssText, MOUNTED_HOST_STYLE)
+  checkNode('无 moveBefore 时宿主不搬家（iframe 不重载）', host2.parentElement, globalThis.document.body)
+  check('无 moveBefore 时改为固定定位覆盖', host2.style.cssText.includes('position:fixed'), true)
+  check('无 moveBefore 时对齐容器几何', host2.style.cssText.includes('left:64px') && host2.style.cssText.includes('width:800px'), true)
+  check('无 moveBefore 时可见', host2.getAttribute('aria-hidden'), null)
   noMove.unmountHost(host2)
-  checkNode('无 moveBefore 时仍退回 body', host2.parentElement, globalThis.document.body)
+  checkNode('无 moveBefore 时退回隐藏位仍是同一父节点', host2.parentElement, globalThis.document.body)
+  check('无 moveBefore 时恢复隐藏样式', host2.style.cssText, HIDDEN_HOST_STYLE)
 
   console.log(`\n[test-plugin-sandbox-host] OK — ${checks} 项断言通过`)
 } catch (err) {

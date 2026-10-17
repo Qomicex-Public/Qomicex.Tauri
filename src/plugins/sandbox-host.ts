@@ -46,28 +46,70 @@ export function attachHost(host: HTMLDivElement) {
 }
 
 /**
- * 同文档搬动节点：`moveBefore` 不重建浏览上下文，插件脚本不会重跑。
+ * 是否支持 `moveBefore`。
  *
- * 无 `moveBefore`（WebKit/Safari，实测 Safari 至今不支持）时退化为 `appendChild`，
- * 这**不是**等价降级：iframe 会被重新加载，新文档要重新执行前端、重新注册方法，
- * 期间注册表里仍留着旧 document 的 window 引用 —— 它的 `closed === true`，
- * `postMessage` 不报错但没人接收，调用方 Promise 永久挂起（实测 >6s 无回执）。
- * 因此仅在拿不到 `moveBefore` 时才走这条路径，且只在有页面宿主、确实需要搬动时
- * 才会触发；库插件的隐藏宿主从不搬动。
+ * 不支持时不能靠 `appendChild` 搬动活着的 iframe：那会重建浏览上下文、重跑插件脚本，
+ * 而且每次进出插件页都重来一遍（不是一次）。那种环境下改为固定宿主位置 + 纯 CSS
+ * 呈现切换（见 mountHost / unmountHost），节点始终不离开原来的父节点。
  */
+function supportsMoveBefore(): boolean {
+  return typeof (Element.prototype as unknown as { moveBefore?: unknown }).moveBefore === 'function'
+}
+
+/** 同文档搬动节点：`moveBefore` 不重建浏览上下文，插件脚本不会重跑。 */
 function moveNode(node: HTMLElement, parent: HTMLElement) {
   const moveBefore = (parent as ParentNode & { moveBefore?: (n: Node, ref: Node | null) => void }).moveBefore
   if (typeof moveBefore === 'function') {
     try {
       moveBefore.call(parent, node, null)
       return
-    } catch { /* moveBefore 要求节点已有父且同文档，不满足时走 appendChild */ }
+    } catch { /* moveBefore 要求节点已有父且同文档，不满足时退回 appendChild */ }
   }
   parent.appendChild(node)
 }
 
+/**
+ * 显示态的覆盖：宿主挪进页面容器时铺满容器；无 `moveBefore` 时宿主留在 body，
+ * 用 fixed 定位覆盖到页面容器所占的矩形上（纯视觉切换，iframe 不重载）。
+ */
+const COVER_STYLE =
+  'position:fixed;overflow:hidden;pointer-events:auto;visibility:visible;z-index:1'
+
+/**
+ * 无 `moveBefore` 时，宿主用 fixed 覆盖页面容器，需要跟随容器位置变化（窗口缩放、
+ * 侧边栏展开/收起、滚动）重新对齐。返回取消函数；有 `moveBefore` 时无需跟踪。
+ */
+export function trackMountTarget(host: HTMLDivElement, target: HTMLElement, isMounted: () => boolean): () => void {
+  if (supportsMoveBefore()) return () => {}
+  const sync = () => {
+    if (!isMounted()) return
+    const rect = target.getBoundingClientRect()
+    host.style.cssText = `${COVER_STYLE};left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px`
+  }
+  const observer = new ResizeObserver(sync)
+  observer.observe(target)
+  window.addEventListener('resize', sync)
+  window.addEventListener('scroll', sync, true)
+  sync()
+  return () => {
+    observer.disconnect()
+    window.removeEventListener('resize', sync)
+    window.removeEventListener('scroll', sync, true)
+  }
+}
+
 /** 迁入页面容器并显示。 */
 export function mountHost(host: HTMLDivElement, target: HTMLElement) {
+  if (!supportsMoveBefore()) {
+    // 固定位置渲染：iframe 留在 body 上，只改几何与可见性
+    const rect = target.getBoundingClientRect()
+    host.style.cssText = `${COVER_STYLE};left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px`
+    host.removeAttribute('aria-hidden')
+    if (host.parentElement !== (document.body ?? document.documentElement)) {
+      ;(document.body ?? document.documentElement).appendChild(host)
+    }
+    return
+  }
   if (host.parentElement === target) return
   host.style.cssText = MOUNTED_HOST_STYLE
   host.removeAttribute('aria-hidden')
@@ -77,7 +119,12 @@ export function mountHost(host: HTMLDivElement, target: HTMLElement) {
 /** 退回 body 的隐藏位置，已注册的插件方法不随页面卸载消失。 */
 export function unmountHost(host: HTMLDivElement) {
   const body = document.body ?? document.documentElement
-  if (host.parentElement === body) return
+  if (host.parentElement === body) {
+    // 已经在 body：只需恢复隐藏样式（无 moveBefore 的固定位置渲染路径也走这里）
+    host.style.cssText = HIDDEN_HOST_STYLE
+    host.setAttribute('aria-hidden', 'true')
+    return
+  }
   host.style.cssText = HIDDEN_HOST_STYLE
   host.setAttribute('aria-hidden', 'true')
   moveNode(host, body)

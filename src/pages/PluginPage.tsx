@@ -56,6 +56,7 @@ export default function PluginPage() {
     if (plugin?.state !== 'active') return
 
     let mountedSandbox: SandboxInstance | null = null
+    let stopTracking: (() => void) | null = null
     const timer = setInterval(() => {
       const inst = getInstance(pluginId)
       const el = containerRef.current
@@ -64,7 +65,7 @@ export default function PluginPage() {
       if ('iframe' in inst) {
         clearInterval(timer)
         mountedSandbox = inst
-        mountSandbox(inst, el)
+        stopTracking = mountSandbox(inst, el)
       } else if ('container' in inst) {
         const c = inst.container
         if (c.parentElement !== el) {
@@ -89,6 +90,7 @@ export default function PluginPage() {
     // 连同已注册的方法一起消失，依赖它的 callPlugin 在用户离开页面后全部失败。
     return () => {
       clearInterval(timer)
+      stopTracking?.()
       if (mountedSandbox) unmountSandbox(mountedSandbox)
     }
   }, [pluginId, plugin?.state])

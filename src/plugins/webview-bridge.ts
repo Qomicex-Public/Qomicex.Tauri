@@ -22,27 +22,53 @@ import { setL4HostBridge } from './l4-registry.ts'
  */
 const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
-let initialized = false
+/** 初始化 Promise：全部监听器装好后 resolve，创建 l4 窗口前必须 await。 */
+let initPromise: Promise<void> | null = null
 
 /**
- * 用 Tauri 事件实现注册表总线：主窗口按 label 定向发送，l4 窗口统一发往 `main`。
- * 事件名带 `plugin-l4-registry-` 前缀，与 API 桥的 `plugin-l4-api-*` 区分。
+ * 初始化 l4 桥（幂等）。
+ *
+ * 返回 Promise 是必要的：`listen()` 是异步的，窗口若在监听器装好前就创建，插件前端
+ * 抢先发出的 register / call 事件没有接收方会被直接丢弃 —— 主窗口永远不知道插件提供
+ * 了哪些方法，调用方只会看到「未提供方法」或超时。
  */
-function tauriBus(): RegistryBus {
-  return {
+export function initL4Bridge(): Promise<void> {
+  if (initPromise) return initPromise
+  if (!isTauri()) {
+    initPromise = Promise.resolve()
+    return initPromise
+  }
+
+  /** 所有 `listen()` 的解析 Promise：初始化完成 = 它们全部就绪。 */
+  const pendingListeners: Promise<unknown>[] = []
+
+  const l4Label = (pluginId: string) => `plugin-webview-${pluginId}`
+
+  // 伪 source：handleApiCall 经 source.postMessage 回传，这里转成发往对应 l4 窗口的事件
+  const fakeSource = (pluginId: string) => ({
+    postMessage: (msg: Record<string, unknown>) => {
+      void emitTo(l4Label(pluginId), 'plugin-l4-api-response', msg).catch(() => { /* 窗口已关闭 */ })
+    },
+  })
+
+  const registryBus: RegistryBus = {
     send: (event, payload, target) => {
       void emitTo(target, event, payload).catch((e) => {
-        // 目标窗口已关闭：调用方那边由超时兜底，这里只记一条，避免未处理的 rejection
+        // 目标窗口已关闭：调用方那边由超时兜底，这里记一条，避免未处理的 rejection
         console.warn('[plugin] l4 注册表事件发送失败', event, target, e)
       })
     },
     on: (event, handler) => {
       let disposed = false
       let unlisten: (() => void) | null = null
-      void listen(event, (e) => handler(e.payload)).then((fn) => {
-        // listen 是异步的：解析完成前就 dispose 时，立刻退订，避免泄漏监听
+      const ready = listen(event, (e) => handler(e.payload))
+      pendingListeners.push(ready)
+      ready.then((fn) => {
+        // listen 是异步的：解析完成前就退订时立刻解绑，避免监听器泄漏
         if (disposed) fn()
         else unlisten = fn
+      }).catch((e) => {
+        console.warn('[plugin] l4 注册表事件监听失败', event, e)
       })
       return () => {
         disposed = true
@@ -53,38 +79,31 @@ function tauriBus(): RegistryBus {
       }
     },
   }
-}
 
-type HostRegistry = {
-  has?: (pluginId: string, method?: string) => boolean
-  _callWithinWindow?: (pluginId: string, method: string, args: unknown[]) => Promise<unknown>
-}
+  pendingListeners.push(
+    listen('plugin-l4-api-call', (e) => {
+      const { pluginId, id, method, args } = e.payload as { pluginId: string; id: string; method: string; args: unknown[] }
+      handleApiCall(id, method, args, pluginId, fakeSource(pluginId) as unknown as Window)
+    }),
+    listen('plugin-l4-api-abort', (e) => {
+      abortStream((e.payload as { id: string }).id)
+    }),
+  )
 
-export function initL4Bridge() {
-  if (initialized || !isTauri()) return
-  initialized = true
-  const l4Label = (pluginId: string) => `plugin-webview-${pluginId}`
-
-  // 伪 source：handleApiCall 经 source.postMessage 回传，这里转成发往对应 l4 窗口的事件
-  const fakeSource = (pluginId: string) => ({
-    postMessage: (msg: Record<string, unknown>) => {
-      void emitTo(l4Label(pluginId), 'plugin-l4-api-response', msg)
-    },
-  })
-
-  void listen('plugin-l4-api-call', (e) => {
-    const { pluginId, id, method, args } = e.payload as { pluginId: string; id: string; method: string; args: unknown[] }
-    handleApiCall(id, method, args, pluginId, fakeSource(pluginId) as unknown as Window)
-  })
-  void listen('plugin-l4-api-abort', (e) => {
-    abortStream((e.payload as { id: string }).id)
-  })
-
-  // 主窗口注册表：l4 窗口登记的方法 → 转发到该窗口执行。
-  // _callWithinWindow 只在本窗口派发，避免「主窗口 → l4 → 主窗口」回环。
-  const registry = (window as unknown as { __pluginRegistry?: HostRegistry }).__pluginRegistry
-  setL4HostBridge(createL4HostBridge(tauriBus(), (pluginId, method, args) => {
+  // 构造即同步订阅全部注册表事件（把各自的 listen() 塞进 pendingListeners）
+  const hostBridge = createL4HostBridge(registryBus, (pluginId, method, args) => {
+    const registry = (window as unknown as {
+      __pluginRegistry?: { _callWithinWindow: (p: string, m: string, a: unknown[]) => Promise<unknown> }
+    }).__pluginRegistry
+    // _callWithinWindow 只在本窗口派发（防「主窗口 → l4 → 主窗口」回环），
+    // 目标在另一个 l4 窗口时会继续查 l4 桥
     if (!registry?._callWithinWindow) return Promise.reject(new Error('Plugin registry not initialized'))
     return registry._callWithinWindow(pluginId, method, args)
-  }))
+  })
+
+  initPromise = Promise.all(pendingListeners.map((p) => p.catch(() => {}))).then(() => {
+    setL4HostBridge(hostBridge)
+  })
+
+  return initPromise
 }

@@ -20,11 +20,12 @@ export function PluginSlot({ slotId, sandbox, width, height }: PluginSlotProps) 
     const container = containerRef.current
     if (!container) return
 
-    mountSandbox(sandbox, container)
+    const stopTracking = mountSandbox(sandbox, container)
 
     return () => {
       // 槽位/设置页沙箱卸载即脱离文档（它们只服务当前可见 UI），由持有者在插件
       // 停用时销毁；常驻主沙箱则退回隐藏位置，见 unmountSandbox。
+      stopTracking()
       unmountSandbox(sandbox)
     }
   }, [sandbox])

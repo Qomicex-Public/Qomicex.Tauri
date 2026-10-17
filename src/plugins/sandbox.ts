@@ -11,7 +11,7 @@ import { normalizeHex, THEME_COLOR_MODE_BACKGROUND } from '../lib/themeColor.ts'
 import { getSettings as getAppSettings } from '../api/settings.ts'
 import type { PluginErrorType } from '../api/telemetry.ts'
 import { reportPluginError } from '../lib/telemetry.ts'
-import { attachHost, createHost, mountHost, unmountHost } from './sandbox-host.ts'
+import { attachHost, createHost, mountHost, trackMountTarget, unmountHost } from './sandbox-host.ts'
 
 export interface SandboxInstance {
   iframe: HTMLIFrameElement
@@ -334,9 +334,13 @@ export function createSandbox(plugin: PluginInfo, hiddenMount = false): SandboxI
   return instance
 }
 
-/** 把插件 iframe 迁入页面容器显示（PluginPage / PluginSlot 调用）。 */
-export function mountSandbox(instance: SandboxInstance, target: HTMLElement) {
+/**
+ * 把插件 iframe 迁入页面容器显示（PluginPage / PluginSlot 调用）。
+ * 返回取消函数：无 `moveBefore` 的环境需要跟随容器几何重新对齐，卸载时应调用。
+ */
+export function mountSandbox(instance: SandboxInstance, target: HTMLElement): () => void {
   mountHost(instance.host, target)
+  return trackMountTarget(instance.host, target, () => instance.host.isConnected && !instance.host.hasAttribute('aria-hidden'))
 }
 
 /**

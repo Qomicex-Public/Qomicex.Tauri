@@ -6,6 +6,7 @@ import type { PluginInfo, PluginMenuItem, PluginContributes } from './types.ts'
 import { usePluginStore } from '../stores/pluginStore.ts'
 import { createSandbox, renderInline, getInstance, getWebviewInstance, registerWebviewInstance, destroyWebviewInstance, convertCssLinks, getFileUrl, createSlotSandbox, destroySlotSandboxes } from './sandbox.ts'
 import { initL4Bridge } from './webview-bridge.ts'
+import { getL4HostBridge } from './l4-registry.ts'
 import { registerSlot, unregisterPluginSlots } from './slots.tsx'
 import { getHookRegistry } from './hook-registry.ts'
 import { PluginSlot } from './PluginSlot.tsx'
@@ -89,6 +90,13 @@ function hasPageEntry(plugin: PluginInfo): boolean {
 const pendingWebviews = new Map<string, Promise<void>>()
 
 /**
+ * 期望的插件状态（active / disabled）。仅用于消除「激活过程中用户停用」的竞态：
+ * 远程窗口创建要 await，期间 `deactivatePlugin` 找不到实例可销毁，创建完成后若无
+ * 重新校验，会把已被停用的插件重新注册并置为 active（窗口也跟着留着）。
+ */
+const desiredState = new Map<string, 'active' | 'disabled'>()
+
+/**
  * l4：把插件托管到独立 Tauri WebviewWindow（独立 renderer 进程）。
  * 加载启动器路由 `/plugins/p/:id?pluginWebview=1`，插件 API 经跨窗口事件桥
  * 代理回主窗口执行（见 webview-bridge.ts）。幂等：窗口已存在则 focus。
@@ -121,7 +129,8 @@ export async function createRemoteWebview(plugin: PluginInfo): Promise<void> {
     return
   }
 
-  initL4Bridge()
+  // 监听器装好之前创建窗口，插件前端抢先发出的 register/call 会没人接收（事件丢弃）
+  await initL4Bridge()
 
   const win = new WebviewWindow(label, {
     // pluginId 必须显式带上：App.tsx 用 `pluginWebview=1&pluginId=<id>` 判定 l4 窗口模式
@@ -138,12 +147,23 @@ export async function createRemoteWebview(plugin: PluginInfo): Promise<void> {
   const created = new Promise<void>((resolve) => {
     win.once('tauri://created', () => {
       pendingWebviews.delete(label)
+      // 创建期间用户停用了插件：不能注册实例，直接关窗，避免已停用的插件被重新拉起
+      if (desiredState.get(plugin.manifest.id) === 'disabled') {
+        console.warn('[plugin] l4 窗口创建完成时插件已被停用，直接关闭', plugin.manifest.id)
+        win.close().catch(() => {})
+        resolve()
+        return
+      }
       registerWebviewInstance(plugin.manifest.id, {
         plugin,
         destroy: () => { win.close().catch(() => {}) },
       })
       // 用户手动关闭 l4 窗口 → 清理实例表，避免去重时误判仍存活
-      win.once('tauri://destroyed', () => destroyWebviewInstance(plugin.manifest.id))
+      win.once('tauri://destroyed', () => {
+        destroyWebviewInstance(plugin.manifest.id)
+        // 同时清掉注册表登记：否则 has() 恒为 true，调用被发往已关闭的窗口直到超时
+        getL4HostBridge()?.unregisterWindow(plugin.manifest.id)
+      })
       resolve()
     })
     win.once('tauri://error', (e) => {
@@ -167,6 +187,9 @@ export async function activatePlugin(plugin: PluginInfo) {
     return
   }
 
+  // 记录期望状态：远程窗口创建期间的停用请求据此在创建完成后生效
+  desiredState.set(plugin.manifest.id, 'active')
+
   const useSandbox = plugin.manifest.render !== 'inline'
   const useWebviewRender = useWebview(plugin)
   // 库插件（无页面入口）用户永远导航不到，必须激活即隐藏挂载；有页面的插件保持
@@ -177,6 +200,8 @@ export async function activatePlugin(plugin: PluginInfo) {
     try {
       if (useWebviewRender) {
         await createRemoteWebview(plugin)
+        // 创建期间被停用：createRemoteWebview 已关窗，这里不能再注册菜单/置 active
+        if (desiredState.get(plugin.manifest.id) === 'disabled') return
       } else if (useSandbox) {
         createSandbox(plugin, hiddenMount)
       } else {
@@ -274,11 +299,16 @@ export async function activatePlugin(plugin: PluginInfo) {
 }
 
 export function deactivatePlugin(pluginId: string) {
+  // 先记下期望状态：远程窗口仍在创建时，创建回调据此关窗而不是注册实例
+  desiredState.set(pluginId, 'disabled')
   const inst = getInstance(pluginId)
   if (inst) {
     try { inst.destroy() } catch { /* ignore */ }
   }
   destroyWebviewInstance(pluginId)
+  // l4 窗口的注册表登记随窗口一起失效：不清掉的话 has() 恒为 true，
+  // 后续调用会被发往已关闭的窗口，只能等满超时
+  getL4HostBridge()?.unregisterWindow(pluginId)
   destroySlotSandboxes(pluginId)
   unregisterPluginSlots(pluginId)
   unregisterPluginIconTheme(pluginId)

@@ -19,6 +19,8 @@
  */
 
 export const L4_REGISTRY_EVENTS = {
+  /** l4 → main：该窗口的注册表桥已就绪（前端已加载，方法可能随后注册） */
+  windowReady: 'plugin-l4-registry-window-ready',
   /** l4 → main：某插件在某些方法上已注册 */
   register: 'plugin-l4-registry-register',
   /** l4 → main：插件卸载，清空登记 */
@@ -96,6 +98,11 @@ export interface L4HostBridge {
   has(pluginId: string): boolean
   /** 调用 l4 窗口内的插件方法；未登记时与本地 registry 一样 reject。 */
   call(pluginId: string, method: string, args: unknown[]): Promise<unknown>
+  /**
+   * 清除某个 l4 窗口的全部登记（窗口关闭 / 插件停用 / 被 iframe 回退替换时调用）。
+   * 不清理的话 `has()` 会一直为 true，调用被路由到已消失的窗口，只能等超时。
+   */
+  unregisterWindow(sourcePluginId: string): void
   dispose(): void
 }
 
@@ -107,6 +114,16 @@ export function createL4HostBridge(bus: RegistryBus, invoke: (pluginId: string, 
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const plugins = new Map<string, Map<string, string>>() // pluginId → method → label
   const pending = new Map<string, PendingCall>()
+  /**
+   * 窗口已创建、前端尚未 registerMethod 期间的调用：method → 挂起的 deferred。
+   *
+   * `createRemoteWebview` 在窗口创建成功时就 resolve，插件资源与 node bridge 还要
+   * 稍后才就绪；这段间隙里直接报「未提供方法」会让调用方看到假失败。改为短暂排队，
+   * 注册到达时统一唤醒，超时则以明确错误失败。
+   */
+  const waiting = new Map<string, Array<{ method: string; args: unknown[]; resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>>()
+  /** 已创建过的 l4 窗口（即使还没注册任何方法）。用于区分「尚未就绪」与「不认识」。 */
+  const knownWindows = new Set<string>()
 
   const settle = (callId: string, error: string | undefined, result: unknown) => {
     const call = pending.get(callId)
@@ -117,6 +134,16 @@ export function createL4HostBridge(bus: RegistryBus, invoke: (pluginId: string, 
     else call.resolve(result)
   }
 
+  const dispatch = (pluginId: string, method: string, args: unknown[], label: string): Promise<unknown> => new Promise((resolve, reject) => {
+    const callId = newCallId()
+    const timer = setTimeout(() => {
+      pending.delete(callId)
+      reject(new Error(`插件 ${pluginId} 的方法 ${method} 调用超时（独立窗口无响应）`))
+    }, timeoutMs)
+    pending.set(callId, { resolve, reject, timer })
+    bus.send(L4_REGISTRY_EVENTS.call, { callId, pluginId, method, args }, label)
+  })
+
   const offs = [
     bus.on(L4_REGISTRY_EVENTS.register, (raw) => {
       const payload = raw as { pluginId?: string; method?: string }
@@ -124,6 +151,23 @@ export function createL4HostBridge(bus: RegistryBus, invoke: (pluginId: string, 
       const methods = plugins.get(payload.pluginId) ?? new Map<string, string>()
       methods.set(payload.method, l4WindowLabel(payload.pluginId))
       plugins.set(payload.pluginId, methods)
+      knownWindows.add(payload.pluginId)
+      // 唤醒等在该方法上的调用
+      const queue = waiting.get(payload.pluginId)
+      if (!queue) return
+      const rest: typeof queue = []
+      for (const item of queue) {
+        if (item.method !== payload.method) { rest.push(item); continue }
+        clearTimeout(item.timer)
+        dispatch(payload.pluginId, item.method, item.args, l4WindowLabel(payload.pluginId)).then(item.resolve, item.reject)
+      }
+      if (rest.length === 0) waiting.delete(payload.pluginId)
+      else waiting.set(payload.pluginId, rest)
+    }),
+    bus.on(L4_REGISTRY_EVENTS.windowReady, (raw) => {
+      // 窗口侧 node bridge 安装完成：此后即使方法还没注册，调用也应排队而不是立即失败
+      const pluginId = (raw as { pluginId?: string })?.pluginId
+      if (pluginId) knownWindows.add(pluginId)
     }),
     bus.on(L4_REGISTRY_EVENTS.unregister, (raw) => {
       const pluginId = (raw as { pluginId?: string })?.pluginId
@@ -154,18 +198,40 @@ export function createL4HostBridge(bus: RegistryBus, invoke: (pluginId: string, 
     has: (pluginId) => plugins.has(pluginId),
     call: (pluginId, method, args) => {
       const methods = plugins.get(pluginId)
-      if (!methods) return Promise.reject(new Error(`插件 ${pluginId} 未提供方法 ${method}`))
-      const label = methods.get(method)
-      if (!label) return Promise.reject(new Error(`插件 ${pluginId} 未提供方法 ${method}`))
+      const label = methods?.get(method)
+      if (label) return dispatch(pluginId, method, args, label)
+      // 已登记过该插件的其它方法 → 说明窗口活着但这个方法确实不存在，立即报错。
+      // 只有「窗口已知、一个方法都还没注册」才是启动间隙，才值得排队等待。
+      if (methods && methods.size > 0) {
+        return Promise.reject(new Error(`插件 ${pluginId} 未提供方法 ${method}`))
+      }
+      if (!knownWindows.has(pluginId)) {
+        return Promise.reject(new Error(`插件 ${pluginId} 未提供方法 ${method}`))
+      }
       return new Promise((resolve, reject) => {
-        const callId = newCallId()
         const timer = setTimeout(() => {
-          pending.delete(callId)
-          reject(new Error(`插件 ${pluginId} 的方法 ${method} 调用超时（独立窗口无响应）`))
+          const queue = waiting.get(pluginId) ?? []
+          const idx = queue.findIndex((i) => i.timer === timer)
+          if (idx >= 0) queue.splice(idx, 1)
+          if (queue.length === 0) waiting.delete(pluginId)
+          reject(new Error(`插件 ${pluginId} 的方法 ${method} 调用超时（独立窗口界面未就绪）`))
         }, timeoutMs)
-        pending.set(callId, { resolve, reject, timer })
-        bus.send(L4_REGISTRY_EVENTS.call, { callId, pluginId, method, args }, label)
+        const queue = waiting.get(pluginId) ?? []
+        queue.push({ method, args, resolve, reject, timer })
+        waiting.set(pluginId, queue)
       })
+    },
+    unregisterWindow: (sourcePluginId) => {
+      // 只清该窗口对应的登记：多个 l4 窗口并存时不能误伤其它插件。
+      const label = l4WindowLabel(sourcePluginId)
+      for (const [pluginId, methods] of plugins) {
+        for (const [method, owner] of methods) {
+          if (owner === label) methods.delete(method)
+        }
+        if (methods.size === 0) plugins.delete(pluginId)
+      }
+      waiting.delete(sourcePluginId)
+      knownWindows.delete(sourcePluginId)
     },
     dispose: () => {
       for (const off of offs) off()
@@ -173,7 +239,15 @@ export function createL4HostBridge(bus: RegistryBus, invoke: (pluginId: string, 
         clearTimeout(call.timer)
         call.reject(new Error('l4 注册表桥已销毁'))
       }
+      for (const queue of waiting.values()) {
+        for (const item of queue) {
+          clearTimeout(item.timer)
+          item.reject(new Error('l4 注册表桥已销毁'))
+        }
+      }
       pending.clear()
+      waiting.clear()
+      knownWindows.clear()
       plugins.clear()
     },
   }
@@ -183,6 +257,8 @@ export function createL4HostBridge(bus: RegistryBus, invoke: (pluginId: string, 
 export interface L4NodeBridge {
   register(pluginId: string, method: string): void
   unregister(pluginId: string): void
+  /** 通告本窗口桥已就绪：此后主窗口对该插件的调用会排队等注册，而不是立即失败。 */
+  ready(pluginId: string): void
   /** 转发给主窗口代调用（l4 插件调其他插件时用）。`selfPluginId` 用于定位回执窗口。 */
   callRemote(targetPluginId: string, method: string, args: unknown[], selfPluginId?: string): Promise<unknown>
   dispose(): void
@@ -220,6 +296,7 @@ export function createL4NodeBridge(bus: RegistryBus, invokeLocal: (pluginId: str
   return {
     register: (pluginId, method) => bus.send(L4_REGISTRY_EVENTS.register, { pluginId, method }, 'main'),
     unregister: (pluginId) => bus.send(L4_REGISTRY_EVENTS.unregister, { pluginId }, 'main'),
+    ready: (pluginId) => bus.send(L4_REGISTRY_EVENTS.windowReady, { pluginId }, 'main'),
     /**
      * @param selfPluginId 发起方插件（本窗口里的那个）。主窗口据此把回执发回本窗口，
      *   缺省时主窗口会发到 `main`，调用方收不到回执只能等超时。
