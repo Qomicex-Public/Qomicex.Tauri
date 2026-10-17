@@ -60,15 +60,6 @@ const l4Window = isL4Window()
  */
 const IN_WINDOW_CALL_TIMEOUT_MS = 20_000
 
-/** l4 窗口承载的插件 id：由 `createRemoteWebview` 生成的 URL 参数带回。 */
-function l4SelfPluginId(): string {
-  try {
-    return new URLSearchParams(window.location.search).get('pluginId') ?? ''
-  } catch {
-    return ''
-  }
-}
-
 function createRegistry(hostWindow: AnyWindow, isHost: boolean): PluginRegistryApi {
   // 本地持有的导出：pluginId -> method -> fn（仅存在 fn 所在的 window）
   const localExports: Record<string, Record<string, (...args: unknown[]) => unknown>> = {}
@@ -169,7 +160,7 @@ function createRegistry(hostWindow: AnyWindow, isHost: boolean): PluginRegistryA
       if (node) {
         if (localExports[pluginId]) return callLocal(pluginId, method, args)
         // selfPluginId 用本窗口自身的插件 id：主窗口据此把回执发回本窗口
-        return node.callRemote(pluginId, method, args, l4SelfPluginId())
+        return node.callRemote(pluginId, method, args)
       }
       // iframe 内调用：转发到主窗口路由
       return new Promise((resolve, reject) => {
@@ -280,7 +271,7 @@ if (window === window.top) {
         // 主窗口的注册表；不回执的话 iframe 侧的 Promise 会一直挂着（#260）。
         const l4Node = l4Window ? getL4NodeBridge() : null
         const call = l4Node
-          ? l4Node.callRemote(pluginId, method, args, l4SelfPluginId())
+          ? l4Node.callRemote(pluginId, method, args)
           : (() => {
               // 主窗口：可能是 l4 窗口里的插件
               const l4 = getL4HostBridge()

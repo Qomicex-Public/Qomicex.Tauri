@@ -40,6 +40,15 @@ export function l4WindowLabel(pluginId: string): string {
   return `plugin-webview-${pluginId}`
 }
 
+/** l4 窗口 URL 上承载的插件 id（`?pluginWebview=1&pluginId=<id>`）。 */
+function l4SelfPluginIdFromUrl(): string {
+  try {
+    return new URLSearchParams(window.location.search).get('pluginId') ?? ''
+  } catch {
+    return ''
+  }
+}
+
 const DEFAULT_TIMEOUT_MS = 30_000
 
 /**
@@ -60,6 +69,11 @@ export interface RegistryBus {
 export interface L4BridgeOptions {
   /** 单次调用超时（毫秒）。l4 窗口被直接关闭时不会有回执，必须兜底。 */
   timeoutMs?: number
+  /**
+   * l4 窗口所属的插件 id。节点侧上报注册/注销一律用它，不采信调用方传入的
+   * pluginId —— 否则窗口内 iframe 可伪造成别的插件，删掉对方的登记。
+   */
+  selfPluginId?: string
 }
 
 interface PendingCall {
@@ -259,13 +273,24 @@ export interface L4NodeBridge {
   unregister(pluginId: string): void
   /** 通告本窗口桥已就绪：此后主窗口对该插件的调用会排队等注册，而不是立即失败。 */
   ready(pluginId: string): void
-  /** 转发给主窗口代调用（l4 插件调其他插件时用）。`selfPluginId` 用于定位回执窗口。 */
-  callRemote(targetPluginId: string, method: string, args: unknown[], selfPluginId?: string): Promise<unknown>
+  /** 转发给主窗口代调用（l4 插件调其他插件时用）。发起方身份由窗口决定，不由调用方指定。 */
+  callRemote(targetPluginId: string, method: string, args: unknown[]): Promise<unknown>
   dispose(): void
 }
 
 export function createL4NodeBridge(bus: RegistryBus, invokeLocal: (pluginId: string, method: string, args: unknown[]) => Promise<unknown>, options: L4BridgeOptions = {}): L4NodeBridge {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  /**
+   * 本窗口所属插件 id：注册/注销/代调用的身份一律用它，不采信 iframe 自报的 id。
+   *
+   * 未显式配置时从窗口 URL 读（真实运行路径）。两者都取不到说明调用方式有误：
+   * 此时身份为空会让回执被路由到 main，表现为调用超时，因此直接抛错更易排查。
+   */
+  const selfPluginId = (): string => {
+    const id = options.selfPluginId ?? l4SelfPluginIdFromUrl()
+    if (!id) throw new Error('l4 节点桥缺少自身插件 id（需传 options.selfPluginId 或窗口 URL 带 pluginId）')
+    return id
+  }
   const pending = new Map<string, PendingCall>()
 
   const settle = (callId: string, error: string | undefined, result: unknown) => {
@@ -294,21 +319,25 @@ export function createL4NodeBridge(bus: RegistryBus, invokeLocal: (pluginId: str
   ]
 
   return {
-    register: (pluginId, method) => bus.send(L4_REGISTRY_EVENTS.register, { pluginId, method }, 'main'),
-    unregister: (pluginId) => bus.send(L4_REGISTRY_EVENTS.unregister, { pluginId }, 'main'),
-    ready: (pluginId) => bus.send(L4_REGISTRY_EVENTS.windowReady, { pluginId }, 'main'),
     /**
-     * @param selfPluginId 发起方插件（本窗口里的那个）。主窗口据此把回执发回本窗口，
-     *   缺省时主窗口会发到 `main`，调用方收不到回执只能等超时。
+     * 上报注册。**不信任调用方传入的 pluginId**：l4 窗口会把 iframe 消息里的
+     * pluginId 原样转发过来，恶意插件可以伪造成别人的 id 发 unregister，把对方登记
+     * 删掉。这里一律以本窗口所属插件 id 为准。
      */
-    callRemote: (targetPluginId, method, args, selfPluginId = '') => new Promise((resolve, reject) => {
+    register: (pluginId, method) => bus.send(L4_REGISTRY_EVENTS.register, { pluginId: selfPluginId() || pluginId, method }, 'main'),
+    unregister: (pluginId) => bus.send(L4_REGISTRY_EVENTS.unregister, { pluginId: selfPluginId() || pluginId }, 'main'),
+    ready: (pluginId) => bus.send(L4_REGISTRY_EVENTS.windowReady, { pluginId: selfPluginId() || pluginId }, 'main'),    /**
+     * @param selfPluginId 兼容保留：身份一律取本窗口所属插件 id（见 options.selfPluginId），
+     *   传入值不再影响回执路由，避免伪造身份者把回执引到别的窗口。
+     */
+    callRemote: (targetPluginId, method, args) => new Promise((resolve, reject) => {
       const callId = newCallId()
       const timer = setTimeout(() => {
         pending.delete(callId)
         reject(new Error(`插件 ${targetPluginId} 的方法 ${method} 调用超时（主窗口无响应）`))
       }, timeoutMs)
       pending.set(callId, { resolve, reject, timer })
-      bus.send(L4_REGISTRY_EVENTS.proxyCall, { callId, pluginId: selfPluginId, targetPluginId, method, args }, 'main')
+      bus.send(L4_REGISTRY_EVENTS.proxyCall, { callId, pluginId: selfPluginId(), targetPluginId, method, args }, 'main')
     }),
     dispose: () => {
       for (const off of offs) off()

@@ -170,9 +170,13 @@ export async function createRemoteWebview(plugin: PluginInfo): Promise<void> {
     })
     win.once('tauri://error', (e) => {
       pendingWebviews.delete(label)
-      // 窗口没建成：清掉期望状态，避免遗留的 'active' 让后续判断卡在错误分支
-      desiredState.delete(plugin.manifest.id)
       console.error('[plugin] l4 webview 创建失败，降级为 iframe', plugin.manifest.id, e)
+      // 创建期间用户已停用：不能建降级沙箱，也不能清掉停用标记 —— 否则等待中的
+      // activatePlugin 会越过停用检查、把插件重新置回 active
+      if (desiredState.get(plugin.manifest.id) === 'disabled') {
+        resolve()
+        return
+      }
       if (!getInstance(plugin.manifest.id)) createSandbox(plugin, !hasPageEntry(plugin))
       resolve()
     })

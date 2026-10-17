@@ -117,7 +117,7 @@ try {
     const node = bus.forWindow(label)
 
     const host = createL4HostBridge(main, async () => { throw new Error('不该走 iframe 路径') })
-    const l4 = createL4NodeBridge(node, async (pluginId, method, args) => `${pluginId}.${method}(${args.join(',')})`)
+    const l4 = createL4NodeBridge(node, async (pluginId, method, args) => `${pluginId}.${method}(${args.join(",")})`, { selfPluginId: PLUGIN })
 
     check('注册前 host.has 为 false', host.has(PLUGIN), false)
     l4.register(PLUGIN, 'greet')
@@ -146,7 +146,7 @@ try {
       proxied.push({ pluginId, method, args })
       return `proxied:${pluginId}:${method}`
     })
-    const l4 = createL4NodeBridge(node, async () => { throw new Error('不该走本地') })
+    const l4 = createL4NodeBridge(node, async () => { throw new Error('插件边界') }, { selfPluginId: PLUGIN })
 
     const result = await l4.callRemote('top.qomicex.markdown', 'renderMarkdown', ['# hi'], PLUGIN)
     check('l4 反向调用拿到主窗口结果', result, 'proxied:top.qomicex.markdown:renderMarkdown')
@@ -164,7 +164,7 @@ try {
     const node = bus.forWindow(label)
 
     const host = createL4HostBridge(main, async () => {})
-    const l4 = createL4NodeBridge(node, async () => { throw new Error('插件内部炸了') })
+    const l4 = createL4NodeBridge(node, async () => { throw new Error('插件内部炸了') }, { selfPluginId: PLUGIN })
 
     l4.register(PLUGIN, 'boom')
     await flush()
@@ -187,7 +187,7 @@ try {
     const node = bus.forWindow(label)
 
     const host = createL4HostBridge(main, async () => {}, { timeoutMs: 50 })
-    const l4 = createL4NodeBridge(node, () => { throw new Error('同步抛出') }, { timeoutMs: 50 })
+    const l4 = createL4NodeBridge(node, () => { throw new Error('同步抛出') }, { timeoutMs: 50, selfPluginId: PLUGIN })
 
     l4.register(PLUGIN, 'syncBoom')
     await flush()
@@ -210,7 +210,7 @@ try {
     const node = bus.forWindow(label)
 
     const host = createL4HostBridge(main, () => { throw new Error('代调用同步炸了') }, { timeoutMs: 50 })
-    const l4 = createL4NodeBridge(node, async () => {}, { timeoutMs: 50 })
+    const l4 = createL4NodeBridge(node, async () => {}, { timeoutMs: 50, selfPluginId: PLUGIN })
 
     let caught = null
     try {
@@ -230,7 +230,7 @@ try {
     const main = bus.forWindow('main')
     const node = bus.forWindow(label)
     const host = createL4HostBridge(main, async () => {})
-    const l4 = createL4NodeBridge(node, async () => {})
+    const l4 = createL4NodeBridge(node, async () => {}, { selfPluginId: PLUGIN })
 
     let unknownPlugin = null
     try {
@@ -260,7 +260,7 @@ try {
     const main = bus.forWindow('main')
     const node = bus.forWindow(label)
     const host = createL4HostBridge(main, async () => {}, { timeoutMs: 60 })
-    const l4 = createL4NodeBridge(node, async () => {})
+    const l4 = createL4NodeBridge(node, async () => {}, { selfPluginId: PLUGIN })
 
     l4.register(PLUGIN, 'hang')
     await flush()
@@ -283,7 +283,7 @@ try {
     const main = bus.forWindow('main')
     const node = bus.forWindow(label)
     const host = createL4HostBridge(main, async () => {})
-    const l4 = createL4NodeBridge(node, async () => 'ok')
+    const l4 = createL4NodeBridge(node, async () => 'ok', { selfPluginId: PLUGIN })
 
     l4.register(PLUGIN, 'greet')
     l4.register(PLUGIN, 'greet')
@@ -307,7 +307,7 @@ try {
     const main = bus.forWindow('main')
     const node = bus.forWindow(label)
     const host = createL4HostBridge(main, async () => {})
-    const l4 = createL4NodeBridge(node, async () => 'ok')
+    const l4 = createL4NodeBridge(node, async () => 'ok', { selfPluginId: PLUGIN })
 
     l4.register(PLUGIN, 'greet')
     await flush()
@@ -333,7 +333,7 @@ try {
     const main = bus.forWindow('main')
     const node = bus.forWindow(label)
     const host = createL4HostBridge(main, async () => {})
-    const l4 = createL4NodeBridge(node, async () => 'late-ok')
+    const l4 = createL4NodeBridge(node, async () => 'late-ok', { selfPluginId: PLUGIN })
 
     l4.ready(PLUGIN)
     await flush()
@@ -354,7 +354,7 @@ try {
     const main = bus.forWindow('main')
     const node = bus.forWindow(label)
     const host = createL4HostBridge(main, async () => {}, { timeoutMs: 60 })
-    const l4 = createL4NodeBridge(node, async () => 'ok')
+    const l4 = createL4NodeBridge(node, async () => 'ok', { selfPluginId: PLUGIN })
 
     l4.ready(PLUGIN)
     await flush()
@@ -381,18 +381,58 @@ try {
       if (host.has(pluginId)) return host.call(pluginId, method, args)
       return Promise.reject(new Error(`插件 ${pluginId} 未提供方法 ${method}`))
     })
-    const l4a = createL4NodeBridge(nodeA, async () => 'ok')
-    const l4b = createL4NodeBridge(nodeB, async (p, m, a) => `b:${p}:${m}:${a.join(',')}`)
+    const l4a = createL4NodeBridge(nodeA, async () => 'ok', { selfPluginId: 'plugin.a' })
+    const l4b = createL4NodeBridge(nodeB, async (p, m, a) => `b:${p}:${m}:${a.join(',')}`, { selfPluginId: 'plugin.b' })
 
     l4b.register('plugin.b', 'serve')
     await flush()
     // plugin.a 反向调用 plugin.b（活在另一个 l4 窗口）
-    const result = await l4a.callRemote('plugin.b', 'serve', ['arg'], 'plugin.a')
+    const result = await l4a.callRemote('plugin.b', 'serve', ['arg'])
     check('跨 l4 窗口调用能到达目标窗口', result, 'b:plugin.b:serve:arg')
 
     host.dispose()
     l4a.dispose()
     l4b.dispose()
+  }
+
+  // ---- 场景 12：节点桥不采信调用方传入的 pluginId（防伪造 unregister 删别人登记）----
+  {
+    // 独立 bus：避免与前面场景的监听器串扰
+    const bus = createMemoryBus()
+    const main = bus.forWindow('main')
+    const victim = 'top.qomicex.markdown'
+    // 本窗口属于 PLUGIN（恶意方）；调用方会尝试传别人的 id
+    const attacker = createL4NodeBridge(bus.forWindow(label), async () => 'attacker-ok', { selfPluginId: PLUGIN })
+    // 受害者在自己的 l4 窗口里
+    const victimBridge = createL4NodeBridge(bus.forWindow(l4WindowLabel(victim)), async () => 'victim-ok', { selfPluginId: victim })
+    const host = createL4HostBridge(main, async () => {})
+
+    victimBridge.register(victim, 'renderMarkdown')
+    await flush()
+    check('受害者已登记', host.has(victim), true)
+
+    // 伪造注销：用攻击者 bridge 传受害者的 id
+    attacker.unregister(victim)
+    await flush()
+    check('伪造 unregister 未能删除受害者的登记', host.has(victim), true)
+
+    // 伪造注册：攻击者声称自己提供受害者的方法
+    attacker.register(victim, 'forged')
+    await flush()
+    let forgedRejected = false
+    try {
+      await host.call(victim, 'forged', [])
+    } catch {
+      forgedRejected = true
+    }
+    check('伪造 register 未给受害者新增方法', forgedRejected, true)
+
+    // 受害者的真实方法必须仍然可用（登记没被攻击者的注册覆盖）
+    check('受害者的真实方法仍可调用', await host.call(victim, 'renderMarkdown', []), 'victim-ok')
+
+    host.dispose()
+    attacker.dispose()
+    victimBridge.dispose()
   }
 
   // ---- 场景 7：dispose 后不再处理事件，挂起的调用被 reject（插件禁用/窗口关闭）----
@@ -401,7 +441,7 @@ try {
     const main = bus.forWindow('main')
     const node = bus.forWindow(label)
     const host = createL4HostBridge(main, async () => {}, { timeoutMs: 60 })
-    const l4 = createL4NodeBridge(node, async () => {})
+    const l4 = createL4NodeBridge(node, async () => {}, { selfPluginId: PLUGIN })
 
     l4.register(PLUGIN, 'greet')
     await flush()

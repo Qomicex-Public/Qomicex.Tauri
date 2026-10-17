@@ -92,6 +92,8 @@ export function initL4Bridge(): Promise<void> {
 
   // 构造即同步订阅全部注册表事件（把各自的 listen() 塞进 pendingListeners）
   const hostBridge = createL4HostBridge(registryBus, (pluginId, method, args) => {
+    // 注册表要在**回调内部**读取：initL4Bridge 可能在 __pluginRegistry 安装之前执行，
+    // 提前取一次会让之后所有代调用都返回「not initialized」。
     const registry = (window as unknown as {
       __pluginRegistry?: { _callWithinWindow: (p: string, m: string, a: unknown[]) => Promise<unknown> }
     }).__pluginRegistry
