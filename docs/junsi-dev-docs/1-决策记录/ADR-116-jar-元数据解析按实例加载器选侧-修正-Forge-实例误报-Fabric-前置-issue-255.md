@@ -36,7 +36,7 @@ issue #255 报告：Forge 实例（刀剑异闻录整合包，Forge 1.20.1）的
 2. **Cleanroom 归入 Forge 系**：它是 Forge fork，模组元数据同为 `META-INF/mods.toml`。
 3. **per-jar 缓存身份必须含解析侧**：缓存 key 由 `{pathSha1}.json` 改为 `{pathSha1}-{forge|neoforge|fabric}.json`。同一 jar 在 Forge 实例按 mods.toml 解析、在 Fabric 实例按 fabric.mod.json 解析，结果不同；只按路径做 key 会让先扫的实例把结论喂给后扫的实例（size+mtime 完全相同，无从察觉）。
 4. **两级缓存版本 bump**：core `MOD_META_CACHE_VERSION` 3→4、backend `MODS_CACHE_SCHEMA` 4→5。旧缓存里 Forge 实例的 dependencies 取自 fabric.mod.json，不失效会继续误报。
-5. **backend 的 mods 缓存必须记录并校验 loader**（PR #258 评审 sourcery 指出）：磁盘缓存原只校验 schema/TTL/目录指纹。实例换加载器（如 Forge → Fabric）时目录签名不变、TTL 未到，会继续返回按旧加载器解析的依赖。现缓存写入 `loader`，命中时按**解析侧等价**比较（`forge`/`cleanroom` 同为 Forge 侧、`fabric` 与未知同为 Fabric 侧、`neoforge` 独占一侧），不一致则强制重扫（stale 分支同样拒绝）。
+5. **backend 的两套磁盘缓存都必须记录并校验 loader**（PR #258 评审 sourcery + 二轮 CodeRabbit 指出）：模组列表缓存（`ModsCacheEntry`）与更新检查缓存（`UpdateCacheEntry`）原只校验 schema/TTL/目录指纹。实例换加载器（如 Forge → Fabric）时目录签名、实例 ID 都不变、TTL 未到，前者会继续返回按旧加载器解析的依赖，后者会把旧加载器筛出的更新清单交给 `batch_update_mods`——那里按清单的 `file_name`/`download_url`/`new_file_name` 删旧文件、装新文件，后果比少一个警告严重得多。现两套缓存都写入 `loader`，命中时按**解析侧等价**比较（`forge`/`cleanroom` 同为 Forge 侧、`fabric` 与未知同为 Fabric 侧、`neoforge` 独占一侧），不一致则拒绝（fresh 与 stale 分支都拒绝，且不基于旧条目触发后台刷新）。
 6. **host_port 的 mods 扫描改用「实际游戏加载器」**（PR #258 评审 sourcery 指出）：`detect_loaders` 按 `libraries` 顺序入列，OptiFine 常排在 Forge/NeoForge 之前，原先直接取「首个非 Vanilla/Unknown」会把 Forge+OptiFine 宿主判成 OptiFine，从而按 Fabric 侧解析双端 jar。现新增 `ConnectorGameInfo.scan_loader`（`skip_serializing`，不进协议负载），由 `pick_game_loader` 按 NeoForge → Forge → Cleanroom → Quilt → Fabric 优先级挑选，与展示用的 `loader` 解耦。
 7. **嵌套 Jar-in-Jar 的 id 采集也要按侧**（PR #9 评审 sourcery 指出）：嵌套 jar 同样可能是双端 jar，`collect_nested_ids` / `nested_jar_id` 原先固定读 Fabric 侧，Forge 实例会把另一端的 id 记进 `provides_ids`，掩盖真实的 Forge 侧依赖。现按侧优先、另一侧兜底。
 8. **解析「未填充」不再等同于「命中」**（PR #9 评审 sourcery 指出）：原实现只要条目存在就停止（`parse_*` 返回 `()`，结构不符时静默不填充），会让有效的备用元数据被跳过。现 `parse_fabric_json` / `parse_forge_toml` 返回是否成功填充，`try_parse_mod_metadata` 据此区分三态：`Parsed`（停止）/ `NotPresent`（回退下一格式或 `mcmod.info`）/ `ReadError`（条目存在但读取失败 → 同源 `catch{}` 语义，放弃本 jar）。
@@ -87,7 +87,7 @@ issue #255 报告：Forge 实例（刀剑异闻录整合包，Forge 1.20.1）的
 - qomicex-core-rust/src/services/local/factory.rs（透传 loader + 接线测试）
 - qomicex-core-rust/src/services/local/mods.rs（LoaderSide 三侧判定 / parse_metadata 按侧分派 / try_parse_mod_metadata 三态 / 嵌套 id 按侧 / 缓存 key 含侧别 / MOD_META_CACHE_VERSION 3→4）
 - qomicex-core-rust/src/jni.rs（唯一另一处 create_mods 调用，传 None）
-- src-backend/qomicex-backend/src/endpoints/instance_files.rs（Resolved 增 loader，6 处调用点；ModsCacheEntry 增 loader 并校验；MODS_CACHE_SCHEMA 4→5）
+- src-backend/qomicex-backend/src/endpoints/instance_files.rs（Resolved 增 loader，6 处调用点；ModsCacheEntry 与 UpdateCacheEntry 均增 loader 并校验；MODS_CACHE_SCHEMA 4→5）
 - src-backend/qomicex-backend/src/endpoints/connector.rs（scan_mods_to_entries / scan_host_mods_from_game_dir 增 loader，2 处调用点；新增 ConnectorGameInfo.scan_loader 与 pick_game_loader）
 - 父仓需 bump qomicex-core-rust 子模块指针
 
@@ -96,4 +96,5 @@ issue #255 报告：Forge 实例（刀剑异闻录整合包，Forge 1.20.1）的
 |---|---|---|---|
 | 2026-10-17 | v1.0 | 初版创建 | AI Agent |
 | 2026-10-17 | v1.1 | PR 评审（sourcery/CodeRabbit）后补 4 项：NeoForge 与 Forge 分侧、嵌套 Jar-in-Jar id 按侧、解析未填充不再等同命中、backend 缓存校验 loader 与 host_port 改用实际游戏加载器；测试增至 7 项，逐项验证「抽掉即失败」 | AI Agent |
+| 2026-10-17 | v1.3 | 二轮评审 CodeRabbit 补第三处同类遗漏：更新检查缓存 `UpdateCacheEntry` 同样不校验 loader，而它的产物会被 `batch_update_mods` 用于删装模组文件；两套缓存的 loader 校验口径统一到 `loader_matches` | AI Agent |
 | 2026-10-17 | v1.2 | 二轮评审 CodeRabbit 指出「是对象/有表」不等于「可用」：`fabric.mod.json` 为 `{}`、`[[mods]]` 全空时仍算解析成功，会吞掉同 jar 的有效备用元数据。改为按实际提取到的字段判定可用性；补 2 项双向回退测试（含一个必须用 Forge 实例否则假通过的用例）；ADR 决策项增至 10 条 | AI Agent |
