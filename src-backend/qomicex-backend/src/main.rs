@@ -115,6 +115,18 @@ async fn main() {
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let shutdown_for_pipe = shutdown_rx.clone();
 
+    // 父进程看护：启动器崩溃 / 被任务管理器结束 / 更新器替换进程时，它来不及执行
+    // RunEvent::Exit 里的 kill，后端必须自己退出。否则每遇到一次就留一个僵尸后端，
+    // 堆积后新启动器连不上自己的管道，所有 API 502
+    // （见 services/parent_watch.rs）。
+    {
+        let tx = shutdown_tx.clone();
+        crate::services::parent_watch::spawn_guard(move || {
+            tracing::warn!("父进程已退出，后端随之关闭");
+            let _ = tx.send(true);
+        });
+    }
+
     let ctrl_c = async move {
         tokio::signal::ctrl_c().await.ok();
         let _ = shutdown_tx.send(true);

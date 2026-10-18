@@ -153,6 +153,10 @@ fn spawn_backend(app: &tauri::App, pipe_name: &Option<String>) {
     }
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
+    // 让后端知道父进程是谁：启动器崩溃 / 被任务管理器结束时，RunEvent::Exit 跑不到，
+    // 后端据此自行退出（services/parent_watch.rs）。此前只靠优雅退出清理，非正常退出
+    // 会累积僵尸后端，堆积后新启动器连不上自己的管道（所有 API 502）。
+    cmd.env("QOMICEX_PARENT_PID", std::process::id().to_string());
     // 注意：不要给 backend 注入 QOMICEX_HOME=app_data_dir()——三平台上该目录
     // （identifier 目录 / Windows Roaming）与 backend 默认解析目录（{LocalAppData}/
     // qomicex-launcher）不一致，注入会导致老用户配置"搬家"丢失，且与 Tauri 主进程
@@ -171,6 +175,19 @@ fn spawn_backend(app: &tauri::App, pipe_name: &Option<String>) {
             return;
         }
     };
+
+    // Windows：把后端放进 KILL_ON_JOB_CLOSE 的 Job Object。启动器进程无论怎么结束
+    // （优雅退出、崩溃、任务管理器强杀），内核都会立刻终止 Job 内所有进程 —— 不需要
+    // 依赖后端每秒一次的父进程轮询，也就不存在最长 1 秒的残留窗口。
+    //
+    // 失败（权限受限、旧系统）不致命：后端自身的 parent_watch 仍然生效，只是可能晚
+    // 1 秒退出。
+    #[cfg(windows)]
+    {
+        if let Err(e) = ipc::assign_to_kill_on_close_job(child.id()) {
+            tauri_log!("backend", "job object 绑定失败（回退到后端自检）: {e}");
+        }
+    }
     let _tag = BACKEND_EXE;
     if let Some(out) = child.stdout.take() {
         std::thread::spawn(move || {

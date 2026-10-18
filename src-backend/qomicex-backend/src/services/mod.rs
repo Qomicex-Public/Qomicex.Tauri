@@ -23,6 +23,7 @@ pub mod modpack_manifest;
 pub mod modpack_update;
 pub mod multimc;
 pub mod options;
+pub mod parent_watch;
 pub mod plugin;
 pub mod plugin_signature;
 pub mod plugin_store;
