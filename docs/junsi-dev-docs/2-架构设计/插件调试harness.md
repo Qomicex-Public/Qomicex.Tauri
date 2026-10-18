@@ -124,7 +124,12 @@ pnpm run harness -- hello-plugin --build-cmd "pnpm run build"
 插件设置页是 `srcdoc` iframe，能否滚动只由注入的 CSS（`src/plugins/plugin-css.ts`）决定。
 `scripts/harness/verify-settings-scroll.mjs` 在真实浏览器里校验它：起 stub + Vite dev、注入
 Tauri mock，进「设置 → 插件 → 插件设置」，用**真实 `mouse.wheel`** 滚长设置页 iframe，
-断言滚到底、底部标记进入视口、外层设置页不跟着滚。
+断言滚到底、底部标记进入视口、外层滚动容器不跟着滚。
+
+「外层不跟着滚」比较的是 iframe 在宿主文档里最近的滚动容器（`overflow-y-auto` 的 `PageShell`）
+的 `scrollTop`，不是 `window.scrollY`：`Layout` 的 `main` 是 `overflow-hidden`，宿主页面本身
+永不滚动，用 `window.scrollY` 等于没断言。滚轮最后一格只补到 iframe 底部为止——越过底部后
+浏览器会把剩余量链式交给外层容器（scroll chaining），那是正常行为，会掩盖这条断言。
 
 ```bash
 pnpm run harness:verify-settings-scroll            # 退出码 0/1
@@ -136,6 +141,10 @@ pnpm run harness:verify-settings-scroll --headed   # 看滚动过程
 `window.scrollTo` 依然有效、`scrollHeight > clientHeight` 也照旧成立，只有真实滚轮能复现
 「用户滚不动、内容被裁掉」（issue #269）。注入 CSS 的静态断言另见
 `scripts/test-plugin-settings-scroll.mjs`，两者互补。
+
+实测（`plugin-css.ts` 注入 `body{overflow:auto}`）：8 格滚轮到 `scrollY=2139=maxScroll`、底部
+标记入视口、宿主容器 `scrollTop` 0 → 0，11/11；把注入 CSS 改回 `overflow:hidden`：iframe
+`scrollY` 始终为 0，20 格滚轮全部链式交给宿主容器（`scrollTop` 0 → 18），5/11、退出码 1。
 
 > 注意：frame URL 恒为 `about:srcdoc`，脚本按槽位 `data-slot-id` 定位 iframe，不能用 URL 匹配。
 
@@ -161,3 +170,4 @@ pnpm run harness:verify-settings-scroll --headed   # 看滚动过程
 |---|---|---|---|
 | 2026-08-25 | v1.0 | 初版创建（PHASE1 任务⑥） | AI Agent |
 | 2026-10-18 | v1.1 | 抽出 `lib.mjs` 公共设施；新增 `verify-settings-scroll.mjs` 与 `settings-pages-demo` fixture（设置页滚动端到端校验） | AI Agent |
+| 2026-10-18 | v1.2 | 外层滚动断言改比最近滚动容器 `scrollTop`（`window.scrollY` 在 `overflow-hidden` 的 `main` 下恒为 0），滚轮最后一格不产生溢出 | AI Agent |

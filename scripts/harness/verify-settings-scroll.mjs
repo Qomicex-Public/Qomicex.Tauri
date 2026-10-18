@@ -13,6 +13,10 @@
  * 设置页是 srcdoc iframe（见 sandbox.ts loadSandboxContent），frame 的 URL 恒为 about:srcdoc，
  * 因此按槽位 `data-slot-id` 定位，不能用 URL 匹配。
  *
+ * 「没被裁掉」的判据是 iframe 自己滚到 maxScroll 且底部标记入视口；外层则比较 iframe 最近的滚动
+ * 容器（PageShell，overflow-y-auto）的 scrollTop 是否变化——Layout 的 main 是 overflow-hidden，
+ * window.scrollY 恒为 0，拿它当断言等于没断言。
+ *
  * 依赖 plugins-dev/settings-pages-demo（本脚本会自动构建其 dist/）。
  * 用法：pnpm run harness:verify-settings-scroll [--headed]
  * 退出码：0 全部通过；1 有断言失败。
@@ -85,9 +89,12 @@ async function dismissModals(page) {
   }
 }
 
+/** 槽位 iframe 的选择器（frame URL 恒为 about:srcdoc，只能按 data-slot-id 定位）。 */
+const slotSelector = (file) => `.plugin-slot[data-slot-id="plugin-settings:${PLUGIN_ID}:${file}"] iframe`
+
 /** 按槽位拿到设置页 iframe 与它的文档（srcdoc，等插件 HTML fetch 完才渲染）。 */
 async function waitForSlotFrame(page, file, timeoutMs = 25000) {
-  const selector = `.plugin-slot[data-slot-id="plugin-settings:${PLUGIN_ID}:${file}"] iframe`
+  const selector = slotSelector(file)
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const el = await page.$(selector)
@@ -101,13 +108,16 @@ async function waitForSlotFrame(page, file, timeoutMs = 25000) {
   return null
 }
 
-/** 设置页 iframe 的读值：内容/视口高度、两轴 overflow、当前 scrollY、底部标记位置。 */
+/** 设置页 iframe 的读值：内容/视口高度、两轴 overflow、当前滚动位置、底部标记位置。
+ *  滚动位置取 window.scrollY 与 document.scrollingElement.scrollTop 的较大值：body 带 overflow 时
+ *  不同浏览器把滚动落到哪个对象上并不一致。 */
 const probeFrame = (markerId) => {
   const html = document.documentElement
+  const scroller = document.scrollingElement ?? html
   const marker = markerId ? document.getElementById(markerId) : null
   const rect = marker?.getBoundingClientRect()
   return {
-    scrollY: Math.round(window.scrollY),
+    scrollY: Math.round(Math.max(window.scrollY, scroller.scrollTop)),
     scrollHeight: html.scrollHeight,
     clientHeight: html.clientHeight,
     maxScroll: html.scrollHeight - html.clientHeight,
@@ -117,14 +127,51 @@ const probeFrame = (markerId) => {
   }
 }
 
-/** 真实滚轮：鼠标移到 iframe 中心后连续滚动。 */
-async function wheelScroll(page, box, ticks = 10, deltaY = 300) {
+/** 宿主文档里 iframe 最近的滚动容器（可滚动 overflow 的最近祖先，没有则回退 document.scrollingElement）。
+ *  不能只看 window.scrollY：Layout 的 main 是 overflow-hidden，页面本身永远不滚，设置页真正的滚动
+ *  容器是外层 PageShell（overflow-y-auto），比较它的 scrollTop 才能发现「外层跟着滚」。 */
+const probeOuterScroll = (selector) => {
+  const scrollable = (el) => {
+    const overflowY = getComputedStyle(el).overflowY
+    return overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay'
+  }
+  let node = document.querySelector(selector)?.parentElement ?? null
+  let container = null
+  while (node && node !== document.documentElement) {
+    if (scrollable(node)) {
+      container = node
+      break
+    }
+    node = node.parentElement
+  }
+  const target = container ?? document.scrollingElement ?? document.documentElement
+  const classes = typeof target.className === 'string' ? target.className.trim().split(/\s+/).slice(0, 2).join('.') : ''
+  return {
+    via: container ? `${target.tagName.toLowerCase()}${classes ? `.${classes}` : ''}` : 'document.scrollingElement',
+    scrollTop: Math.round(target.scrollTop),
+    scrollHeight: target.scrollHeight,
+    clientHeight: target.clientHeight,
+  }
+}
+
+/** iframe 内当前滚动位置（与 probeFrame 同口径）。 */
+const frameScrollTop = (frame) => frame.evaluate(() => Math.round(Math.max(window.scrollY, (document.scrollingElement ?? document.documentElement).scrollTop)))
+
+/** 真实滚轮：鼠标移到 iframe 中心后连续滚动，最后一格只补到 iframe 底部为止。
+ *  滚轮越过 iframe 底部后，剩余量会被浏览器链式交给外层滚动容器（scroll chaining），那是正常行为，
+ *  却会掩盖「外层是不是自己在滚」，所以这里不产生溢出。返回实际 tick 次数。 */
+async function wheelScroll(page, box, frame, maxScroll, ticks = 20, deltaY = 300) {
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  let used = 0
   for (let i = 0; i < ticks; i += 1) {
-    await page.mouse.wheel(0, deltaY)
+    const remaining = maxScroll - await frameScrollTop(frame)
+    if (remaining <= 2) break
+    await page.mouse.wheel(0, Math.min(deltaY, remaining))
+    used += 1
     await page.waitForTimeout(100)
   }
   await page.waitForTimeout(400)
+  return used
 }
 
 // --- 0. 构建 fixture（dist/ 是生成物，避免用到过期产物） ---
@@ -192,15 +239,15 @@ try {
     check('body 两轴 overflow 不是 hidden/clip（否则用户滚不动）', before.bodyOverflowY !== 'hidden' && before.bodyOverflowY !== 'clip', `body.overflowY=${before.bodyOverflowY} html.overflowY=${before.htmlOverflowY}`)
     check('滚动前在顶部', before.scrollY === 0, `scrollY=${before.scrollY}`)
 
-    const outerBefore = await page.evaluate(() => Math.round(window.scrollY))
-    if (box) await wheelScroll(page, box)
+    const outerBefore = await page.evaluate(probeOuterScroll, slotSelector(LONG_FILE))
+    const ticks = box ? await wheelScroll(page, box, long.frame, before.maxScroll) : 0
     const after = await long.frame.evaluate(probeFrame, MARKER_ID)
-    const outerAfter = await page.evaluate(() => Math.round(window.scrollY))
+    const outerAfter = await page.evaluate(probeOuterScroll, slotSelector(LONG_FILE))
 
     check('真实滚轮能滚动长设置页', after.scrollY > 0, `scrollY=${after.scrollY} / maxScroll=${after.maxScroll}`)
     check('滚到底部（未被截断）', after.scrollY >= after.maxScroll - 2, `scrollY=${after.scrollY} maxScroll=${after.maxScroll}`)
     check('底部标记滚入视口', after.markerInView, `markerInView=${after.markerInView}`)
-    check('滚动发生在 iframe 内（外层设置页不跟着滚）', outerAfter === outerBefore, `外层 scrollY ${outerBefore} → ${outerAfter}`)
+    check('滚动发生在 iframe 内（宿主滚动容器不跟着滚）', outerAfter.scrollTop === outerBefore.scrollTop, `${ticks} 格滚轮到 iframe 底部，${outerBefore.via} scrollTop ${outerBefore.scrollTop} → ${outerAfter.scrollTop}`)
   }
 
   // --- 4. 短设置页：内容不溢出时不应有滚动条 ---
