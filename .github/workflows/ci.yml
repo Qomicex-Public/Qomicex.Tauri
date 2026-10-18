@@ -95,6 +95,10 @@ jobs:
           tool: cargo-audit
       - name: Cargo audit
         run: |
+          # ⚠️ 本步骤与 .github/actions/quality-gate/action.yml 的「Cargo audit」
+          # 是**两份独立命令**（CI 走这里，release.yml / debug.yml 走 composite
+          # action）——改 ignore 列表必须两处同时改，否则会出现「CI 绿但 Release 红」。
+          #
           # easytier fork 锁定 hickory 0.25.2（endpoint-discovery 启用 dns-resolver）：
           # 0118 在 0.25 线无补丁版本，0119 需 0.26.1（breaking，需迁移 EasyTier4QML fork）。
           #
