@@ -59,8 +59,11 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
   const [theme, setTheme] = useState<'dark' | 'light'>(settings.theme === 'light' ? 'light' : 'dark')
   const [dataDir, setDataDirState] = useState(settings.dataDir || '')
   const [gameDir, setGameDir] = useState(settings.gameDir || '.minecraft')
-  const [sourcePreference, setSourcePreference] = useState<'official' | 'mirror'>(
-    settings.sourcePreference ?? 'official',
+  const [vanillaSourcePreference, setVanillaSourcePreference] = useState<'official' | 'mirror'>(
+    settings.vanillaSourcePreference ?? 'official',
+  )
+  const [modSourcePreference, setModSourcePreference] = useState<'official' | 'mirror'>(
+    settings.modSourcePreference ?? 'official',
   )
   const [memoryMode, setMemoryMode] = useState<'auto' | 'custom'>(settings.memoryMode || 'auto')
   const [defaultMaxMemory, setDefaultMaxMemory] = useState(settings.defaultMaxMemory)
@@ -242,7 +245,8 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
       }
       if (mode === 'custom') {
         next.gameDir = gameDir
-        next.sourcePreference = sourcePreference
+        next.vanillaSourcePreference = vanillaSourcePreference
+        next.modSourcePreference = modSourcePreference
         if (dataDir && dataDir !== settings.dataDir) {
           const normalized = dataDir.replace(/\\/g, '/')
           try {
@@ -470,27 +474,32 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
           {/* 步骤 5（自定义）：下载源 */}
           {mode === 'custom' && step === 5 && (
             <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>{t('settings.launcher.sourcePreference')}</Label>
-                <div className="flex flex-wrap gap-2">
-                  {(['official', 'mirror'] as const).map((pref) => (
-                    <button
-                      key={pref}
-                      type="button"
-                      onClick={() => setSourcePreference(pref)}
-                      className={cn(
-                        'rounded-lg border px-3 py-2 text-sm transition-colors',
-                        sourcePreference === pref ? 'border-primary bg-primary/5' : 'hover:bg-accent/50',
-                      )}
-                    >
-                      {t(`settings.launcher.sourcePreferenceName.${pref}`)}
-                    </button>
-                  ))}
+              {([
+                { key: 'vanillaSourcePreference', value: vanillaSourcePreference, set: setVanillaSourcePreference },
+                { key: 'modSourcePreference', value: modSourcePreference, set: setModSourcePreference },
+              ] as const).map((row) => (
+                <div key={row.key} className="space-y-2">
+                  <Label>{t(`settings.launcher.${row.key}`)}</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {(['official', 'mirror'] as const).map((pref) => (
+                      <button
+                        key={pref}
+                        type="button"
+                        onClick={() => row.set(pref)}
+                        className={cn(
+                          'rounded-lg border px-3 py-2 text-sm transition-colors',
+                          row.value === pref ? 'border-primary bg-primary/5' : 'hover:bg-accent/50',
+                        )}
+                      >
+                        {t(`settings.launcher.sourcePreferenceName.${pref}`)}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  {t('settings.launcher.sourcePreferenceDesc')}
-                </p>
-              </div>
+              ))}
+              <p className="text-xs text-muted-foreground">
+                {t('settings.launcher.sourcePreferenceDesc')}
+              </p>
             </div>
           )}
 
@@ -667,7 +676,7 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
                 {mode === 'custom' && (
                   <>
                     <div className="flex justify-between gap-4"><span className="shrink-0 text-muted-foreground">{t('wizard.stepDirectories')}</span><span className="truncate text-right font-mono text-xs">{dataDir || t('wizard.default')}</span></div>
-                    <div className="flex justify-between gap-4"><span className="shrink-0 text-muted-foreground">{t('wizard.stepDownloadSource')}</span><span className="truncate text-right font-mono text-xs">{t(`settings.launcher.sourcePreferenceName.${sourcePreference}`)}</span></div>
+                    <div className="flex justify-between gap-4"><span className="shrink-0 text-muted-foreground">{t('wizard.stepDownloadSource')}</span><span className="truncate text-right font-mono text-xs">{t(`settings.launcher.sourcePreferenceName.${vanillaSourcePreference}`)}</span></div>
                   </>
                 )}
               </div>

@@ -26,11 +26,12 @@ export interface AppSettings {
   language: string
   defaultJavaPath: string
   /**
-   * 下载源偏好：**只表示优先级顺序，两侧互为兜底**。
-   * - `official`：官方源先，失败回退镜像；
-   * - `mirror`：镜像先，失败回退官方。
-   */
-  sourcePreference: 'official' | 'mirror'
+     * **原版**资源（jar / libraries / assets / 加载器）的下载源偏好。
+     * 偏好只表示优先级顺序，两侧互为兜底。
+     */
+  vanillaSourcePreference: 'official' | 'mirror'
+  /** **模组**资源（Modrinth / CurseForge 文件）的下载源偏好，语义同上。 */
+  modSourcePreference: 'official' | 'mirror'
   /** 按资源类型自动选择：模组走镜像、原版走官方（默认开） */
   autoSelectSource: boolean
   downloadTimeout: number
@@ -129,7 +130,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   jvmArgs: '',
   language: 'zh-CN',
   defaultJavaPath: '',
-  sourcePreference: 'official',
+  vanillaSourcePreference: 'official',
+  modSourcePreference: 'official',
   autoSelectSource: true,
   downloadTimeout: 60,
   theme: 'dark',
