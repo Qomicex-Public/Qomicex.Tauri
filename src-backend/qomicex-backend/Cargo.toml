@@ -87,7 +87,7 @@ qrcodegen = "1.8"
 # 仅 Windows：winreg 在非 Windows 平台编译即报 compile_error!
 # （license_core.rs board_id 的 BIOS 读取；代码已有 cfg(windows) 保护）
 winreg = "0.52"
-windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

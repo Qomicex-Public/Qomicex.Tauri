@@ -443,3 +443,53 @@ pub async fn ipc_ping(pipe: tauri::State<'_, IpcPipe>) -> Result<bool, String> {
     }
     Ok(matches!(read_head(&mut conn).await, Ok((200, _))))
 }
+
+/// 把进程加入当前应用的 KILL_ON_JOB_CLOSE Job Object。
+///
+/// 启动器退出时（含崩溃、任务管理器强杀）由内核终止 Job 内所有进程，后端不会残留。
+/// Job 句柄故意**不关闭**：`KILL_ON_JOB_CLOSE` 的语义就是「最后一个句柄关闭时杀掉
+/// 内容物」，进程退出时内核会自动关句柄，无需我们手动处理。
+///
+/// 失败时调用方回退到后端自身的父进程自检（`services/parent_watch.rs`），只是可能
+/// 晚约 1 秒退出，不影响正确性。
+#[cfg(windows)]
+pub fn assign_to_kill_on_close_job(pid: u32) -> Result<(), String> {
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
+
+    // SAFETY: 所有句柄在失败路径显式关闭；job 句柄成功时故意保留（见上）。
+    unsafe {
+        let job: HANDLE = CreateJobObjectW(None, windows::core::PCWSTR::null())
+            .map_err(|e| format!("CreateJobObject: {e}"))?;
+        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const core::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+        .map_err(|e| {
+            let _ = CloseHandle(job);
+            format!("SetInformationJobObject: {e}")
+        })?;
+
+        let process =
+            OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, false, pid).map_err(|e| {
+                let _ = CloseHandle(job);
+                format!("OpenProcess({pid}): {e}")
+            })?;
+        let assigned = AssignProcessToJobObject(job, process);
+        let _ = CloseHandle(process);
+        assigned.map_err(|e| {
+            let _ = CloseHandle(job);
+            format!("AssignProcessToJobObject: {e}")
+        })?;
+        Ok(())
+    }
+}

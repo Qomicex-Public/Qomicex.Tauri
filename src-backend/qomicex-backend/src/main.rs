@@ -115,10 +115,28 @@ async fn main() {
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let shutdown_for_pipe = shutdown_rx.clone();
 
-    let ctrl_c = async move {
-        tokio::signal::ctrl_c().await.ok();
-        let _ = shutdown_tx.send(true);
-    };
+    // 父进程看护：启动器崩溃 / 被任务管理器结束 / 更新器替换进程时，它来不及执行
+    // RunEvent::Exit 里的 kill，后端必须自己退出。否则每遇到一次就留一个僵尸后端，
+    // 堆积后新启动器连不上自己的管道，所有 API 502
+    // （见 services/parent_watch.rs）。
+    {
+        let tx = shutdown_tx.clone();
+        crate::services::parent_watch::spawn_guard(move || {
+            tracing::warn!("父进程已退出，后端随之关闭");
+            let _ = tx.send(true);
+        });
+    }
+
+    // Ctrl-C 也并入同一条 shutdown 通道：无 TCP 时 main 等的是 shutdown 而不是
+    // ctrl_c 本身（见下方），若这里不联动，Ctrl-C 就再也无法让后端退出。
+    {
+        let tx = shutdown_tx.clone();
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                let _ = tx.send(true);
+            }
+        });
+    }
 
     let tcp_task = if tcp_enabled {
         let listener = tokio::net::TcpListener::bind(&addr)
@@ -126,9 +144,15 @@ async fn main() {
             .unwrap_or_else(|e| panic!("绑定后端监听地址 {addr} 失败: {e}"));
         tracing::info!("qomicex-backend listening on http://{addr}");
         let app = app.clone();
+        let shutdown_for_tcp = shutdown_rx.clone();
         Some(tokio::spawn(async move {
             axum::serve(listener, app)
-                .with_graceful_shutdown(ctrl_c)
+                .with_graceful_shutdown(async move {
+                    let mut rx = shutdown_for_tcp;
+                    if !*rx.borrow() {
+                        let _ = rx.changed().await;
+                    }
+                })
                 .await
                 .expect("axum server error");
         }))
@@ -147,8 +171,14 @@ async fn main() {
     drop(app);
 
     if !tcp_enabled {
-        // 无 TCP 时没有 graceful shutdown 触发源，直接监听 Ctrl-C
-        tokio::signal::ctrl_c().await.ok();
+        // 无 TCP 时没有 axum 的 graceful shutdown 作为等待点，但**不能直接 await
+        // ctrl_c**：父进程消失时看护发的是 shutdown 信号，Ctrl-C 永远不会来，main
+        // 会滞留在这一行，进程不退出（服务已停但进程还在 —— 正是要消除的僵尸形态）。
+        // 这里改为等 shutdown 通道，把 Ctrl-C 也并入同一个信号源。
+        let mut rx = shutdown_rx.clone();
+        if !*rx.borrow() {
+            let _ = rx.changed().await;
+        }
     }
     if let Some(t) = tcp_task {
         t.await.expect("axum server error");
