@@ -159,6 +159,26 @@ const plugins = await __PLUGIN_API__.call('listPlugins')
 const hasDep = plugins.some(p => p.id === 'top.qomicex.markdown')
 ```
 
+### Shell 执行（execCommand）
+
+`execCommand(command, timeoutMs?)` 在宿主进程中执行一条命令，返回 `{ exitCode, stdout, stderr }`。
+
+**Windows 上优先使用 PowerShell 7（`pwsh`），未安装时回退系统自带的 Windows PowerShell 5.1。**
+因此同一条命令在不同机器上可能由不同版本执行，写插件时注意：
+
+- 只用两代都支持的语法（`??`、`-Parallel` 等是 7 才有的）
+- 判断当前版本：`$PSVersionTable.PSVersion.Major`（5 或 7）
+- 需要 7 时自行检测并给出明确错误，而不是假定它存在
+
+解释器探测顺序：`QOMICEX_PWSH_PATH` 环境变量 → `PATH` 中的 `pwsh` → `%ProgramFiles%\PowerShell\7\pwsh.exe` → 回退 `powershell`（5.1）。结果在启动时缓存一次，运行期间新装 pwsh 需重启启动器。
+
+```js
+const r = await __PLUGIN_API__.call('execCommand', '$PSVersionTable.PSVersion.Major', 5000)
+console.log('PowerShell major:', r.stdout.trim())  // 5 或 7
+```
+
+Linux / macOS 使用 `/bin/sh -c`。
+
 ### CORS 代理（proxyFetch）
 
 插件网页直接 `fetch` 外部 API 可能被 CORS 拒绝，可通过 `proxyFetch` 走后端转发（`POST /api/plugins/proxy`），绕开浏览器 CORS 限制。
