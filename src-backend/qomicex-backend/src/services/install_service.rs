@@ -1498,10 +1498,16 @@ pub(crate) async fn download_batch(
     // transition to `Downloading`; a late subscriber would miss those ticks.
     let mut rx = mgr.subscribe();
 
+    // 偏好只决定优先级，兜底是通用的：模组文件挂镜像/官方另一侧，原版文件挂
+    // 官方/BMCLAPI 另一侧。两套函数对不匹配的 host 都返回空，可无脑叠加。
+    let plan = crate::services::source_policy::SourcePlan::load();
     let mut ids = Vec::new();
     for (url, dest, headers) in files {
         // 父目录已在判重前统一创建，这里只兜底极端情况（判重后父目录被删）。
-        let mut mirrors = crate::services::file_mirror::mirror_fallback_urls(&url);
+        let mut mirrors = crate::services::source_policy::mod_fallbacks(&url, &plan);
+        mirrors.extend(crate::services::source_policy::vanilla_fallback_urls(
+            &url, &plan,
+        ));
         // 查表键与判重键一致；attach_mirrors 会跳过与主 URL 相同的纯冗余项与既有镜像。
         let key = dedup_key(&dest);
         let before = mirrors.len();

@@ -147,11 +147,12 @@ impl AppState {
             .ok()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(embedded_ms_client_id);
-        let global_mirror = if settings_now.download_source == 1 {
-            DownloadMirror::Bmclapi
-        } else {
-            DownloadMirror::Official
-        };
+        let global_mirror =
+            if crate::services::source_policy::SourcePlan::load().vanilla_mirror_id() == 1 {
+                DownloadMirror::Bmclapi
+            } else {
+                DownloadMirror::Official
+            };
 
         // 网络设置：代理 + 忽略 SSL。共享 HTTP 客户端在启动时按此构建；
         // 下载管理器由 new_download_manager 同步携带并在 PUT /settings 时热替换。
@@ -160,14 +161,6 @@ impl AppState {
 
         let http_client =
             build_http_client(&user_agent, proxy_url.as_deref(), no_proxy, ignore_ssl);
-
-        // 文件镜像健康探针：UTC+8 默认把 mod 文件重写到镜像节点，而镜像节点会
-        // 整体挂起（回 200 头后 body 不到达）。进程级探针失败时自动降级为官方源，
-        // 避免每个文件都先去撞死节点。
-        crate::services::file_mirror::start_health_probe(
-            http_client.clone(),
-            Duration::from_secs(300),
-        );
 
         let mods_icon_dir = settings::resolve_base_dir().join("QML").join("mod-icons");
         let _ = std::fs::create_dir_all(&mods_icon_dir);

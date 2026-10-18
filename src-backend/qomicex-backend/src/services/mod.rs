@@ -31,6 +31,7 @@ pub mod resource_favorite;
 pub mod resource_favorite_folder;
 pub mod scan_cache;
 pub mod schematic_assets;
+pub mod source_policy;
 pub mod technic;
 pub mod trace;
 pub mod translation;

@@ -22,17 +22,17 @@ fn default_proxy_mode() -> String {
 
 /// 「文件下载源」默认值：系统时区为 UTC+8（中国大陆及周边）时取镜像源（1），
 /// 其余时区官方源（0）。供 serde default（老配置缺字段）与全新安装共用。
-fn default_file_download_source() -> i32 {
+fn default_source_preference() -> String {
     if is_china_timezone() {
-        1
+        "mirror".to_string()
     } else {
-        0
+        "official".to_string()
     }
 }
 
 /// 系统时区偏移是否为 UTC+8。只用于下载源默认值的地域判断：无网络探测、
 /// 不做指纹，仅取本地时钟偏移。
-fn is_china_timezone() -> bool {
+pub(crate) fn is_china_timezone() -> bool {
     chrono::Local::now().offset().local_minus_utc() == 8 * 3600
 }
 
@@ -95,24 +95,18 @@ pub struct SettingsResponse {
     pub jvm_args: String,
     pub language: String,
     pub default_java_path: String,
-    pub download_source: i32,
-    pub auto_select_download_source: Option<bool>,
-    pub mod_mirror: i32,
-    pub auto_select_mod_mirror: Option<bool>,
-    /// 资源（mod 文件 CDN）下载源：0 = 官方源（直连原 CDN）；1 = 镜像源（MCIM 优先：
-    /// `cdn.modrinth.com`/`edge.forgecdn.net` → `mod.mcimirror.top`，MCIM 不覆盖的
-    /// `cdn-alt.modrinth.com`/`mediafilez.forgecdn.net` 走 QML Mirror；运行期 MCIM
-    /// 失败自动回退 QML 节点、官方 CDN 兜底）。旧值 2（QML Mirror HK）已并入 1。
-    /// 默认值见 [`default_file_download_source`]（国内时区 → 1）。
-    #[serde(default = "default_file_download_source")]
-    pub file_download_source: i32,
-    /// 自动选择资源（文件 CDN）下载源：`true` = 自动选当前延迟最低的可用源。
-    pub auto_select_file_download_source: Option<bool>,
-    /// 一次性迁移标记：镜像源改版（MCIM 优先 + 国内默认）后，把「值为旧默认 0 且
-    /// 处于 UTC+8 时区」的存量用户提升为 1。显式标记防止用户主动选回官方源后被
-    /// 每次启动反复改回。`None`/`Some(true)` = 已处理。
+    /// 下载源偏好。**只表示优先级顺序，两侧互为兜底**：
+    /// - `"official"`：官方源先，失败回退镜像；
+    /// - `"mirror"`：镜像先，失败回退官方。
+    ///
+    /// 默认国内时区为 `"mirror"`（镜像本来只为国内链路准备），其余为 `"official"`。
+    /// 具体到资源类型如何落位见 `services/source_policy.rs`。
+    #[serde(default = "default_source_preference")]
+    pub source_preference: String,
+    /// 自动按资源类型选择优先级：模组走镜像、原版走官方。
+    /// `None`/`Some(true)` = 开启（默认），`Some(false)` = 关闭并按偏好。
     #[serde(default)]
-    pub file_download_source_migrated: Option<bool>,
+    pub auto_select_source: Option<bool>,
     pub download_timeout: i32,
     pub animations_enabled: Option<bool>,
     pub animation_speed: Option<i32>,
@@ -282,13 +276,8 @@ impl Default for SettingsResponse {
             jvm_args: String::new(),
             language: "zh-CN".to_string(),
             default_java_path: String::new(),
-            download_source: 0,
-            auto_select_download_source: None,
-            mod_mirror: 0,
-            auto_select_mod_mirror: None,
-            file_download_source: default_file_download_source(),
-            auto_select_file_download_source: None,
-            file_download_source_migrated: Some(true),
+            source_preference: default_source_preference(),
+            auto_select_source: None,
             download_timeout: 60,
             animations_enabled: None,
             animation_speed: None,
@@ -385,22 +374,55 @@ impl SettingsResponse {
     }
 }
 
-/// 镜像源改版一次性迁移：
-/// - 旧值 2（QML Mirror HK，已废弃）→ 1（镜像源，行为被 MCIM 优先的镜像源覆盖，
-///   HK 节点仍在运行期回退链里）。
-/// - 值为旧默认 0 且系统时区 UTC+8 → 1（国内默认镜像源）。磁盘值 0 无法区分
-///   「主动选官方」和「从没动过」，按确认的策略一次性迁移并用显式标记防反复；
-///   迁移后用户改回 0 即被尊重。非 UTC+8 用户保持 0 不动。
-fn apply_file_download_source_migration(s: &mut SettingsResponse) {
-    if s.file_download_source_migrated == Some(true) {
+/// 旧版「分别选择具体源」→ 新版「一个偏好 + 一个自动开关」的迁移。
+///
+/// 在反序列化**之前**对原始 JSON 做，迁移完把旧键删掉（下次保存即清理磁盘）。
+/// 判据尽量保守：
+/// - 两个旧源任一项为 1（曾选过镜像/BMCLAPI）→ `mirror`，否则 `official`；
+/// - 三个旧自动开关任一存在则取「或」；一个都没有（用户从没动过）→ 留空，
+///   交给 serde 默认值（自动开）。
+fn migrate_legacy_source_fields(v: &mut serde_json::Value) {
+    let Some(obj) = v.as_object_mut() else {
         return;
+    };
+    if !obj.contains_key("sourcePreference") {
+        let as_i64 = |k: &str| obj.get(k).and_then(|x| x.as_i64());
+        // 两个旧键都不存在 = 全新配置，交给 serde 默认值（按系统时区），
+        // 不要在这里插入一个可能与时区默认相反的固定值。
+        if obj.contains_key("downloadSource") || obj.contains_key("fileDownloadSource") {
+            let legacy_mirror = as_i64("downloadSource") == Some(1)
+                || as_i64("fileDownloadSource").is_some_and(|v| v >= 1);
+            let pref = if legacy_mirror { "mirror" } else { "official" };
+            obj.insert(
+                "sourcePreference".into(),
+                serde_json::Value::String(pref.into()),
+            );
+        }
     }
-    let should_mirror =
-        s.file_download_source == 2 || (s.file_download_source == 0 && is_china_timezone());
-    if should_mirror {
-        s.file_download_source = 1;
+    if !obj.contains_key("autoSelectSource") {
+        let touched = [
+            "autoSelectDownloadSource",
+            "autoSelectModMirror",
+            "autoSelectFileDownloadSource",
+        ];
+        if touched.iter().any(|k| obj.contains_key(*k)) {
+            let any_true = touched
+                .iter()
+                .any(|k| obj.get(*k).and_then(|x| x.as_bool()).unwrap_or(false));
+            obj.insert("autoSelectSource".into(), serde_json::Value::Bool(any_true));
+        }
     }
-    s.file_download_source_migrated = Some(true);
+    for k in [
+        "downloadSource",
+        "autoSelectDownloadSource",
+        "modMirror",
+        "autoSelectModMirror",
+        "fileDownloadSource",
+        "autoSelectFileDownloadSource",
+        "fileDownloadSourceMigrated",
+    ] {
+        obj.remove(k);
+    }
 }
 
 /// 加载设置（对应 SystemEndpoints.LoadSettings：文件缺失/解析失败 → 默认值）。
@@ -408,7 +430,14 @@ pub fn load_settings() -> SettingsResponse {
     let path = settings_path();
     if path.exists() {
         if let Ok(content) = std::fs::read_to_string(&path) {
-            if let Ok(mut parsed) = serde_json::from_str::<SettingsResponse>(&content) {
+            let migrated = serde_json::from_str::<serde_json::Value>(&content)
+                .ok()
+                .map(|mut v| {
+                    migrate_legacy_source_fields(&mut v);
+                    v
+                })
+                .and_then(|v| serde_json::from_value::<SettingsResponse>(v).ok());
+            if let Some(mut parsed) = migrated {
                 // 磁盘上的值可能被手改成越界数值，读入即钳位。
                 parsed.clamp_numeric_ranges();
                 // 老版本 settings.json 没有 initialized 字段（None）：视为已完成初始化，
@@ -427,8 +456,6 @@ pub fn load_settings() -> SettingsResponse {
                     }
                     parsed.download_timeout_migrated = Some(true);
                 }
-                // 镜像源改版一次性迁移（语义见 apply_file_download_source_migration）。
-                apply_file_download_source_migration(&mut parsed);
                 return parsed;
             }
         }
@@ -450,9 +477,10 @@ pub fn get_global_version_isolation() -> bool {
     load_settings().version_isolation
 }
 
-/// 全局「资源下载源」（mod 文件 CDN 镜像）：0 = 官方，1 = 镜像源（MCIM 优先 + QML 回退）。
-pub fn get_global_file_download_source() -> i32 {
-    load_settings().file_download_source
+/// 全局：原版下载源编号（0 = 官方，1 = BMCLAPI）。由策略模块解析，仅供核心库
+/// 构造时使用；业务代码请直接用 `services::source_policy::SourcePlan`。
+pub fn get_global_vanilla_source() -> i32 {
+    crate::services::source_policy::SourcePlan::load().vanilla_mirror_id()
 }
 
 // =====================================================================
@@ -835,13 +863,13 @@ mod relay_node_tests {
         assert_eq!(validate_relay_nodes_lenient(Some(&[])), None);
     }
 
-    /// 镜像源一次性迁移语义（issue：文件下载源改版）。用构造的 JSON 走 serde
-    /// 反序列化验证缺字段/旧值的组合行为，不落盘、不依赖真实 settings.json。
-    mod file_download_source_migration {
+    /// 旧「分别选具体源」→ 新「偏好 + 自动开关」的迁移语义。
+    /// 用构造的 JSON 验证缺字段/旧值组合，不落盘、不依赖真实 settings.json。
+    mod source_preference_migration {
         use super::*;
 
         /// SettingsResponse 无 serde default 的必填字段合集（最小合法 settings.json）。
-        const BASE_JSON: &str = r#""gameDir":".minecraft","downloadThreads":64,"versionIsolation":true,"closeAfterLaunch":false,"defaultMaxMemory":4096,"jvmArgs":"","language":"zh-CN","defaultJavaPath":"","downloadSource":0,"modMirror":0,"downloadTimeout":60,"translationProvider":"mymemory","cornerRadius":8,"windowCorners":true,"curseforgeVersionFetchConcurrency":10,"curseforgeVersionCacheTtlSeconds":300"#;
+        const BASE_JSON: &str = r#""gameDir":".minecraft","downloadThreads":64,"versionIsolation":true,"closeAfterLaunch":false,"defaultMaxMemory":4096,"jvmArgs":"","language":"zh-CN","defaultJavaPath":"","downloadTimeout":60,"translationProvider":"mymemory","cornerRadius":8,"windowCorners":true,"curseforgeVersionFetchConcurrency":10,"curseforgeVersionCacheTtlSeconds":300"#;
 
         fn parse(extra: &str) -> SettingsResponse {
             let json = if extra.is_empty() {
@@ -849,45 +877,72 @@ mod relay_node_tests {
             } else {
                 format!("{{{BASE_JSON},{extra}}}")
             };
-            serde_json::from_str(&json).expect("测试 JSON 必须可解析")
+            let mut v: serde_json::Value =
+                serde_json::from_str(&json).expect("测试 JSON 必须可解析");
+            migrate_legacy_source_fields(&mut v);
+            serde_json::from_value(v).expect("迁移后的 JSON 必须可反序列化")
         }
 
-        /// 老配置缺 file_download_source 字段：serde default 按当前系统时区取值
-        /// （UTC+8 → 1 镜像源，其余 → 0 官方）。
+        /// 全新配置（无旧键）：按系统时区取默认偏好。
         #[test]
-        fn missing_field_uses_timezone_default() {
-            let mut s = parse("");
-            apply_file_download_source_migration(&mut s);
-            let expected = if is_china_timezone() { 1 } else { 0 };
-            assert_eq!(s.file_download_source, expected);
+        fn missing_preference_uses_timezone_default() {
+            let s = parse("");
+            let expected = if is_china_timezone() {
+                "mirror"
+            } else {
+                "official"
+            };
+            assert_eq!(s.source_preference, expected);
         }
 
-        /// 旧值 2（QML Mirror HK，已废弃）→ 1：HK 节点仍在运行期回退链里，
-        /// 迁移不丢已有镜像能力。
+        /// 旧值 2（QML Mirror HK）曾表示镜像 → 迁移为 mirror。
         #[test]
-        fn legacy_value_2_migrates_to_1() {
-            let mut s = parse(r#""fileDownloadSource":2,"fileDownloadSourceMigrated":false"#);
-            apply_file_download_source_migration(&mut s);
-            assert_eq!(s.file_download_source, 1);
+        fn legacy_value_2_migrates_to_mirror() {
+            let s = parse(r#""fileDownloadSource":2,"fileDownloadSourceMigrated":false"#);
+            assert_eq!(s.source_preference, "mirror");
         }
 
-        /// 国内（UTC+8）用户旧默认 0 → 1；显式迁移标记防反复。
-        /// 非 UTC+8 环境本用例退化为「保持 0」，断言按当前时区取分支。
+        /// 两个旧源都是 0（纯官方）→ official；旧镜像开关为 true → 自动开。
         #[test]
-        fn legacy_default_0_migrates_in_china_timezone() {
-            let mut s = parse(r#""fileDownloadSource":0,"fileDownloadSourceMigrated":false"#);
-            apply_file_download_source_migration(&mut s);
-            let expected = if is_china_timezone() { 1 } else { 0 };
-            assert_eq!(s.file_download_source, expected);
-            assert_eq!(s.file_download_source_migrated, Some(true));
+        fn legacy_official_with_auto_flag() {
+            let s = parse(
+                r#""downloadSource":0,"fileDownloadSource":0,"autoSelectFileDownloadSource":true"#,
+            );
+            assert_eq!(s.source_preference, "official");
+            assert_eq!(s.auto_select_source, Some(true));
         }
 
-        /// 已迁移的配置不再被改写：用户主动选回官方源 0 必须被尊重。
+        /// 旧自动开关全为 false → 自动关；旧键必须被清理（磁盘下次保存即收敛）。
         #[test]
-        fn migrated_flag_preserves_user_choice() {
-            let mut s = parse(r#""fileDownloadSource":0,"fileDownloadSourceMigrated":true"#);
-            apply_file_download_source_migration(&mut s);
-            assert_eq!(s.file_download_source, 0);
+        fn legacy_auto_flags_false_and_keys_removed() {
+            let json =
+                format!("{{{BASE_JSON},\"downloadSource\":1,\"autoSelectDownloadSource\":false}}");
+            let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
+            migrate_legacy_source_fields(&mut v);
+            let obj = v.as_object().unwrap();
+            for k in [
+                "downloadSource",
+                "autoSelectDownloadSource",
+                "modMirror",
+                "autoSelectModMirror",
+                "fileDownloadSource",
+                "autoSelectFileDownloadSource",
+                "fileDownloadSourceMigrated",
+            ] {
+                assert!(!obj.contains_key(k), "旧键 {k} 应被迁移清理");
+            }
+            assert_eq!(obj["sourcePreference"], "mirror");
+            assert_eq!(obj["autoSelectSource"], false);
+        }
+
+        /// 已经是新配置时迁移不得覆盖用户选择。
+        #[test]
+        fn new_fields_are_never_overwritten() {
+            let s = parse(
+                r#""sourcePreference":"official","autoSelectSource":false,"fileDownloadSource":1"#,
+            );
+            assert_eq!(s.source_preference, "official");
+            assert_eq!(s.auto_select_source, Some(false));
         }
     }
 }
