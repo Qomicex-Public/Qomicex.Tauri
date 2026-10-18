@@ -509,6 +509,17 @@ export default function Instances() {
         progress: 0,
         createdAt: new Date().toISOString(),
         instanceId: instance.id,
+        // 失败后可重建：安装失败会回滚删除实例，重试必须能重新创建它。
+        retry: {
+          kind: 'game',
+          name: data.name,
+          gameVersion: data.gameVersion,
+          gameDir: currentDir,
+          loader: data.loader,
+          loaderVersion: data.loaderVersion,
+          addons: selectedAddons.length > 0 ? [...selectedAddons] : undefined,
+          icon: data.icon,
+        },
       }
       addTask(task)
 

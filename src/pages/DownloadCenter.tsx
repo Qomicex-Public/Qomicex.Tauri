@@ -27,6 +27,7 @@ import DownloadSpeedGraph from '../components/DownloadSpeedGraph.tsx'
 
 import type { DownloadTask, InstallStepInfo } from '../types/index.ts'
 import { useDownloadSSE } from '../hooks/useDownloadSSE.ts'
+import { retryTask } from '../lib/retryTask.ts'
 
 type FilterMode = 'all' | 'downloading' | 'paused' | 'completed' | 'failed'
 
@@ -268,9 +269,15 @@ function TaskCard({ task, t }: { task: DownloadTask; t: TFunc }) {
               </Tooltip>
             </>
           )}
-          {task.status === 'failed' && (
+          {task.status === 'failed' && task.retry && (
             <Tooltip content={t('downloads.retry')}>
-              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => removeTask(task.id)}>
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => {
+                // 先置回排队态：重试要重新解析/建实例，耗时数秒，避免用户重复点击。
+                updateTask(task.id, { status: 'queued', progress: 0, error: undefined })
+                retryTask(task)
+                  .then((patch) => updateTask(task.id, patch))
+                  .catch((e) => updateTask(task.id, { status: 'failed', error: e?.message || t('downloads.errors.downloadFailed') }))
+              }}>
                 <RotateCw className="h-3.5 w-3.5" />
               </Button>
             </Tooltip>
