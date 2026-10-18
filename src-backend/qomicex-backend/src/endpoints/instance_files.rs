@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Instance files endpoints (source: Endpoints/InstanceFilesEndpoints.cs).
 //!
 //! Provides per-instance local file management for a single instance's
@@ -302,7 +305,12 @@ const MODS_CACHE_EMPTY_TTL_SECS: i64 = 5 * 60;
 /// 版本号不一致一律视为 miss，强制重扫一次。
 /// v3：新增 `providesIds`（嵌套 Jar-in-Jar 子模块 id）——旧缓存缺该字段会把
 /// `fabric-api` 的子模块判成缺失，造成误报，必须一并失效。
-const MODS_CACHE_SCHEMA: u32 = 3;
+/// v4：mcmod.info 世代（1.12.2）补全 modId / requiredMods / @Mod 注解硬依赖——
+/// 旧缓存的 modId/dependencies 恒为空，必须失效重扫。
+/// v5：jar 元数据解析按实例 loader 选侧（issue #255）——旧缓存里 Forge 实例的
+/// dependencies 取自 fabric.mod.json，含着 `fabric`/`fabricloader` 等 Fabric 侧依赖，
+/// 不失效就会继续误报「缺少 fabric 前置」。
+const MODS_CACHE_SCHEMA: u32 = 5;
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -319,6 +327,11 @@ struct ModsCacheEntry {
     /// 写入时的缓存结构版本；缺省/不匹配 = 旧结构（无依赖数据）→ miss。
     #[serde(default)]
     schema: Option<u32>,
+    /// 写入时的实例加载器（issue #255）：jar 元数据按加载器选侧，实例换加载器（如
+    /// Forge → Fabric）后解析结果不同，而目录签名不变、TTL 未到，不校验就会继续返回
+    /// 按旧加载器解析的依赖（评审 sourcery 指出）。缺省 = 未记录 → miss 重扫。
+    #[serde(default)]
+    loader: Option<String>,
 }
 
 static REFRESH_LOCK: LazyLock<Mutex<HashMap<String, ()>>> =
@@ -335,6 +348,7 @@ fn read_mods_cache(
     data_dir: &PathBuf,
     instance_id: &str,
     expected_signature: u64,
+    expected_loader: Option<&str>,
 ) -> Option<Vec<ModMetadataDto>> {
     let path = mods_cache_path(data_dir, instance_id);
     let bytes = std::fs::read(path).ok()?;
@@ -345,6 +359,10 @@ fn read_mods_cache(
     if cache.schema != Some(MODS_CACHE_SCHEMA) {
         return None;
     }
+    // 加载器变了（issue #255）→ 解析侧随之改变，必须重扫；比较时忽略大小写与首尾空白
+    if !loader_matches(cache.loader.as_deref(), expected_loader) {
+        return None;
+    }
     // TTL 内还须目录指纹一致：用户在文件系统增删/改名/移动 mod 后立即失效。
     if now - cache.fetched_at < ttl && cache.dir_signature == Some(expected_signature) {
         Some(cache.entries)
@@ -353,10 +371,29 @@ fn read_mods_cache(
     }
 }
 
+/// 缓存的写入加载器与当前实例加载器是否一致（issue #255）。
+/// 两者都需要按「解析侧」等价比较：core 对 forge/neoforge/cleanroom 分派不同解析顺序，
+/// 而 `fabric` 与未知都归入 Fabric 侧，故不能只做字符串相等。
+fn loader_matches(cached: Option<&str>, current: Option<&str>) -> bool {
+    fn side(loader: Option<&str>) -> &'static str {
+        match loader
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("neoforge") => "neoforge",
+            Some("forge") | Some("cleanroom") => "forge",
+            _ => "fabric",
+        }
+    }
+    side(cached) == side(current)
+}
+
 fn read_mods_cache_stale(
     data_dir: &PathBuf,
     instance_id: &str,
     expected_signature: u64,
+    expected_loader: Option<&str>,
 ) -> Option<Vec<ModMetadataDto>> {
     let path = mods_cache_path(data_dir, instance_id);
     let bytes = std::fs::read(path).ok()?;
@@ -364,6 +401,10 @@ fn read_mods_cache_stale(
     // 结构版本不符 → 连 stale 都不给：依赖数据缺失的列表若先返回再后台刷新，
     // 用户会看到「无缺失依赖」的错误结论，故宁可同步重扫。
     if cache.schema != Some(MODS_CACHE_SCHEMA) {
+        return None;
+    }
+    // 加载器不符 → 同上，宁可同步重扫也不返回按旧加载器解析的依赖（issue #255）
+    if !loader_matches(cache.loader.as_deref(), expected_loader) {
         return None;
     }
     // 仅"目录未动、纯 TTL 过期"走 stale-while-revalidate；
@@ -380,6 +421,7 @@ fn write_mods_cache(
     entries: Vec<ModMetadataDto>,
     ttl_secs: i64,
     dir_signature: u64,
+    loader: Option<&str>,
 ) {
     let path = mods_cache_path(data_dir, instance_id);
     if let Some(dir) = path.parent() {
@@ -393,6 +435,8 @@ fn write_mods_cache(
         ttl_secs: Some(ttl_secs),
         dir_signature: Some(dir_signature),
         schema: Some(MODS_CACHE_SCHEMA),
+        // issue #255：记录解析所用的加载器，命中时比对（实例换加载器即失效）
+        loader: loader.map(str::to_string),
     };
     if let Ok(json) = serde_json::to_vec(&cache) {
         let _ = std::fs::write(path, json);
@@ -452,6 +496,12 @@ const UPDATE_CACHE_TTL_SECS: i64 = 6 * 3600;
 struct UpdateCacheEntry {
     fetched_at: i64,
     updates: Vec<ModUpdateEntryDto>,
+    /// 写入时的实例加载器（issue #255 评审补充）：`PUT /instance/{id}` 可以只改 loader，
+    /// 而 `refresh_mod_updates` 按 loader 扫描模组、按 loader 筛选远程版本，命中则用
+    /// 旧 loader 的清单做「删旧文件 + 下载新文件」。文件名/目录签名/TTL 都不变，
+    /// 故必须单独校验。缺省（旧缓存）= None，与任何当前 loader 比较都按侧不同处理。
+    #[serde(default)]
+    loader: Option<String>,
 }
 
 fn update_cache_path(data_dir: &PathBuf, instance_id: &str) -> PathBuf {
@@ -461,10 +511,24 @@ fn update_cache_path(data_dir: &PathBuf, instance_id: &str) -> PathBuf {
         .join(format!("{instance_id}-updates.json"))
 }
 
-fn read_update_cache(data_dir: &PathBuf, instance_id: &str) -> Option<UpdateCacheEntry> {
+/// 更新检查缓存条目是否可按当前加载器复用（与 `ModsCacheEntry` 同一判定口径：
+/// 按解析侧等价比较，见 [`loader_matches`]）。
+fn update_cache_usable(cache: &UpdateCacheEntry, current_loader: Option<&str>) -> bool {
+    loader_matches(cache.loader.as_deref(), current_loader)
+}
+
+fn read_update_cache(
+    data_dir: &PathBuf,
+    instance_id: &str,
+    current_loader: Option<&str>,
+) -> Option<UpdateCacheEntry> {
     let path = update_cache_path(data_dir, instance_id);
     let bytes = std::fs::read(path).ok()?;
     let cache: UpdateCacheEntry = serde_json::from_slice(&bytes).ok()?;
+    // 加载器变了（如 Forge → Fabric）→ 清单是按旧加载器筛出来的，不得复用
+    if !update_cache_usable(&cache, current_loader) {
+        return None;
+    }
     let now = now_secs();
     if now - cache.fetched_at < UPDATE_CACHE_TTL_SECS {
         Some(cache)
@@ -473,13 +537,28 @@ fn read_update_cache(data_dir: &PathBuf, instance_id: &str) -> Option<UpdateCach
     }
 }
 
-fn read_update_cache_stale(data_dir: &PathBuf, instance_id: &str) -> Option<UpdateCacheEntry> {
+fn read_update_cache_stale(
+    data_dir: &PathBuf,
+    instance_id: &str,
+    current_loader: Option<&str>,
+) -> Option<UpdateCacheEntry> {
     let path = update_cache_path(data_dir, instance_id);
     let bytes = std::fs::read(path).ok()?;
-    serde_json::from_slice(&bytes).ok()
+    let cache: UpdateCacheEntry = serde_json::from_slice(&bytes).ok()?;
+    // stale 分支同样要拒绝：返回按旧加载器的清单会让前端把错误的「可更新」标记
+    // 贴到当前实例上。
+    if !update_cache_usable(&cache, current_loader) {
+        return None;
+    }
+    Some(cache)
 }
 
-fn write_update_cache(data_dir: &PathBuf, instance_id: &str, updates: Vec<ModUpdateEntryDto>) {
+fn write_update_cache(
+    data_dir: &PathBuf,
+    instance_id: &str,
+    updates: Vec<ModUpdateEntryDto>,
+    loader: Option<&str>,
+) {
     let path = update_cache_path(data_dir, instance_id);
     if let Some(dir) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(dir) {
@@ -489,6 +568,8 @@ fn write_update_cache(data_dir: &PathBuf, instance_id: &str, updates: Vec<ModUpd
     let cache = UpdateCacheEntry {
         fetched_at: now_secs(),
         updates,
+        // 记录生成本次清单所用加载器，供命中时比对
+        loader: loader.map(str::to_string),
     };
     if let Ok(json) = serde_json::to_vec(&cache) {
         let _ = std::fs::write(path, json);
@@ -505,6 +586,7 @@ async fn refresh_mods_cache(
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
+        r.loader.as_deref(),
     );
     let mut list = mods.get_mod_list(None).await.map_err(map_core_error)?;
     mods.enrich_mod_ids(&mut list).await;
@@ -559,7 +641,14 @@ async fn refresh_mods_cache(
         MODS_CACHE_TTL_SECS
     };
     let sig = mods_dir_signature(&r);
-    write_mods_cache(&state.data_dir, instance_id, result.clone(), ttl, sig);
+    write_mods_cache(
+        &state.data_dir,
+        instance_id,
+        result.clone(),
+        ttl,
+        sig,
+        r.loader.as_deref(),
+    );
     Ok(result)
 }
 
@@ -709,6 +798,9 @@ struct Resolved {
     game_dir: PathBuf,
     version: String,
     isolated: bool,
+    /// 实例加载器（issue #255）：core 解析 jar 元数据时按它选侧——多端模组单 jar 内含
+    /// fabric 与 forge 两套元数据，取错一侧会报出另一端的依赖（如 Forge 实例报缺 `fabric`）。
+    loader: Option<String>,
 }
 
 fn resolve(id: &str, state: &crate::state::AppState) -> ApiResult<Resolved> {
@@ -735,6 +827,7 @@ fn resolve(id: &str, state: &crate::state::AppState) -> ApiResult<Resolved> {
         game_dir: to_absolute(&base),
         version: inst.name,
         isolated,
+        loader: inst.loader,
     })
 }
 
@@ -1019,14 +1112,16 @@ async fn mods_metadata(
     AxumPath(id): AxumPath<String>,
     State(state): State<SharedState>,
 ) -> ApiResult<Response> {
-    // 目录指纹：文件系统变动（增删/改名/移动）立即使磁盘缓存失效。
-    let sig = mods_dir_signature(&resolve(&id, &state)?);
+    // 目录指纹 + 加载器：文件系统变动或实例换加载器立即使磁盘缓存失效（issue #255）。
+    let r = resolve(&id, &state)?;
+    let loader = r.loader.clone();
+    let sig = mods_dir_signature(&r);
     // Disk cache (6h TTL): fresh hit skips scan + network entirely.
-    if let Some(entries) = read_mods_cache(&state.data_dir, &id, sig) {
+    if let Some(entries) = read_mods_cache(&state.data_dir, &id, sig, loader.as_deref()) {
         return Ok(Json(entries).into_response());
     }
     // Stale hit（仅目录未动的纯 TTL 过期）: return stale + spawn background refresh.
-    if let Some(entries) = read_mods_cache_stale(&state.data_dir, &id, sig) {
+    if let Some(entries) = read_mods_cache_stale(&state.data_dir, &id, sig, loader.as_deref()) {
         let state2 = state.clone();
         let id2 = id.clone();
         tokio::spawn(async move {
@@ -1196,14 +1291,16 @@ async fn mods_enrich(
     AxumPath(id): AxumPath<String>,
     State(state): State<SharedState>,
 ) -> ApiResult<Json<Vec<ModEnrichDto>>> {
-    // 目录指纹：文件系统变动立即使磁盘缓存失效（与 mods_metadata 同一语义）。
-    let sig = mods_dir_signature(&resolve(&id, &state)?);
+    // 目录指纹 + 加载器：文件系统变动或实例换加载器立即使磁盘缓存失效（与 mods_metadata 同一语义）。
+    let r = resolve(&id, &state)?;
+    let loader = r.loader.clone();
+    let sig = mods_dir_signature(&r);
     // Disk cache (6h TTL): fresh hit skips scan + network entirely.
-    if let Some(entries) = read_mods_cache(&state.data_dir, &id, sig) {
+    if let Some(entries) = read_mods_cache(&state.data_dir, &id, sig, loader.as_deref()) {
         return Ok(Json(entries_to_enrich(entries)));
     }
     // Stale hit（仅目录未动的纯 TTL 过期）: return stale + spawn background refresh.
-    if let Some(entries) = read_mods_cache_stale(&state.data_dir, &id, sig) {
+    if let Some(entries) = read_mods_cache_stale(&state.data_dir, &id, sig, loader.as_deref()) {
         let state2 = state.clone();
         let id2 = id.clone();
         tokio::spawn(async move {
@@ -1240,7 +1337,9 @@ async fn mods_update_cache(
     AxumPath(id): AxumPath<String>,
     State(state): State<SharedState>,
 ) -> ApiResult<Json<ModUpdatesCacheResponse>> {
-    if let Some(entry) = read_update_cache_stale(&state.data_dir, &id) {
+    // 实例信息缺失时不能静默返回「无更新」：缓存只有按 loader 校验过的才可信
+    let loader = state.instance.get_by_id(&id).and_then(|i| i.loader);
+    if let Some(entry) = read_update_cache_stale(&state.data_dir, &id, loader.as_deref()) {
         let stale = now_secs() - entry.fetched_at >= UPDATE_CACHE_TTL_SECS;
         Ok(Json(ModUpdatesCacheResponse {
             updates: entry.updates,
@@ -1282,14 +1381,15 @@ async fn check_mod_updates(
     Query(q): Query<CheckUpdatesQuery>,
 ) -> ApiResult<Json<ModUpdatesResponse>> {
     let force = q.force.unwrap_or(0) != 0;
+    let loader = state.instance.get_by_id(&id).and_then(|i| i.loader);
     if !force {
-        if let Some(entry) = read_update_cache(&state.data_dir, &id) {
+        if let Some(entry) = read_update_cache(&state.data_dir, &id, loader.as_deref()) {
             let mut updates = entry.updates;
             // 旧缓存（添加 icon_url 之前写入）图标缺失：按需补全并回写，避免下载任务无图标
             if updates.iter().any(|u| u.icon_url.is_none()) {
                 fill_mod_update_icons(&state.http_client, &state.curse_forge_api_key, &mut updates)
                     .await;
-                write_update_cache(&state.data_dir, &id, updates.clone());
+                write_update_cache(&state.data_dir, &id, updates.clone(), loader.as_deref());
             }
             return Ok(Json(ModUpdatesResponse {
                 updates,
@@ -1298,7 +1398,7 @@ async fn check_mod_updates(
         }
     }
     let updates = refresh_mod_updates(&state, &id).await?;
-    write_update_cache(&state.data_dir, &id, updates.clone());
+    write_update_cache(&state.data_dir, &id, updates.clone(), loader.as_deref());
     Ok(Json(ModUpdatesResponse {
         updates,
         refreshed: true,
@@ -1323,6 +1423,7 @@ async fn refresh_mod_updates(
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
+        r.loader.as_deref(),
     );
     let list = mods.get_mod_list_light().await.map_err(map_core_error)?;
 
@@ -1613,6 +1714,7 @@ async fn enable_mod(
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
+        r.loader.as_deref(),
     );
     mods.enable_mod(&path);
     Ok(StatusCode::OK)
@@ -1634,6 +1736,7 @@ async fn disable_mod(
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
+        r.loader.as_deref(),
     );
     mods.disable_mod(&path);
     Ok(StatusCode::OK)
@@ -1664,6 +1767,7 @@ async fn batch_enable_mods(
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
+        r.loader.as_deref(),
     );
     for name in names {
         let path = dir.join(&name).to_string_lossy().into_owned();
@@ -1684,6 +1788,7 @@ async fn batch_disable_mods(
         &r.version,
         r.isolated,
         &state.curse_forge_api_key,
+        r.loader.as_deref(),
     );
     for name in names {
         let path = dir.join(&name).to_string_lossy().into_owned();
@@ -3133,6 +3238,59 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// 更新检查缓存必须按加载器校验（PR #258 评审指出）。
+    ///
+    /// 危害链：`PUT /instance/{id}` 只改 `loader` 时，mods 目录与实例 ID 都不变，
+    /// 而 `refresh_mod_updates` 是按 loader 扫描本地模组、按 loader 筛选远程版本，
+    /// 命中旧缓存会拿旧 loader 的 `file_name` / `download_url` / `new_file_name` 去
+    /// 删旧文件、装新文件。故 loader 不一致必须判为不可用。
+    #[test]
+    fn update_cache_rejects_entry_written_under_other_loader() {
+        let entry = |loader: Option<&str>| UpdateCacheEntry {
+            fetched_at: 0,
+            updates: Vec::new(),
+            loader: loader.map(str::to_string),
+        };
+
+        // 同侧 → 可用（大小写/空白归一，与 ModsCacheEntry 口径一致）
+        assert!(update_cache_usable(&entry(Some("forge")), Some("forge")));
+        assert!(update_cache_usable(&entry(Some(" Forge ")), Some("FORGE")));
+        // Cleanroom 是 Forge fork，元数据同为 mods.toml → 与 Forge 同侧
+        assert!(update_cache_usable(
+            &entry(Some("cleanroom")),
+            Some("forge")
+        ));
+
+        // 跨侧 → 不可用（正是本评审要堵的路径）
+        assert!(!update_cache_usable(&entry(Some("forge")), Some("fabric")));
+        assert!(!update_cache_usable(&entry(Some("fabric")), Some("forge")));
+        // NeoForge 独占一侧：与 Forge 也不同侧
+        assert!(!update_cache_usable(
+            &entry(Some("neoforge")),
+            Some("forge")
+        ));
+        assert!(!update_cache_usable(
+            &entry(Some("forge")),
+            Some("neoforge")
+        ));
+
+        // 旧缓存（无 loader 字段）与已知加载器：Fabric 侧按等价视为可用，
+        // Forge/NeoForge 侧不可用（宁可重扫，也不返回可能错侧的历史结果）
+        assert!(update_cache_usable(&entry(None), Some("fabric")));
+        assert!(!update_cache_usable(&entry(None), Some("forge")));
+        assert!(!update_cache_usable(&entry(None), Some("neoforge")));
+    }
+
+    /// 缓存条目缺 `loader` 字段时仍可反序列化（兼容评审前写入的旧缓存文件），
+    /// 且 `loader` 为 `None` → 交由 [`update_cache_usable`] 判不可用（Forge 侧）。
+    #[test]
+    fn update_cache_entry_deserializes_without_loader_field() {
+        let json = r#"{"fetchedAt":1700000000,"updates":[]}"#;
+        let cache: UpdateCacheEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(cache.loader, None);
+        assert!(!update_cache_usable(&cache, Some("forge")));
     }
 
     #[test]

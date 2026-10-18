@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
 
 export interface DebugState {

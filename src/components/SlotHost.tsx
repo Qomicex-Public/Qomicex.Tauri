@@ -1,9 +1,12 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { Fragment } from 'react'
 import { usePluginStore } from '../stores/pluginStore.ts'
-import { getSlotContent } from '../plugins/slots.tsx'
+import { useSlotContent } from '../plugins/slots.tsx'
 import type { SlotId } from '../plugins/slots.tsx'
 
-/** 渲染指定槽位下全部插件注册的 UI。订阅插件状态：激活/停用后自动增删。 */
+/** 渲染指定槽位下全部插件注册的 UI。订阅插件状态与槽位注册表：激活/停用/运行时追加后自动增删。 */
 export function SlotHost({ slotId, className, trailingSeparator }: {
   slotId: SlotId
   className?: string
@@ -11,7 +14,7 @@ export function SlotHost({ slotId, className, trailingSeparator }: {
   trailingSeparator?: boolean
 }) {
   usePluginStore(s => s.plugins)
-  const items = getSlotContent(slotId)
+  const items = useSlotContent(slotId)
 
   if (items.length === 0) return null
 

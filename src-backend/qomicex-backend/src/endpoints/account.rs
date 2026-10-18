@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Account endpoints (corresponding source: Endpoints/AccountEndpoints.cs).
 //! All routes are served through `state.account` (persistent CRUD). Route
 //! prefix is `/api/account` (routes below start with `/account/...`).

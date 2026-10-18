@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Instance endpoints (source: Endpoints/InstanceEndpoints.cs).
 //!
 //! Provides game-instance CRUD, default-instance management and mod loader
@@ -26,6 +29,7 @@ use crate::endpoints::java;
 use crate::endpoints::loader::LoaderVersionInfo;
 use crate::error::{ApiError, ApiResult};
 use crate::services::install_service::InstallRequestData;
+use crate::services::install_tracker::InstallProgress;
 use crate::services::instance::GameInstance;
 use crate::services::instance_group::InstanceGroup;
 use crate::services::launch_tracker::LaunchProgress;
@@ -128,6 +132,10 @@ struct SyncScanRequest {
 #[serde(rename_all = "camelCase")]
 struct SyncScanVersion {
     name: String,
+    /// 版本目录名（= 实例记录的身份键）。前端从 `ScannedVersion.dirName` 回传；
+    /// 旧前端缺失时回退 `name`（旧行为，issue #244 修复点）。
+    #[serde(default)]
+    dir_name: Option<String>,
     game_version: String,
     #[serde(default)]
     loader: Option<String>,
@@ -143,19 +151,6 @@ struct SyncScanVersion {
     modpack_author: Option<String>,
     #[serde(default)]
     modpack_summary: Option<String>,
-}
-
-/// GET /api/instance/{id}/install/progress response (source: InstallProgressResponse).
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct InstallProgressResponse {
-    instance_id: String,
-    status: String,
-    progress: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-    total_files: i32,
-    completed_files: i32,
 }
 
 /// POST /api/instance/{id}/launch body (source: LaunchInstanceRequest).
@@ -282,6 +277,7 @@ async fn sync_scan(
         .into_iter()
         .map(|v| crate::services::instance::ScannedVersionInfo {
             name: v.name,
+            dir_name: v.dir_name,
             game_version: v.game_version,
             game_dir: req.game_dir.clone(),
             loader: v.loader,
@@ -1551,30 +1547,23 @@ async fn install_instance(
     }))
 }
 
-/// GET /api/instance/{id}/install/progress
+/// GET /api/instance/{id}/install/progress response：直接复用 `InstallProgress`
+/// （install_tracker 对外进度 DTO），不再另定义精简副本。
+///
+/// 该端点原先只返回 6 个字段，而前端 `InstallProgressResponse`（types/index.ts）
+/// 声明 11 个、SSE 载荷给全字段，导致 `stage` / `failedFiles` / `currentFile` /
+/// `currentFileProgress` / `speed` / `isPaused` 恒为 `undefined`，且 TS 编译期不报错。
+/// 复用同一 DTO 后，「后端字段 ⊇ 前端类型」由类型系统保证，新增字段不会再漂移。
 async fn install_progress(
     State(state): State<SharedState>,
     AxumPath(instance_id): AxumPath<String>,
-) -> ApiResult<Json<InstallProgressResponse>> {
+) -> ApiResult<Json<InstallProgress>> {
     let p = state.install_tracker.get_state(&instance_id);
-    Ok(Json(match p {
-        Some(p) => InstallProgressResponse {
-            instance_id: p.instance_id,
-            status: p.status,
-            progress: p.progress,
-            error: p.error,
-            total_files: p.total_files,
-            completed_files: p.completed_files,
-        },
-        None => InstallProgressResponse {
-            instance_id: instance_id.clone(),
-            status: "not-started".to_string(),
-            progress: 0.0,
-            error: None,
-            total_files: 0,
-            completed_files: 0,
-        },
-    }))
+    Ok(Json(p.unwrap_or_else(|| InstallProgress {
+        instance_id,
+        status: "not-started".to_string(),
+        ..Default::default()
+    })))
 }
 
 async fn install_pause(

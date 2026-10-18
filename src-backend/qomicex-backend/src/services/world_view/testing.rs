@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 集成测试夹具：暴露内部 API 供 `ported_tests` 调用。
 //!
 //! 与上游 world-viewer 的 `lib.rs::testing` 模块保持一致，只是把 `crate::`

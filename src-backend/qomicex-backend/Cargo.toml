@@ -14,7 +14,7 @@ name = "qomicex-backend"
 version = "0.1.0"
 edition = "2021"
 description = "Qomicex standalone HTTP backend (Rust rewrite of Qomicex.Launcher.Backend.Neo)"
-license = "GPL-3.0"
+license = "GPL-3.0-or-later"
 
 [[bin]]
 name = "qomicex-backend"
@@ -61,7 +61,7 @@ aes-gcm = { version = "0.10", optional = true }
 base64 = "0.22"
 
 # --- Plugin system ---
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 urlencoding = "2"
 url = "2"
 

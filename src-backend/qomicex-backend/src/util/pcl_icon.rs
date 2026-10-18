@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 实例图标：读取、归一化（缩放）与 base64 data URI 编解码。
 //!
 //! ## 为什么要在后端缩放

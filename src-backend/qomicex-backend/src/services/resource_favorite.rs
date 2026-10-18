@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 资源收藏服务（独立 resource_favorites.json 持久化）。
 //!
 //! 收藏条目唯一键为 `source + id + category`；同时保存卡片渲染所需的资源快照

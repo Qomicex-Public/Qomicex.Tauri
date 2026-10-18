@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 匿名插件错误遥测（opt-in，默认关）。
 //
 // 开关跟随后端设置 telemetryEnabled（默认 false）；关闭时不触发、不上报。

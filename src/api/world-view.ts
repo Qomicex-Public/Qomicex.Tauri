@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { API_BASE } from './client.ts'
 import type { WorldInfo, WorldBlockInfo } from '../types/index.ts'
 
@@ -13,9 +16,15 @@ export function openWorld(
   return postJson(`/instance/${instanceId}/world/open`, { name, key })
 }
 
-/** 关闭会话并释放后端的区块缓存。 */
-export async function closeWorld(instanceId: string): Promise<void> {
-  await fetch(`${API_BASE}/instance/${instanceId}/world/close`, { method: 'POST' })
+/**
+ * 关闭会话并释放后端的区块缓存。
+ *
+ * 带 `key` 时只关该会话 —— 多窗口预览时不会误关其他窗口的会话（#233）。
+ * 省略 `key` 则关闭全部（兼容旧调用方）。
+ */
+export async function closeWorld(instanceId: string, key?: string): Promise<void> {
+  const suffix = key ? `?key=${encodeURIComponent(key)}` : ''
+  await fetch(`${API_BASE}/instance/${instanceId}/world/close${suffix}`, { method: 'POST' })
 }
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { Bug, ChevronDown, ChevronUp, Copy, X } from 'lucide-react'
 import { get } from '../api/client.ts'

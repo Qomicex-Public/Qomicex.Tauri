@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 export async function cropHeadFromSkin(skinBlob: Blob, size = 64): Promise<Blob> {
   const bitmap = await createImageBitmap(skinBlob)
   const canvas = document.createElement('canvas')

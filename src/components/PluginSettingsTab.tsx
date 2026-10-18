@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Tabs } from './ui'
 import { useI18n } from '../i18n/index.tsx'

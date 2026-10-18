@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { CheckCircle2, Circle, CircleDashed, Loader2, XCircle } from 'lucide-react'
 import { useI18n } from '../i18n/index.tsx'
 import type { InstallStepInfo } from '../types/index.ts'

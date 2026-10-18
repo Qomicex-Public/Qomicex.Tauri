@@ -1,25 +1,21 @@
 # 待办清单
 
-> 生成时间：2026-09-07
+> **本文件不是事实源，请勿在此维护列表。**
+>
+> 待办清单的唯一事实源是 [`docs/TODO.md`](../../TODO.md)。
+> 本文件保留在文档索引内，仅为让「8-部署运维」分类下能检索到待办入口。
 
-## 高优先级
+## 为什么不在两处维护
 
-- [ ] **修复 Issue #86**：主页组件位置修改后下次打开会重置（GitHub open issue）
+历史上本文件与 `docs/TODO.md` 各存一份，导致内容分叉：
 
-## 中优先级
+- 本文件停留在 **2026-09-07**，仍列着 `Issue #86`、`modpack.rs:1174`、`instance_files.rs:1001`、
+  `skin.rs:907`、`UpdateDialog.tsx:36` 等待办 —— 这些在 `docs/TODO.md` 里**已归档为已完成或不采纳**；
+- 两份的「技术债备忘」也不同步。
 
-- [ ] **modpack.rs:1174**：整合包安装参数为占位值，待解析 manifest.zip 取真实值
-- [ ] **instance_files.rs:1001**：mcmod 中文名 enrich 未接入（McmodService 缺接口）
+双份维护的代价是必然分叉。故 2026-10-09 起本文件收敛为指针。
 
-## 低优先级
+## 去哪里看
 
-- [ ] **skin.rs:907**：切换 `axum::extract::Multipart` 替换现有上传解析
-- [ ] **resource_center.rs:708**：FTB 无分页，聚合搜索翻页会重复
-- [ ] **UpdateDialog.tsx:36**：插件下载无真中止 API，cancel 语义 = 下完不装
-
-## 技术债备忘（ponytail 有意简化，非 bug）
-
-- `src/lib/simple-cache.ts` / `src/api/skin.ts`：全局内存缓存无淘汰，内存敏感时需 LRU
-- `src-tauri/src/ipc.rs:260`：导出响应整体缓冲进内存，大文件应走 `ipc_stream`
-- `src/pages/Accounts.tsx:96`：shift-select 搜索变化时区间选择漂移
-- CI（debug.yml / release.yml）：QEMU 下 pnpm tarball 校验异常的 workaround
+- **活跃待办**（含 2026-10-09 全项目 Review 产生的 14 条 issue 清单）：[`docs/TODO.md`](../../TODO.md)
+- **Review 全文**：[`项目全景Review-2026-10.md`](../2-架构设计/项目全景Review-2026-10.md)

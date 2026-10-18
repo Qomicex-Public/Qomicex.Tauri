@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App.tsx";

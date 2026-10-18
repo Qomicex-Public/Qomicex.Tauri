@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 游戏进程退出监控 + 崩溃诊断收集。
 //!
 //! 对应 C# `InstanceController` 启动任务中的 `WaitForExit` 段：进程退出后收集

@@ -1,9 +1,15 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useRef, useState } from 'react'
 import type { PluginInfo } from '../plugins/types.ts'
 import { fetchPlugin } from '../api/plugins.ts'
 import { convertScriptSrcs, convertCssLinks, getFileUrl, buildPluginDoc } from '../plugins/sandbox.ts'
 import { getThemeVars, getThemeScheme } from '../plugins/plugin-css.ts'
 import { initApiTransport } from '../api/ipc.ts'
+import { createL4NodeBridge } from '../plugins/l4-registry-bridge.ts'
+import type { RegistryBus } from '../plugins/l4-registry-bridge.ts'
+import { setL4NodeBridge } from '../plugins/l4-registry.ts'
 
 /**
  * l4 独立窗口页：由主窗口 `createRemoteWebview` 以 `/plugins/p/:id?pluginWebview=1`
@@ -57,6 +63,31 @@ export default function PluginWebviewPage({ pluginId }: { pluginId: string }) {
 
         const { listen, emitTo } = await import('@tauri-apps/api/event')
 
+        // l4 窗口侧注册表总线：统一发到 `main`，接收主窗口按需转发的事件。
+        const eventBus = (): RegistryBus => ({
+          send: (event, payload, target) => {
+            // 目标窗口可能已关闭：emitTo 会 reject，不处理就是未处理的 Promise rejection
+            void emitTo(target, event, payload).catch((e) => {
+              console.warn('[plugin] l4 注册表事件发送失败', event, target, e)
+            })
+          },
+          on: (event, handler) => {
+            let disposed = false
+            let unlisten: (() => void) | null = null
+            // listen 失败也要记录：否则该事件永远收不到，只能表现为调用超时
+            void listen(event, (e) => handler(e.payload)).then((fn) => {
+              if (disposed) fn()
+              else unlisten = fn
+            }).catch((e) => {
+              console.warn('[plugin] l4 注册表事件监听失败', event, e)
+            })
+            return () => {
+              disposed = true
+              if (unlisten) { unlisten(); unlisten = null }
+            }
+          },
+        })
+
         // 插件桥 → 主窗口：仅转发 API 调用（协议消息体原样，传输层换成跨窗口事件）
         const forward = (e: MessageEvent) => {
           if (e.source !== iframe.contentWindow) return
@@ -75,6 +106,30 @@ export default function PluginWebviewPage({ pluginId }: { pluginId: string }) {
         unlistens.push(await listen('plugin-l4-api-response', (e) => {
           iframe.contentWindow?.postMessage(e.payload, '*')
         }))
+
+        // l4 注册表节点桥：把本窗口里插件注册的方法报给主窗口，并接住主窗口转来的
+        // 方法调用。此前只在窗口内部登记，主窗口的 callPlugin 永远查不到（#260）。
+        // selfPluginId 显式给出窗口所属插件：注册/注销的身份不采信 iframe 自报的 id，
+        // 否则恶意插件可伪造成别人发 unregister，删掉对方的登记。
+        const nodeBridge = createL4NodeBridge(eventBus(), (targetPluginId, method, callArgs) => {
+          const registry = (window as unknown as {
+            __pluginRegistry?: { _callWithinWindow: (p: string, m: string, a: unknown[]) => Promise<unknown> }
+          }).__pluginRegistry
+          return registry
+            ? registry._callWithinWindow(targetPluginId, method, callArgs)
+            : Promise.reject(new Error('Plugin registry not initialized'))
+        }, { selfPluginId: pluginId })
+        setL4NodeBridge(nodeBridge)
+        // 通告就绪：此后主窗口对本插件的调用会排队等 registerMethod，而不是立即
+        // 报「未提供方法」（窗口已创建、前端还在加载的间隙）。
+        nodeBridge.ready(pluginId)
+        unlistens.push(() => {
+          // 先注销再销毁：注销要走总线发送，dispose 会解绑自身监听（发送不依赖监听，
+          // 但这个顺序让「窗口消失」与「登记清除」的因果更清楚）
+          nodeBridge.unregister(pluginId)
+          nodeBridge.dispose()
+          setL4NodeBridge(null)
+        })
 
         iframe.onload = () => {
           // 主题一次性推送（本窗口无完整主题管线，取计算样式同步一次即可）

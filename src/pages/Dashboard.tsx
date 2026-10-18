@@ -1,7 +1,10 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useMemo } from 'react'
 import { Pencil } from 'lucide-react'
 import { usePluginStore } from '../stores/pluginStore.ts'
-import { getSlotContent } from '../plugins/slots.tsx'
+import { useSlotContent } from '../plugins/slots.tsx'
 import { usePageAnimation } from '../hooks/usePageAnimation.ts'
 import { useMessageBox } from '../components/ui'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
@@ -16,6 +19,9 @@ import { WatermarkWidget, AccountWidget, InstanceWidget, AnnouncementWidget } fr
 function DashboardContent() {
   const { t } = useI18n()
   const plugins = usePluginStore(s => s.plugins)
+  // 订阅槽位注册表：插件运行时可向 dashboard:widgets 追加入口（addMenuItem），
+  // 只依赖 plugins 会漏掉这类更新
+  const dashboardWidgets = useSlotContent('dashboard:widgets')
   const { layout, setLayout, editing, setEditing, showMicrosoftReauth, setShowMicrosoftReauth, defaultAccount, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useDashboard()
 
   const widgets = useMemo<WidgetEntry[]>(() => {
@@ -25,7 +31,7 @@ function DashboardContent() {
       { id: 'instance', label: t('dashboard.widget.instance'), node: <InstanceWidget /> },
       { id: 'announcements', label: t('dashboard.widget.announcements'), node: <AnnouncementWidget /> },
     ]
-    const pluginEntries: WidgetEntry[] = getSlotContent('dashboard:widgets').map((reg, i) => ({
+    const pluginEntries: WidgetEntry[] = dashboardWidgets.map((reg, i) => ({
       id: `plugin:${reg.pluginId}:${i}` as WidgetId,
       label: reg.pluginId,
       node: (
@@ -35,7 +41,7 @@ function DashboardContent() {
       ),
     }))
     return [...staticEntries, ...pluginEntries]
-  }, [plugins, t])
+  }, [plugins, t, dashboardWidgets])
 
   useEffect(() => {
     const known = new Set<string>(widgets.map(w => w.id))

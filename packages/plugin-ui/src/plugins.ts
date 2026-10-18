@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 插件清单类型 + 权限目录（与主仓 src/plugins/types.ts 保持同步；启动器与插件商店共同消费）
 
 export interface PluginManifest {

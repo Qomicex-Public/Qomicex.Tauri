@@ -1,16 +1,31 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import type { PluginInfo } from './types.ts'
 import { usePluginStore } from '../stores/pluginStore.ts'
 import { createPluginBridge } from './plugin-api.ts'
-import { injectCss, registerThemeSync, getThemeVarsCss, themeBridgeScript } from './plugin-css.ts'
+import { injectCss, registerThemeSync, unregisterThemeSync, getThemeVarsCss, themeBridgeScript } from './plugin-css.ts'
 import { API_BASE } from '../api/client.ts'
 import { applyThemeOverride, clearThemeOverride } from '../theme/override.ts'
 import { normalizeHex, THEME_COLOR_MODE_BACKGROUND } from '../lib/themeColor.ts'
 import { getSettings as getAppSettings } from '../api/settings.ts'
 import type { PluginErrorType } from '../api/telemetry.ts'
 import { reportPluginError } from '../lib/telemetry.ts'
+import { createIframeHost, mountHost, trackMountTarget, unmountHost } from './sandbox-host.ts'
 
 export interface SandboxInstance {
   iframe: HTMLIFrameElement
+  /**
+   * iframe 的宿主容器。宿主常驻文档（见 sandbox-host.ts）：srcdoc iframe 未进入
+   * 文档时不执行脚本，宿主脱管就等于插件方法全部不注册（issue #260）。
+   */
+  host: HTMLDivElement
+  /**
+   * 卸载宿主时的行为：`true` = 退回 body 的隐藏位置，插件脚本与已注册方法在页面
+   * 关闭后继续有效（插件主沙箱）；`false` = 直接脱离文档（槽位/设置页沙箱只服务
+   * 当前可见 UI，重新挂载时由 srcdoc 重新加载）。
+   */
+  persistent: boolean
   plugin: PluginInfo
   destroy: () => void
 }
@@ -34,6 +49,13 @@ const webviewInstances = new Map<string, WebviewInstance>()
 /** UI 槽位沙箱：pluginId → 该插件挂载到各槽位的 iframe 列表（与主页面沙箱独立管理） */
 const slotSandboxes = new Map<string, SandboxInstance[]>()
 const sourceMap = new WeakMap<Window, string>()
+
+/// 已销毁的 iframe 集合（弱引用，不阻止回收）。
+///
+/// `iframe.onload` 是异步触发的，而 `destroy()` 是同步的：插件快速停用时
+/// onload 可能在 destroy 之后才跑，此时若仍注册主题同步就会永久泄漏该 iframe
+/// 及其整棵 DOM（#236）。用弱集合标记已销毁，供 onload 回调判定。
+const destroyedIframes = new WeakSet<HTMLIFrameElement>()
 
 export function getFileUrl(pluginId: string, frontend: string, path: string) {
   const base = frontend.split('/').slice(0, -1).join('/')
@@ -91,7 +113,13 @@ window.__PLUGIN_API_BASE__ = '__API_BASE_TOKEN__'
     _callLocal: function (method, args) {
       var fn = (__localExports[window.__PLUGIN_ID__] || {})[method]
       if (typeof fn !== 'function') return Promise.reject(new Error('插件 ' + window.__PLUGIN_ID__ + ' 未提供方法 ' + method))
-      return Promise.resolve(fn.apply(null, args))
+      // 同步抛错必须转成 reject：调用方经 postMessage 等回执，异常直接冒泡的话
+      // 回执帧永远发不出去，调用方会一直挂着（#260）。
+      try {
+        return Promise.resolve(fn.apply(null, args))
+      } catch (e) {
+        return Promise.reject(e instanceof Error ? e : new Error(String(e)))
+      }
     }
   }
   // iframe 侧本地 hook 注册表：pluginId -> method -> handler（洋葱管道）
@@ -256,6 +284,14 @@ window.__PLUGIN_API__ = {
       }
       parent.postMessage({ type: '__plugin_api_call', id, method: 'proxyFetchStream', args: [payload] }, '*')
     })
+  },
+  // 文档把这两个写成具名调用（__PLUGIN_API__.callWasm(...)），但桥里原本只有
+  // call() 通道，照文档写会 TypeError。这里补上薄封装，与白名单里的同名方法对齐。
+  callWasm: (pluginId, exportName) => {
+    return window.__PLUGIN_API__.call('callWasm', pluginId, exportName)
+  },
+  listWasmPlugins: () => {
+    return window.__PLUGIN_API__.call('listWasmPlugins')
   }
 }
 document.addEventListener('DOMContentLoaded', () => {
@@ -276,16 +312,28 @@ document.addEventListener('DOMContentLoaded', () => {
 })
 <\/script>`
 
-export function createSandbox(plugin: PluginInfo): SandboxInstance {
-  const iframe = document.createElement('iframe')
-  iframe.setAttribute('sandbox', 'allow-scripts')
-  iframe.style.cssText = 'border:none;width:100%;height:100%'
+/**
+ * 创建插件 iframe 沙箱。
+ * @param hiddenMount `true` = 立即挂进 body 的隐藏宿主（库插件：没有页面入口，
+ * 不挂载则 `srcdoc` 不执行、`registerMethod` 永不注册，issue #260）；`false` = 等
+ * PluginPage 打开时再挂载（有页面入口的插件，避免启动即执行所有 UI 前端）。
+ */
+export function createSandbox(plugin: PluginInfo, hiddenMount = false): SandboxInstance {
+  const { host, iframe } = createIframeHost(plugin.manifest.id, hiddenMount)
 
   const instance: SandboxInstance = {
-    iframe, plugin,
+    iframe, host, persistent: true, plugin,
     destroy: () => {
+      destroyedIframes.add(iframe)
+      unregisterThemeSync(iframe)
       sandboxes.delete(plugin.manifest.id)
+      // 标记销毁：unmountSandbox 据此跳过「退回 body」，避免把宿主重新挂回文档
+      host.dataset.pluginDestroyed = '1'
+      // 显式清空 srcdoc 并摘除 iframe：只 remove 宿主不保证浏览上下文被销毁，
+      // 插件侧的 window 监听会继续存活（#260 停用后的资源残留）
+      iframe.srcdoc = ''
       iframe.remove()
+      host.remove()
     }
   }
 
@@ -294,22 +342,49 @@ export function createSandbox(plugin: PluginInfo): SandboxInstance {
   return instance
 }
 
+/**
+ * 把插件 iframe 迁入页面容器显示（PluginPage / PluginSlot 调用）。
+ * 返回取消函数：无 `moveBefore` 的环境需要跟随容器几何重新对齐，卸载时应调用。
+ */
+export function mountSandbox(instance: SandboxInstance, target: HTMLElement): () => void {
+  mountHost(instance.host, target)
+  return trackMountTarget(instance.host, target, () => instance.host.isConnected && !instance.host.hasAttribute('aria-hidden'))
+}
+
+/**
+ * 把 iframe 退出页面容器。常驻主沙箱退回 body 的隐藏位置，插件脚本与已注册方法
+ * 保持有效；槽位/设置页沙箱直接脱离文档（它们只服务于当前可见的 UI，重新挂载时
+ * 由 srcdoc 重新加载）。
+ */
+export function unmountSandbox(instance: SandboxInstance) {
+  // 用显式销毁标记判断，而不是 isConnected：React 卸载顺序不保证 cleanup 早于容器
+  // 脱离文档，那时 isConnected 已为 false，宿主会被留在已脱离的页面容器里，下次
+  // mountHost 又因 parentElement 未变而跳过样式恢复，插件页会停在隐藏态。
+  if (instance.host.dataset.pluginDestroyed === '1') return
+  if (instance.persistent) unmountHost(instance.host)
+  else instance.host.remove()
+}
+
 /** 创建 UI 槽位 iframe 沙箱：把插件包内任意 HTML 文件以沙箱渲染，供 slots 槽位挂载。 */
 export function createSlotSandbox(plugin: PluginInfo, file: string): SandboxInstance {
-  const iframe = document.createElement('iframe')
-  iframe.setAttribute('sandbox', 'allow-scripts')
-  iframe.style.cssText = 'border:none;width:100%;height:100%'
+  // 槽位沙箱不常驻：由 PluginSlot 挂进自己的容器
+  const { host, iframe } = createIframeHost(plugin.manifest.id, false)
 
   const instance: SandboxInstance = {
-    iframe, plugin,
+    iframe, host, persistent: false, plugin,
     destroy: () => {
+      destroyedIframes.add(iframe)
+      unregisterThemeSync(iframe)
       const list = slotSandboxes.get(plugin.manifest.id)
       if (list) {
         const idx = list.indexOf(instance)
         if (idx >= 0) list.splice(idx, 1)
         if (list.length === 0) slotSandboxes.delete(plugin.manifest.id)
       }
+      host.dataset.pluginDestroyed = '1'
+      iframe.srcdoc = ''
       iframe.remove()
+      host.remove()
     }
   }
 
@@ -343,11 +418,22 @@ async function loadSandboxContent(plugin: PluginInfo, iframe: HTMLIFrameElement,
 
     html = buildPluginDoc(plugin, html, entry)
 
+    // 提前登记来源：插件脚本在首次 load 事件之前就会调用 API，若等到 onload 才
+    // sourceMap.set，这段窗口期的调用会查不到 pluginId（表现为调用卡住/被拒）。
+    if (iframe.contentWindow) sourceMap.set(iframe.contentWindow, plugin.manifest.id)
+
     iframe.onload = () => {
+      // destroy() 可能先于 onload 触发（见 destroyedIframes 注释），
+      // 此时不得再注册主题同步，否则泄漏已卸载的 iframe（#236）。
+      if (destroyedIframes.has(iframe)) return
+      // srcdoc 首次导航后 contentWindow 可能换成新对象，这里再登记一次兜底
       if (iframe.contentWindow) sourceMap.set(iframe.contentWindow, plugin.manifest.id)
       registerThemeSync(iframe)
     }
     iframe.srcdoc = html
+    // srcdoc 赋值后 contentWindow 已就位：此刻登记，覆盖「脚本已开始跑、onload 未到」
+    // 的窗口期（插件常在 DOMContentLoaded 里就调 API）。
+    if (iframe.contentWindow) sourceMap.set(iframe.contentWindow, plugin.manifest.id)
   } catch (e) {
     console.error('[sandbox] loadSandboxContent failed for', plugin.manifest.id, e)
     reportPluginError(plugin.manifest.id, plugin.manifest.version, 'plugin_load_failed')
@@ -479,6 +565,13 @@ window.__PLUGIN_API__ = {
       }
       window.postMessage({ type: '__plugin_api_call', id: id, method: 'proxyFetchStream', args: [payload] }, '*')
     })
+  },
+  // 与 iframe 桥对齐：文档把这两个写成具名调用
+  callWasm: function (pluginId, exportName) {
+    return window.__PLUGIN_API__.call('callWasm', pluginId, exportName)
+  },
+  listWasmPlugins: function () {
+    return window.__PLUGIN_API__.call('listWasmPlugins')
   }
 }
 window.addEventListener('error', function () { window.dispatchEvent(new CustomEvent('qomicex:plugin-error', { detail: { pluginId: '${plugin.manifest.id}', pluginVersion: '${plugin.manifest.version}', errorType: 'plugin_runtime_error' } })) })
@@ -534,7 +627,18 @@ window.addEventListener('message', (e) => {
   if (e.data?.type === '__plugin_api_call') {
     const { id, method, args } = e.data
     const pluginId = sourceMap.get(e.source as Window)
-    if (pluginId) handleApiCall(id, method, args, pluginId, e.source as Window)
+    if (pluginId) {
+      handleApiCall(id, method, args, pluginId, e.source as Window)
+    } else if (e.source) {
+      // 来源未登记（iframe onload 尚未跑完、或来源不是插件沙箱）：必须回执错误。
+      // 静默丢弃会让插件侧的 Promise 永久挂起 —— 调用方既看不到失败也没有超时，
+      // 表现为「这个 API 卡住了」，极难定位。
+      ;(e.source as Window).postMessage({
+        type: '__plugin_api_response',
+        id,
+        error: 'Plugin bridge not ready: source window is not registered yet',
+      }, '*')
+    }
   }
   if (e.data?.type === '__plugin_api_abort') {
     abortStream(e.data.id)
@@ -607,6 +711,7 @@ const METHOD_PERMISSIONS: Record<string, string> = {
   registerMethod: 'config:write', callPlugin: 'network:fetch', callWasm: 'wasm:execute', listWasmPlugins: 'wasm:execute',
   readText: 'filesystem:read', readBytes: 'filesystem:read', writeText: 'filesystem:write', writeBytes: 'filesystem:write', deleteFile: 'filesystem:write', execCommand: 'shell:execute',
   navigate: 'config:read', openPluginSettings: 'config:read', showToast: 'ui:toast', log: 'plugin:log', getSystemInfo: 'system:info', openUrl: 'system:notification', listPlugins: 'plugin:list',
+  addMenuItem: 'ui:inject_sidebar',
   getThemeColor: 'config:read', applyThemeOverride: 'config:write', clearThemeOverride: 'config:write',
   'overlay.create': 'ui:sub_window', 'overlay.show': 'ui:sub_window', 'overlay.hide': 'ui:sub_window',
   'overlay.destroy': 'ui:sub_window', 'overlay.setHtml': 'ui:sub_window', 'overlay.setPosition': 'ui:sub_window',
@@ -682,6 +787,7 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     case 'openPluginSettings': bridge.openPluginSettings(args[0] as string | undefined); return
     case 'showToast': bridge.showToast(args[0] as string, args[1] as 'info' | 'error' | 'success' | undefined); return
     case 'log': bridge.log(args[0] as string, args[1] as 'debug' | 'info' | 'warn' | 'error' | undefined); return
+    case 'addMenuItem': bridge.addMenuItem(args[0] as { path: string; label: string; icon?: string }); return
     case 'getThemeColor': return getCurrentThemeColorHex()
     case 'applyThemeOverride': applyThemeOverride(args[0] as Record<string, string>); return
     case 'clearThemeOverride': clearThemeOverride(); return

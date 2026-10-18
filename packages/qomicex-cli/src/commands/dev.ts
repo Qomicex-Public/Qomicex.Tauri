@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // qomicex dev — 起本地插件调试环境。
 // 在仓库内（plugins-dev/ 等）检测到 scripts/harness/run.mjs 时，spawn harness
 // 走完整调试环境（Tauri mock + stub + 热重载）；否则回退裸 Vite + 输出 dev 源配置。

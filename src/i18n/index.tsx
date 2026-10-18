@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 轻量 i18n：I18nProvider + useI18n。零依赖，TS 强类型 key。
 // 语言资源由 submodule qomicex-tauri-i18n 提供；语言持久化：localStorage('qomicex-language') 即时生效，与后端 settings.language 双向同步。
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react'

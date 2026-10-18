@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { CheckCircle2, ChevronDown, Circle, Layers, RotateCw, Search } from 'lucide-react'
@@ -13,6 +16,7 @@ import { getResourceVersions, getResourceDependencies } from '../api/resource.ts
 import { loadSettings } from '../api/settings.ts'
 import { getInstalledFileNames, getModsMetadata } from '../api/instance-files.ts'
 import { quickInstallViaDownloadCenter } from '../lib/quickInstall.ts'
+import { planDependencyInstall } from '../lib/dependencyInstallPlan.ts'
 import { useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import type { GameInstance, ModMetadata, ResourceVersion, ResolvedDependency } from '../types/index.ts'
@@ -202,21 +206,11 @@ export default function ResourceInstallDialog({
     if (!selectedInstance || !selectedVersion) return
     setStarting(true)
     setInstallError(null)
-    const depsItems: { url: string; fileName: string; category: string; name: string }[] = []
-    const toDelete: { fileName: string; category: string }[] = []
-
-    for (const dep of deps) {
-      const existing = installedByProjectId.get(dep.projectId)
-      if (existing) {
-        if (existing.fileName !== dep.fileName)
-          toDelete.push({ fileName: existing.fileName, category: dep.category })
-        continue
-      }
-      const sel = depSelectedVersion[dep.projectId]
-      const url = sel?.downloadUrl ?? dep.downloadUrl
-      const fileName = sel?.fileName ?? dep.fileName
-      if (url) depsItems.push({ url, fileName, category: dep.category, name: dep.name })
-    }
+    // 已安装的前置一律不重下、不删除（issue #249）。判定与清理口径见
+    // planDependencyInstall：本地文件名与上游文件名不同域，不能用来判定「过期」。
+    const { downloads: depsItems, deletions: toDelete } = planDependencyInstall(
+      deps, installedByProjectId, depSelectedVersion,
+    )
     const mainFile = selectedVersion.downloads[0]
     if (!mainFile) { setInstallError(t('dialogs.resourceInstall.noDownloadableFile')); setStarting(false); return }
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /**
  * `.qtheme` 颜色主题 schema v1：校验 + 归一化 + 转 CSS 变量。
  *

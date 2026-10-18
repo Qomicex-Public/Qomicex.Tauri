@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 开发期 `.env` 加载（issue #159 / PR #170 的 dev 补充）。
 //!
 //! ## 背景

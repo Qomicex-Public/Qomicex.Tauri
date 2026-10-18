@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 插件包 Ed25519 签名（ADR-050 三级信任链）。
 // 规范化与 store `src/lib/signature.ts` / launcher `plugin_signature.rs` 字节级一致：
 //   signedHash = SHA-256( canonicalJson({ manifest: sha256Hex(manifest.json 原始字节),

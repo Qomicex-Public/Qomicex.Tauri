@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { Component, type ReactNode, type ErrorInfo } from 'react'
 import { useI18n } from '../i18n/index.tsx'
 import { reportRenderCrash } from '../lib/error-report.ts'

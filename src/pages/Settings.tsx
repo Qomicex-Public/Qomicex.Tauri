@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faGithub, faJava } from '@fortawesome/free-brands-svg-icons'
@@ -40,6 +43,7 @@ import { LANGS } from '../i18n/lang.ts'
 import type { LangChoice } from '../i18n/lang.ts'
 import { cn } from '../lib/utils.ts'
 import { normalizeHex, THEME_COLOR_MODE_BACKGROUND } from '../lib/themeColor.ts'
+import { applySettingsToDom } from '../lib/applySettingsToDom.ts'
 import type { SystemInfo, JavaDownloadVendorInfo, DownloadTask } from '../types/index.ts'
 import {
   addCustomJavaRuntime,
@@ -149,30 +153,9 @@ const DEP_CATEGORY_KEYS: Record<string, string> = {
  */
 function saveSettings(settings: AppSettings, throwOnError = false): Promise<void> {
   const persisted = apiSaveSettings(settings, { throwOnError })
-  const enabled = settings.animationsEnabled !== false
-  const speed = settings.animationSpeed ?? 1
-  const maxFps = settings.maxFrameRate ?? 0
-  const fpsScale = maxFps > 0 ? 60 / maxFps : 1
-  document.documentElement.dataset.animEnabled = String(enabled)
-  document.documentElement.dataset.maxFps = String(maxFps)
-  document.documentElement.style.setProperty('--anim-duration-multiplier', String((1 / speed) * fpsScale))
-  document.documentElement.style.setProperty('--radius', `${settings.cornerRadius ?? 8}px`)
-  // 组件材质：与 App.tsx onSettingsChange 的 applyGlassMaterial 同步，
-  // 确保设置页修改后立即生效（apiSaveSettings 的监听器链是异步的）。
-  document.documentElement.dataset.material = settings.componentMaterial ?? 'default'
-  document.documentElement.style.setProperty('--glass-blur', `${Math.max(0, settings.glassBlur ?? 18)}px`)
-  // 默认材质卡片样式：与 App.tsx applyCardStyle 同步，设置页改动立即生效
-  const o = Math.min(100, Math.max(0, settings.cardOpacity ?? 50))
-  document.documentElement.style.setProperty('--card-opacity', String(o / 100))
-  const bc = settings.cardBorderColor?.trim()
-  if (bc && /^#?[0-9a-fA-F]{3}$|^#?[0-9a-fA-F]{6}$/.test(bc)) document.documentElement.style.setProperty('--card-border-color', bc)
-  else document.documentElement.style.removeProperty('--card-border-color')
-  const bw = Math.max(0, settings.cardBorderWidth ?? 1)
-  if (bw === 1) document.documentElement.style.removeProperty('--card-border-width')
-  else document.documentElement.style.setProperty('--card-border-width', `${bw}px`)
-  // 对话框透明度：与 App.tsx applyDialogOpacity 同步
-  const dop = Math.min(100, Math.max(0, settings.dialogOpacity ?? 75))
-  document.documentElement.style.setProperty('--dialog-opacity', String(dop / 100))
+  // 与 App.tsx 的 onSettingsChange 共用同一实现（#238）：此前两处各写一份，
+  // 已经漂移到「animGpu 只在 App 设」——在设置页关掉 GPU 加速不会即时生效。
+  applySettingsToDom(settings)
   window.dispatchEvent(new CustomEvent('qomicex-bg-change'))
   return persisted
 }
@@ -1593,7 +1576,7 @@ export default function Settings() {
                 <div className="space-y-2 px-4 py-3">
                   <Label>{t('settings.launcher.resourceDownloadSource')}</Label>
                   <div className="flex flex-wrap items-center gap-2">
-                    {[0, 1, 2].map((s) => {
+                    {[0, 1].map((s) => {
                       const ping = filePings.find(p => p.id === s)
                       const showLatency = ping && ping.latency >= 0
                       const latencyColor = !ping?.ok ? 'text-destructive'

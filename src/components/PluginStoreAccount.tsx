@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useRef, useState } from 'react'
 import { Copy, LogOut, User } from 'lucide-react'
 import { Button, Label, Separator, useMessageBox } from './ui'

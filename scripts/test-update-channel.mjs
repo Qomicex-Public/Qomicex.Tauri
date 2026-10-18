@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // src/lib/updateChannel.ts 的回归测试。
 //
 // 为什么不是一个测试框架：AGENTS.md「前端无测试框架」一节把测试框架的引入排在阶段 4，

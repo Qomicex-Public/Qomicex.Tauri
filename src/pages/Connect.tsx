@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { ArrowLeft, DoorOpen, Loader2, LogIn, Minus, Play, Plus, UserX } from 'lucide-react'
 import { Loader2 as Loader2Data, Play as PlayData, Wifi as WifiData } from 'lucide'
@@ -491,8 +494,26 @@ export default function Connect() {
       unknown: { variant: 'secondary' },
     }
     const c = cfg[natType.type] ?? { variant: 'secondary' as const }
+    // 公网映射地址由 STUN 探测得到，作为 tooltip 的补充信息展示便于自助排查
+    const mapped = natType.publicIp
+      ? `${natType.publicIp}${natType.publicPort ? `:${natType.publicPort}` : ''}`
+      : null
+    // 后端只下发结构化 code + 参数，文案在此按当前语言翻译
+    const { code, servers, responded, port, error } = natType.reason
+    const reasonParams: Record<string, string | number> = {}
+    if (servers !== undefined) reasonParams.servers = servers
+    if (responded !== undefined) reasonParams.responded = responded
+    if (port !== undefined) reasonParams.port = port
+    if (error !== undefined) reasonParams.error = error
+    const tip = (
+      <div className="space-y-1">
+        <div>{t(`connect.natTypes.${natType.type}.tooltip`)}</div>
+        {mapped && <div className="text-muted-foreground">{t('connect.natPublicAddr', { addr: mapped })}</div>}
+        <div className="text-muted-foreground">{t(`connect.natReasons.${code}`, reasonParams)}</div>
+      </div>
+    )
     return (
-      <Tooltip content={t(`connect.natTypes.${natType.type}.tooltip`)}>
+      <Tooltip content={tip}>
         <Badge variant={c.variant}>{t(`connect.natTypes.${natType.type}.label`)}</Badge>
       </Tooltip>
     )

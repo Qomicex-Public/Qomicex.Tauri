@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // qomicex login — 设备流登录（RFC 8628）并持久化会话到 ~/.qomicex/auth.json，
 // 供后续 publish 免重复登录（refresh token 30 天，旋转式续期）。
 import { DEFAULT_API_BASE, requestDeviceCode, pollDeviceLogin } from '../lib/store.ts'

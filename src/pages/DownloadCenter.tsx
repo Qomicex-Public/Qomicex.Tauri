@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import { ArrowRight, Box, CheckCircle2, Coffee, Download, Hammer, ListChecks, Package, RotateCw, Square, Trash2, ChevronDown } from 'lucide-react'
 import { RotateCw as RotateCwData, Trash2 as Trash2Data } from 'lucide'
@@ -180,7 +183,7 @@ function TaskCard({ task, t }: { task: DownloadTask; t: TFunc }) {
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="truncate text-sm font-medium">{task.name}</span>
+              <span className="min-w-0 truncate text-sm font-medium">{task.name}</span>
               <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium', cfg.color)}>
                 {t(`downloads.status.${task.status}`)}
               </span>

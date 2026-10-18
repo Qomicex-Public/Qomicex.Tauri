@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // verify 的静态启发式扫描：权限最小化 + 主线程长循环告警。
 // 均为轻量文本/正则，不做真 AST（提案允许"简单启发式即可"）。
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'

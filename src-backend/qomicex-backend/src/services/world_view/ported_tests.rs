@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 上游 world-viewer 的集成测试，逐文件移植（仅 world_viewer_lib::testing 改为
 //! crate::services::world_view::testing）。
 //!

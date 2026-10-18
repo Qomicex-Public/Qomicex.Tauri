@@ -5,6 +5,7 @@
 | 状态 | 已采纳 |
 | 日期 | 2026-10-04 |
 | 决策者 | AI Agent |
+| 修订 | v1.4（2026-10-06，requiredMods 生效条件补全） |
 
 ## 背景
 
@@ -22,6 +23,13 @@
 7. **缓存 schema 版本失效**：新增 `MODS_CACHE_SCHEMA`（后端 mods 列表缓存）与 `MOD_META_CACHE_VERSION`（core per-jar 缓存），版本不符时一律判未命中、强制重扫。仅靠「文件未变」（size+mtime / 目录指纹）发现不了「解析逻辑升级了」——旧缓存会把新字段经 `#[serde(default)]` 静默读成空，导致本功能无声失效（实测踩过：升级后 `providesIds` 恒为 0）。
 8. **可点击入口放菜单而非 Tooltip**：`plugin-ui` 的 `Tooltip` 内容是 `pointer-events-none` 且在 mouseleave 隐藏，无法承载可点击项；「去下载前置」入口改放右键/更多菜单，排除了在 Tooltip 内放按钮的做法。
 9. **必须采集嵌套 Jar-in-Jar 子模块 id（真实数据驱动的重要修正）**：容器 jar 顶层只声明自身 id，子模块 id 在内嵌 jar 里。实测 `fabric-api-0.161.0.jar` 顶层 `id` 仅 `fabric-api`，但 `META-INF/jars/` 下嵌 **44 个** jar，分别提供 `fabric-lifecycle-events-v1`、`fabric-resource-loader-v0` 等。只读顶层 id 会让依赖这些子模块的模组被大面积误报——在真实整合包 Fabulously Optimized（38 mods）上实测误报 **7 个**。故 core 新增 `ModInfo.provides_ids`，解析两种真实布局：Fabric 的 `META-INF/jars/*.jar`、Forge/NeoForge JarJar 的 `META-INF/jarjar/metadata.json` → `jars[].path`；前端把 `providesIds` 一并计入「已提供」集合。只做一层嵌套（JiJ 规范即一层，且避免解压炸弹式递归），单步失败静默跳过。
+10. **mcmod.info 世代（1.12.2 及更早 Forge/Fabric 前的老 mod）的依赖数据补全（v1.3 修订）**：用户报告 1.12.2-Forge 实例中 JER 依赖 JEI 未装却不报缺失。jar 探针实测 + 代码取证确认根因：`parse_mcmod_json` 只读展示字段，不读 `modid` 与任何依赖字段 → mcmod.info 世代的 mod `modId`/`dependencies` 恒为空 → 前端判定无从谈起（数据源头缺失，前端逻辑无缺陷）。修复按 [Forge 官方文档（Structuring Your Mod）](https://mcforge-documantation-jp.github.io/gettingstarted/structuring/) 的字段语义只收硬依赖：
+    - 补读 `mcmod.info` 的 `modid`（1.12.2 世代 mod 从此有精确 id，替代文件名兜底）；
+    - 读 `useDependencyInformation=true` 时的 `requiredMods`（`modid` / `modid@range` 混合格式）——官方语义「缺失即崩溃」的硬依赖；三列表仅在 `useDependencyInformation=true` **且该 mod 声明 `@Mod(useMetadata=true)`** 时被 FML 采用（两开关缺省均 false）。`useMetadata` 是注解属性、缺省时不在常量池留字符串，静态解析无法可靠判定 → 以 `useDependencyInformation=true` 近似（v1.4 评审修正）：极端「声明 requiredMods 却未开 useMetadata」的 jar 可能误报，为守住硬依赖告警覆盖接受（漏报 = 崩溃无提示，即 issue #165 原始痛点）；
+    - 扫描 class 常量池的 @Mod 注解字符串 `required-after:` / `required-before:`（1.12.2 世代 FML 实际执行强制检查的权威来源，JER 的 `required-after:jei@[4.7.0,)` 即在此）；`after:` / `before:` 仅是加载顺序、缺失不崩溃，不收录；
+    - **刻意不读 `mcmod.info` 的 `dependencies` 列表**：官方语义为纯加载顺序（"If one is not present, nothing happens"），收进来必误报（实测 Mekanism 1.12.2 的 12 项 dependencies 全是可选软依赖，若误收会虚假报出 ic2/buildcraftcore/computercraft 等 ~10 个缺失）；
+    - 注解依赖与 requiredMods 按 modId 大小写不敏感去重合并（注解优先，因其为运行时权威）；
+    - 两级缓存版本 bump：core `MOD_META_CACHE_VERSION` 2→3、backend `MODS_CACHE_SCHEMA` 3→4，强制旧缓存失效重扫。
 
 ## 备选方案
 
@@ -45,10 +53,15 @@
 - 缺点：Tooltip 内容 pointer-events-none 且 mouseleave 即隐藏，按钮点不到
 - 为何不选：实测组件行为不支持，改放菜单
 
+### 方案 v1.3 备选：把 mcmod.info 的 `dependencies` 当硬依赖收录
+- 优点：改动最小（只读一个 JSON 数组）
+- 缺点：语义错误——官方文档明确该列表只是加载顺序、缺失不影响启动；实测会把 Mekanism 的 ~10 个可选软依赖误报成缺失，违反本 ADR「宁可漏报也不误报」口径
+- 为何不选：误报面大且与 Forge 运行时行为因果不一致
+
 ## 影响
 - qomicex-core-rust/src/models/expansion/local.rs（ModDependencyInfo + ModInfo 的 mod_id/dependencies/provides_ids）
-- qomicex-core-rust/src/services/local/mods.rs（fabric/forge 依赖解析、嵌套 JiJ id 采集、CachedModMeta + 版本号、26 个测试）
-- src-backend/qomicex-backend/src/endpoints/instance_files.rs（ModDependencyDto + providesIds 映射 + MODS_CACHE_SCHEMA=3）
+- qomicex-core-rust/src/services/local/mods.rs（fabric/forge 依赖解析、嵌套 JiJ id 采集、CachedModMeta + 版本号、26 个测试；v1.3：mcmod.info 分支补 modid/requiredMods/@Mod 注解扫描 + 7 个新测试）
+- src-backend/qomicex-backend/src/endpoints/instance_files.rs（ModDependencyDto + providesIds 映射 + MODS_CACHE_SCHEMA；v1.3：3→4）
 - src/types/index.ts（ModDependency + ModMetadata 的 modId/dependencies/providesIds）
 - src/lib/modDependencies.ts（新增判定模块）
 - src/components/ModCard.tsx（⚠ 徽标 + 菜单入口）
@@ -62,6 +75,13 @@
 - 正向对照（证明非假阴性）：清空 `providesIds` 精确重现那 7 个误报；禁用/移除 fabric-api 亦各报 7 个。
 - PR #177 评审修复（`9f71c01`）后复验：移除 `fabric`/`quilt` 未引入任何新误报，三个真实整合包仍为 0 缺失；新增 7 项行为断言（含「只声明 modId=fabric 的旧版 API 仍能满足依赖」「11 个真平台 id 仍被排除」两条关键回归）全部通过。
 - 浏览器实机（Playwright + Tauri mock，`/instances/ba13cdf9-cc7?tab=mods`）：筛选桶计数、汇总横幅（「有 7 个模组缺少前置依赖」+「只看这些」）、7 行筛选结果带 ⚠ 徽标、Tooltip（「缺失依赖 / fabric-api」）、「下载前置：fabric-api」跳转至资源中心（带 keyword/gameVersion/loader）均确认。
+- **v1.3 回归验证（修复禁用探针）**：临时禁用注解扫描与 requiredMods 收录 → 5 个新测试全部 FAILED 且失败原因正是「依赖数据为空」（`只收 requiredMods: []`），还原后全绿——证明测试守住了目标行为。
+- **v1.3 真实 1.12.2 数据复测**（`C:\.minecraft\versions\1.12.2-Forge-14.23.5.2864\mods`，探针实测输出）：
+  - JER：`id="jeresources" deps=["jei@[4.7.0,)", "forge@[14.23.5.2779,)"]` —— 注解硬依赖成功解析（jei 未装 → 前端将正确报缺失）；
+  - Mekanism：`deps=["forge@[14.23.5.2768,)"]` —— 只收 requiredMods，12 项软依赖零误报；
+  - MekanismGenerators：`deps=["mekanism@[1.12.2-9.8.3.390]"]` —— 前置已装，零误报；
+  - VoxelMap：`deps=[]`。
+  - 修复前同目录基线：全部 mod 的 modId/dependencies 恒为空（用户报告的失效现象）。
 
 ## 修订记录
 | 日期 | 版本 | 修改内容 | 修改人 |
@@ -69,3 +89,5 @@
 | 2026-10-04 | v1.0 | 初版创建 | AI Agent |
 | 2026-10-04 | v1.1 | 真实数据验证发现嵌套 JiJ 子模块 id 缺失导致大面积误报，新增 providesIds 采集；缓存加版本号；补真实数据与浏览器实测结论 | AI Agent |
 | 2026-10-04 | v1.2 | PR #177 评审指出 `fabric` 被误当平台内置 id（实为旧版 Fabric API 的 id），连同同类项 `quilt` 一并移除并写明收录标准；补该修复的复验结论 | AI Agent |
+| 2026-10-06 | v1.3 | 修复 mcmod.info 世代（1.12.2）依赖数据恒为空导致的检测失效：补读 modid / requiredMods / @Mod 注解硬依赖，dependencies 列表确认为软依赖不收录；两级缓存版本 bump；补回归探针与真实数据复测结论 | AI Agent |
+| 2026-10-06 | v1.4 | PR #219 CodeRabbit 评审补全 requiredMods 的 FML 完整生效条件（另需 @Mod(useMetadata=true)）；说明静态解析以 useDependencyInformation=true 近似判定的原因与误报取舍；修复文档重复段落 | AI Agent |

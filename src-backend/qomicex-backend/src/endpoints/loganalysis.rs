@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 日志分析端点（`/api/loganalysis/*`），移植自 C# `LogAnalysisController.cs`。
 //!
 //! - `POST /api/loganalysis/analyze` — 分析前端粘贴的日志文本。

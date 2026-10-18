@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 整合包原地更新 —— 检查与预览（issue #118，方案 C）。
 //!
 //! 本模块**只读**：不修改实例文件，只回答「能不能更新」「有哪些更新」
@@ -578,7 +581,8 @@ async fn download_and_read_zip_entry(
         let f = archive
             .by_index(i)
             .map_err(|e| ApiError::internal(format!("读取 zip 条目失败: {e}")))?;
-        if f.name().eq_ignore_ascii_case(entry) {
+        // zip 9：`name()` 返回 `ZipResult<Cow<str>>`，解码失败视为不匹配
+        if f.name().is_ok_and(|n| n.eq_ignore_ascii_case(entry)) {
             found = Some(i);
             break;
         }
@@ -1118,7 +1122,8 @@ async fn fetch_zip_entry_text(
         let f = archive
             .by_index(i)
             .map_err(|e| format!("读取 zip 条目失败: {e}"))?;
-        if f.name().eq_ignore_ascii_case(entry) {
+        // zip 9：`name()` 返回 `ZipResult<Cow<str>>`，解码失败视为不匹配
+        if f.name().is_ok_and(|n| n.eq_ignore_ascii_case(entry)) {
             idx = Some(i);
             break;
         }

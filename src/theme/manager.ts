@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /**
  * 主题管理器：加载 / 切换 / 持久化自定义 `.qtheme` 颜色主题 + 图标主题。
  *

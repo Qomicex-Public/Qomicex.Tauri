@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /** 测试游戏的独立日志窗口 label（固定，重复点击先关旧的再开新的）。 */
 const GAME_LOG_WINDOW_LABEL = 'game-log-window'
 

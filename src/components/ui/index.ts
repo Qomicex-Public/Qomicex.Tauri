@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 export { cn } from '@qomicex/plugin-ui'
 export { Badge, badgeVariants } from '@qomicex/plugin-ui'
 export { BatchToolbar } from '@qomicex/plugin-ui'

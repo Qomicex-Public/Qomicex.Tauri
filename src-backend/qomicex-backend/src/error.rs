@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 统一错误类型与 HTTP 错误封装（对应源 Middleware/ErrorHandlingMiddleware.cs + Models/ApiError.cs）。
 //!
 //! 对外错误 JSON 契约（camelCase，与源 ApiError 一致）：

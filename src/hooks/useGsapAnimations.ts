@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useLayoutEffect, useRef, RefObject } from 'react'
 import gsap from 'gsap'
 import { getSettings } from '../api/settings.ts'
@@ -28,49 +31,6 @@ export function usePageTransition<T extends HTMLElement>(options?: {
       { opacity: 1, y: 0, duration, ease: 'power3.out', ...(settings.gpuAcceleration !== false ? { force3D: true } : {}) }
     )
   }, [options?.duration, options?.y])
-
-  return ref
-}
-
-/**
- * 子元素交错入场动画 Hook
- * 用于列表/网格的子元素依次入场
- */
-export function useStaggerAnimation<T extends HTMLElement>(options?: {
-  stagger?: number
-  duration?: number
-  y?: number
-  scale?: number
-}): RefObject<T | null> {
-  const ref = useRef<T>(null)
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-
-    const settings = getSettings()
-    if (!settings.animationsEnabled) return
-
-    const speed = settings.animationSpeed ?? 1
-    const stagger = Math.min(options?.stagger ?? 0.05, 0.4) / speed
-    const duration = (options?.duration ?? 0.3) / speed
-    const y = options?.y ?? 8
-    const scale = options?.scale ?? 0.97
-
-    const children = el.children
-    if (children.length === 0) return
-
-    gsap.fromTo(children,
-      { opacity: 0, y, scale },
-      {
-        opacity: 1, y: 0, scale: 1,
-        duration,
-        stagger,
-        ease: 'power3.out',
-        ...(settings.gpuAcceleration !== false ? { force3D: true } : {})
-      }
-    )
-  }, [options?.stagger, options?.duration, options?.y, options?.scale])
 
   return ref
 }

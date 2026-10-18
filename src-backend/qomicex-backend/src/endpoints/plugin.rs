@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Plugin endpoints (source: Endpoints/PluginEndpoints.cs).
 //!
 //! All 25 routes live under `/api/plugins`:
@@ -5,14 +8,15 @@
 //!   cache, cors proxy (SSE-capable), WASM gateway bridge, file read/write/
 //!   authorize/delete (FS_AUTHORIZATION_REQUIRED flow), download management
 //!   (tasks go to the shared DownloadManager so they surface in the download
-//!   center), and shell execution (win: powershell, other: /bin/sh).
+//!   center), and shell execution (win: pwsh 7 when installed, else the bundled
+//!   Windows PowerShell 5.1; other: /bin/sh).
 //!
 //! Permission gating is NOT done here: like the C# original, the backend only
 //! validates input; the frontend bridge enforces manifest permissions.
 
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -586,13 +590,17 @@ async fn rollback(
 /// GET /api/plugins/{id}/files/{*path} — static plugin assets (no-cache).
 async fn plugin_file(AxumPath((id, path)): AxumPath<(String, String)>) -> ApiResult<Response> {
     let plugins_root = settings::plugins_dir();
-    let base = plugins_root.join(&id);
-    if !base.starts_with(&plugins_root) {
+    if !is_plugin_dir_name(&id) {
         return Err(ApiError::not_found(
             "PLUGIN_FILE_NOT_FOUND",
             "File not found",
         ));
     }
+    let base = plugins_root.join(&id);
+    // 注意：不能用 `base.parent()` / `starts_with` 做边界判定 —— 二者都是**词法**
+    // （组件）比较，不解析 `..`：`plugins_root.join("..").parent()` 仍返回
+    // plugins_root，`starts_with` 也仍为真，两类守卫都会对 `id=".."` 失效。
+    // 唯一可靠的判据是 id 本身必须是单个普通文件名（`is_plugin_dir_name`）。
     let file_path = resolve_plugin_asset(&base, &path);
     let Some(file_path) = file_path else {
         return Err(ApiError::not_found(
@@ -616,6 +624,21 @@ async fn plugin_file(AxumPath((id, path)): AxumPath<(String, String)>) -> ApiRes
         .unwrap())
 }
 
+/// 插件目录名必须恰好是 `plugins/` 下的一个普通文件名：拒绝空、`.`、`..`
+/// 以及任何分隔符 / 盘符 / 绝对路径形态。
+///
+/// 不能改用 `Path::starts_with` 判定：它按**组件**比较前缀，`plugins_root.join("..")`
+/// 在组件层面仍以 `plugins_root` 的组件序列开头（`..` 是末位组件，不会回退），
+/// 于是 `id=".."` 恒为真，守卫形同虚设。
+fn is_plugin_dir_name(id: &str) -> bool {
+    !id.is_empty()
+        && id != "."
+        && id != ".."
+        && !id.contains('/')
+        && !id.contains('\\')
+        && !id.contains(':')
+}
+
 /// Resolve a plugin asset under `base`, refusing any traversal outside it.
 fn resolve_plugin_asset(base: &std::path::Path, rel: &str) -> Option<PathBuf> {
     if rel.is_empty() {
@@ -630,6 +653,8 @@ fn resolve_plugin_asset(base: &std::path::Path, rel: &str) -> Option<PathBuf> {
         return None;
     }
     let joined = base.join(rel_path);
+    // rel_path 已排除绝对路径与 ParentDir，此处 starts_with 只需再挡住带盘符前缀
+    // 的形态（Windows 下 `C:foo` 不是绝对路径，但 join 会替换掉 base）。
     if !joined.starts_with(base) {
         return None;
     }
@@ -1453,7 +1478,8 @@ async fn extract_zip_into(
             if entry.is_dir() {
                 continue;
             }
-            let rel: PathBuf = PathBuf::from(entry.name());
+            // zip 9：`name()` 返回 `ZipResult<Cow<str>>`（8 之前直接是 &str）
+            let rel: PathBuf = PathBuf::from(entry.name()?.as_ref());
             if rel
                 .components()
                 .any(|c| matches!(c, std::path::Component::ParentDir))
@@ -1554,6 +1580,89 @@ fn basename_of_url(url: &str) -> Option<String> {
 // Shell execution
 // =====================================================================
 
+/// Windows 上优先使用 PowerShell 7（`pwsh`），未安装时回退到系统自带的 5.1。
+///
+/// 只在启动时探测一次并缓存：探测要访问文件系统，没必要每条命令都做；插件若在
+/// 运行期间新装了 pwsh，重启后端即可生效（安装本身通常需要重启终端）。
+///
+/// 决策逻辑见 [`pick_shell_program`]（纯函数，可单测）。
+#[cfg(windows)]
+fn windows_shell_program() -> &'static str {
+    static PROGRAM: OnceLock<String> = OnceLock::new();
+    PROGRAM.get_or_init(|| {
+        let custom = std::env::var("QOMICEX_PWSH_PATH").ok();
+        let msi = std::env::var_os("ProgramFiles")
+            .map(|pf| Path::new(&pf).join("PowerShell").join("7").join("pwsh.exe"))
+            .filter(|p| p.is_file())
+            .map(|p| p.to_string_lossy().into_owned());
+        let on_path = find_pwsh_exe_on_path();
+        pick_shell_program(custom.as_deref(), on_path.as_deref(), msi.as_deref())
+    })
+}
+
+/// 解释器选择（纯函数，便于单测）。
+///
+/// 优先级：显式 `QOMICEX_PWSH_PATH` → `PATH` 里的 `pwsh.exe` → MSI 安装位置 → 5.1。
+///
+/// **一律返回可用于启动的完整路径或可执行名**，且返回什么就启动什么：此前探测
+/// `PATH` 时接受了 `.cmd` / `.bat`，实际却启动裸名 `pwsh` —— Rust 的进程创建按
+/// 可执行程序解析裸名，不会套用脚本扩展名，结果是明明探测成功却 `SHELL_START_FAILED`。
+/// 因此探测只认 `pwsh.exe`，并把命中路径原样返回。
+///
+/// 5.1 的回退用**绝对路径**而不是裸命令名：`powershell` 依赖 `PATH` 含 System32，
+/// 而 PATH 被裁剪/损坏时裸名会直接 `program not found` —— 那样连最基本的命令执行
+/// 都不可用，比版本不理想严重得多。
+#[cfg(windows)]
+fn pick_shell_program(
+    custom: Option<&str>,
+    pwsh_exe_on_path: Option<&str>,
+    msi_path: Option<&str>,
+) -> String {
+    if let Some(c) = custom {
+        if !c.is_empty() {
+            return c.to_string();
+        }
+    }
+    if let Some(p) = pwsh_exe_on_path {
+        return p.to_string();
+    }
+    if let Some(p) = msi_path {
+        return p.to_string();
+    }
+    windows_powershell_51().unwrap_or_else(|| "powershell".to_string())
+}
+
+/// 系统自带 Windows PowerShell 5.1 的绝对路径。
+///
+/// 位置随系统目录变化（`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`）。
+#[cfg(windows)]
+fn windows_powershell_51() -> Option<String> {
+    let root = std::env::var_os("SystemRoot")
+        .or_else(|| std::env::var_os("windir"))
+        .map(PathBuf::from)?;
+    let exe = root
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    exe.is_file().then(|| exe.to_string_lossy().into_owned())
+}
+
+/// 在 `PATH` 里查找可直接启动的 `pwsh.exe`，返回其完整路径。
+///
+/// 只认 `.exe`：进程创建不会按 `.cmd` / `.bat` 的语义套用解释器，探测到脚本却用裸名
+/// 启动必然会失败。Store 版在 `WindowsApps` 下的执行别名文件读取方式与常规文件不同，
+/// 因此 `is_file()` 失败时再试一次 `metadata()`。
+#[cfg(windows)]
+fn find_pwsh_exe_on_path() -> Option<String> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).find_map(|dir| {
+        let candidate = dir.join("pwsh.exe");
+        let exists = candidate.is_file() || std::fs::metadata(&candidate).is_ok();
+        exists.then(|| candidate.to_string_lossy().into_owned())
+    })
+}
+
 async fn shell(
     AxumPath(_id): AxumPath<String>,
     Json(req): Json<PluginShellRequest>,
@@ -1566,11 +1675,12 @@ async fn shell(
     }
     let timeout_ms = req.timeout_ms.unwrap_or(15000).clamp(1000, 120000);
 
-    let mut cmd = tokio::process::Command::new(if cfg!(windows) {
-        "powershell"
-    } else {
-        "/bin/sh"
-    });
+    #[cfg(windows)]
+    let program = windows_shell_program();
+    #[cfg(not(windows))]
+    let program = "/bin/sh";
+
+    let mut cmd = tokio::process::Command::new(program);
     if cfg!(windows) {
         cmd.arg("-NoProfile").arg("-Command").arg(&req.command);
         #[cfg(windows)]
@@ -1687,6 +1797,44 @@ mod tests {
         assert!(is_private("fc00::1"));
     }
 
+    /// 回归（#226）：`plugin_file` 的路径守卫原先用 `base.starts_with(&plugins_root)`，
+    /// 而该 API 按**组件**比较前缀 —— `join("..")` 的结果在组件层面仍以 plugins_root
+    /// 开头，于是 `id=".."` 恒为真，守卫不生效。
+    #[test]
+    fn plugin_file_guard_rejects_parent_dir_id() {
+        let root = std::path::Path::new("/tmp/qomicex-plugins");
+        // 组件语义：这正是旧实现被绕过的原因，先固定这个前提
+        assert!(root.join("..").starts_with(root));
+        assert!(root.join("../..").starts_with(root));
+        // 新守卫必须拒绝
+        assert!(!is_plugin_dir_name(".."));
+        assert!(!is_plugin_dir_name("../.."));
+        assert!(!is_plugin_dir_name("a/b"));
+        assert!(!is_plugin_dir_name("a\\b"));
+        assert!(!is_plugin_dir_name("C:\\Windows"));
+        assert!(!is_plugin_dir_name(""));
+        assert!(!is_plugin_dir_name("."));
+        // 合法插件目录名仍放行
+        assert!(is_plugin_dir_name("com.qomicex.demo"));
+        assert!(is_plugin_dir_name("my_plugin-1.0"));
+    }
+
+    /// 回归（#226）：记录「词法路径守卫对 `..` 无效」这一事实，防止日后重新引入
+    /// `base.parent()` / `base.starts_with(root)` 这类看似正确、实则恒真的伪守卫。
+    #[test]
+    fn lexical_path_guards_do_not_stop_parent_dir() {
+        let root = std::path::Path::new("/tmp/qomicex-plugins");
+        for id in ["..", "../..", "a/../.."] {
+            let base = root.join(id);
+            assert!(base.starts_with(root), "id={id}: starts_with 对 .. 恒真");
+        }
+        // parent() 同样不可靠：单个 `..` 会被词法消解回 root，多级则留在 root 之下
+        assert_eq!(root.join("..").parent(), Some(root));
+        assert_ne!(root.join("../..").parent(), Some(root));
+        // 唯一可靠的判据是 id 形态本身
+        assert!(is_plugin_dir_name("com.qomicex.demo"));
+    }
+
     #[test]
     fn proxy_fake_ip_is_allowed() {
         // Clash/Surge fake-ip pools resolve public hostnames into 198.18.0.0/15.
@@ -1704,5 +1852,100 @@ mod tests {
         assert!(!is_private("8.8.8.8"));
         assert!(!is_private("114.114.114.114"));
         assert!(!is_private("2606:4700:4700::1111"));
+    }
+
+    /// 回归（execCommand 解释器）：Windows 上必须优先用 PowerShell 7（`pwsh`），
+    /// 未安装时回退 5.1。
+    ///
+    /// 直接测 [`pick_shell_program`] 而不是探测结果：CI 与开发机上 pwsh 的有无不同，
+    /// 断言具体命中哪个会变成环境探测；这里锁的是**优先级语义**。
+    #[cfg(windows)]
+    #[test]
+    fn shell_program_prefers_pwsh_over_windows_powershell() {
+        let pwsh = r"C:\Program Files\PowerShell\7\pwsh.exe";
+        // PATH 命中 → 用它（且必须是探测到的**完整路径**，不是裸名）
+        assert_eq!(pick_shell_program(None, Some(pwsh), None), pwsh);
+        // 没有 pwsh → 回退 5.1，且必须是可执行的绝对路径，不能是裸名
+        let fallback = pick_shell_program(None, None, None);
+        assert!(
+            fallback.to_lowercase().ends_with("powershell.exe"),
+            "回退应为 powershell.exe，实际 {fallback}"
+        );
+        assert!(
+            std::path::Path::new(&fallback).is_absolute(),
+            "回退必须是绝对路径（不依赖 PATH），实际 {fallback}"
+        );
+        // PATH 未命中但 MSI 存在 → 用 MSI 的绝对路径
+        assert_eq!(pick_shell_program(None, None, Some(pwsh)), pwsh);
+        // PATH 与 MSI 都有时优先 PATH 命中项
+        assert_eq!(
+            pick_shell_program(None, Some(r"D:\pwsh\pwsh.exe"), Some(pwsh)),
+            r"D:\pwsh\pwsh.exe"
+        );
+    }
+
+    /// `QOMICEX_PWSH_PATH` 显式指定时压过一切自动探测（绿色版/自定义目录场景）。
+    #[cfg(windows)]
+    #[test]
+    fn explicit_pwsh_path_overrides_autodetect() {
+        assert_eq!(
+            pick_shell_program(
+                Some(r"D:\tools\pwsh\pwsh.exe"),
+                Some(r"C:\Program Files\PowerShell\7\pwsh.exe"),
+                Some(r"C:\msi\pwsh.exe")
+            ),
+            r"D:\tools\pwsh\pwsh.exe"
+        );
+        // 空值视为未设置，不能当成有效路径
+        assert_eq!(
+            pick_shell_program(Some(""), Some(r"D:\pwsh\pwsh.exe"), None),
+            r"D:\pwsh\pwsh.exe"
+        );
+        assert!(
+            pick_shell_program(Some(""), None, None)
+                .to_lowercase()
+                .ends_with("powershell.exe"),
+            "空值应回退到 powershell.exe"
+        );
+    }
+
+    /// 探测与启动必须指向同一个程序：`PATH` 里只有脚本（`.cmd`/`.bat`）时不能当作可用。
+    ///
+    /// 只看路径是否存在会把 `pwsh.cmd` 当成 pwsh，而进程创建不套用脚本语义，最终
+    /// `SHELL_START_FAILED`。函数只返回 `.exe` 路径这一契约由此固定。
+    #[cfg(windows)]
+    #[test]
+    fn pwsh_detection_only_returns_executables() {
+        if let Some(found) = find_pwsh_exe_on_path() {
+            assert!(
+                found.to_lowercase().ends_with("pwsh.exe"),
+                "探测结果必须是 pwsh.exe，实际 {found}"
+            );
+            assert!(
+                std::path::Path::new(&found).is_absolute(),
+                "探测结果必须是完整路径，实际 {found}"
+            );
+        }
+    }
+
+    /// 真实环境下选出来的程序名必须落在 PowerShell 家族内。
+    ///
+    /// 防的是回归成 `cmd`、`pwsh7` 这类拼写错误 —— 那种错误会让 `-NoProfile` 直接
+    /// 失败，插件调用 execCommand 时只看到 shell 启动失败。
+    #[cfg(windows)]
+    #[test]
+    fn detected_shell_program_is_powershell_family() {
+        let program = windows_shell_program();
+        let name = std::path::Path::new(program)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        assert!(
+            matches!(
+                name.as_str(),
+                "pwsh" | "pwsh.exe" | "powershell" | "powershell.exe"
+            ),
+            "unexpected shell program: {program}"
+        );
     }
 }

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 严重错误日志上报（转发到 Qomicex 公开 API `POST /api/client/logs`）。
 //!
 //! 只用于"影响运行的恶性 bug"：前端 ErrorBoundary（渲染崩溃/白屏）、全局未捕获

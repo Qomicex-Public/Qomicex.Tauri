@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { Button } from './ui'
 import { useMessageBox } from './ui'

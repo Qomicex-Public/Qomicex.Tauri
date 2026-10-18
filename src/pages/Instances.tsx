@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import gsap from 'gsap'
@@ -83,6 +86,22 @@ const REMOTE_SORT_OPTIONS = [
 ]
 
 function cn(...classes: (string | boolean | undefined | null)[]): string { return classes.filter(Boolean).join(' ') }
+
+/** 扫描版本的**实例匹配**键 = 版本目录名（`name` 是版本 JSON 的 id，可与之不同）。
+ *  实例记录的 name 恒为目录名，故匹配必须用它；缺失时回退 name（尽力而为，
+ *  真实解析由后端按 `dir_name` 缺省路径完成）。 */
+function matchKeyOf(v: ScannedVersion): string {
+  return v.dirName ?? v.name
+}
+
+/** 列表去重 / React key 用的**唯一**键。
+ *
+ *  `dirName` 存在时它就是身份键；缺失时**不能**回退成 `name`：两个不同目录的版本
+ *  JSON `id` 相同时会塌成一张卡片，被隐藏目录的实例/设置从列表上无法访问
+ *  （issue #244 评审）。此时用序号保证每条各自成键，不隐藏任何版本。 */
+function listKeyOf(v: ScannedVersion, index: number): string {
+  return v.dirName ?? `\u0000missing-dirname-${index}`
+}
 
 /** 取扫描版本里第一个真实加载器（过滤 Vanilla/Unknown——原版实例 loader 应保持空） */
 function firstRealLoader(v: ScannedVersion): { type?: string; version?: string } {
@@ -535,7 +554,8 @@ export default function Instances() {
     if (existing) return existing
     try {
       const inst = await createInstance({
-        name: v.name,
+        // 记录的 name 是版本目录名（路径基座），不是版本 JSON 的 id
+        name: v.dirName ?? v.name,
         gameVersion: v.gameVersion,
         loader: firstRealLoader(v).type,
         loaderVersion: firstRealLoader(v).version,
@@ -622,7 +642,8 @@ export default function Instances() {
 
     try {
       const created = await createInstance({
-        name: v.name,
+        // 记录的 name 是版本目录名（路径基座）
+        name: v.dirName ?? v.name,
         gameVersion: v.gameVersion,
         loader: firstRealLoader(v).type,
         loaderVersion: firstRealLoader(v).version,
@@ -646,7 +667,8 @@ export default function Instances() {
     if (!inst) {
       try {
         inst = await createInstance({
-          name: v.name,
+          // 记录的 name 是版本目录名（路径基座）
+          name: v.dirName ?? v.name,
           gameVersion: v.gameVersion,
           loader: firstRealLoader(v).type,
           loaderVersion: firstRealLoader(v).version,
@@ -702,7 +724,11 @@ export default function Instances() {
 
   const filtered = useMemo(() => {
     let list = scannedLocal
-      .filter((v, i, arr) => arr.findIndex(x => x.name === v.name) === i)
+      // 按目录名去重：v.name 是版本 JSON 的 id，两个目录的 JSON id 相同时会塌成
+      // 一张卡片，被隐藏目录的实例/设置无法访问（issue #244 评审）。
+      // 按唯一键去重：dirName 缺失时不回退 JSON id，否则两个目录会塌成一张卡片。
+      // 用元素自身下标参与比较（缺失 dirName 时键即下标，天然互不相同）。
+      .filter((v, i, arr) => arr.findIndex((x, xi) => listKeyOf(x, xi) === listKeyOf(v, i)) === i)
       .filter((v) => !search || v.name.toLowerCase().includes(search.toLowerCase()))
       .filter((v) => filterType === 'all' || getVersionType(v) === filterType)
     if (groupFilter) {
@@ -809,7 +835,7 @@ export default function Instances() {
             <Tabs tabs={REMOTE_VERSION_CATEGORIES.map(c => ({ id: c.key, label: t(`instances.category.${c.key}`) }))} activeTab={remoteCategory} onChange={setRemoteCategory} />
           </div>
 
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_112px]">
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_auto]">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input placeholder={t('instances.searchPlaceholder')} value={versionSearch} onChange={(e) => setVersionSearch(e.target.value)} className="pl-9" />
@@ -821,7 +847,7 @@ export default function Instances() {
               ))}
             </Select>
 
-            <button onClick={() => changeRemoteViewMode(remoteViewMode === 'grid' ? 'list' : 'grid')} className={cn('flex h-9 w-9 items-center justify-center rounded-lg border bg-card text-muted-foreground hover:bg-accent hover:text-foreground transition-colors', remoteViewMode === 'grid' ? 'border-primary/30 text-primary' : 'border-input')}>
+            <button onClick={() => changeRemoteViewMode(remoteViewMode === 'grid' ? 'list' : 'grid')} className={cn('flex h-9 w-9 items-center justify-center justify-self-end rounded-lg border bg-card text-muted-foreground hover:bg-accent hover:text-foreground transition-colors', remoteViewMode === 'grid' ? 'border-primary/30 text-primary' : 'border-input')}>
               <MorphIcon icon={remoteViewMode === 'grid' ? GripData : ListData} className="h-3.5 w-3.5" spring="snappy" reducedMotion="user" />
             </button>
           </div>
@@ -1030,7 +1056,9 @@ export default function Instances() {
   }
 
   function getInstanceForVersion(v: ScannedVersion): GameInstance | undefined {
-    return backedInstances.find((i) => i.gameDir === currentDir && i.name === v.name)
+    // 实例记录的 name 是版本目录名；v.name 是版本 JSON 的 id，二者可不同（issue #244）。
+    const dir = v.dirName ?? v.name
+    return backedInstances.find((i) => i.gameDir === currentDir && i.name === dir)
   }
 
   /** 删除实例：二次确认后调用后端（后端会删除版本隔离目录，破坏性操作）。 */
@@ -1052,7 +1080,8 @@ export default function Instances() {
   function buildInstanceContextItems(v: ScannedVersion): ContextMenuItem[] {
     const inst = getInstanceForVersion(v)
     const running = inst ? runningInstances.some((r) => r.instanceId === inst.id) : false
-    const versionDir = `${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.name}`
+    // 浏览路径必须用版本目录名（v.name 是版本 JSON 的 id，指向的目录可能不存在）
+    const versionDir = `${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${matchKeyOf(v)}`
     return [
       { label: t('instances.launchGame'), onClick: () => handleLaunch(v), disabled: running },
       { label: t('instances.testGame'), onClick: () => handleTestGame(v), disabled: running },
@@ -1278,11 +1307,11 @@ export default function Instances() {
           <div className="flex border-b border-border">
             <button
               onClick={() => setSettingsTab('basic')}
-              className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${settingsTab === 'basic' ? 'border-b-2 border-primary text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              className={`flex-1 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${settingsTab === 'basic' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
             >{t('instances.basicInfo')}</button>
             <button
               onClick={() => setSettingsTab('repair')}
-              className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${settingsTab === 'repair' ? 'border-b-2 border-primary text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              className={`flex-1 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${settingsTab === 'repair' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
             >{t('instances.repairFiles')}</button>
           </div>
           <div className="p-6">
@@ -1483,9 +1512,9 @@ export default function Instances() {
         <div className="space-y-6">
           {scannedLocal.length > 0 && (viewMode === 'grid' ? (
           <div ref={gridAnimRef} className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-            {filtered.map((v) => (
-              <ContextMenu key={v.name} items={buildInstanceContextItems(v)}>
-                <div data-key={v.name} className="group glass-surface relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => openVersionSettings(v)}>
+            {filtered.map((v, vi) => (
+              <ContextMenu key={listKeyOf(v, vi)} items={buildInstanceContextItems(v)}>
+                <div data-key={listKeyOf(v, vi)} className="group glass-surface relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => openVersionSettings(v)}>
                 <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={getLoadersForVersion(v)[0]?.type} className="mb-3 h-16 w-16 rounded-2xl" />
                 <h3 className="w-full truncate text-sm font-medium leading-tight">{v.name}</h3>
                 {getInstanceForVersion(v)?.remark && (
@@ -1527,7 +1556,7 @@ export default function Instances() {
                       </Tooltip>
                     )})()}
                     <Tooltip content={t('instances.openFolder')}>
-                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); openFolder(`${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.name}`).catch(() => {}) }}><FolderOpen className="h-3.5 w-3.5" /></Button>
+                      <Button size="icon" variant="ghost" className="h-8 w-8 text-white/70 hover:bg-white/15 hover:text-white" onClick={(e) => { e.stopPropagation(); openFolder(`${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${matchKeyOf(v)}`).catch(() => {}) }}><FolderOpen className="h-3.5 w-3.5" /></Button>
                     </Tooltip>
                   </div>
                   </div>
@@ -1537,9 +1566,9 @@ export default function Instances() {
           </div>
         ) : (
           <div ref={listAnimRef} className="space-y-3">
-            {filtered.map((v) => (
-              <ContextMenu key={v.name} items={buildInstanceContextItems(v)}>
-                <div data-key={v.name} className="group glass-surface flex items-center gap-4 rounded-xl border bg-card px-5 py-4 transition-all hover:border-primary/30 hover:shadow-sm">
+            {filtered.map((v, vi) => (
+              <ContextMenu key={listKeyOf(v, vi)} items={buildInstanceContextItems(v)}>
+                <div data-key={listKeyOf(v, vi)} className="group glass-surface flex items-center gap-4 rounded-xl border bg-card px-5 py-4 transition-all hover:border-primary/30 hover:shadow-sm">
                 <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={getLoadersForVersion(v)[0]?.type} className="h-12 w-12 shrink-0 rounded-xl" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -1589,7 +1618,7 @@ export default function Instances() {
                     </Tooltip>
                   )})()}
                    <Tooltip content={t('instances.openFolder')}>
-                        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openFolder(`${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${v.name}`).catch(() => {})}><FolderOpen className="h-3.5 w-3.5" /></Button>
+                        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openFolder(`${currentDir.replace(/[/\\]+$/, '').replace(/\\/g, '/')}/versions/${matchKeyOf(v)}`).catch(() => {})}><FolderOpen className="h-3.5 w-3.5" /></Button>
 </Tooltip>
                  </div>
                </div>

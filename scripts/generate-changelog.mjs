@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // scripts/generate-changelog.mjs
 // 根据当前版本和发布类型，从 git 提交历史自动生成 changelog
 // 用法: node scripts/generate-changelog.mjs <versionTag> <releaseType> [outputFile]

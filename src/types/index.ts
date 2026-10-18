@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 export interface SystemInfo {
   osName: string
   os: string
@@ -57,20 +60,6 @@ export interface JavaDownloadProgressResponse {
   fileName: string
   targetDir: string
   error: string | null
-}
-
-export interface LauncherRequest {
-  version: string
-  gameDir: string
-  maxMemory: string
-  additionalParam?: string
-  devideVersion: boolean
-  accountName?: string
-  accountUuid?: string
-  accessToken?: string
-  javaPath?: string
-  javaVersionId: number
-  launcherName?: string
 }
 
 export interface Account {
@@ -338,6 +327,9 @@ export interface ScanMeta {
 
 export interface ScannedVersion {
   name: string
+  /** 版本目录名（= 实例记录的 name / VersionDirName）。`name` 是版本 JSON 的 id，
+   *  二者可不同（issue #244 GTNH）；实例匹配与目录拼接必须用本字段。 */
+  dirName?: string
   gameVersion: string
   state: string
   stateDescribe: string
@@ -1156,8 +1148,28 @@ export interface MultiMcImportRequest {
 
 export interface NatTypeResult {
   type: 'cone' | 'symmetric' | 'blocked' | 'unknown'
+  /** 判定依据/失败原因：结构化 code + 参数，由前端按语言翻译（不下发英文散文） */
+  reason: NatReason
   publicIp: string | null
   publicPort: number | null
+}
+
+/** NAT 判定原因（对应后端 NatReason 枚举，`code` 用于 i18n 查表） */
+export interface NatReason {
+  code:
+    | 'endpointIndependentMapping'
+    | 'addressDependentMapping'
+    | 'addressAndPortDependentMapping'
+    | 'singleServerResponded'
+    | 'noServerResponded'
+    | 'noServerResolvable'
+    | 'resolveTimeout'
+    | 'udpBindFailed'
+    | 'probeSendFailed'
+  servers?: number
+  responded?: number
+  port?: number
+  error?: string
 }
 
 export interface SkinProfile {

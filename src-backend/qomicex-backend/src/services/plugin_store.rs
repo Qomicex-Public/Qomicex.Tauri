@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Plugin Store 客户端服务（Issue #27，上游 plugins.qomicex.top/api/v1）。
 //!
 //! 职责边界：

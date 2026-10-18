@@ -1,6 +1,6 @@
 # API 端点参考
 
-> 更新日期：2026-10-04
+> 更新日期：2026-10-10
 
 后端基础地址：`http://localhost:5000`。前端 Vite 代理将 `/api/*` 转发到此地址。
 
@@ -631,6 +631,21 @@ Yggdrasil.MinecraftToken.Create Yggdrasil.Server.Join`。
 
 **响应：** `List<LoaderVersionInfo>`
 
+### POST `/api/instance/sync-scan`
+
+把前端 `GET /api/versions/scan` 的结果回写为实例列表（实例列表的核心同步入口），返回同步后的实例列表。
+
+**请求体：** `{ "gameDir": "...", "versions": [ { "name": "...", "dirName": "...", "gameVersion": "...", "loader": "...", "loaderVersion": "...", "iconData": null, "modpackName": null, "modpackVersion": null, "modpackAuthor": null, "modpackSummary": null } ] }`
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `name` | 是 | 版本 JSON 的 `id`（扫描响应同名，用于显示） |
+| `dirName` | 否 | **版本目录名**（= 实例记录的 `name` / `VersionDirName`）。后端以此为身份键匹配实例记录。缺省（旧客户端）时回退用 `name`，但名字与目录名不一致的实例会丢失设置（issue #244） |
+
+**同步语义（issue #244）**：身份键是 `(gameDir, dirName)`，**不是** `name`。扫描产出的 `name` 取自版本 JSON 的 `id`，与目录名可以不同（如目录 `GTNH 2.8.4` 的 JSON `id` 为 `GT New Horizons`）；旧实现按 `name` 匹配，名字漂移时记录被判为「磁盘残留」删除、再用默认值重建，导致 `jvmArgs`/`maxMemory`/整合包元数据丢失且 `id` 被更换。此外，只要 `{gameDir}/versions/{记录.name}` 目录真实存在，该记录就不会被当作残留丢弃（判残留的依据是目录在不在，而非名字对不对得上）。
+
+**响应：** `List<GameInstance>`
+
 ---
 
 ## 6. 实例文件 Instance Files
@@ -819,37 +834,19 @@ Yggdrasil.MinecraftToken.Create Yggdrasil.Server.Join`。
 
 **分组前缀：** `/api/launch`
 
-### POST `/api/launch`
-
-直接启动（不通过实例管理）。
-
-```json
-{
-  "instanceId": "...",
-  "versionId": "1.20.1-Forge-47.1.0",
-  "javaPath": "C:\\java\\bin\\javaw.exe",
-  "maxMemory": 4096,
-  "jvmArgs": "-XX:+UseG1GC",
-  "versionIsolation": false,
-  "authUuid": "...",
-  "authName": "Player",
-  "authToken": "...",
-  "joinServer": "localhost",
-  "joinWorld": "world"
-}
-```
-
-**响应：** `LaunchResultDto`
-
 ### POST `/api/launch/{pid}/kill`
 
-通过进程 ID 强制结束游戏进程。
+通过进程 ID 强制结束游戏进程（杀整个进程树：Windows `taskkill /T /F`，Unix 从叶子到根 `kill -9`）。
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | pid | int | path，进程 ID |
 
 **响应：** `{ "message": "..." }`
+
+> **已移除：`POST /api/launch`**（#237）。它与 `POST /api/instance/{id}/launch` 行为不一致
+> （缺 `stage` 字段、恒用 `AuthMode::Offline` 跳过账号令牌刷新、无 license 校验），
+> 且前端无任何调用者。启动统一走实例路径。
 
 ---
 
@@ -1696,9 +1693,9 @@ technic **纳入聚合源**（`source=all` + `category=modpack`）：接受其�
 
 `checkOnly: true` 时仅检查是否已安装。
 
-### GET `/api/resources/complete/progress`
-
-查询补全进度。
+> **已移除：`GET /api/resources/complete/progress`**（#230）。它返回的是硬编码占位值
+> （percentage 恒 0），与 `complete` 的 fire-and-forget `install_version` 之间没有联动，
+> 且前端无任何调用者。真实安装进度请用 `GET /api/instance/{id}/install/progress`。
 
 ---
 
@@ -1859,6 +1856,20 @@ data: [plugin:com.example.demo:info] hello
 
 自动选择最优 Mod 源。
 
+### GET `/api/settings/file-download-sources/ping`
+
+测试文件下载源延迟。测速目标为 pinned 的真实文件（Modrinth sodium jar）——
+API 透传路径与文件路径是不同路由，测 API 不能证明文件路径可用。`id=1`（镜像源）
+按实际下载顺序（MCIM → QML Mirror 节点）逐节点探测、取首个可用节点的链路总耗时；
+官方 CDN 兜底不参与镜像源探测，全部镜像节点失败时镜像源报告不可用。
+
+**响应：** `List<DownloadSourcePing>`
+
+### GET `/api/settings/file-download-source/auto-select`
+
+自动选择最优文件下载源（官方源 vs 镜像源，均并行测量、取延迟最低可用者），
+写入 `fileDownloadSource`。
+
 ---
 
 ## 21. 更新 Update
@@ -1918,6 +1929,8 @@ data: [plugin:com.example.demo:info] hello
 |---|---|---|
 | `gameDir` | — | 游戏根目录（其下 `versions/` 为实际扫描目标） |
 | `mode` | `fast` | `fast`：命中扫描缓存的版本直接复用 jar 级结果，未命中的先走 JSON 链（毫秒级返回）；`full`：给未命中的条目补算 jar 级探测并写缓存 |
+
+响应每个版本条目含 `name` 与 `dirName`：**`name`** 是版本 JSON 的 `id`；**`dirName`** 是版本目录名（= 实例记录的 `name` / `VersionDirName`）。二者可以不同（如目录 `GTNH 2.8.4` 的 JSON `id` 为 `GT New Horizons`），实例匹配与目录拼接必须用 `dirName`。
 
 响应多一个 `refineRequired`（布尔）：有版本目录还没算过 jar 级探测（首次扫描、刚装好）时为 `true`，前端应再发一次 `?mode=full` 回填 `gameVersion`。
 
@@ -2573,6 +2586,12 @@ Yggdrasil 外置登录的 **ALI（API 地址指示）** 解析：把用户输入
 
 关闭会话并释放区块缓存。204，无响应体。
 
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `key` | string，query，可选 | 只关闭该 `key` 的会话槽位。多窗口分别预览不同存档时不会误关其他窗口的会话（#233）。省略则关闭全部会话（兼容旧调用方） |
+
+会话按 `key` 分槽（上限 4 个，LRU 淘汰；每个会话约 78 MB 区块缓存），因此多窗口同时预览不同存档互不影响。
+
 ### 前端瓦片缓存键
 
 瓦片 URL 中的 `key` 由 `src/api/world-view.ts` 的 `worldKeyOf(savePath)` 生成：32 位回绕哈希（`Math.imul(31, h) + charCode`）后 base36 编码，前缀 `w`。它同时参与浏览器 HTTP 缓存与 `CachedTileLayer` 内存缓存的键，因此切换存档不会复用上一个世界的地图。
@@ -2900,3 +2919,61 @@ Query：`allowUnsigned=true` 时跳过强制签名校验（前端风险确认后
 | 无 `Content-Length` + 上限压至 1 KiB（抽掉头部预检的探针） | — | **400 `INSTALL_URL_TOO_LARGE`**（拦截来自逐块累加本身） |
 | 回环 `http://127.0.0.1:1/…` | 400 `PROXY_PRIVATE_ADDRESS` | 400 `PROXY_PRIVATE_ADDRESS`（回归不变） |
 
+
+
+### 2026-10-11 更新
+### GET `/api/connector/nat-type`
+
+检测本机 NAT 映射行为（STUN，RFC 5780 映射行为测试；结果缓存 5 分钟）。后端在**同一个本地 UDP socket** 上向多台候选 STUN 服务器并发发起 binding 请求，比较各目标返回的映射端口/地址是否一致来判定映射行为。
+
+实现要点：
+
+- 候选主机名**并行解析且只取 IPv4**：socket 绑定 IPv4，双栈主机名若首个解析地址为 IPv6，直接按主机名发送会在该 socket 上失败、白白跳过可用服务器。DNS 解析与请求收发**共用同一 3s 预算**。
+- 缓存写入带**单调探测序号**：并发探测乱序完成时只有序号更大的结果可写入，避免较早的探测覆盖较新的结果并重置 5 分钟生命周期。
+
+**响应：** `NatTypeResult`
+
+| 字段 | 类型 | 说明 |
+|:---|:---|:---|
+| `type` | `"cone" \| "symmetric" \| "blocked" \| "unknown"` | 类型判定（见下表） |
+| `reason` | `NatReason` | 判定依据/失败原因，**结构化** `{ code, ...参数 }`，由前端按当前语言翻译 |
+| `publicIp` | `string \| null` | 探测到的本机公网映射 IP；未探测到为 `null` |
+| `publicPort` | `int \| null` | 探测到的本机公网映射端口；未探测到为 `null` |
+
+**`type` 判定语义：**
+
+| 值 | 判定条件 | 含义 |
+|:---|:---|:---|
+| `cone` | 所有响应的映射端口/地址一致（端点无关映射） | 锥形类，打洞成功率高 |
+| `symmetric` | 映射端口随目标变化（地址相关/地址端口相关映射） | 对称 NAT，打洞困难 |
+| `blocked` | 全部候选服务器解析失败、发送失败或无响应 | 无法完成探测 |
+| `unknown` | 仅 1 台服务器响应，不足以比较 | 映射行为未知 |
+
+**`reason` 结构化 code：**
+
+| code | 参数 | 含义 |
+|:---|:---|:---|
+| `endpointIndependentMapping` | `servers`, `port` | 端点无关映射 |
+| `addressDependentMapping` | `servers`, `port` | 地址相关映射 |
+| `addressAndPortDependentMapping` | `servers` | 地址端口相关映射（对称 NAT） |
+| `singleServerResponded` | `servers`, `responded` | 仅部分服务器响应，不足以判定 |
+| `noServerResponded` | `servers` | 全部无响应 |
+| `noServerResolvable` | `servers` | 全部无法解析 |
+| `resolveTimeout` | `servers` | 解析超时 |
+| `udpBindFailed` | `error` | 本地 UDP 绑定失败 |
+| `probeSendFailed` | `servers` | 全部发送失败 |
+
+**响应示例：**
+
+```json
+{
+  "type": "cone",
+  "reason": { "code": "endpointIndependentMapping", "servers": 6, "port": 29192 },
+  "publicIp": "182.107.142.140",
+  "publicPort": 29192
+}
+```
+
+**已知限制：** RFC 3489 的 filtering 测试（进一步区分完全锥形/受限锥形/端口受限锥形）依赖服务器支持 `CHANGE-REQUEST` 属性。实测扫描 30 台公共 STUN 服务器、15 台可达，**无一支持**该属性，故 filtering 无法判定，本端点只返回映射行为结论。`blocked` 表示探测未获响应，不等同于「UDP 被防火墙阻断」——`reason.code` 用于区分具体原因。
+
+---

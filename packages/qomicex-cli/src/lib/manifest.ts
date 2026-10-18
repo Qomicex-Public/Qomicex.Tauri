@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // manifest.json 校验（手写极简 schema，等价于 zod 子集，零依赖）。
 // 字段蓝本：src/plugins/types.ts + store 上传校验（checkQplugin）。
 import { PERMISSION_CATALOG } from './permissions.ts'

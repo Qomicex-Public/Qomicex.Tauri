@@ -95,9 +95,23 @@ jobs:
           tool: cargo-audit
       - name: Cargo audit
         run: |
+          # ⚠️ 本步骤与 .github/actions/quality-gate/action.yml 的「Cargo audit」
+          # 是**两份独立命令**（CI 走这里，release.yml / debug.yml 走 composite
+          # action）——改 ignore 列表必须两处同时改，否则会出现「CI 绿但 Release 红」。
+          #
           # easytier fork 锁定 hickory 0.25.2（endpoint-discovery 启用 dns-resolver）：
           # 0118 在 0.25 线无补丁版本，0119 需 0.26.1（breaking，需迁移 EasyTier4QML fork）。
-          cd src-backend/qomicex-backend && cargo audit --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119
+          #
+          # 0367/0368/0369（zip 的 extract() symlink / SUID 提权，均 fixed >=9.0.0）：
+          # 本仓与 core、Updater 的 zip 已升 9.0.4。剩余命中来自 easytier-proto 在
+          # 9055aef 里写死的 `zip = "4.0.0"`（第三方 fork，本仓改不了），而它唯一的
+          # extract() 调用在 `build = "build/main.rs"` 的构建脚本中——仅用于开发者本机
+          # 解压 protoc，不进运行时二进制、不处理不可信输入，故不构成本项目的提权面。
+          # 待 EasyTier4QML fork 升级 zip 后移除这三条 ignore。
+          cd src-backend/qomicex-backend && cargo audit \
+            --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 \
+            --ignore RUSTSEC-2026-0367 --ignore RUSTSEC-2026-0368 \
+            --ignore RUSTSEC-2026-0369
       - name: Install test dependencies
         run: sudo apt-get update && sudo apt-get install -y jq curl
       - name: Run API filter tests
@@ -163,6 +177,33 @@ jobs:
       # 深链解析的安全边界回归（路径穿越绕白名单 / 非法编码抛错 / 同名实例被静默乱挑）。
       # 同样是用仓库自带 tsc 编译真实源码后断言，不依赖 Node 的类型剥离。
       - run: pnpm run test:deep-link
+      # 步骤名 i18n 覆盖护栏：后端安装管线里的 step id 必须在 downloads.steps 有词条，
+      # 否则下载中心卡片直接显示 `downloads.steps.<id>` 键名（Technic Solder 期3 漏过 4 个）。
+      - run: pnpm run test:i18n-steps
+      # 插件主题同步的注册/注销配对护栏：registerThemeSync 的返回值丢弃会让已卸载
+      # 的 iframe 被模块级 Set 永久持有（每次启用/禁用循环泄漏一个 iframe 及其 DOM）。
+      - run: pnpm run test:plugin-theme-sync
+      # 插件 iframe 宿主生命周期（issue #260）：srcdoc iframe 只有进入文档才执行脚本，
+      # 库插件的宿主若不常驻，registerMethod 永不注册、callPlugin 全部静默失败。
+      - run: pnpm run test:plugin-sandbox-host
+      # l4 独立窗口插件的方法注册（issue #260）：窗口自带 top，注册只留在本地，
+      # 主窗口 callPlugin 永远查不到。桥逻辑纯函数化，用内存总线验证往返/超时/同步抛错。
+      - run: pnpm run test:plugin-l4-registry
+      # l4 桥监听器安装的回滚语义：部分失败必须解绑已成功的，否则重试会重复注册，
+      # 同一个 plugin-l4-api-call 被处理两次（非幂等操作产生重复副作用）。
+      - run: pnpm run test:plugin-l4-bridge-init
+      # 流式通道请求头（issue #262）：IPC 分支不像 fetch 那样自动生成 Content-Type，
+      # 缺了后端 Json 提取器恒 415，插件的流式能力会静默失效。
+      - run: pnpm run test:plugin-ipc-stream-headers
+      # 插件 API 面（issue #264）：白名单/switch/权限目录/桥具名方法四份清单若漂移，
+      # 插件侧只会看到「方法不存在」或调用挂起，人工测试极难覆盖。
+      - run: pnpm run test:plugin-api-surface
+      # 快捷安装前置计划的护栏（issue #249）：已安装的前置不得进入删除名单。
+      # 该判定此前用本地文件名与上游文件名比较，两域必然不等 → 已装前置被删且不补下载。
+      - run: pnpm run test:dependency-install-plan
+      # 版权头护栏（issue #248）：源文件须带 GPL-3.0-or-later 的 SPDX 声明。
+      # 缺头就失败，避免新增文件再次无声明（CLI 模板与 plugins-dev 为有意例外，见脚本）。
+      - run: pnpm run license:check
       # lint 尚未进阻断：存量见 AGENTS.md「Lint 现状」，清零后再去掉 continue-on-error。
       - name: ESLint
         continue-on-error: true

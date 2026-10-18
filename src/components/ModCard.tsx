@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useCallback, useState, useRef, useEffect, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Box, Check, Ellipsis, TriangleAlert } from 'lucide-react'
@@ -422,7 +425,7 @@ export default function ModCard({
                   <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">{version}</span>
                 </div>
                 {mod.description && mod.description !== 'No description available' && (
-                  <p className="mt-1 line-clamp-2 text-xs text-muted-foreground/70">
+                  <p className="mt-1 line-clamp-1 text-xs text-muted-foreground/70">
                     <MinecraftText text={mod.description} />
                   </p>
                 )}
@@ -460,7 +463,9 @@ export default function ModCard({
                 <h3 className="truncate text-xs font-medium text-foreground">{nameText}</h3>
                 {zhLocale && <span className="truncate text-[11px] text-muted-foreground/70">{sourceText}</span>}
                 <Tooltip content={version}>
-                  <span className="truncate text-[11px] tabular-nums text-muted-foreground">{version}</span>
+                  {/* w-full：Tooltip 包装层是 flex 容器，span 作为 flex 项默认收缩为文本宽，
+                      text-right 无剩余空间可对齐，短版本号会靠左。撑满列宽后右对齐才生效。 */}
+                  <span className="w-full truncate text-right text-[11px] tabular-nums text-muted-foreground">{version}</span>
                 </Tooltip>
               </div>
               {/* 更新标记：固定宽度槽位（无更新时也占位），避免圆点出现/消失挤动版本列 */}

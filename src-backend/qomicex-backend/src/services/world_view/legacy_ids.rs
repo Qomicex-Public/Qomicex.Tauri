@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Legacy (1.12 and earlier) block id -> name tables.
 //!
 //! Chunks before 1.13 store numeric block ids. Their names come from

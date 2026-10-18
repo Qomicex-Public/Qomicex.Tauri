@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Biome tint tables: biome -> (grass, foliage, water, dry-foliage) colours.
 //!
 //! Generated from MCA Selector's per-version colour mappings. Values are

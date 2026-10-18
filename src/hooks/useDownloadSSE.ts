@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useState } from 'react'
 import { openStream, createSseParser } from '../api/ipc.ts'
 import type { InstallStepInfo } from '../types/index.ts'

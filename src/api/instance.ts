@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { get, post, put, del, API_BASE, ApiError } from './client.ts'
 import { uploadFile } from './ipc.ts'
 import { MODPACK_REQUEST_TIMEOUT_MS } from './drop-install.ts'
@@ -19,6 +22,11 @@ export const syncScan = hookable('syncScan', async (gameDir: string, versions: S
       const realLoader = v.loaders?.find(l => l.type && l.type !== 'Vanilla' && l.type !== 'Unknown')
       return {
         name: v.name,
+        // 身份键：后端按目录名匹配实例记录（`name` 是版本 JSON 的 id，可与之不同）。
+        // 缺省时**不要**回填 v.name：那会让后端无法分辨「字段缺失」，从而无法执行
+        // 目录名兼容解析，反而在 JSON id 这个键下造出重复记录（issue #244 评审）。
+        // 保留 undefined，由后端反查真实目录名。
+        dirName: v.dirName,
         gameVersion: v.gameVersion,
         loader: realLoader?.type,
         loaderVersion: realLoader?.version,

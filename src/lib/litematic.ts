@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Litematica (.litematic) schematic parser for the Qomicex launcher.
 //
 // A .litematic = a single GZIP-compressed NBT stream (root compound named

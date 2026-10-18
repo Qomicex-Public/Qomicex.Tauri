@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, ArrowUp, Ban, Bot, Box, Camera, Check, ChevronDown, Clipboard, CopyPlus, Database, Download, Eye, FileOutput, FolderOpen, Gamepad2, Info, Layers, LayoutList, List, ListChecks, MemoryStick, Package, Pen, PenTool, Play, Plus, RotateCcw, RotateCw, Rows3, Save, Search, Server, Settings, ShieldCheck, SlidersHorizontal, SquareTerminal, Star, Sun, Trash2, TriangleAlert, User, Wifi, X } from 'lucide-react'
@@ -1022,15 +1025,16 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
           </div>
 
           {enriching && (
-            <div className="mb-3 flex items-center gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+            <div className="mx-4 mb-3 flex items-center gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
               <RotateCw className="h-3.5 w-3.5 animate-spin text-primary" />
               {t('instanceDetail.mods.fetchingRemoteInfo')}
             </div>
           )}
 
-          {/* 依赖缺失汇总（issue #165）：进入页面即可见；0 缺失时完全不渲染，不在正常实例上占位 */}
+          {/* 依赖缺失汇总（issue #165）：进入页面即可见；0 缺失时完全不渲染，不在正常实例上占位。
+              mx-4 与下方卡片列表容器 p-4 对齐——横幅与卡片同宽（评审：无内缩时比卡片宽 32px） */}
           {!loading && missingDepsCount > 0 && (
-            <div className="mb-3 flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+            <div className="mx-4 mb-3 flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
               <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
               <span className="flex-1">{t('instanceDetail.mods.missingDepsBanner', { count: missingDepsCount })}</span>
               {filterType !== 'missing-deps' && (

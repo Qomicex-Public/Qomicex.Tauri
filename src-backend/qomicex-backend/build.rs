@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 构建脚本：Windows 运行时 DLL 复制 + `appsettings.json` 生成。
 //!
 //! ## appsettings.json 生成（issue #159）

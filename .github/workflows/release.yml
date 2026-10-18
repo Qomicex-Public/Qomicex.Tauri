@@ -283,9 +283,12 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # 走 step env 而非 run 体插值：workflow_dispatch 的版本输入会经
+          # needs.setup.outputs.version 流到这里，run 体里的 ${{ }} 是文本拼接，
+          # 构造的版本文本会在持有签名私钥的步骤里被执行。
+          RELEASE_TAG: ${{ needs.setup.outputs.displayVersion }}
         run: |
           # 文件布局更新包：NSIS /S 静默安装到收集目录，打包安装后的目录内容
-          $version = "${{ needs.setup.outputs.version }}"
           $setup = Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -Filter "*setup.exe" | Where-Object { $_.Name -notmatch "uninst" } | Select-Object -First 1
           if (-not $setup) { throw "No NSIS setup.exe found" }
           $collect = Join-Path $env:RUNNER_TEMP "qomicex-install-collect"
@@ -298,12 +301,24 @@ jobs:
           Compress-Archive -Path (Join-Path $collect '*') -DestinationPath $pkg -Force
           npx tauri signer sign $pkg
           Write-Output "self-update package: $pkg"
+          # 自更新包索引条目：release 作业靠 update-package-fragment-*.json 合并
+          # updates.json，缺这一步则该平台在索引里没有条目、自更新选不到包。
+          $urlBase = "${{ github.server_url }}/${{ github.repository }}/releases/download/$env:RELEASE_TAG"
+          $sig = (Get-Content -Path "$pkg.sig" -Raw).Trim()
+          $fragment = @{ "windows-x86_64" = @{ url = "$urlBase/$pkg"; signature = $sig; strategy = "dir" } }
+          $json = $fragment | ConvertTo-Json -Compress -Depth 10
+          Set-Content -Path "update-package-fragment-windows-x86_64.json" -Value $json
+          Write-Output "Fragment: $json"
       - uses: actions/upload-artifact@v7
         with:
           name: update-package-windows-x64
           path: |
             qomicex-update-*.zip
             qomicex-update-*.zip.sig
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-package-fragment-${{ github.job }}
+          path: update-package-fragment-*.json
       - uses: actions/upload-artifact@v7
         with:
           name: update-fragment-${{ github.job }}
@@ -406,9 +421,13 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # 走 step env 而非 run 体插值：workflow_dispatch 的版本输入会经
+          # needs.setup.outputs.version 流到这里，run 体里的 ${{ }} 是文本拼接，
+          # 构造的版本文本会在持有签名私钥的步骤里被执行。
+          RELEASE_TAG: ${{ needs.setup.outputs.displayVersion }}
         run: |
-          $version = "${{ needs.setup.outputs.version }}"
           $setup = Get-ChildItem -Path "src-tauri/target/aarch64-pc-windows-msvc/release/bundle" -Recurse -Filter "*setup.exe" | Where-Object { $_.Name -notmatch "uninst" } | Select-Object -First 1
+          if (-not $setup) { throw "No NSIS setup.exe found" }
           if (-not $setup) { throw "No NSIS setup.exe found" }
           $collect = Join-Path $env:RUNNER_TEMP "qomicex-install-collect"
           New-Item -ItemType Directory -Force $collect | Out-Null
@@ -420,12 +439,24 @@ jobs:
           Compress-Archive -Path (Join-Path $collect '*') -DestinationPath $pkg -Force
           npx tauri signer sign $pkg
           Write-Output "self-update package: $pkg"
+          # 自更新包索引条目：release 作业靠 update-package-fragment-*.json 合并
+          # updates.json，缺这一步则该平台在索引里没有条目、自更新选不到包。
+          $urlBase = "${{ github.server_url }}/${{ github.repository }}/releases/download/$env:RELEASE_TAG"
+          $sig = (Get-Content -Path "$pkg.sig" -Raw).Trim()
+          $fragment = @{ "windows-aarch64" = @{ url = "$urlBase/$pkg"; signature = $sig; strategy = "dir" } }
+          $json = $fragment | ConvertTo-Json -Compress -Depth 10
+          Set-Content -Path "update-package-fragment-windows-aarch64.json" -Value $json
+          Write-Output "Fragment: $json"
       - uses: actions/upload-artifact@v7
         with:
           name: update-package-windows-arm64
           path: |
             qomicex-update-*.zip
             qomicex-update-*.zip.sig
+      - uses: actions/upload-artifact@v7
+        with:
+          name: update-package-fragment-${{ github.job }}
+          path: update-package-fragment-*.json
       - uses: actions/upload-artifact@v7
         with:
           name: update-fragment-${{ github.job }}

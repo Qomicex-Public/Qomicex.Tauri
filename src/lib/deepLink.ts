@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /**
  * `qomicex-launcher://` OS 级深链（issue #127）的解析与动作分发。
  *
@@ -6,18 +9,24 @@
  * `ipc.ts` 里的 `qomicex` 是 webview **内部**自定义协议（前后端 QIPC 管道传输，
  * ADR-040）；本模块处理的是**操作系统级** URL 协议，由浏览器等外部程序唤起启动器。
  * 两者同名会在 macOS/Linux 上产生真实歧义，故 OS 协议名取 `qomicex-launcher`
- * （见 ADR-087），内部协议零改动。
+ * （见 ADR-100），内部协议零改动。
  *
  * # 支持的动作
  *
  * ```
- * qomicex-launcher://launch/<实例名或ID>
+ * qomicex-launcher://launch?target=<实例名或ID 或 游戏目录:实例名>
  * qomicex-launcher://open/<route>                      // 仅白名单路由
- * qomicex-launcher://join/<房间码>
+ * qomicex-launcher://join?code=<房间码>
  * qomicex-launcher://install/plugin?slug=<slug>&version=<v>
  * qomicex-launcher://install/plugin?url=<https://….qplugin>
  * qomicex-launcher://install/modpack?type=modrinth|curseforge&projectId=<p>&fileId=<f>[&name=<实例名>]
  * ```
+ *
+ * `launch`/`join` 的参数必须走 query 而不是 path：真实房间码格式为
+ * `U/XXXX-XXXX-XXXX-XXXX`（connector `RoomCode` 的 `PREFIX = "U/"`），实例路径同样
+ * 含 `/`，path 段切分会把 `join/U/THL9-…` 截成 `U`。query 值经 `searchParams` 解码，
+ * 编码或未编码的斜杠都原样保留。旧 path 形态（`join/U/…`、`launch/MyPack`）已弃用，
+ * 解析为 null 静默忽略。
  *
  * `install/modpack` 的 `projectId`+`fileId` 是**后端硬要求**（`/modpack/install-direct`
  * 在线分支两者缺一即 400 `MODPACK_SOURCE_REQUIRED`），`name` 缺省时由解析出的包名兜底。
@@ -203,7 +212,7 @@ function normalizeModpackSource(raw: string | null): ModpackSource | null {
 /**
  * 该来源是否**只**需要 projectId（无 fileId 概念）。
  *
- * Technic 一个包只有一个直链，没有「版本 id」这一层（issue #151，ADR-103）：
+ * Technic 一个包只有一个直链，没有「版本 id」这一层（issue #151，ADR-105）：
  * `projectId` 即 slug。其余三个源的 `fileId` 是版本身份，缺一不可——
  * 后端 `install_direct` 对非 technic 源仍强制要求两者齐备。
  */
@@ -227,10 +236,12 @@ export function parseDeepLink(raw: string): DeepLinkAction | null {
   }
   if (url.protocol !== `${DEEP_LINK_SCHEME}:`) return null
 
-  // 形如 `qomicex-launcher://launch/foo` 时动作在 host、参数在 pathname。
+  // 形如 `qomicex-launcher://launch?target=foo` 时动作在 host、参数在 query。
   const action = url.hostname.toLowerCase()
   // `%FF` 这类非法编码会让 decodeURIComponent 抛 URIError：调用方按「不认识的链接」
   // 静默忽略是约定行为（任何网页都能构造），不能让异常冒出去打断整批处理。
+  // open 动作的 route 在 path；`searchParams.get` 自身已容错非法编码（返回原样段），
+  // 这里统一 try/catch 是为 pathname 的 open 分支兜底。
   let segments: string[]
   try {
     segments = url.pathname.split('/').filter(Boolean).map(decodeURIComponent)
@@ -241,7 +252,7 @@ export function parseDeepLink(raw: string): DeepLinkAction | null {
 
   switch (action) {
     case 'launch': {
-      const raw = first.trim()
+      const raw = (url.searchParams.get('target') ?? '').trim()
       if (!raw) return null
       const { name, dir } = splitLaunchTarget(raw)
       return { kind: 'launch', target: name, dir, raw }
@@ -258,7 +269,7 @@ export function parseDeepLink(raw: string): DeepLinkAction | null {
       return isAllowedRoute(route) ? { kind: 'open', route } : null
     }
     case 'join': {
-      const code = first.trim()
+      const code = (url.searchParams.get('code') ?? '').trim()
       return code ? { kind: 'join', code } : null
     }
     case 'install': {

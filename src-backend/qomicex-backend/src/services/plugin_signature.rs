@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 插件包 Ed25519 签名验证（ADR-050 三级信任链）。
 //!
 //! 信任链：包内 signature.json + signature.cert.json（商店根钥签发的开发者公钥证书）
@@ -192,7 +195,10 @@ pub fn verify_package_signature(
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().to_string();
+        let name = entry
+            .name()
+            .map(|n| n.into_owned())
+            .unwrap_or_else(|_| String::new());
         if name == SIGNATURE_FILE || name == CERT_FILE {
             continue;
         }
@@ -341,7 +347,7 @@ mod tests {
             let mut archive = zip::ZipArchive::new(std::io::Cursor::new(pkg)).unwrap();
             for i in 0..archive.len() {
                 let mut entry = archive.by_index(i).unwrap();
-                let name = entry.name().to_string();
+                let name = entry.name().unwrap().to_string();
                 let mut buf = Vec::new();
                 entry.read_to_end(&mut buf).unwrap();
                 out.start_file(&name, opts).unwrap();

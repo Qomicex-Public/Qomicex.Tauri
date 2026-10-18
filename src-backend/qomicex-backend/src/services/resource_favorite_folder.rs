@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 资源收藏夹服务（独立 `resource_favorite_folders.json` 持久化）。
 //!
 //! 收藏项通过 `ResourceFavorite.folder_ids` 关联到本文件里的夹子，条目本身仍存

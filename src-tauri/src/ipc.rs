@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! qomicex:// 自定义协议 → QIPC 管道转发器 + 流式命令。
 //!
 //! 普通请求：webview fetch(qomicex://...) → 协议处理器 → 管道帧 → 后端 axum。

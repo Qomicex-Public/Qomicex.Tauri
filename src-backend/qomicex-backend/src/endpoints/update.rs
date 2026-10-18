@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Update endpoints (translated from Endpoints/UpdateEndpoints.cs +
 //! Services/UpdateService.cs).
 //!
@@ -170,7 +173,7 @@ fn license_machine_code() -> String {
 ///
 /// `plan()` / `check()` / `manifest()` 三处共用，保证"是否有更新"的结论一致——
 /// 漏掉任一路径都会重新打开跨通道降级的口子（`/update/manifest` 正是如此，
-/// 见 ADR-081 的回归记录）。
+/// 见 ADR-085 的回归记录）。
 fn train_reject_reason(
     candidate: &str,
     current: &str,

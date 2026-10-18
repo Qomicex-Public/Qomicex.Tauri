@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MultiMC 实例/整合包通用导入（对齐 HMCL `MultiMCModpackInstallTask` /
 //! `MultiMCInstancePatch` 的 MultiMC scheme → 官方 Version scheme 转换）。
 //!
@@ -260,7 +263,8 @@ pub fn parse_metadata_from_zip(zip_path: &Path) -> Result<MultiMcMetadata, Strin
     //    来自不同目录（如包内含多个实例或嵌套条目）导致名称/组件错配。
     let mut mc_prefixes: Vec<String> = Vec::new();
     for i in 0..archive.len() {
-        let Some(name) = archive.name_for_index(i) else {
+        // zip 9：`name_for_index()` 返回 `Option<ZipResult<Cow<str>>>`（8 之前是 Option<&str>）
+        let Some(Ok(name)) = archive.name_for_index(i) else {
             continue;
         };
         if name.ends_with("mmc-pack.json") {

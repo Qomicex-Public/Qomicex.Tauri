@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import { useState } from 'react'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
 import { Button } from './ui'
@@ -11,7 +14,7 @@ import { addTask, updateTask, removeTask } from '../stores/downloadStore.ts'
 import { useI18n } from '../i18n/index.tsx'
 
 /**
- * Technic 是「一个包 = 一个直链」，无版本/fileId 概念（issue #151，ADR-103）。
+ * Technic 是「一个包 = 一个直链」，无版本/fileId 概念（issue #151，ADR-105）。
  *
  * 后端 `/modpack/install-direct` 的 technic 分支自行解析直链并下载导入，
  * 前端只传 slug（projectId）——不传 URL。

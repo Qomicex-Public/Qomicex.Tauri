@@ -17,7 +17,17 @@
     "dev:backend": "cargo run --manifest-path src-backend/qomicex-backend/Cargo.toml",
     "harness": "node scripts/harness/run.mjs",
     "test:update-channel": "node scripts/test-update-channel.mjs",
-    "test:deep-link": "node scripts/test-deep-link-parse.mjs"
+    "test:deep-link": "node scripts/test-deep-link-parse.mjs",
+    "test:i18n-steps": "node scripts/test-i18n-step-keys.mjs",
+    "test:plugin-theme-sync": "node scripts/test-plugin-theme-sync.mjs",
+    "test:plugin-sandbox-host": "node scripts/test-plugin-sandbox-host.mjs",
+    "test:plugin-l4-registry": "node scripts/test-plugin-l4-registry.mjs",
+    "test:plugin-l4-bridge-init": "node scripts/test-plugin-l4-bridge-init.mjs",
+    "test:plugin-ipc-stream-headers": "node scripts/test-plugin-ipc-stream-headers.mjs",
+    "test:plugin-api-surface": "node scripts/test-plugin-api-surface.mjs",
+    "test:dependency-install-plan": "node scripts/test-dependency-install-plan.mjs",
+    "license:check": "node scripts/add-license-headers.mjs --check",
+    "license:apply": "node scripts/add-license-headers.mjs"
   },
   "dependencies": {
     "@fortawesome/free-brands-svg-icons": "^7.3.1",

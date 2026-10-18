@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 应用路由组装（对应 Program.cs 中 `app.MapXxxEndpoints(...)` 系列 + CORS）。
 
 use std::sync::Arc;

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // 启动器定位 + CDP 启动 + 日志 tail（debug 命令用）。
 // Windows：WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS 开 WebView2 CDP 端口；
 // Linux/macOS：WEBKIT_INSPECTOR_SERVER / WEBKIT_INSPECTOR_HTTP_SERVER 尽力支持。

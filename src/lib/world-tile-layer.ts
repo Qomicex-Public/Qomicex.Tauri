@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 import L from 'leaflet'
 
 /** 已解码的瓦片，以及后端标记的「该区域没有已生成区块」。 */
