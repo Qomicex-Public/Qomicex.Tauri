@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>长设置页（滚动验证）</title>
+  <style>
+    /* 仅本页脚手架：把内容撑到明显高于常见 iframe 高度（#settings-bottom-marker 是校验锚点）。 */
+    .demo-page { padding: 2px 4px 8px }
+    .demo-marker {
+      margin-top: 12px; padding: 12px; border-radius: 8px; font-size: 13px;
+      background: rgba(34, 197, 94, .14); border: 1px solid rgba(34, 197, 94, .35);
+    }
+  </style>
+</head>
+<body>
+  <div id="root" class="demo-page">
+    <div class="p-card">
+      <div class="p-card-title">长设置页（滚动验证）</div>
+      <div class="p-card-desc">
+        下面 40 个字段用于把内容撑到高于 iframe。若设置页不可滚动，底部的
+        <code>#settings-bottom-marker</code> 永远不可见（issue #269）。
+      </div>
+    </div>
+
+    <div id="fields" class="p-col"></div>
+
+    <div id="settings-bottom-marker" class="demo-marker">
+      BOTTOM-MARKER：能滚到这里说明设置页可滚动。最后修改：<span id="saved-at">未保存</span>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var fields = document.getElementById('fields')
+      for (var i = 1; i <= 40; i++) {
+        var field = document.createElement('div')
+        field.className = 'p-col'
+        field.innerHTML = '<label class="p-label" for="field' + i + '">设置项 ' + i + '</label>'
+          + '<input id="field' + i + '" class="p-input" data-key="field' + i + '" value="v' + i + '">'
+        fields.appendChild(field)
+      }
+
+      // 用真实桥读写设置：沙箱暴露的是 __PLUGIN_API__.call(method, ...args)，
+      // 没有具名的 getSettings/setSettings（见 src/plugins/sandbox.ts 的 apiBridgeScript）。
+      var api = window.__PLUGIN_API__
+      if (!api || typeof api.call !== 'function') return
+
+      api.call('getSettings').then(function (settings) {
+        if (!settings) return
+        Object.keys(settings).forEach(function (key) {
+          var input = document.querySelector('[data-key="' + key + '"]')
+          if (input) input.value = settings[key]
+        })
+      }).catch(function () {})
+
+      var save = document.createElement('button')
+      save.className = 'p-btn p-btn--primary p-mt-2'
+      save.textContent = '保存全部'
+      save.addEventListener('click', function () {
+        // setSettings 的签名是 (key, value)，一个 key 一次调用
+        var pending = []
+        document.querySelectorAll('[data-key]').forEach(function (input) {
+          pending.push(api.call('setSettings', input.getAttribute('data-key'), input.value))
+        })
+        Promise.all(pending).then(function () {
+          document.getElementById('saved-at').textContent = new Date().toLocaleTimeString()
+        }).catch(function () {})
+      })
+      document.getElementById('settings-bottom-marker').appendChild(save)
+    })()
+  </script>
+</body>
+</html>

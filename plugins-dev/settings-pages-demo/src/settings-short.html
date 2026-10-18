@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>短设置页</title>
+</head>
+<body>
+  <div id="root" class="p-col p-mt-2">
+    <div class="p-card">
+      <div class="p-card-title">短设置页</div>
+      <div class="p-card-desc">内容低于 iframe 高度：不应出现滚动条，也不应被拉伸出空白占位。</div>
+    </div>
+
+    <div class="p-col">
+      <label class="p-label" for="server">服务器地址</label>
+      <input id="server" class="p-input" data-key="server" value="https://example.com">
+    </div>
+    <label class="p-check-field">
+      <input type="checkbox" data-key="enabled" checked>
+      <span>启用</span>
+    </label>
+  </div>
+
+  <script>
+    (function () {
+      var api = window.__PLUGIN_API__
+      if (!api || typeof api.call !== 'function') return
+      api.call('getSettings').then(function (settings) {
+        if (!settings) return
+        Object.keys(settings).forEach(function (key) {
+          var input = document.querySelector('[data-key="' + key + '"]')
+          if (input && input.type === 'checkbox') input.checked = !!settings[key]
+          else if (input) input.value = settings[key]
+        })
+      }).catch(function () {})
+    })()
+  </script>
+</body>
+</html>
