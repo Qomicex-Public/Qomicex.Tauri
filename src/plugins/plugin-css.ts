@@ -5,7 +5,10 @@ export const pluginCss = `
 :root{color-scheme:light dark}
 *{margin:0;padding:0;box-sizing:border-box}
 html{background:transparent}
-body{font-family:system-ui,sans-serif;color:hsl(var(--foreground));background:transparent;height:100%;overflow:hidden}
+/* overflow 不能用 hidden：html 的 overflow 为 visible 时 body 的 overflow 会传播给视口，
+   hidden 会让整个 iframe 对用户不可滚动（window.scrollTo 仍有效，肉眼与 DOM 尺寸都看不出来），
+   长设置页被直接裁掉。保留 height:100% 以维持插件内部 height:100% 布局的确定高度。 */
+body{font-family:system-ui,sans-serif;color:hsl(var(--foreground));background:transparent;height:100%;overflow:auto}
 #root{height:100%}
 
 /* Tabs */

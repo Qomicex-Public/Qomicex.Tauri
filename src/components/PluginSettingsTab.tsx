@@ -82,13 +82,18 @@ export default function PluginSettingsTab() {
           orientation="vertical"
         />
       </div>
+      {/*
+        高度随视口伸缩：写死 560px 在窗口拉高时浪费空间、缩小窗口又可能超出可视区；
+        纯百分比高度在父级高度由内容决定时会退化为 iframe 默认的 150px。clamp 同时给出
+        确定值与自适应范围，超出部分由 iframe 内部滚动（见 plugin-css.ts 的 body）。
+      */}
       <div className="min-w-0 flex-1 overflow-hidden rounded-lg border bg-background">
         {current && sandboxesRef.current.has(current.key) && (
           <PluginSlot
             key={current.key}
             slotId={`plugin-settings:${current.key}`}
             sandbox={sandboxesRef.current.get(current.key)!}
-            height={560}
+            height="clamp(420px,70vh,720px)"
           />
         )}
       </div>
