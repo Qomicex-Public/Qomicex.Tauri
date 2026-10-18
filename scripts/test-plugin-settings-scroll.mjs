@@ -58,6 +58,19 @@ function declarationsOf(css, selector) {
 
 const scrollable = (value) => value !== 'hidden' && value !== 'clip'
 
+/**
+ * 把 overflow 解析成两轴。简写 `overflow` 的第一个值是 x、第二个是 y（单值同时作用于两轴），
+ * 单独的 `overflow-x` / `overflow-y` 优先。不解析简写的话，`overflow:auto hidden`
+ * 会被当成整串比较，纵向的 hidden 逃过断言。
+ */
+function overflowAxes(decl) {
+  const [shorthandX, shorthandY = shorthandX] = (decl.overflow ?? 'visible').split(/\s+/)
+  return {
+    x: decl['overflow-x'] ?? shorthandX,
+    y: decl['overflow-y'] ?? shorthandY,
+  }
+}
+
 try {
   execFileSync(
     process.execPath,
@@ -71,11 +84,10 @@ try {
   const rootRule = declarationsOf(pluginCss, '#root')
 
   // ---- 核心断言：body 必须允许用户滚动（overflow:hidden 会传播给视口）----
-  const vertical = body['overflow-y'] ?? body.overflow
-  const horizontal = body['overflow-x'] ?? body.overflow
-  check('body 有 overflow 声明', typeof vertical, 'string')
-  check('body 纵向可滚动', scrollable(vertical), true)
-  check('body 横向不裁掉内容', scrollable(horizontal), true)
+  const axes = overflowAxes(body)
+  check('body 有 overflow 声明', typeof axes.y, 'string')
+  check('body 纵向可滚动', scrollable(axes.y), true)
+  check('body 横向不裁掉内容', scrollable(axes.x), true)
 
   // ---- 兼容断言：保留确定高度，否则插件内部 height:100% 布局会退化 ----
   check('body 保留 height:100%', body.height, '100%')
