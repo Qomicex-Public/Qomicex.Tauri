@@ -1595,27 +1595,36 @@ fn windows_shell_program() -> &'static str {
             .map(|pf| Path::new(&pf).join("PowerShell").join("7").join("pwsh.exe"))
             .filter(|p| p.is_file())
             .map(|p| p.to_string_lossy().into_owned());
-        pick_shell_program(custom.as_deref(), pwsh_on_path(), msi.as_deref())
+        let on_path = find_pwsh_exe_on_path();
+        pick_shell_program(custom.as_deref(), on_path.as_deref(), msi.as_deref())
     })
 }
 
 /// 解释器选择（纯函数，便于单测）。
 ///
-/// 优先级：显式 `QOMICEX_PWSH_PATH` → `PATH` 里的 `pwsh` → MSI 安装位置 → 5.1。
-/// 返回 `pwsh`（走 PATH 查找）或绝对路径。
+/// 优先级：显式 `QOMICEX_PWSH_PATH` → `PATH` 里的 `pwsh.exe` → MSI 安装位置 → 5.1。
+///
+/// **一律返回可用于启动的完整路径或可执行名**，且返回什么就启动什么：此前探测
+/// `PATH` 时接受了 `.cmd` / `.bat`，实际却启动裸名 `pwsh` —— Rust 的进程创建按
+/// 可执行程序解析裸名，不会套用脚本扩展名，结果是明明探测成功却 `SHELL_START_FAILED`。
+/// 因此探测只认 `pwsh.exe`，并把命中路径原样返回。
 ///
 /// 5.1 的回退用**绝对路径**而不是裸命令名：`powershell` 依赖 `PATH` 含 System32，
 /// 而 PATH 被裁剪/损坏时裸名会直接 `program not found` —— 那样连最基本的命令执行
 /// 都不可用，比版本不理想严重得多。
 #[cfg(windows)]
-fn pick_shell_program(custom: Option<&str>, pwsh_on_path: bool, msi_path: Option<&str>) -> String {
+fn pick_shell_program(
+    custom: Option<&str>,
+    pwsh_exe_on_path: Option<&str>,
+    msi_path: Option<&str>,
+) -> String {
     if let Some(c) = custom {
         if !c.is_empty() {
             return c.to_string();
         }
     }
-    if pwsh_on_path {
-        return "pwsh".to_string();
+    if let Some(p) = pwsh_exe_on_path {
+        return p.to_string();
     }
     if let Some(p) = msi_path {
         return p.to_string();
@@ -1639,21 +1648,18 @@ fn windows_powershell_51() -> Option<String> {
     exe.is_file().then(|| exe.to_string_lossy().into_owned())
 }
 
-/// `PATH` 里是否存在可直接执行的 `pwsh`（`.exe` / `.cmd` 都算）。
+/// 在 `PATH` 里查找可直接启动的 `pwsh.exe`，返回其完整路径。
 ///
-/// 不能只判断「文件存在」：Store 版在 `WindowsApps` 下放的是应用执行别名，
-/// 直接 `is_file` 在某些版本上不可靠，因此两种判定都用，任一成立即认为可用。
+/// 只认 `.exe`：进程创建不会按 `.cmd` / `.bat` 的语义套用解释器，探测到脚本却用裸名
+/// 启动必然会失败。Store 版在 `WindowsApps` 下的执行别名文件读取方式与常规文件不同，
+/// 因此 `is_file()` 失败时再试一次 `metadata()`。
 #[cfg(windows)]
-fn pwsh_on_path() -> bool {
-    let Some(path) = std::env::var_os("PATH") else {
-        return false;
-    };
-    let candidates = ["pwsh.exe", "pwsh.cmd", "pwsh.bat"];
-    std::env::split_paths(&path).any(|dir| {
-        candidates.iter().any(|name| {
-            let full = dir.join(name);
-            full.is_file() || std::fs::metadata(&full).is_ok()
-        })
+fn find_pwsh_exe_on_path() -> Option<String> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).find_map(|dir| {
+        let candidate = dir.join("pwsh.exe");
+        let exists = candidate.is_file() || std::fs::metadata(&candidate).is_ok();
+        exists.then(|| candidate.to_string_lossy().into_owned())
     })
 }
 
@@ -1856,10 +1862,11 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn shell_program_prefers_pwsh_over_windows_powershell() {
-        // PATH 有 pwsh → 用它，而不是 5.1
-        assert_eq!(pick_shell_program(None, true, None), "pwsh");
+        let pwsh = r"C:\Program Files\PowerShell\7\pwsh.exe";
+        // PATH 命中 → 用它（且必须是探测到的**完整路径**，不是裸名）
+        assert_eq!(pick_shell_program(None, Some(pwsh), None), pwsh);
         // 没有 pwsh → 回退 5.1，且必须是可执行的绝对路径，不能是裸名
-        let fallback = pick_shell_program(None, false, None);
+        let fallback = pick_shell_program(None, None, None);
         assert!(
             fallback.to_lowercase().ends_with("powershell.exe"),
             "回退应为 powershell.exe，实际 {fallback}"
@@ -1868,15 +1875,12 @@ mod tests {
             std::path::Path::new(&fallback).is_absolute(),
             "回退必须是绝对路径（不依赖 PATH），实际 {fallback}"
         );
-        // 只有 MSI 路径 → 用绝对路径（等价于 pwsh）
+        // PATH 未命中但 MSI 存在 → 用 MSI 的绝对路径
+        assert_eq!(pick_shell_program(None, None, Some(pwsh)), pwsh);
+        // PATH 与 MSI 都有时优先 PATH 命中项
         assert_eq!(
-            pick_shell_program(None, false, Some(r"C:\Program Files\PowerShell\7\pwsh.exe")),
-            r"C:\Program Files\PowerShell\7\pwsh.exe"
-        );
-        // PATH 与 MSI 都有时优先 PATH 的 pwsh（避免路径含空格/权限问题）
-        assert_eq!(
-            pick_shell_program(None, true, Some(r"C:\Program Files\PowerShell\7\pwsh.exe")),
-            "pwsh"
+            pick_shell_program(None, Some(r"D:\pwsh\pwsh.exe"), Some(pwsh)),
+            r"D:\pwsh\pwsh.exe"
         );
     }
 
@@ -1887,19 +1891,41 @@ mod tests {
         assert_eq!(
             pick_shell_program(
                 Some(r"D:\tools\pwsh\pwsh.exe"),
-                true,
+                Some(r"C:\Program Files\PowerShell\7\pwsh.exe"),
                 Some(r"C:\msi\pwsh.exe")
             ),
             r"D:\tools\pwsh\pwsh.exe"
         );
         // 空值视为未设置，不能当成有效路径
-        assert_eq!(pick_shell_program(Some(""), true, None), "pwsh");
+        assert_eq!(
+            pick_shell_program(Some(""), Some(r"D:\pwsh\pwsh.exe"), None),
+            r"D:\pwsh\pwsh.exe"
+        );
         assert!(
-            pick_shell_program(Some(""), false, None)
+            pick_shell_program(Some(""), None, None)
                 .to_lowercase()
                 .ends_with("powershell.exe"),
             "空值应回退到 powershell.exe"
         );
+    }
+
+    /// 探测与启动必须指向同一个程序：`PATH` 里只有脚本（`.cmd`/`.bat`）时不能当作可用。
+    ///
+    /// 只看路径是否存在会把 `pwsh.cmd` 当成 pwsh，而进程创建不套用脚本语义，最终
+    /// `SHELL_START_FAILED`。函数只返回 `.exe` 路径这一契约由此固定。
+    #[cfg(windows)]
+    #[test]
+    fn pwsh_detection_only_returns_executables() {
+        if let Some(found) = find_pwsh_exe_on_path() {
+            assert!(
+                found.to_lowercase().ends_with("pwsh.exe"),
+                "探测结果必须是 pwsh.exe，实际 {found}"
+            );
+            assert!(
+                std::path::Path::new(&found).is_absolute(),
+                "探测结果必须是完整路径，实际 {found}"
+            );
+        }
     }
 
     /// 真实环境下选出来的程序名必须落在 PowerShell 家族内。
