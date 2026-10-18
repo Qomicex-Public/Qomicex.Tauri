@@ -31,7 +31,7 @@ import { addTask, updateTask, getTasks } from '../stores/downloadStore.ts'
 import { Select, SelectOption, SelectDivider } from '../components/ui'
 import { Tabs } from '../components/ui'
 import type { ScannedVersion, RemoteVersionInfo, CreateInstanceRequest, LoaderVersionInfo, LoaderAddonInfo, DownloadTask, GameInstance } from '../types/index.ts'
-import { getSettings, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, onSettingsChange, autoSelectDownloadSource, openFolder } from '../api/settings.ts'
+import { getSettings, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, onSettingsChange, openFolder } from '../api/settings.ts'
 import { InstanceIcon } from '../components/InstanceIcon.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
 import { ApiError } from '../api/client.ts'
@@ -509,40 +509,16 @@ export default function Instances() {
         progress: 0,
         createdAt: new Date().toISOString(),
         instanceId: instance.id,
-        // 失败后可重建：安装失败会回滚删除实例，重试必须能重新创建它。
-        retry: {
-          kind: 'game',
-          name: data.name,
-          gameVersion: data.gameVersion,
-          gameDir: currentDir,
-          loader: data.loader,
-          loaderVersion: data.loaderVersion,
-          addons: selectedAddons.length > 0 ? [...selectedAddons] : undefined,
-          icon: data.icon,
-        },
       }
       addTask(task)
 
       const settings = loadSettings()
       const threads = settings.downloadThreads || 64
       const versionIsolation = settings.versionIsolation !== false
-      let downloadSource = settings.downloadSource ?? 0
       const downloadTimeout = settings.downloadTimeout ?? 15
 
-      if (settings.autoSelectDownloadSource) {
-        try {
-          const result = await autoSelectDownloadSource()
-          downloadSource = result.id
-        } catch {
-          // 自动测速选源失败时回退到 settings.downloadSource（用户手动选过的源）/
-          // 默认源——那本身就是有效配置，属合理降级。
-          // 有意不弹提示：若随后安装也用不了这个源，失败会经下载任务的 error 在
-          // 下载中心暴露；若安装成功，说明源可用，选源失败只是没拿到最优解。
-          // 此处再弹一条只会与任务错误重复打扰。需要排查时看控制台即可。
-        }
-      }
-
-      startInstall(instance.id, data.loader, data.loaderVersion, selectedAddons.length > 0 ? selectedAddons : undefined, threads, versionIsolation, downloadSource, downloadTimeout).catch((e) => {
+      // 下载源由后端按「偏好 + 资源类型」解析，前端不再选源、也不再提前测速。
+      startInstall(instance.id, data.loader, data.loaderVersion, selectedAddons.length > 0 ? selectedAddons : undefined, threads, versionIsolation, downloadTimeout).catch((e) => {
         const ts = getTasks()
         const existing = ts.find((t) => t.id === instance.id)
         if (existing) {

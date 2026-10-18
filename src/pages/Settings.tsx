@@ -58,10 +58,10 @@ import { ApiError, get, API_BASE } from '../api/client.ts'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
 import type { JavaRuntime } from '../types/index.ts'
-import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, getSettings, pingDownloadSources, pingModSources, pingFileDownloadSources, clearCache, clearCurseForgeCache, clearNeoForgeCache, clearFtbCache, clearModsListCache, clearModUpdatesCache, clearModpackTemp, getCacheStats, setDataDir, getSystemFonts } from '../api/settings.ts'
+import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, getSettings, clearCache, clearCurseForgeCache, clearNeoForgeCache, clearFtbCache, clearModsListCache, clearModUpdatesCache, clearModpackTemp, getCacheStats, setDataDir, getSystemFonts } from '../api/settings.ts'
 import type { CacheStats, CacheDirStats } from '../api/settings.ts'
 import { cacheInvalidate } from '../lib/simple-cache.ts'
-import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
+import type { AppSettings } from '../api/settings.ts'
 import { FILE_NAMING_OPTIONS } from '../lib/download-naming.ts'
 import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL, REFERENCE_PROJECTS, USER_AGREEMENT_URL } from '../constants/credits.ts'
 import { LegalDialog } from '../components/LegalDialog.tsx'
@@ -78,11 +78,6 @@ const CATEGORIES = [
   { id: 'about', icon: Info },
   { id: 'debug', icon: Bug },
 ] as const
-
-const DOWNLOAD_SOURCES = [
-  { value: 0 },
-  { value: 1 },
-]
 
 /** 主题色默认值（未设置时回落到 CSS 默认绿，仅用于取色器占位显示）。 */
 const DEFAULT_THEME_COLOR = '#22c55e'
@@ -858,20 +853,11 @@ export default function Settings() {
   const loadedRef = useRef(false)
   const [backgrounds, setBackgrounds] = useState<string[]>([])
   const [fontList, setFontList] = useState<string[]>([])
-  const [sourcePings, setSourcePings] = useState<DownloadSourcePing[]>([])
-  const [pingLoading, setPingLoading] = useState(false)
-  const [modPings, setModPings] = useState<ModSourcePing[]>([])
-  const [modPingLoading, setModPingLoading] = useState(false)
-  const [filePings, setFilePings] = useState<DownloadSourcePing[]>([])
-  const [filePingLoading, setFilePingLoading] = useState(false)
 
   useEffect(() => {
     apiLoadSettings().then((s) => {
       setSettings(s)
       loadedRef.current = true
-      pingDownloadSources().then(setSourcePings).catch(() => {})
-      pingModSources().then(setModPings).catch(() => {})
-      pingFileDownloadSources().then(setFilePings).catch(() => {})
     }).catch(() => {})
     get<string[]>('/settings/backgrounds').then(setBackgrounds).catch(() => {})
     getSystemFonts().then(setFontList).catch(() => {})
@@ -881,21 +867,6 @@ export default function Settings() {
     const unsub = subscribe(() => setRuntimesState([...getRuntimes()]))
     return unsub
   }, [])
-
-  useEffect(() => {
-    if (!loadedRef.current) return
-    refreshPings()
-  }, [settings.autoSelectDownloadSource])
-
-  useEffect(() => {
-    if (!loadedRef.current) return
-    refreshModPings()
-  }, [settings.autoSelectModMirror])
-
-  useEffect(() => {
-    if (!loadedRef.current) return
-    refreshFilePings()
-  }, [settings.autoSelectFileDownloadSource])
 
   useEffect(() => {
     if (category === 'about') {
@@ -998,60 +969,6 @@ export default function Settings() {
       const dir = path.replace(/[/\\][^/\\]+$/i, '')
       openPath(dir).catch(() => {})
     })
-  }
-
-  async function refreshPings() {
-    setPingLoading(true)
-    try {
-      const pings = await pingDownloadSources()
-      setSourcePings(pings)
-      if (settings.autoSelectDownloadSource) {
-        const best = pings.filter(p => p.ok).sort((a, b) => a.latency - b.latency)[0]
-        if (best && best.id !== settings.downloadSource) {
-          update('downloadSource', best.id)
-        }
-      }
-    } catch {
-      setSourcePings([])
-    } finally {
-      setPingLoading(false)
-    }
-  }
-
-  async function refreshModPings() {
-    setModPingLoading(true)
-    try {
-      const pings = await pingModSources()
-      setModPings(pings)
-      if (settings.autoSelectModMirror) {
-        const best = pings.filter(p => p.ok).sort((a, b) => a.latency - b.latency)[0]
-        if (best && best.id !== settings.modMirror) {
-          update('modMirror', best.id)
-        }
-      }
-    } catch {
-      setModPings([])
-    } finally {
-      setModPingLoading(false)
-    }
-  }
-
-  async function refreshFilePings() {
-    setFilePingLoading(true)
-    try {
-      const pings = await pingFileDownloadSources()
-      setFilePings(pings)
-      if (settings.autoSelectFileDownloadSource) {
-        const best = pings.filter(p => p.ok).sort((a, b) => a.latency - b.latency)[0]
-        if (best && best.id !== settings.fileDownloadSource) {
-          update('fileDownloadSource', best.id)
-        }
-      }
-    } catch {
-      setFilePings([])
-    } finally {
-      setFilePingLoading(false)
-    }
   }
 
   async function handleOpenBackgrounds() {
@@ -1517,176 +1434,49 @@ export default function Settings() {
             </SettingSection>
 
             <SettingSection title={t('settings.launcher.downloadSource')} icon={<Globe className="h-4 w-4" />}>
-                <div className="space-y-2 px-4 py-3">
-                  <Label>{t('settings.launcher.downloadSource')}</Label>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {DOWNLOAD_SOURCES.map((s) => {
-                      const ping = sourcePings.find(p => p.id === s.value)
-                      const showLatency = ping && ping.latency >= 0
-                      const latencyColor = !ping?.ok ? 'text-destructive'
-                        : ping.latency < 200 ? 'text-emerald-400'
-                        : ping.latency < 400 ? 'text-amber-400'
-                        : 'text-destructive'
-                      return (
-                        <button
-                          key={s.value}
-                          disabled={settings.autoSelectDownloadSource}
-                          onClick={() => update('downloadSource', s.value)}
-                          className={cn(
-                            'flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm transition-colors',
-                            settings.autoSelectDownloadSource && settings.downloadSource !== s.value && 'pointer-events-none opacity-60',
-                            settings.autoSelectDownloadSource && settings.downloadSource === s.value && 'pointer-events-none',
-                            settings.downloadSource === s.value
-                              ? 'border-primary bg-primary/10 font-medium text-primary'
-                              : 'border-border hover:border-muted-foreground/30'
-                          )}
-                        >
-                          {t(`settings.launcher.downloadSourceName.${s.value}`)}
-                          {pingLoading && <RotateCw className="h-3 w-3 animate-spin text-muted-foreground" />}
-                          {!pingLoading && showLatency && (
-                            <span className={cn('text-xs tabular-nums', latencyColor)}>
-                              {ping.latency}ms
-                            </span>
-                          )}
-                          {!pingLoading && !showLatency && (
-                            <span className="text-xs text-muted-foreground">--</span>
-                          )}
-                        </button>
-                      )
-                    })}
-                    <Tooltip content={t('settings.launcher.refreshLatency')}>
-                      <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={refreshPings} disabled={pingLoading}>
-                        <RotateCw className={cn('h-3.5 w-3.5', pingLoading && 'animate-spin')} />
-                      </Button>
-                    </Tooltip>
-                  </div>
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <Switch
-                      checked={settings.autoSelectDownloadSource}
-                      onCheckedChange={(c) => update('autoSelectDownloadSource', c === true)}
-                    />
-                    <div className="flex items-center gap-1.5">
-                      <Zap className="h-3.5 w-3.5 text-amber-400" />
-                      <span className="text-sm font-medium">{t('settings.launcher.autoSelectDownloadSource')}</span>
-                    </div>
-                  </label>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.autoSelectDownloadSourceDesc')}</p>
+              <div className="space-y-3 px-4 py-3">
+                <Label>{t('settings.launcher.sourcePreference')}</Label>
+                <div className="flex flex-wrap items-center gap-2">
+                  {(['official', 'mirror'] as const).map((pref) => (
+                    <button
+                      key={pref}
+                      disabled={settings.autoSelectSource}
+                      onClick={() => update('sourcePreference', pref)}
+                      className={cn(
+                        'rounded-lg border px-4 py-2 text-sm transition-colors',
+                        settings.autoSelectSource && 'pointer-events-none opacity-60',
+                        settings.sourcePreference === pref
+                          ? 'border-primary bg-primary/10 font-medium text-primary'
+                          : 'border-border hover:border-muted-foreground/30',
+                      )}
+                    >
+                      {t(`settings.launcher.sourcePreferenceName.${pref}`)}
+                    </button>
+                  ))}
                 </div>
+                <p className="text-xs text-muted-foreground">{t('settings.launcher.sourcePreferenceDesc')}</p>
 
-                <div className="space-y-2 px-4 py-3">
-                  <Label>{t('settings.launcher.resourceDownloadSource')}</Label>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {[0, 1].map((s) => {
-                      const ping = filePings.find(p => p.id === s)
-                      const showLatency = ping && ping.latency >= 0
-                      const latencyColor = !ping?.ok ? 'text-destructive'
-                        : ping.latency < 200 ? 'text-emerald-400'
-                        : ping.latency < 400 ? 'text-amber-400'
-                        : 'text-destructive'
-                      return (
-                        <button
-                          key={s}
-                          disabled={settings.autoSelectFileDownloadSource}
-                          onClick={() => update('fileDownloadSource', s)}
-                          className={cn(
-                            'flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm transition-colors',
-                            settings.autoSelectFileDownloadSource && settings.fileDownloadSource !== s && 'pointer-events-none opacity-60',
-                            settings.autoSelectFileDownloadSource && settings.fileDownloadSource === s && 'pointer-events-none',
-                            settings.fileDownloadSource === s
-                              ? 'border-primary bg-primary/10 font-medium text-primary'
-                              : 'border-border hover:border-muted-foreground/30'
-                          )}
-                        >
-                          {t(`settings.launcher.resourceDownloadSourceName.${s}`)}
-                          {filePingLoading && <RotateCw className="h-3 w-3 animate-spin text-muted-foreground" />}
-                          {!filePingLoading && showLatency && (
-                            <span className={cn('text-xs tabular-nums', latencyColor)}>
-                              {ping.latency}ms
-                            </span>
-                          )}
-                          {!filePingLoading && !showLatency && (
-                            <span className="text-xs text-muted-foreground">--</span>
-                          )}
-                        </button>
-                      )
-                    })}
-                    <Tooltip content={t('settings.launcher.refreshLatency')}>
-                      <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={refreshFilePings} disabled={filePingLoading}>
-                        <RotateCw className={cn('h-3.5 w-3.5', filePingLoading && 'animate-spin')} />
-                      </Button>
-                    </Tooltip>
+                <label className="flex cursor-pointer items-center gap-3 pt-1">
+                  <Switch
+                    checked={settings.autoSelectSource}
+                    onCheckedChange={(c) => update('autoSelectSource', c === true)}
+                  />
+                  <div className="flex items-center gap-1.5">
+                    <Zap className="h-3.5 w-3.5 text-amber-400" />
+                    <span className="text-sm font-medium">{t('settings.launcher.autoSelectSource')}</span>
                   </div>
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <Switch
-                      checked={settings.autoSelectFileDownloadSource}
-                      onCheckedChange={(c) => update('autoSelectFileDownloadSource', c === true)}
-                    />
-                    <div className="flex items-center gap-1.5">
-                      <Zap className="h-3.5 w-3.5 text-amber-400" />
-                      <span className="text-sm font-medium">{t('settings.launcher.autoSelectFileDownloadSource')}</span>
-                    </div>
-                  </label>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.resourceDownloadSourceDesc')}</p>
-                </div>
+                </label>
+                <p className="text-xs text-muted-foreground">{t('settings.launcher.autoSelectSourceDesc')}</p>
 
-                <div className="space-y-2 px-4 py-3">
-                  <Label>{t('settings.launcher.modSource')}</Label>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {[
-                      { value: 0 },
-                      { value: 1 },
-                    ].map((s) => {
-                      const ping = modPings.find(p => p.id === s.value)
-                      const showLatency = ping && ping.latency >= 0
-                      const latencyColor = !ping?.ok ? 'text-destructive'
-                        : ping.latency < 200 ? 'text-emerald-400'
-                        : ping.latency < 400 ? 'text-amber-400'
-                        : 'text-destructive'
-                      return (
-                        <button
-                          key={s.value}
-                          disabled={settings.autoSelectModMirror}
-                          onClick={() => update('modMirror', s.value)}
-                          className={cn(
-                            'flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm transition-colors',
-                            settings.autoSelectModMirror && settings.modMirror !== s.value && 'pointer-events-none opacity-60',
-                            settings.autoSelectModMirror && settings.modMirror === s.value && 'pointer-events-none',
-                            settings.modMirror === s.value
-                              ? 'border-primary bg-primary/10 font-medium text-primary'
-                              : 'border-border hover:border-muted-foreground/30'
-                          )}
-                        >
-                          {t(`settings.launcher.modSourceName.${s.value}`)}
-                          {modPingLoading && <RotateCw className="h-3 w-3 animate-spin text-muted-foreground" />}
-                          {!modPingLoading && showLatency && (
-                            <span className={cn('text-xs tabular-nums', latencyColor)}>
-                              {ping.latency}ms
-                            </span>
-                          )}
-                          {!modPingLoading && !showLatency && (
-                            <span className="text-xs text-muted-foreground">--</span>
-                          )}
-                        </button>
-                      )
+                {!settings.autoSelectSource && (
+                  <p className="text-xs text-muted-foreground">
+                    {t('settings.launcher.effectiveSources', {
+                      vanilla: t(`settings.launcher.sourceName.${settings.sourcePreference === 'mirror' ? 'bmclapi' : 'official'}`),
+                      mods: t(`settings.launcher.sourceName.${settings.sourcePreference === 'mirror' ? 'mirror' : 'official'}`),
                     })}
-                    <Tooltip content={t('settings.launcher.refreshLatency')}>
-                      <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={refreshModPings} disabled={modPingLoading}>
-                        <RotateCw className={cn('h-3.5 w-3.5', modPingLoading && 'animate-spin')} />
-                      </Button>
-                    </Tooltip>
-                  </div>
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <Switch
-                      checked={settings.autoSelectModMirror}
-                      onCheckedChange={(c) => update('autoSelectModMirror', c === true)}
-                    />
-                    <div className="flex items-center gap-1.5">
-                      <Zap className="h-3.5 w-3.5 text-amber-400" />
-                      <span className="text-sm font-medium">{t('settings.launcher.autoSelectModSource')}</span>
-                    </div>
-                  </label>
-                  <p className="text-xs text-muted-foreground">{t('settings.launcher.autoSelectModSourceDesc')}</p>
-                </div>
+                  </p>
+                )}
+              </div>
             </SettingSection>
 
             <SettingSection title={t('settings.relayNodes.title')} icon={<Globe className="h-4 w-4" />}>

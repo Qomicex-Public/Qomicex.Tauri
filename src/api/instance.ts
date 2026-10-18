@@ -125,8 +125,14 @@ export async function cancelLaunch(id: string): Promise<void> {
   await post(`/instance/${id}/launch/cancel`)
 }
 
-export async function startInstall(id: string, loader?: string, loaderVersion?: string, addons?: string[], downloadThreads?: number, versionIsolation?: boolean, downloadSource?: number, downloadTimeout?: number, optifineVersion?: string): Promise<void> {
-  await post(`/instance/${id}/install`, { loader, loaderVersion, addons, downloadThreads, versionIsolation, downloadSourceId: downloadSource, downloadTimeout, optifineVersion })
+/**
+ * 启动安装。
+ *
+ * 下载源不在这里传：后端按「偏好 + 资源类型」统一解析（见 source_policy），
+ * 前端传入具体源只会在策略变更后产生两套事实源。
+ */
+export async function startInstall(id: string, loader?: string, loaderVersion?: string, addons?: string[], downloadThreads?: number, versionIsolation?: boolean, downloadTimeout?: number, optifineVersion?: string): Promise<void> {
+  await post(`/instance/${id}/install`, { loader, loaderVersion, addons, downloadThreads, versionIsolation, downloadTimeout, optifineVersion })
 }
 
 export async function getInstallProgress(id: string): Promise<InstallProgressResponse> {

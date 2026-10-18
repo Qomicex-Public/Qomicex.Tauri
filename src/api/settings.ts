@@ -25,20 +25,14 @@ export interface AppSettings {
   jvmArgs: string
   language: string
   defaultJavaPath: string
-  downloadSource: number
-  autoSelectDownloadSource: boolean
-  modMirror: number
-  autoSelectModMirror: boolean
   /**
-   * 文件下载源（mod 文件 CDN）：0 = 官方源（直连原 CDN）；1 = 镜像源
-   * （MCIM 优先，MCIM 不覆盖的域名走 QML Mirror；运行期失败自动回退 QML 节点、
-   * 官方 CDN 兜底）。国内时区默认 1。
+   * 下载源偏好：**只表示优先级顺序，两侧互为兜底**。
+   * - `official`：官方源先，失败回退镜像；
+   * - `mirror`：镜像先，失败回退官方。
    */
-  fileDownloadSource: number
-  /** 自动选择文件下载源 */
-  autoSelectFileDownloadSource: boolean
-  /** 镜像源改版一次性迁移标记（true = 已处理，防止覆盖用户后续选择） */
-  fileDownloadSourceMigrated?: boolean
+  sourcePreference: 'official' | 'mirror'
+  /** 按资源类型自动选择：模组走镜像、原版走官方（默认开） */
+  autoSelectSource: boolean
   downloadTimeout: number
   theme: 'dark' | 'light' | 'system'
   themePreset: 'default' | 'latte' | 'frappe' | 'macchiato' | 'mocha'
@@ -135,16 +129,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   jvmArgs: '',
   language: 'zh-CN',
   defaultJavaPath: '',
-  downloadSource: 0,
-  autoSelectDownloadSource: false,
-  modMirror: 0,
-  autoSelectModMirror: false,
-  fileDownloadSource: 0,
-  autoSelectFileDownloadSource: false,
-  // 必须与 fileDownloadSource: 0 配对为 false：设置加载完成前 update() 提前落盘
-  // 的完整对象会按此标记跳过后端迁移，migrated:true 会把 UTC+8 用户的镜像源
-  // 默认值永久挡在门外（CodeRabbit #217 指出）。
-  fileDownloadSourceMigrated: false,
+  sourcePreference: 'official',
+  autoSelectSource: true,
   downloadTimeout: 60,
   theme: 'dark',
   themePreset: 'default',
@@ -276,58 +262,6 @@ export function onSettingsChange(fn: (s: AppSettings) => void): () => void {
   return () => listeners.delete(fn)
 }
 
-export interface DownloadSourcePing {
-  id: number
-  name: string
-  url: string
-  /** 后端字段名：latency（serde camelCase 对单词不变形） */
-  latency: number
-  /** 后端字段名：ok */
-  ok: boolean
-}
-
-export async function pingDownloadSources(): Promise<DownloadSourcePing[]> {
-  return get<DownloadSourcePing[]>('/settings/download-sources/ping')
-}
-
-export interface ModSourcePing {
-  id: number
-  name: string
-  url: string
-  ok: boolean
-  latency: number
-  canConnect: boolean
-}
-
-export async function pingModSources(): Promise<ModSourcePing[]> {
-  return get<ModSourcePing[]>('/settings/mod-sources/ping')
-}
-
-export async function pingFileDownloadSources(): Promise<DownloadSourcePing[]> {
-  return get<DownloadSourcePing[]>('/settings/file-download-sources/ping')
-}
-
-export async function autoSelectModSource(): Promise<{ id: number; latencyMs: number }> {
-  const result = await get<{ id: number; latencyMs: number }>('/settings/mod-source/auto-select')
-  cached = { ...cached, modMirror: result.id }
-  return result
-}
-
-export async function autoSelectDownloadSource(): Promise<{ id: number; latencyMs: number }> {
-  const result = await get<{ id: number; latencyMs: number }>('/settings/download-source/auto-select')
-  cached = { ...cached, downloadSource: result.id }
-  return result
-}
-
-export async function getDataDir(): Promise<string> {
-  try {
-    const { path } = await get<{ path: string }>('/settings/data-dir')
-    return path
-  } catch {
-    return DEFAULT_SETTINGS.dataDir
-  }
-}
-
 /** 系统已安装字体家族名列表（去重、排序），供外观设置选择。 */
 export async function getSystemFonts(): Promise<string[]> {
   try {
@@ -344,6 +278,15 @@ export async function setDataDir(path: string): Promise<string> {
 
 export function openFolder(path: string): Promise<void> {
   return post('/settings/open-folder', { path })
+}
+
+export async function getDataDir(): Promise<string> {
+  try {
+    const { path } = await get<{ path: string }>('/settings/data-dir')
+    return path
+  } catch {
+    return DEFAULT_SETTINGS.dataDir
+  }
 }
 
 export async function clearCache(): Promise<{ deleted: number }> {

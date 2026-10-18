@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { createInstance, resolveModpack, startInstall, startModpackInstall } from '../api/instance.ts'
-import { autoSelectDownloadSource, getSettings } from '../api/settings.ts'
+import { getSettings } from '../api/settings.ts'
 import type { DownloadTask } from '../types/index.ts'
 
 /** `retryTask` 的返回值：直接喂给 `updateTask`，把卡片重新挂回进行中。 */
@@ -48,16 +48,8 @@ export async function retryTask(task: DownloadTask): Promise<RetryPatch> {
       icon: spec.icon,
     })
 
+    // 下载源由后端按「偏好 + 资源类型」解析，重试时同样不传具体源。
     const settings = getSettings()
-    let downloadSource = settings.downloadSource ?? 0
-    if (settings.autoSelectDownloadSource) {
-      try {
-        downloadSource = (await autoSelectDownloadSource()).id
-      } catch {
-        // 与首次安装一致：自动测速失败时回退到设置里的源，不打断重试。
-      }
-    }
-
     await startInstall(
       instance.id,
       spec.loader,
@@ -65,7 +57,6 @@ export async function retryTask(task: DownloadTask): Promise<RetryPatch> {
       spec.addons && spec.addons.length > 0 ? spec.addons : undefined,
       settings.downloadThreads || 64,
       settings.versionIsolation !== false,
-      downloadSource,
       settings.downloadTimeout ?? 15,
     )
     return { ...fresh(), instanceId: instance.id }
