@@ -8,14 +8,15 @@
 //!   cache, cors proxy (SSE-capable), WASM gateway bridge, file read/write/
 //!   authorize/delete (FS_AUTHORIZATION_REQUIRED flow), download management
 //!   (tasks go to the shared DownloadManager so they surface in the download
-//!   center), and shell execution (win: powershell, other: /bin/sh).
+//!   center), and shell execution (win: pwsh 7 when installed, else the bundled
+//!   Windows PowerShell 5.1; other: /bin/sh).
 //!
 //! Permission gating is NOT done here: like the C# original, the backend only
 //! validates input; the frontend bridge enforces manifest permissions.
 
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -1579,6 +1580,83 @@ fn basename_of_url(url: &str) -> Option<String> {
 // Shell execution
 // =====================================================================
 
+/// Windows 上优先使用 PowerShell 7（`pwsh`），未安装时回退到系统自带的 5.1。
+///
+/// 只在启动时探测一次并缓存：探测要访问文件系统，没必要每条命令都做；插件若在
+/// 运行期间新装了 pwsh，重启后端即可生效（安装本身通常需要重启终端）。
+///
+/// 决策逻辑见 [`pick_shell_program`]（纯函数，可单测）。
+#[cfg(windows)]
+fn windows_shell_program() -> &'static str {
+    static PROGRAM: OnceLock<String> = OnceLock::new();
+    PROGRAM.get_or_init(|| {
+        let custom = std::env::var("QOMICEX_PWSH_PATH").ok();
+        let msi = std::env::var_os("ProgramFiles")
+            .map(|pf| Path::new(&pf).join("PowerShell").join("7").join("pwsh.exe"))
+            .filter(|p| p.is_file())
+            .map(|p| p.to_string_lossy().into_owned());
+        pick_shell_program(custom.as_deref(), pwsh_on_path(), msi.as_deref())
+    })
+}
+
+/// 解释器选择（纯函数，便于单测）。
+///
+/// 优先级：显式 `QOMICEX_PWSH_PATH` → `PATH` 里的 `pwsh` → MSI 安装位置 → 5.1。
+/// 返回 `pwsh`（走 PATH 查找）或绝对路径。
+///
+/// 5.1 的回退用**绝对路径**而不是裸命令名：`powershell` 依赖 `PATH` 含 System32，
+/// 而 PATH 被裁剪/损坏时裸名会直接 `program not found` —— 那样连最基本的命令执行
+/// 都不可用，比版本不理想严重得多。
+#[cfg(windows)]
+fn pick_shell_program(custom: Option<&str>, pwsh_on_path: bool, msi_path: Option<&str>) -> String {
+    if let Some(c) = custom {
+        if !c.is_empty() {
+            return c.to_string();
+        }
+    }
+    if pwsh_on_path {
+        return "pwsh".to_string();
+    }
+    if let Some(p) = msi_path {
+        return p.to_string();
+    }
+    windows_powershell_51().unwrap_or_else(|| "powershell".to_string())
+}
+
+/// 系统自带 Windows PowerShell 5.1 的绝对路径。
+///
+/// 位置随系统目录变化（`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`）。
+#[cfg(windows)]
+fn windows_powershell_51() -> Option<String> {
+    let root = std::env::var_os("SystemRoot")
+        .or_else(|| std::env::var_os("windir"))
+        .map(PathBuf::from)?;
+    let exe = root
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    exe.is_file().then(|| exe.to_string_lossy().into_owned())
+}
+
+/// `PATH` 里是否存在可直接执行的 `pwsh`（`.exe` / `.cmd` 都算）。
+///
+/// 不能只判断「文件存在」：Store 版在 `WindowsApps` 下放的是应用执行别名，
+/// 直接 `is_file` 在某些版本上不可靠，因此两种判定都用，任一成立即认为可用。
+#[cfg(windows)]
+fn pwsh_on_path() -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    let candidates = ["pwsh.exe", "pwsh.cmd", "pwsh.bat"];
+    std::env::split_paths(&path).any(|dir| {
+        candidates.iter().any(|name| {
+            let full = dir.join(name);
+            full.is_file() || std::fs::metadata(&full).is_ok()
+        })
+    })
+}
+
 async fn shell(
     AxumPath(_id): AxumPath<String>,
     Json(req): Json<PluginShellRequest>,
@@ -1591,11 +1669,12 @@ async fn shell(
     }
     let timeout_ms = req.timeout_ms.unwrap_or(15000).clamp(1000, 120000);
 
-    let mut cmd = tokio::process::Command::new(if cfg!(windows) {
-        "powershell"
-    } else {
-        "/bin/sh"
-    });
+    #[cfg(windows)]
+    let program = windows_shell_program();
+    #[cfg(not(windows))]
+    let program = "/bin/sh";
+
+    let mut cmd = tokio::process::Command::new(program);
     if cfg!(windows) {
         cmd.arg("-NoProfile").arg("-Command").arg(&req.command);
         #[cfg(windows)]
@@ -1767,5 +1846,80 @@ mod tests {
         assert!(!is_private("8.8.8.8"));
         assert!(!is_private("114.114.114.114"));
         assert!(!is_private("2606:4700:4700::1111"));
+    }
+
+    /// 回归（execCommand 解释器）：Windows 上必须优先用 PowerShell 7（`pwsh`），
+    /// 未安装时回退 5.1。
+    ///
+    /// 直接测 [`pick_shell_program`] 而不是探测结果：CI 与开发机上 pwsh 的有无不同，
+    /// 断言具体命中哪个会变成环境探测；这里锁的是**优先级语义**。
+    #[cfg(windows)]
+    #[test]
+    fn shell_program_prefers_pwsh_over_windows_powershell() {
+        // PATH 有 pwsh → 用它，而不是 5.1
+        assert_eq!(pick_shell_program(None, true, None), "pwsh");
+        // 没有 pwsh → 回退 5.1，且必须是可执行的绝对路径，不能是裸名
+        let fallback = pick_shell_program(None, false, None);
+        assert!(
+            fallback.to_lowercase().ends_with("powershell.exe"),
+            "回退应为 powershell.exe，实际 {fallback}"
+        );
+        assert!(
+            std::path::Path::new(&fallback).is_absolute(),
+            "回退必须是绝对路径（不依赖 PATH），实际 {fallback}"
+        );
+        // 只有 MSI 路径 → 用绝对路径（等价于 pwsh）
+        assert_eq!(
+            pick_shell_program(None, false, Some(r"C:\Program Files\PowerShell\7\pwsh.exe")),
+            r"C:\Program Files\PowerShell\7\pwsh.exe"
+        );
+        // PATH 与 MSI 都有时优先 PATH 的 pwsh（避免路径含空格/权限问题）
+        assert_eq!(
+            pick_shell_program(None, true, Some(r"C:\Program Files\PowerShell\7\pwsh.exe")),
+            "pwsh"
+        );
+    }
+
+    /// `QOMICEX_PWSH_PATH` 显式指定时压过一切自动探测（绿色版/自定义目录场景）。
+    #[cfg(windows)]
+    #[test]
+    fn explicit_pwsh_path_overrides_autodetect() {
+        assert_eq!(
+            pick_shell_program(
+                Some(r"D:\tools\pwsh\pwsh.exe"),
+                true,
+                Some(r"C:\msi\pwsh.exe")
+            ),
+            r"D:\tools\pwsh\pwsh.exe"
+        );
+        // 空值视为未设置，不能当成有效路径
+        assert_eq!(pick_shell_program(Some(""), true, None), "pwsh");
+        assert!(
+            pick_shell_program(Some(""), false, None)
+                .to_lowercase()
+                .ends_with("powershell.exe"),
+            "空值应回退到 powershell.exe"
+        );
+    }
+
+    /// 真实环境下选出来的程序名必须落在 PowerShell 家族内。
+    ///
+    /// 防的是回归成 `cmd`、`pwsh7` 这类拼写错误 —— 那种错误会让 `-NoProfile` 直接
+    /// 失败，插件调用 execCommand 时只看到 shell 启动失败。
+    #[cfg(windows)]
+    #[test]
+    fn detected_shell_program_is_powershell_family() {
+        let program = windows_shell_program();
+        let name = std::path::Path::new(program)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        assert!(
+            matches!(
+                name.as_str(),
+                "pwsh" | "pwsh.exe" | "powershell" | "powershell.exe"
+            ),
+            "unexpected shell program: {program}"
+        );
     }
 }
