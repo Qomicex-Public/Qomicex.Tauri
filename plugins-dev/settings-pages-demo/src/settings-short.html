@@ -24,8 +24,8 @@
   <script>
     (function () {
       var api = window.__PLUGIN_API__
-      if (!api || typeof api.getSettings !== 'function') return
-      api.getSettings().then(function (settings) {
+      if (!api || typeof api.call !== 'function') return
+      api.call('getSettings').then(function (settings) {
         if (!settings) return
         Object.keys(settings).forEach(function (key) {
           var input = document.querySelector('[data-key="' + key + '"]')

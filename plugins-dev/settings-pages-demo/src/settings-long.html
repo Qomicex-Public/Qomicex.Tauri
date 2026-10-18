@@ -40,30 +40,29 @@
         fields.appendChild(field)
       }
 
-      // 用真实桥读写设置，顺带验证设置页沙箱里 __PLUGIN_API__ 可用。
+      // 用真实桥读写设置：沙箱暴露的是 __PLUGIN_API__.call(method, ...args)，
+      // 没有具名的 getSettings/setSettings（见 src/plugins/sandbox.ts 的 apiBridgeScript）。
       var api = window.__PLUGIN_API__
-      if (!api) return
+      if (!api || typeof api.call !== 'function') return
 
-      if (typeof api.getSettings === 'function') {
-        api.getSettings().then(function (settings) {
-          if (!settings) return
-          Object.keys(settings).forEach(function (key) {
-            var input = document.querySelector('[data-key="' + key + '"]')
-            if (input) input.value = settings[key]
-          })
-        }).catch(function () {})
-      }
+      api.call('getSettings').then(function (settings) {
+        if (!settings) return
+        Object.keys(settings).forEach(function (key) {
+          var input = document.querySelector('[data-key="' + key + '"]')
+          if (input) input.value = settings[key]
+        })
+      }).catch(function () {})
 
       var save = document.createElement('button')
       save.className = 'p-btn p-btn--primary p-mt-2'
       save.textContent = '保存全部'
       save.addEventListener('click', function () {
-        var settings = {}
+        // setSettings 的签名是 (key, value)，一个 key 一次调用
+        var pending = []
         document.querySelectorAll('[data-key]').forEach(function (input) {
-          settings[input.getAttribute('data-key')] = input.value
+          pending.push(api.call('setSettings', input.getAttribute('data-key'), input.value))
         })
-        if (typeof api.setSettings !== 'function') return
-        api.setSettings(settings).then(function () {
+        Promise.all(pending).then(function () {
           document.getElementById('saved-at').textContent = new Date().toLocaleTimeString()
         }).catch(function () {})
       })

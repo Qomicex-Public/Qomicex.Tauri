@@ -18,7 +18,7 @@
  * 退出码：0 全部通过；1 有断言失败。
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -139,80 +139,94 @@ if (build.status !== 0) {
   process.exit(1)
 }
 
-// --- 1. stub + Vite dev（只暴露本 fixture，设置页 tab 唯一） ---
-const group = createProcessGroup()
-const mockPath = join(tmpdir(), 'qomicex-harness-settings-scroll-mock.json')
+// 每次运行用独立的私有临时目录放 stub mock（mkdtemp 是 0700，且不复用可预测路径）
+const mockDir = mkdtempSync(join(tmpdir(), 'qomicex-harness-settings-scroll-'))
+const mockPath = join(mockDir, 'mock.json')
 writeFileSync(mockPath, JSON.stringify({ pluginIds: [PLUGIN_ID] }, null, 2))
-await startServices({ group, mock: mockPath })
 
-// --- 2. 浏览器 + Tauri mock ---
-const { context, browser, executablePath } = await launchChromium({ headed })
-console.log(`[verify] 浏览器: ${executablePath}`)
-const page = await context.newPage()
-await routeApiToStub(page)
-await page.addInitScript({ content: TAURI_MOCK })
+let browser = null
+let group = null
+let error = null
+try {
+  // --- 1. stub + Vite dev（只暴露本 fixture，设置页 tab 唯一） ---
+  group = createProcessGroup()
+  await startServices({ group, mock: mockPath })
 
-await page.goto(`${VITE_URL}/`, { waitUntil: 'domcontentloaded', timeout: 90000 })
-for (let i = 0; i < 40; i += 1) {
-  if (await page.evaluate(() => !!document.querySelector('main'))) break
-  await page.waitForTimeout(500)
-}
+  // --- 2. 浏览器 + Tauri mock ---
+  const launched = await launchChromium({ headed })
+  browser = launched.browser
+  console.log(`[verify] 浏览器: ${launched.executablePath}`)
+  const page = await launched.context.newPage()
+  await routeApiToStub(page)
+  await page.addInitScript({ content: TAURI_MOCK })
 
-// --- 3. 设置 → 插件 → 插件设置 ---
-const long = await step('进入插件设置页', async () => {
-  await page.evaluate(() => document.querySelector('a[href="/settings"]')?.click())
-  if (!await clickText(page, '插件')) throw new Error('找不到「插件」设置 tab')
-  if (!await clickText(page, '插件设置')) throw new Error('找不到「插件设置」tab')
-  await dismissModals(page)
-  let slot = await waitForSlotFrame(page, LONG_FILE, 8000)
-  if (!slot) {
-    await clickText(page, `${PLUGIN_NAME} 1`, 5000)
-    slot = await waitForSlotFrame(page, LONG_FILE, 15000)
+  await page.goto(`${VITE_URL}/`, { waitUntil: 'domcontentloaded', timeout: 90000 })
+  for (let i = 0; i < 40; i += 1) {
+    if (await page.evaluate(() => !!document.querySelector('main'))) break
+    await page.waitForTimeout(500)
   }
-  if (!slot) throw new Error(`设置页 iframe 未渲染：${LONG_FILE}`)
-  return slot
-})
 
-if (long) {
-  check(`插件设置页列出本 fixture（${PLUGIN_ID}）`, true)
+  // --- 3. 设置 → 插件 → 插件设置 ---
+  const long = await step('进入插件设置页', async () => {
+    await page.evaluate(() => document.querySelector('a[href="/settings"]')?.click())
+    if (!await clickText(page, '插件')) throw new Error('找不到「插件」设置 tab')
+    if (!await clickText(page, '插件设置')) throw new Error('找不到「插件设置」tab')
+    await dismissModals(page)
+    let slot = await waitForSlotFrame(page, LONG_FILE, 8000)
+    if (!slot) {
+      await clickText(page, `${PLUGIN_NAME} 1`, 5000)
+      slot = await waitForSlotFrame(page, LONG_FILE, 15000)
+    }
+    if (!slot) throw new Error(`设置页 iframe 未渲染：${LONG_FILE}`)
+    return slot
+  })
 
-  const box = await long.el.boundingBox()
-  check('长设置页 iframe 高度确定且非零', !!box && box.height > 100, box ? `${Math.round(box.width)}x${Math.round(box.height)}` : '无 boundingBox')
+  if (long) {
+    check(`插件设置页列出本 fixture（${PLUGIN_ID}）`, true)
 
-  const before = await long.frame.evaluate(probeFrame, MARKER_ID)
-  check('长设置页内容确实溢出（需要滚动才看得到底部）', before.maxScroll > 200, `scrollHeight=${before.scrollHeight} clientHeight=${before.clientHeight} maxScroll=${before.maxScroll}`)
-  check('body 两轴 overflow 不是 hidden/clip（否则用户滚不动）', before.bodyOverflowY !== 'hidden' && before.bodyOverflowY !== 'clip', `body.overflowY=${before.bodyOverflowY} html.overflowY=${before.htmlOverflowY}`)
-  check('滚动前在顶部', before.scrollY === 0, `scrollY=${before.scrollY}`)
+    const box = await long.el.boundingBox()
+    check('长设置页 iframe 高度确定且非零', !!box && box.height > 100, box ? `${Math.round(box.width)}x${Math.round(box.height)}` : '无 boundingBox')
 
-  const outerBefore = await page.evaluate(() => Math.round(window.scrollY))
-  if (box) await wheelScroll(page, box)
-  const after = await long.frame.evaluate(probeFrame, MARKER_ID)
-  const outerAfter = await page.evaluate(() => Math.round(window.scrollY))
+    const before = await long.frame.evaluate(probeFrame, MARKER_ID)
+    check('长设置页内容确实溢出（需要滚动才看得到底部）', before.maxScroll > 200, `scrollHeight=${before.scrollHeight} clientHeight=${before.clientHeight} maxScroll=${before.maxScroll}`)
+    check('body 两轴 overflow 不是 hidden/clip（否则用户滚不动）', before.bodyOverflowY !== 'hidden' && before.bodyOverflowY !== 'clip', `body.overflowY=${before.bodyOverflowY} html.overflowY=${before.htmlOverflowY}`)
+    check('滚动前在顶部', before.scrollY === 0, `scrollY=${before.scrollY}`)
 
-  check('真实滚轮能滚动长设置页', after.scrollY > 0, `scrollY=${after.scrollY} / maxScroll=${after.maxScroll}`)
-  check('滚到底部（未被截断）', after.scrollY >= after.maxScroll - 2, `scrollY=${after.scrollY} maxScroll=${after.maxScroll}`)
-  check('底部标记滚入视口', after.markerInView, `markerInView=${after.markerInView}`)
-  check('滚动发生在 iframe 内（外层设置页不跟着滚）', outerAfter === outerBefore, `外层 scrollY ${outerBefore} → ${outerAfter}`)
+    const outerBefore = await page.evaluate(() => Math.round(window.scrollY))
+    if (box) await wheelScroll(page, box)
+    const after = await long.frame.evaluate(probeFrame, MARKER_ID)
+    const outerAfter = await page.evaluate(() => Math.round(window.scrollY))
+
+    check('真实滚轮能滚动长设置页', after.scrollY > 0, `scrollY=${after.scrollY} / maxScroll=${after.maxScroll}`)
+    check('滚到底部（未被截断）', after.scrollY >= after.maxScroll - 2, `scrollY=${after.scrollY} maxScroll=${after.maxScroll}`)
+    check('底部标记滚入视口', after.markerInView, `markerInView=${after.markerInView}`)
+    check('滚动发生在 iframe 内（外层设置页不跟着滚）', outerAfter === outerBefore, `外层 scrollY ${outerBefore} → ${outerAfter}`)
+  }
+
+  // --- 4. 短设置页：内容不溢出时不应有滚动条 ---
+  const short = await step('切到短设置页', async () => {
+    if (!await clickText(page, `${PLUGIN_NAME} 2`, 8000)) throw new Error('找不到短设置页 tab')
+    const slot = await waitForSlotFrame(page, SHORT_FILE, 20000)
+    if (!slot) throw new Error(`短设置页 iframe 未渲染：${SHORT_FILE}`)
+    return slot
+  })
+  if (short) {
+    const probe = await short.frame.evaluate(probeFrame)
+    check('短设置页内容不溢出（无多余滚动条/空白）', probe.maxScroll <= 1, `scrollHeight=${probe.scrollHeight} clientHeight=${probe.clientHeight}`)
+    check('短设置页 overflow 同样不是 hidden/clip', probe.bodyOverflowY !== 'hidden' && probe.bodyOverflowY !== 'clip', `body.overflowY=${probe.bodyOverflowY}`)
+  }
+} catch (e) {
+  error = e
+} finally {
+  // 失败路径也必须回收：浏览器与 harness 子进程都不留在后台
+  if (browser) await browser.close().catch(() => {})
+  group?.killAll()
+  rmSync(mockDir, { recursive: true, force: true })
 }
 
-// --- 4. 短设置页：内容不溢出时不应有滚动条 ---
-const short = await step('切到短设置页', async () => {
-  if (!await clickText(page, `${PLUGIN_NAME} 2`, 8000)) throw new Error('找不到短设置页 tab')
-  const slot = await waitForSlotFrame(page, SHORT_FILE, 20000)
-  if (!slot) throw new Error(`短设置页 iframe 未渲染：${SHORT_FILE}`)
-  return slot
-})
-if (short) {
-  const probe = await short.frame.evaluate(probeFrame)
-  check('短设置页内容不溢出（无多余滚动条/空白）', probe.maxScroll <= 1, `scrollHeight=${probe.scrollHeight} clientHeight=${probe.clientHeight}`)
-  check('短设置页 overflow 同样不是 hidden/clip', probe.bodyOverflowY !== 'hidden' && probe.bodyOverflowY !== 'clip', `body.overflowY=${probe.bodyOverflowY}`)
-}
-
-// --- 汇总 ---
 const failed = results.filter((r) => !r.ok)
+if (error) console.error(`[verify] 运行失败：${error.message}`)
 console.log(`\n[verify] ${results.length - failed.length}/${results.length} 通过`)
 for (const f of failed) console.error(`[verify] FAIL ${f.name}${f.detail ? ` — ${f.detail}` : ''}`)
 
-await browser.close()
-group.killAll()
-process.exit(failed.length ? 1 : 0)
+process.exit(error || failed.length ? 1 : 0)
