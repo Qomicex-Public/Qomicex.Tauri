@@ -16,6 +16,7 @@
     "bump-version": "node scripts/bump-version.mjs",
     "dev:backend": "cargo run --manifest-path src-backend/qomicex-backend/Cargo.toml",
     "harness": "node scripts/harness/run.mjs",
+    "harness:verify-settings-scroll": "node scripts/harness/verify-settings-scroll.mjs",
     "test:update-channel": "node scripts/test-update-channel.mjs",
     "test:deep-link": "node scripts/test-deep-link-parse.mjs",
     "test:i18n-steps": "node scripts/test-i18n-step-keys.mjs",

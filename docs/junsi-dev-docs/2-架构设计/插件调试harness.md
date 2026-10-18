@@ -50,12 +50,16 @@ pnpm exec playwright install chromium
 
 前端 `src/api/client.ts` 的 `API_BASE` 硬编码为 `http://127.0.0.1:5000/api`，所以浏览器请求直连 :5000。run.mjs 用 `page.route` 把这些请求转发到 stub :5100，避免与真实 Rust 后端抢端口——**stub 不监听 5000**，你本机跑着后端也不冲突。
 
+`run.mjs` 与 `verify-settings-scroll.mjs` 共用 `lib.mjs` 的 stub/Vite 生命周期、Tauri mock、路由转发与 Chromium 启动，避免同一份 mock 在多处各写一遍而漂移。
+
 ## 组件
 
 | 文件 | 职责 |
 |---|---|
 | `scripts/harness/run.mjs` | 主控：起服务、注入 mock、路由转发、热重载 |
+| `scripts/harness/lib.mjs` | 公共设施：服务生命周期、Tauri mock、API 转发、Chromium 启动 |
 | `scripts/harness/stub.mjs` | 纯 node:http mock server（:5100），模拟后端接口 + 服务插件静态文件 |
+| `scripts/harness/verify-settings-scroll.mjs` | 设置页滚动端到端校验（真实滚轮，退出码即结果） |
 
 ## Stub 接口一览（可配置假数据）
 
@@ -115,9 +119,30 @@ pnpm exec playwright codegen http://127.0.0.1:1420/plugins/p/hello-plugin
 pnpm run harness -- hello-plugin --build-cmd "pnpm run build"
 ```
 
+## 端到端校验：设置页滚动
+
+插件设置页是 `srcdoc` iframe，能否滚动只由注入的 CSS（`src/plugins/plugin-css.ts`）决定。
+`scripts/harness/verify-settings-scroll.mjs` 在真实浏览器里校验它：起 stub + Vite dev、注入
+Tauri mock，进「设置 → 插件 → 插件设置」，用**真实 `mouse.wheel`** 滚长设置页 iframe，
+断言滚到底、底部标记进入视口、外层设置页不跟着滚。
+
+```bash
+pnpm run harness:verify-settings-scroll            # 退出码 0/1
+pnpm run harness:verify-settings-scroll --headed   # 看滚动过程
+```
+
+配套 fixture `plugins-dev/settings-pages-demo` 提供长 / 短两个 `contributes.settingsPages`，
+脚本会先构建它的 `dist/`（`node build.mjs`）。为什么必须用真实滚轮：`body{overflow:hidden}` 时
+`window.scrollTo` 依然有效、`scrollHeight > clientHeight` 也照旧成立，只有真实滚轮能复现
+「用户滚不动、内容被裁掉」（issue #269）。注入 CSS 的静态断言另见
+`scripts/test-plugin-settings-scroll.mjs`，两者互补。
+
+> 注意：frame URL 恒为 `about:srcdoc`，脚本按槽位 `data-slot-id` 定位 iframe，不能用 URL 匹配。
+
 ## 限制与注意事项
 
 - **Chromium ≠ WebView2**：渲染/复合行为可能有差异（如 backdrop-filter），Web 调试结论需在真实 Tauri/WebView2 复核。
+- **浏览器回退**：Playwright 自带 Chromium 未 `playwright install` 时，依次回退到系统 Chrome / Edge / Chromium，也可用 `QOMICEX_CHROMIUM=<可执行文件>` 指定；三者同为 Chromium 内核，与 WebView2 的差异仍以上一条为准。
 - **harness 是只读沙箱**：stub 对真实写数据 / 启动实例 / 真实下载全部返回假数据或 400；不要在插件里触发真实业务动作。
 - **退出清理**：Ctrl+C 后 run.mjs 会 kill 自己 spawn 的 stub 和 Vite；如果你自己先起了 Vite(:1420)（`pnpm run dev`），harness 直接复用、退出时**不会**杀掉你那个进程。
 - **iframe 沙箱**：`sandbox="allow-scripts"` 无 `allow-same-origin`，iframe 内同步 `while(true)` 仍可能阻塞共享渲染进程（与真实 WebView2 一致）。
@@ -135,3 +160,4 @@ pnpm run harness -- hello-plugin --build-cmd "pnpm run build"
 | 日期 | 版本 | 修改内容 | 修改人 |
 |---|---|---|---|
 | 2026-08-25 | v1.0 | 初版创建（PHASE1 任务⑥） | AI Agent |
+| 2026-10-18 | v1.1 | 抽出 `lib.mjs` 公共设施；新增 `verify-settings-scroll.mjs` 与 `settings-pages-demo` fixture（设置页滚动端到端校验） | AI Agent |

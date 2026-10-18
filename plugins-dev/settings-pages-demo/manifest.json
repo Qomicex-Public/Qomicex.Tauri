@@ -1,0 +1,12 @@
+{
+  "id": "settings-pages-demo",
+  "name": "设置页演示",
+  "version": "0.1.0",
+  "minLauncherVersion": "0.1.0",
+  "layers": ["l2"],
+  "permissions": ["config:read", "config:write"],
+  "entry": { "frontend": "dist/index.html" },
+  "contributes": {
+    "settingsPages": ["dist/settings-long.html", "dist/settings-short.html"]
+  }
+}

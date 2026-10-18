@@ -17,16 +17,18 @@
  *   node scripts/harness/run.mjs <pluginId> [--headed] [--mock file.json] [--build-cmd "pnpm run build"]
  *   或仓库根：pnpm run harness -- hello-plugin
  */
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { watch, existsSync, copyFileSync } from 'node:fs'
-import { resolve, join } from 'node:path'
-import { createServer } from 'node:net'
-
-const ROOT = resolve(import.meta.dirname, '../..')
-const VITE_URL = 'http://127.0.0.1:1420'
-const STUB_PORT = 5100
-const STUB_URL = `http://127.0.0.1:${STUB_PORT}`
-const PLUGINS_DIR = join(ROOT, 'plugins-dev')
+import { join } from 'node:path'
+import {
+  PLUGINS_DIR,
+  TAURI_MOCK,
+  VITE_URL,
+  createProcessGroup,
+  launchChromium,
+  routeApiToStub,
+  startServices,
+} from './lib.mjs'
 
 // --- CLI 解析 ---
 const args = process.argv.slice(2)
@@ -49,146 +51,17 @@ if (!existsSync(join(pluginDir, 'manifest.json'))) {
   process.exit(1)
 }
 
-// --- Playwright 可用性 ---
-let chromium
-try {
-  ({ chromium } = await import('playwright'))
-} catch {
-  console.error('未检测到 playwright。请先安装：')
-  console.error('  pnpm add -D playwright')
-  console.error('  pnpm exec playwright install chromium')
-  process.exit(1)
-}
-
-// --- 端口占用检测 ---
-function isPortOpen(port) {
-  return new Promise((resolveFn) => {
-    const s = createServer()
-    s.once('error', () => resolveFn(true))
-    s.once('listening', () => { s.close(); resolveFn(false) })
-    s.listen(port, '127.0.0.1')
-  })
-}
-
 // --- 进程生命周期管理 ---
-const spawned = []
-function spawnProc(name, cmd, args, opts = {}) {
-  const child = spawn(cmd, args, { cwd: opts.cwd ?? ROOT, shell: opts.shell ?? false, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] })
-  child.stdout?.on('data', d => process.stdout.write(`[${name}] ${d}`))
-  child.stderr?.on('data', d => process.stdout.write(`[${name}] ${d}`))
-  spawned.push(child)
-  return child
-}
-async function killAll() {
-  for (const child of spawned) {
-    try { child.kill() } catch {}
-  }
-  // Windows 下杀进程树（pnpm 会再派生 node）
-  for (const child of spawned) {
-    if (process.platform === 'win32' && child.pid) {
-      spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
-    }
-  }
-  spawned.length = 0
-}
-process.on('exit', () => { killAll() })
-process.on('SIGINT', () => { killAll(); process.exit(0) })
-process.on('SIGTERM', () => { killAll(); process.exit(0) })
+const group = createProcessGroup()
 
-// --- 1. 起 stub ---
-const mockArgs = flag('--mock')
-const stubArgs = [join(ROOT, 'scripts/harness/stub.mjs'), '--port', String(STUB_PORT), '--plugin-dir', PLUGINS_DIR]
-if (mockArgs) stubArgs.push('--mock', mockArgs)
-spawnProc('stub', process.execPath, stubArgs)
+// --- 1-2. 起 stub、确保 Vite dev 在跑，并等待两者就绪 ---
+await startServices({ group, mock: flag('--mock') })
 
-// --- 2. 确保 Vite dev 在跑 ---
-const viteAlreadyRunning = await isPortOpen(1420)
-if (!viteAlreadyRunning) {
-  console.log('[harness] Vite dev 未运行，自动启动 (pnpm run dev)…')
-  spawnProc('vite', 'pnpm', ['run', 'dev'], { shell: true })
-}
-
-// --- 等待服务就绪 ---
-async function waitFor(url, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url)
-      if (res.ok) return
-    } catch {}
-    await new Promise(r => setTimeout(r, 500))
-  }
-  throw new Error(`等待服务超时: ${url}`)
-}
-await waitFor(`${STUB_URL}/api/health`)
-await waitFor(`${VITE_URL}`)
-
-// --- 3. Tauri mock（复自 docs 文档，跨导航保留） ---
-const TAURI_MOCK = `
-(() => {
-  let cid = 0; const cbs = new Map();
-  const internals = {
-    metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } },
-    transformCallback: (cb) => { const id = ++cid; cbs.set(id, cb); return id; },
-    unregisterCallback: (id) => { cbs.delete(id); },
-    invoke: (cmd) => new Promise((res) => {
-      const bools = ['is_maximized','is_minimized','is_focused','is_decorated',
-                     'is_resizable','is_maximizable','is_minimizable','is_closable',
-                     'is_fullscreen','is_visible','is_always_on_top'];
-      if (bools.some(b => cmd && cmd.indexOf(b) >= 0)) return res(false);
-      if (cmd && cmd.indexOf('plugin:event|listen') >= 0) return res(1);
-      return res(undefined);
-    }),
-    event: { listen: async () => () => {}, once: async () => () => {},
-             emit: async () => {}, emitTo: async () => {} },
-    convertFileSrc: (p) => p,
-  };
-  Object.defineProperty(window, '__TAURI_INTERNALS__',
-    { value: internals, configurable: true });
-  window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { registerListener: () => {}, unregisterListener: () => {} };
-  window.__TAURI_APP_PLUGIN_INTERNALS__ = { transformCallback: internals.transformCallback };
-  window.__TAURI_OS_PLUGIN_INTERNALS__ = {};
-  window.__TAURI_WINDOW_PLUGIN_INTERNALS__ = {};
-  if (!window.__DEBUG__) window.__DEBUG__ = { unlocked: true, disableAnimations: false, showComponentBoundaries: false };
-})();
-`
-
-// --- 4. 启动浏览器并打开插件页 ---
-const browser = await chromium.launch({ headless: !headed })
-const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+// --- 3-4. 启动浏览器，注入 Tauri mock，打开插件页 ---
+const { context, executablePath } = await launchChromium({ headed })
 const page = await context.newPage()
 
-// 把前端直连 :5000 的请求转发到 stub :5100（API_BASE 硬编码为 5000，不依赖 Vite proxy）
-await page.route('http://127.0.0.1:5000/api/**', async (route) => {
-  const req = route.request()
-  const url = req.url().replace('http://127.0.0.1:5000', STUB_URL)
-  const headers = { ...req.headers(), host: `127.0.0.1:${STUB_PORT}` }
-  let body
-  try { body = req.postDataBuffer() } catch {}
-  try {
-    const res = await fetch(url, { method: req.method(), headers, body, redirect: 'manual' })
-    const data = await res.arrayBuffer()
-    await route.fulfill({
-      status: res.status,
-      headers: Object.fromEntries(res.headers.entries()),
-      body: Buffer.from(data),
-    })
-  } catch {
-    await route.abort('failed')
-  }
-})
-// localhost 变体兜底（前端 /api 走代理时）
-await page.route('http://localhost:5000/api/**', async (route) => {
-  const req = route.request()
-  const url = req.url().replace('http://localhost:5000', STUB_URL)
-  try {
-    const res = await fetch(url, { method: req.method(), headers: req.headers(), body: req.postDataBuffer?.() })
-    await route.fulfill({ status: res.status, headers: Object.fromEntries(res.headers.entries()), body: Buffer.from(await res.arrayBuffer()) })
-  } catch {
-    await route.abort('failed')
-  }
-})
-
+await routeApiToStub(page)
 await page.addInitScript({ content: TAURI_MOCK })
 page.on('console', (msg) => {
   if (msg.type() === 'log' || msg.type() === 'warning' || msg.type() === 'error') {
@@ -197,6 +70,7 @@ page.on('console', (msg) => {
 })
 page.on('pageerror', (err) => { process.stdout.write(`[页面] uncaught: ${err.message}\n`) })
 
+console.log(`[harness] 浏览器: ${executablePath}`)
 console.log(`[harness] 打开插件页 ${VITE_URL}/plugins/p/${pluginId} …`)
 await page.goto(`${VITE_URL}/plugins/p/${pluginId}`, { waitUntil: 'domcontentloaded' })
 
