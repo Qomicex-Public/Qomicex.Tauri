@@ -161,6 +161,14 @@ impl AppState {
         let http_client =
             build_http_client(&user_agent, proxy_url.as_deref(), no_proxy, ignore_ssl);
 
+        // 文件镜像健康探针：UTC+8 默认把 mod 文件重写到镜像节点，而镜像节点会
+        // 整体挂起（回 200 头后 body 不到达）。进程级探针失败时自动降级为官方源，
+        // 避免每个文件都先去撞死节点。
+        crate::services::file_mirror::start_health_probe(
+            http_client.clone(),
+            Duration::from_secs(300),
+        );
+
         let mods_icon_dir = settings::resolve_base_dir().join("QML").join("mod-icons");
         let _ = std::fs::create_dir_all(&mods_icon_dir);
 

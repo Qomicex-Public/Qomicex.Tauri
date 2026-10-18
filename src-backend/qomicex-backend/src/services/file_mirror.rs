@@ -42,6 +42,40 @@ const GENERIC_MIRROR_HOSTS: &[&str] = &[
     "mirror1.qomicex.dpdns.org",
 ];
 
+/// 镜像健康探针的 canary 文件（公开、稳定、几十 KB 的 CF 文件）。
+///
+/// 用真实文件而不是站点根路径：故障形态是「回 200 + Content-Length，body 永不到达」
+/// （实测 `mirror.lenmei233.dpdns.org` 64 个文件仅 2 个成功），只探根路径会误判为健康。
+const MIRROR_CANARY_PATH: &str = "files/2503/41/MmmMmmMmmMmm-1.12-1.14.jar";
+const MIRROR_CANARY_ORIGIN: &str = "mediafilez.forgecdn.net";
+
+/// 镜像当前是否可用。`true` 是默认值（保持既有行为：镜像优先）。
+///
+/// 由后台探针维护：探针失败 → 立即降级为官方源，避免把每个文件都送去一个挂掉的
+/// 节点；探针恢复 → 重新启用镜像。这里只影响「重写成哪个源」，
+/// `mirror_fallback_urls` 的故障转移链不受影响。
+static MIRROR_AVAILABLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// 更新镜像可用性（后台探针调用）。
+pub fn set_mirror_available(available: bool) {
+    MIRROR_AVAILABLE.store(available, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// 镜像当前是否可用。
+pub fn mirror_available() -> bool {
+    MIRROR_AVAILABLE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// 探针目标：把 canary 重写到通用镜像节点的 URL。
+pub fn mirror_canary_url() -> String {
+    format!("https://{MIRROR_CURSEFORGE}/{MIRROR_CANARY_PATH}")
+}
+
+/// 官方对照 URL（探针失败时用于日志与人工核对）。
+pub fn mirror_canary_origin_url() -> String {
+    format!("https://{MIRROR_CANARY_ORIGIN}/{MIRROR_CANARY_PATH}")
+}
+
 /// 已知镜像 URL → 同组其余节点重写后的 URL（故障转移备选）。
 ///
 /// 官方文档明确「多个节点自动故障转移，某个不可用时换另一个」；实测
@@ -123,7 +157,15 @@ fn url_host(url: &str) -> Option<&str> {
 /// - 其他值（0 = 官方源）：原样返回。旧值 2（QML Mirror HK）已并入镜像源，
 ///   settings 加载时迁移为 1。
 pub fn rewrite_file_cdn(url: &str, file_download_source: i32) -> String {
-    if file_download_source != 1 {
+    rewrite_file_cdn_with(url, file_download_source, mirror_available())
+}
+
+/// 与 [`rewrite_file_cdn`] 相同，但显式传入镜像可用性。
+///
+/// 拆成纯函数是为了可测：镜像可用性是进程级全局状态，测试若直接改全局会与其
+/// 他并发用例互相干扰（那个窗口里别的用例会看到「已降级」）。
+fn rewrite_file_cdn_with(url: &str, file_download_source: i32, mirror_ok: bool) -> String {
+    if file_download_source != 1 || !mirror_ok {
         return url.to_string();
     }
     rewrite_host(url, &["cdn.modrinth.com", "edge.forgecdn.net"], MCIM_HOST)
@@ -144,6 +186,64 @@ fn rewrite_host(url: &str, old_hosts: &[&str], new_host: &str) -> Option<String>
     } else {
         None
     }
+}
+
+/// 探测一次镜像可用性。
+///
+/// 判定标准比「能连上」严格：要求 2xx，且**实际收到的字节数与 Content-Length 一致**。
+/// 故障节点会先回 200 头再让 body 挂住，只看到达状态码会误判为健康。
+pub async fn probe_mirror(client: &reqwest::Client) -> bool {
+    let url = mirror_canary_url();
+    let Ok(resp) = client
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(12))
+        .send()
+        .await
+    else {
+        return false;
+    };
+    if !resp.status().is_success() {
+        return false;
+    }
+    let declared = resp.content_length();
+    match resp.bytes().await {
+        Ok(body) => {
+            if body.is_empty() {
+                return false;
+            }
+            declared.is_none_or(|d| d == body.len() as u64)
+        }
+        Err(_) => false,
+    }
+}
+
+/// 启动后台健康探针（进程内只启动一次）。每 `interval` 复查一次，
+/// 结果写入 [`MIRROR_AVAILABLE`]，`rewrite_file_cdn` 据此决定是否重写。
+pub fn start_health_probe(client: reqwest::Client, interval: std::time::Duration) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    tokio::spawn(async move {
+        loop {
+            let ok = probe_mirror(&client).await;
+            let was = mirror_available();
+            set_mirror_available(ok);
+            if was != ok {
+                if ok {
+                    tracing::info!(url = %mirror_canary_url(), "文件镜像恢复可用，重新启用镜像源");
+                } else {
+                    tracing::warn!(
+                        url = %mirror_canary_url(),
+                        origin = %mirror_canary_origin_url(),
+                        "文件镜像探针失败（挂起/截断），临时降级为官方源"
+                    );
+                }
+            }
+            tokio::time::sleep(interval).await;
+        }
+    });
 }
 
 #[cfg(test)]
@@ -167,6 +267,23 @@ mod tests {
         assert_eq!(
             rewrite_file_cdn("https://cdn-alt.modrinth.com/data/xyz/file.jar?x=1", 1),
             "https://modrinth.lenmei233.dpdns.org/data/xyz/file.jar?x=1"
+        );
+    }
+
+    #[test]
+    fn mirror_unavailable_degrades_to_official() {
+        // 镜像探针判定不可用（挂起/截断）时必须回落到官方 CDN，
+        // 否则 UTC+8 的默认配置会把每个 CF 文件先送进一个死节点。
+        let u = "https://mediafilez.forgecdn.net/files/1234/5678/a.jar";
+        assert_eq!(
+            rewrite_file_cdn_with(u, 1, false),
+            u,
+            "镜像不可用时不得重写"
+        );
+        assert_eq!(
+            rewrite_file_cdn_with(u, 1, true),
+            "https://mirror.lenmei233.dpdns.org/files/1234/5678/a.jar",
+            "镜像可用时应照常重写"
         );
     }
 
