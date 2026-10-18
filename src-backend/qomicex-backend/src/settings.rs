@@ -383,6 +383,16 @@ impl SettingsResponse {
     }
 }
 
+/// 读盘后的语义归一（与迁移分开：迁移处理磁盘上的旧键，这里处理已解析的值）。
+///
+/// 上一版 `autoSelectSource` 是 Option，可能把 null 写进磁盘；语义上「未设置」
+/// 等于默认开启，统一归一后前端才不会拿到 null 并显示成关闭。
+fn normalize_loaded_settings(s: &mut SettingsResponse) {
+    if s.auto_select_source.is_none() {
+        s.auto_select_source = Some(true);
+    }
+}
+
 /// 旧版「分别选择具体源」→ 新版「一个偏好 + 一个自动开关」的迁移。
 ///
 /// 在反序列化**之前**对原始 JSON 做，迁移完把旧键删掉（下次保存即清理磁盘）。
@@ -474,11 +484,7 @@ pub fn load_settings() -> SettingsResponse {
                 if parsed.initialized.is_none() {
                     parsed.initialized = Some(true);
                 }
-                // 上一版 autoSelectSource 是 Option，可能把 null 写进磁盘；
-                // 语义上「未设置」= 默认开启，这里统一归一，避免前端拿到 null 显示成关闭。
-                if parsed.auto_select_source.is_none() {
-                    parsed.auto_select_source = Some(true);
-                }
+                normalize_loaded_settings(&mut parsed);
                 // issue #133 一次性迁移：download_timeout 在旧版本里**从未被任何代码消费**
                 // （既没驱动前端请求超时，也没传给下载器），磁盘上的 15 只是当年那个同样
                 // 没生效的默认值，不是用户的有效选择。提升为新默认值，否则老用户升级后
@@ -991,11 +997,17 @@ mod relay_node_tests {
             assert_eq!(s.auto_select_source, Some(false));
         }
 
-        /// 上一版可能把 autoSelectSource 写成 null：语义上等于默认开。
+        /// 上一版可能把 autoSelectSource 写成 null：读盘归一后必须是 Some(true)，
+        /// 而不是留一个「靠下游 unwrap_or 兜着」的 None。
         #[test]
         fn null_auto_select_source_is_normalized_to_true() {
-            let s = parse(r#""autoSelectSource":null"#);
-            assert_eq!(s.auto_select_source.unwrap_or(true), true);
+            let mut s = parse(r#""autoSelectSource":null"#);
+            assert_eq!(
+                s.auto_select_source, None,
+                "先确认 serde 把 null 解析成 None"
+            );
+            normalize_loaded_settings(&mut s);
+            assert_eq!(s.auto_select_source, Some(true));
         }
     }
 }
