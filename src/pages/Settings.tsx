@@ -1435,25 +1435,32 @@ export default function Settings() {
 
             <SettingSection title={t('settings.launcher.downloadSource')} icon={<Globe className="h-4 w-4" />}>
               <div className="space-y-3 px-4 py-3">
-                <Label>{t('settings.launcher.sourcePreference')}</Label>
-                <div className="flex flex-wrap items-center gap-2">
-                  {(['official', 'mirror'] as const).map((pref) => (
-                    <button
-                      key={pref}
-                      disabled={settings.autoSelectSource}
-                      onClick={() => update('sourcePreference', pref)}
-                      className={cn(
-                        'rounded-lg border px-4 py-2 text-sm transition-colors',
-                        settings.autoSelectSource && 'pointer-events-none opacity-60',
-                        settings.sourcePreference === pref
-                          ? 'border-primary bg-primary/10 font-medium text-primary'
-                          : 'border-border hover:border-muted-foreground/30',
-                      )}
-                    >
-                      {t(`settings.launcher.sourcePreferenceName.${pref}`)}
-                    </button>
-                  ))}
-                </div>
+                {([
+                  { key: 'vanillaSourcePreference', value: settings.vanillaSourcePreference },
+                  { key: 'modSourcePreference', value: settings.modSourcePreference },
+                ] as const).map((row) => (
+                  <div key={row.key} className="space-y-2">
+                    <Label>{t(`settings.launcher.${row.key}`)}</Label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {(['official', 'mirror'] as const).map((pref) => (
+                        <button
+                          key={pref}
+                          disabled={settings.autoSelectSource}
+                          onClick={() => update(row.key, pref)}
+                          className={cn(
+                            'rounded-lg border px-4 py-2 text-sm transition-colors',
+                            settings.autoSelectSource && 'pointer-events-none opacity-60',
+                            row.value === pref
+                              ? 'border-primary bg-primary/10 font-medium text-primary'
+                              : 'border-border hover:border-muted-foreground/30',
+                          )}
+                        >
+                          {t(`settings.launcher.sourcePreferenceName.${pref}`)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
                 <p className="text-xs text-muted-foreground">{t('settings.launcher.sourcePreferenceDesc')}</p>
 
                 <label className="flex cursor-pointer items-center gap-3 pt-1">
@@ -1471,8 +1478,8 @@ export default function Settings() {
                 {!settings.autoSelectSource && (
                   <p className="text-xs text-muted-foreground">
                     {t('settings.launcher.effectiveSources', {
-                      vanilla: t(`settings.launcher.sourceName.${settings.sourcePreference === 'mirror' ? 'bmclapi' : 'official'}`),
-                      mods: t(`settings.launcher.sourceName.${settings.sourcePreference === 'mirror' ? 'mirror' : 'official'}`),
+                      vanilla: t(`settings.launcher.sourceName.${settings.vanillaSourcePreference === 'mirror' ? 'bmclapi' : 'official'}`),
+                      mods: t(`settings.launcher.sourceName.${settings.modSourcePreference === 'mirror' ? 'mirror' : 'official'}`),
                     })}
                   </p>
                 )}

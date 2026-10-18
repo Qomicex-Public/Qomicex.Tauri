@@ -35,26 +35,37 @@ pub struct SourcePlan {
 }
 
 impl SourcePlan {
-    pub fn load() -> Self {
-        let s = load_settings();
-        let auto = s.auto_select_source.unwrap_or(true);
-        let mirror_pref = s.source_preference.eq_ignore_ascii_case("mirror");
-        let china = is_china_timezone();
-
+    /// 由原始输入解析计划（纯函数，便于测试）。
+    ///
+    /// - 自动：模组按地域（国内镜像优先、境外官方优先），原版恒官方优先；
+    /// - 手动：两类资源各按自己的偏好，偏好只决定顺序，另一侧仍兜底。
+    pub fn resolve(auto: bool, vanilla_mirror: bool, mod_mirror: bool, china: bool) -> Self {
         let (mirror_first_for_mods, vanilla) = if auto {
-            // 自动：模组按地域，原版恒官方优先。
             (china, VanillaSource::Official)
-        } else if mirror_pref {
-            // 手动「镜像源优先」：模组与原版都先走镜像（BMCLAPI 对原版而言就是镜像）。
-            (true, VanillaSource::Bmclapi)
         } else {
-            (false, VanillaSource::Official)
+            (
+                mod_mirror,
+                if vanilla_mirror {
+                    VanillaSource::Bmclapi
+                } else {
+                    VanillaSource::Official
+                },
+            )
         };
-
         Self {
             mirror_first_for_mods,
             vanilla,
         }
+    }
+
+    pub fn load() -> Self {
+        let s = load_settings();
+        Self::resolve(
+            s.auto_select_source.unwrap_or(true),
+            s.vanilla_source_preference.eq_ignore_ascii_case("mirror"),
+            s.mod_source_preference.eq_ignore_ascii_case("mirror"),
+            is_china_timezone(),
+        )
     }
 
     /// 供核心库（`GameCoreBuilder::use_download_mirror`）使用的原版源编号：
@@ -109,6 +120,29 @@ pub fn vanilla_fallback_urls(url: &str, plan: &SourcePlan) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auto_prefers_official_vanilla_and_mirror_mods_in_china() {
+        let p = SourcePlan::resolve(true, false, false, true);
+        assert_eq!(p.vanilla, VanillaSource::Official, "自动模式原版恒官方优先");
+        assert!(p.mirror_first_for_mods, "国内自动模式模组镜像优先");
+        let p = SourcePlan::resolve(true, true, true, false);
+        assert_eq!(p.vanilla, VanillaSource::Official);
+        assert!(!p.mirror_first_for_mods, "境外自动模式模组官方优先");
+    }
+
+    #[test]
+    fn manual_preferences_are_independent_per_resource_type() {
+        // 原版镜像优先、模组官方优先
+        let p = SourcePlan::resolve(false, true, false, true);
+        assert_eq!(p.vanilla, VanillaSource::Bmclapi);
+        assert!(!p.mirror_first_for_mods);
+
+        // 原版官方优先、模组镜像优先
+        let p = SourcePlan::resolve(false, false, true, false);
+        assert_eq!(p.vanilla, VanillaSource::Official);
+        assert!(p.mirror_first_for_mods);
+    }
 
     #[test]
     fn vanilla_mirror_id_maps_official_to_zero() {
