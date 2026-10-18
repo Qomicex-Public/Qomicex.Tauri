@@ -8,10 +8,12 @@ import type { SandboxInstance } from './sandbox.ts'
 interface PluginSlotProps {
   slotId: string
   sandbox: SandboxInstance
-  /** 可选固定尺寸（px）：用于标题栏等高/宽受控槽位；缺省铺满容器 */
-  width?: number
-  height?: number
+  /** 可选固定尺寸：number 视作 px，也可传 CSS 长度（如 `clamp(420px,70vh,720px)`）；缺省铺满容器 */
+  width?: number | string
+  height?: number | string
 }
+
+const toLength = (value: number | string) => (typeof value === 'number' ? `${value}px` : value)
 
 export function PluginSlot({ slotId, sandbox, width, height }: PluginSlotProps) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -31,7 +33,7 @@ export function PluginSlot({ slotId, sandbox, width, height }: PluginSlotProps) 
   }, [sandbox])
 
   const style = width != null || height != null
-    ? { width: width != null ? `${width}px` : undefined, height: height != null ? `${height}px` : undefined }
+    ? { width: width != null ? toLength(width) : undefined, height: height != null ? toLength(height) : undefined }
     : undefined
 
   return <div ref={containerRef} data-slot-id={slotId} className="plugin-slot" style={style} />
