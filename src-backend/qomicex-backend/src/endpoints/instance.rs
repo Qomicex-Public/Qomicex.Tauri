@@ -651,7 +651,8 @@ async fn launch_instance(
     // the global settings root), mirroring the C# repair stage. This fixes the
     // integrity-check path mismatch that made downloads land in the global dir.
     let repair_core = {
-        let download_source = state.settings.read().await.download_source;
+        let download_source =
+            crate::services::source_policy::SourcePlan::load().vanilla_mirror_id();
         crate::services::install_service::build_repair_core(
             &game_dir,
             download_source,
@@ -750,10 +751,11 @@ async fn launch_instance(
                             if let Some(parent) = dest.parent() {
                                 let _ = std::fs::create_dir_all(parent);
                             }
-                            // 与 download_batch 对齐：镜像表含下载源自带备选 + 抢救 URL，
-                            // 由 attach_mirrors 统一去重、跳过与主 URL 相同的冗余项。
-                            let mut mirrors = crate::services::file_mirror::mirror_fallback_urls(
+                            // 与 download_batch 对齐：镜像表含下载源策略给出的兜底 +
+                            // 抢救 URL，由 attach_mirrors 统一去重、跳过与主 URL 相同的冗余项。
+                            let mut mirrors = crate::services::source_policy::mod_fallbacks(
                                 &f.url,
+                                &crate::services::source_policy::SourcePlan::load(),
                             );
                             let before = mirrors.len();
                             crate::services::install_service::attach_mirrors(
@@ -1301,7 +1303,7 @@ async fn scan_missing_files(
                 format!("版本 JSON 不存在: {}", version_json.display()),
             )
         })?;
-    let download_source = state.settings.read().await.download_source;
+    let download_source = crate::services::source_policy::SourcePlan::load().vanilla_mirror_id();
     let repair_core = crate::services::install_service::build_repair_core(
         &game_dir,
         download_source,

@@ -88,7 +88,6 @@ const FILE_DOWNLOAD_SOURCES: &[(i32, &str, &str)] = &[
 /// 后先撞一遍死节点。
 const FILE_MIRROR_PING_URLS: &[&str] = &[
     "https://mod.mcimirror.top/data/AANobbMI/versions/OihdIimA/sodium-fabric-0.5.13%2Bmc1.20.1.jar",
-    "https://modrinth.lenmei233.dpdns.org/data/AANobbMI/versions/OihdIimA/sodium-fabric-0.5.13%2Bmc1.20.1.jar",
     "https://modrinth1.qomicex.dpdns.org/data/AANobbMI/versions/OihdIimA/sodium-fabric-0.5.13%2Bmc1.20.1.jar",
     "https://modrinth.qomicex.dpdns.org/data/AANobbMI/versions/OihdIimA/sodium-fabric-0.5.13%2Bmc1.20.1.jar",
 ];
@@ -122,18 +121,6 @@ pub fn router() -> Router<SharedState> {
         .route(
             "/settings/file-download-sources/ping",
             get(ping_file_download_sources),
-        )
-        .route(
-            "/settings/download-source/auto-select",
-            get(auto_select_download_source),
-        )
-        .route(
-            "/settings/mod-source/auto-select",
-            get(auto_select_mod_source),
-        )
-        .route(
-            "/settings/file-download-source/auto-select",
-            get(auto_select_file_download_source),
         )
         .route(
             "/settings/clear-curseforge-cache",
@@ -451,80 +438,6 @@ async fn ping_file_download_sources() -> ApiResult<Json<Vec<DownloadSourcePing>>
         });
     }
     Ok(Json(results))
-}
-
-async fn auto_select_download_source() -> ApiResult<Json<AutoSelectResponse>> {
-    let pings =
-        futures::future::join_all(DOWNLOAD_SOURCES.iter().map(|(_, _, url)| ping_head(url))).await;
-    let mut best_id = 0;
-    let mut best_latency = i64::MAX;
-    for ((id, _, _), (lat, ok)) in DOWNLOAD_SOURCES.iter().zip(pings) {
-        if ok && lat < best_latency {
-            best_latency = lat;
-            best_id = *id;
-        }
-    }
-    auto_select_update(|s| s.download_source = best_id);
-    Ok(Json(AutoSelectResponse {
-        id: best_id,
-        latency_ms: if best_latency == i64::MAX {
-            -1
-        } else {
-            best_latency
-        },
-    }))
-}
-
-async fn auto_select_mod_source() -> ApiResult<Json<AutoSelectResponse>> {
-    let pings =
-        futures::future::join_all(MOD_SOURCES.iter().map(|(_, _, url)| ping_get_fast(url))).await;
-    let mut best_id = 0;
-    let mut best_latency = i64::MAX;
-    for ((id, _, _), (ok, lat)) in MOD_SOURCES.iter().zip(pings) {
-        if ok && lat < best_latency {
-            best_latency = lat;
-            best_id = *id;
-        }
-    }
-    auto_select_update(|s| s.mod_mirror = best_id);
-    Ok(Json(AutoSelectResponse {
-        id: best_id,
-        latency_ms: if best_latency == i64::MAX {
-            -1
-        } else {
-            best_latency
-        },
-    }))
-}
-
-async fn auto_select_file_download_source() -> ApiResult<Json<AutoSelectResponse>> {
-    // 官方源与镜像源（按实际下载顺序探测，取首个可用节点）并行测量。
-    let (official, mirror) =
-        futures::join!(ping_head(FILE_OFFICIAL_PING_URL), probe_mirror_source());
-    let candidates = [(0, official), (1, mirror)];
-    let mut best_id = 0;
-    let mut best_latency = i64::MAX;
-    for (id, (lat, ok)) in candidates {
-        if ok && lat < best_latency {
-            best_latency = lat;
-            best_id = id;
-        }
-    }
-    auto_select_update(|s| s.file_download_source = best_id);
-    Ok(Json(AutoSelectResponse {
-        id: best_id,
-        latency_ms: if best_latency == i64::MAX {
-            -1
-        } else {
-            best_latency
-        },
-    }))
-}
-
-fn auto_select_update(f: impl FnOnce(&mut SettingsResponse)) {
-    let mut settings_now = settings::load_settings();
-    f(&mut settings_now);
-    let _ = settings::save_settings(&settings_now);
 }
 
 fn backgrounds_dir() -> std::path::PathBuf {

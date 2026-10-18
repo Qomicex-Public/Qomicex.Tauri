@@ -58,6 +58,18 @@ export default function ModpackInstallDialog({
       progress: 0,
       icon: iconUrl,
       createdAt: new Date().toISOString(),
+      // 启动失败（解析/建实例阶段）也要能重试：失败安装会回滚删除实例。
+      retry: {
+        kind: 'modpack',
+        name: instanceName,
+        gameVersion: selectedVersion?.gameVersions[0] || '',
+        source,
+        projectId,
+        versionId: selectedVersion!.id,
+        gameDir,
+        versionIsolation,
+        icon: iconUrl,
+      },
     })
 
     try {
@@ -122,6 +134,17 @@ export default function ModpackInstallDialog({
         icon: iconUrl,
         createdAt: new Date().toISOString(),
         instanceId,
+        retry: {
+          kind: 'modpack',
+          name: instanceName,
+          gameVersion: selectedVersion!.gameVersions[0] || resolved.gameVersion,
+          source,
+          projectId,
+          versionId: selectedVersion!.id,
+          gameDir,
+          versionIsolation,
+          icon: iconUrl,
+        },
       })
       onClose()
       navigate('/downloads')

@@ -58,6 +58,7 @@ use crate::services::install_tracker::InstallTracker;
 use crate::services::install_tracker::{InstallHandle, InstallProgress, InstallStatus};
 use crate::services::instance::InstanceService;
 use crate::services::modpack_export::{list_export_tree, ExportFormat, ExportTreeNode};
+use crate::services::source_policy::SourcePlan;
 use crate::state::SharedState;
 
 /// Module-private aggregated state (assembled lazily, replacing DI injection).
@@ -848,7 +849,7 @@ async fn run_multimc_import(
 
     // 下载缺失文件（库 + 主 jar + 资源；镜像/进度/取消复用 locator + download_manager）。
     handle.set_stage("downloading-game");
-    let source_id = crate::settings::get_global_file_download_source();
+    let source_id = crate::services::source_policy::SourcePlan::load().vanilla_mirror_id();
     let repair = crate::services::install_service::build_repair_core(
         game_dir,
         source_id,
@@ -1345,7 +1346,7 @@ async fn run_technic_import(
         addons: Vec::new(),
         download_threads: 8,
         version_isolation: true,
-        download_source_id: crate::settings::get_global_file_download_source(),
+        download_source_id: crate::services::source_policy::SourcePlan::load().vanilla_mirror_id(),
         optifine_version: None,
     };
     run_install_pipeline(handle, mgr.clone(), http_client.clone(), "", data, 55.0).await?;
@@ -1892,7 +1893,7 @@ async fn run_solder_import(
         addons: Vec::new(),
         download_threads: 8,
         version_isolation: true,
-        download_source_id: crate::settings::get_global_file_download_source(),
+        download_source_id: crate::services::source_policy::SourcePlan::load().vanilla_mirror_id(),
         optifine_version: None,
     };
     run_install_pipeline(handle, mgr.clone(), http_client.clone(), "", data, 40.0).await?;
@@ -2982,7 +2983,6 @@ impl ModpackServiceData {
             None
         };
 
-        let file_download_source = crate::settings::get_global_file_download_source();
         let inst_svc = self.instance.clone();
         let inst_id_inner = instance_id.clone();
         let icon_data_inner = req.icon_data.clone();
@@ -3023,7 +3023,6 @@ impl ModpackServiceData {
                 modpack_files.as_deref(),
                 version_isolation,
                 local_pack_path.as_deref().and_then(|p| p.to_str()),
-                file_download_source,
                 icon_data_inner,
                 optional_file_ids.as_deref(),
             )
@@ -3480,11 +3479,11 @@ fn is_cf_host(url: &str) -> bool {
 fn mirror_mod_url(
     url: String,
     cf_api_key: &str,
-    file_download_source: i32,
+    plan: &SourcePlan,
 ) -> (String, Vec<(String, String)>) {
     let headers = modpack_headers(&url, cf_api_key);
-    let rewritten = crate::services::file_mirror::rewrite_file_cdn(&url, file_download_source);
-    (rewritten, headers)
+    let primary = crate::services::source_policy::mod_primary(&url, plan);
+    (primary, headers)
 }
 
 /// 确定整合包安装的生效游戏版本（issue #176 复盘，评审确认的方向 A）。
@@ -3532,11 +3531,11 @@ pub(crate) async fn run_modpack_pipeline(
     modpack_files: Option<&[ModpackFileEntry]>,
     version_isolation: bool,
     local_pack_path: Option<&str>,
-    file_download_source: i32,
     icon_data: Option<String>,
     optional_file_ids: Option<&[i64]>,
 ) -> Result<(Vec<String>, String), String> {
     let src = source.to_ascii_lowercase();
+    let plan = SourcePlan::load();
     let mut zip_path: Option<PathBuf> = None;
     let mut parsed: Option<ParsedModpack> = None;
 
@@ -3627,7 +3626,7 @@ pub(crate) async fn run_modpack_pipeline(
             f.current_file = format!("整合包包体: {url}");
         });
         // 包包体也是 Modrinth/CF CDN 文件，同样按资源下载源重写；headers 按原始 host 判断。
-        let mirror_url = crate::services::file_mirror::rewrite_file_cdn(url, file_download_source);
+        let mirror_url = crate::services::source_policy::mod_primary(url, &plan);
         download_batch(
             handle,
             mgr,
@@ -3743,7 +3742,7 @@ pub(crate) async fn run_modpack_pipeline(
                         }
                         let rel = f.path.clone();
                         let dest = modpack_target_path(&gd_g, &vdn_g, version_isolation, &rel);
-                        let (url, headers) = mirror_mod_url(url, cf_api_key, file_download_source);
+                        let (url, headers) = mirror_mod_url(url, cf_api_key, &plan);
                         Some((url, dest, headers, rel))
                     })
                     .collect();
@@ -3804,7 +3803,7 @@ pub(crate) async fn run_modpack_pipeline(
                     let rel = format!("mods/{filename}");
                     let dest = modpack_target_path(&gd_g, &vdn_g, version_isolation, &rel);
                     let (download_url, headers) =
-                        mirror_mod_url(download_url.to_string(), cf_api_key, file_download_source);
+                        mirror_mod_url(download_url.to_string(), cf_api_key, &plan);
                     files.push((download_url, dest, headers));
                     rels.push(rel);
                 }
@@ -3831,8 +3830,7 @@ pub(crate) async fn run_modpack_pipeline(
                 let files: Vec<(String, PathBuf, Vec<(String, String)>)> = libs
                     .iter()
                     .map(|l| {
-                        let (url, headers) =
-                            mirror_mod_url(l.url.clone(), cf_api_key, file_download_source);
+                        let (url, headers) = mirror_mod_url(l.url.clone(), cf_api_key, &plan);
                         (url, PathBuf::from(&l.path), headers)
                     })
                     .collect();
@@ -3873,8 +3871,7 @@ pub(crate) async fn run_modpack_pipeline(
                         }
                         let rel = f.path.clone();
                         let dest = modpack_target_path(&gd_g, &vdn_g, version_isolation, &rel);
-                        let (u, h) =
-                            mirror_mod_url(url.to_string(), cf_api_key, file_download_source);
+                        let (u, h) = mirror_mod_url(url.to_string(), cf_api_key, &plan);
                         files.push((u, dest, h));
                         rels.push(rel);
                     } else if let Some((_, fid)) = f.path.split_once(':') {
@@ -3916,11 +3913,8 @@ pub(crate) async fn run_modpack_pipeline(
                         });
                         let rel = format!("mods/{filename}");
                         let dest = modpack_target_path(&gd_g, &vdn_g, version_isolation, &rel);
-                        let (download_url, headers) = mirror_mod_url(
-                            download_url.to_string(),
-                            cf_api_key,
-                            file_download_source,
-                        );
+                        let (download_url, headers) =
+                            mirror_mod_url(download_url.to_string(), cf_api_key, &plan);
                         files.push((download_url, dest, headers));
                         rels.push(rel);
                     }

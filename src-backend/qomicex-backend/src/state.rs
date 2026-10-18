@@ -147,11 +147,12 @@ impl AppState {
             .ok()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(embedded_ms_client_id);
-        let global_mirror = if settings_now.download_source == 1 {
-            DownloadMirror::Bmclapi
-        } else {
-            DownloadMirror::Official
-        };
+        let global_mirror =
+            if crate::services::source_policy::SourcePlan::load().vanilla_mirror_id() == 1 {
+                DownloadMirror::Bmclapi
+            } else {
+                DownloadMirror::Official
+            };
 
         // 网络设置：代理 + 忽略 SSL。共享 HTTP 客户端在启动时按此构建；
         // 下载管理器由 new_download_manager 同步携带并在 PUT /settings 时热替换。

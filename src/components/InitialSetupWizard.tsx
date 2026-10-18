@@ -11,8 +11,8 @@ import { useI18n } from '../i18n/index.tsx'
 import { LANGS } from '../i18n/lang.ts'
 import type { LangChoice } from '../i18n/lang.ts'
 import { cn } from '../lib/utils.ts'
-import { saveSettings, setDataDir, pingDownloadSources, pingModSources } from '../api/settings.ts'
-import type { AppSettings, DownloadSourcePing, ModSourcePing } from '../api/settings.ts'
+import { saveSettings, setDataDir } from '../api/settings.ts'
+import type { AppSettings } from '../api/settings.ts'
 import { scanRuntimes, getRuntimes, refreshCustomRuntimes } from '../stores/javaStore.ts'
 import type { JavaRuntime } from '../types/index.ts'
 import { getJavaDownloadCatalog, startJavaDownload, getJavaDownloadProgress } from '../api/java.ts'
@@ -59,16 +59,14 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
   const [theme, setTheme] = useState<'dark' | 'light'>(settings.theme === 'light' ? 'light' : 'dark')
   const [dataDir, setDataDirState] = useState(settings.dataDir || '')
   const [gameDir, setGameDir] = useState(settings.gameDir || '.minecraft')
-  const [downloadSource, setDownloadSource] = useState(settings.downloadSource)
-  const [modMirror, setModMirror] = useState(settings.modMirror)
+  const [sourcePreference, setSourcePreference] = useState<'official' | 'mirror'>(
+    settings.sourcePreference ?? 'official',
+  )
   const [memoryMode, setMemoryMode] = useState<'auto' | 'custom'>(settings.memoryMode || 'auto')
   const [defaultMaxMemory, setDefaultMaxMemory] = useState(settings.defaultMaxMemory)
   const [javaRuntimes, setJavaRuntimes] = useState<JavaRuntime[]>(() => getRuntimes())
   const [javaScanning, setJavaScanning] = useState(false)
   const [javaDownloads, setJavaDownloads] = useState<Record<number, JavaDownloadState>>({})
-  const [sourcePings, setSourcePings] = useState<DownloadSourcePing[]>([])
-  const [modPings, setModPings] = useState<ModSourcePing[]>([])
-  const [pingLoading, setPingLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
@@ -77,7 +75,6 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
   const stepCount = mode === 'custom' ? 9 : 6
 
   const isJavaStep = mode === 'quick' ? step === 3 : step === 6
-  const isDownloadStep = mode === 'custom' && step === 5
   const isDoneStep = step === stepCount - 1
 
   // 主题即时生效（与 App.tsx setTheme 保持一致）
@@ -114,26 +111,6 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
   }
 
   // 下载源步骤：测速
-  useEffect(() => {
-    if (!open || !isDownloadStep) return
-    let cancelled = false
-    setPingLoading(true)
-    Promise.all([pingDownloadSources(), pingModSources()])
-      .then(([src, mod]) => {
-        if (cancelled) return
-        setSourcePings(src)
-        setModPings(mod)
-        const bestSrc = src.filter((p) => p.ok).sort((a, b) => a.latency - b.latency)[0]
-        const bestMod = mod.filter((p) => p.ok).sort((a, b) => a.latency - b.latency)[0]
-        if (bestSrc) setDownloadSource(bestSrc.id)
-        if (bestMod) setModMirror(bestMod.id)
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setPingLoading(false)
-      })
-    return () => { cancelled = true }
-  }, [open, isDownloadStep])
 
   // 系统信息：内存步骤的滑块上界与占用条
   useEffect(() => {
@@ -265,8 +242,7 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
       }
       if (mode === 'custom') {
         next.gameDir = gameDir
-        next.downloadSource = downloadSource
-        next.modMirror = modMirror
+        next.sourcePreference = sourcePreference
         if (dataDir && dataDir !== settings.dataDir) {
           const normalized = dataDir.replace(/\\/g, '/')
           try {
@@ -495,54 +471,25 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
           {mode === 'custom' && step === 5 && (
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label>{t('wizard.downloadSource')}</Label>
-                {pingLoading ? (
-                  <p className="text-xs text-muted-foreground">{t('wizard.pinging')}...</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {sourcePings.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => setDownloadSource(p.id)}
-                        className={cn(
-                          'flex w-full items-center justify-between rounded-lg border px-3 py-2 text-sm transition-colors',
-                          downloadSource === p.id ? 'border-primary bg-primary/5' : 'hover:bg-accent/50'
-                        )}
-                      >
-                        <span>{p.name}</span>
-                        <span className={cn('text-xs', p.ok ? 'text-muted-foreground' : 'text-destructive')}>
-                          {p.ok ? `${p.latency} ms` : t('wizard.pingFailed')}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label>{t('wizard.modSource')}</Label>
-                {pingLoading ? (
-                  <p className="text-xs text-muted-foreground">{t('wizard.pinging')}...</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {modPings.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => setModMirror(p.id)}
-                        className={cn(
-                          'flex w-full items-center justify-between rounded-lg border px-3 py-2 text-sm transition-colors',
-                          modMirror === p.id ? 'border-primary bg-primary/5' : 'hover:bg-accent/50'
-                        )}
-                      >
-                        <span>{p.name}</span>
-                        <span className={cn('text-xs', p.ok ? 'text-muted-foreground' : 'text-destructive')}>
-                          {p.ok ? `${p.latency} ms` : t('wizard.pingFailed')}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
+                <Label>{t('settings.launcher.sourcePreference')}</Label>
+                <div className="flex flex-wrap gap-2">
+                  {(['official', 'mirror'] as const).map((pref) => (
+                    <button
+                      key={pref}
+                      type="button"
+                      onClick={() => setSourcePreference(pref)}
+                      className={cn(
+                        'rounded-lg border px-3 py-2 text-sm transition-colors',
+                        sourcePreference === pref ? 'border-primary bg-primary/5' : 'hover:bg-accent/50',
+                      )}
+                    >
+                      {t(`settings.launcher.sourcePreferenceName.${pref}`)}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {t('settings.launcher.sourcePreferenceDesc')}
+                </p>
               </div>
             </div>
           )}
@@ -720,7 +667,7 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
                 {mode === 'custom' && (
                   <>
                     <div className="flex justify-between gap-4"><span className="shrink-0 text-muted-foreground">{t('wizard.stepDirectories')}</span><span className="truncate text-right font-mono text-xs">{dataDir || t('wizard.default')}</span></div>
-                    <div className="flex justify-between gap-4"><span className="shrink-0 text-muted-foreground">{t('wizard.stepDownloadSource')}</span><span className="truncate text-right font-mono text-xs">{sourcePings.find((p) => p.id === downloadSource)?.name || downloadSource}</span></div>
+                    <div className="flex justify-between gap-4"><span className="shrink-0 text-muted-foreground">{t('wizard.stepDownloadSource')}</span><span className="truncate text-right font-mono text-xs">{t(`settings.launcher.sourcePreferenceName.${sourcePreference}`)}</span></div>
                   </>
                 )}
               </div>

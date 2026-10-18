@@ -581,11 +581,9 @@ async fn start(
         None
     };
     // 资源下载源：重写文件 CDN 域名（官方/QML Mirror）。api-key 按重写前的原始 host 判断。
-    let download_url = crate::services::file_mirror::rewrite_file_cdn(
-        &req.url,
-        state.settings.read().await.file_download_source,
-    );
-    let mirrors = crate::services::file_mirror::mirror_fallback_urls(&download_url);
+    let plan = crate::services::source_policy::SourcePlan::load();
+    let download_url = crate::services::source_policy::mod_primary(&req.url, &plan);
+    let mirrors = crate::services::source_policy::mod_fallbacks(&req.url, &plan);
     let mut task = DownloadTask::new(download_url, full_path.clone());
     if !mirrors.is_empty() {
         task = task.with_mirrors(mirrors);
@@ -654,11 +652,9 @@ async fn download_to(
         .unwrap_or_default();
 
     // 资源下载源：重写文件 CDN 域名（官方/QML Mirror）。api-key 按重写前的原始 host 判断。
-    let download_url = crate::services::file_mirror::rewrite_file_cdn(
-        &req.url,
-        state.settings.read().await.file_download_source,
-    );
-    let mirrors = crate::services::file_mirror::mirror_fallback_urls(&download_url);
+    let plan = crate::services::source_policy::SourcePlan::load();
+    let download_url = crate::services::source_policy::mod_primary(&req.url, &plan);
+    let mirrors = crate::services::source_policy::mod_fallbacks(&req.url, &plan);
     let mut task = DownloadTask::new(download_url, target.clone());
     if !mirrors.is_empty() {
         task = task.with_mirrors(mirrors);

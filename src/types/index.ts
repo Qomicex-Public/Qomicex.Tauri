@@ -417,11 +417,40 @@ export interface InstallProgressResponse {
  */
 export type DownloadResourceKind = 'mod' | 'modpack' | 'resourcepack' | 'shader' | 'datapack' | 'save'
 
+/**
+ * 失败任务的重建描述符。
+ *
+ * 只保存「重跑一次安装所需的最小参数」：不存 iconData、不存 modpack 文件清单
+ * （前者是 base64 图片、后者可达数百条，放进 localStorage 会撑爆配额）。
+ * 失败安装会回滚并删除实例记录，因此重试不是重新排队，而是按本描述符重建实例。
+ */
+export type RetrySpec =
+  | {
+      kind: 'game'
+      name: string
+      gameVersion: string
+      gameDir: string
+      loader?: string
+      loaderVersion?: string
+      addons?: string[]
+      icon?: string
+    }
+  | {
+      kind: 'modpack'
+      name: string
+      gameVersion: string
+      source: string
+      projectId: string
+      versionId: string
+      gameDir: string
+      versionIsolation: boolean
+      icon?: string
+    }
+
 export interface DownloadTask {
   id: string
   name: string
-  type: 'game' | 'resource' | 'repair' | 'file' | 'batch' | 'java' | 'modpack' | 'modpack-update'
-  /**
+  type: 'game' | 'resource' | 'repair' | 'file' | 'batch' | 'java' | 'modpack' | 'modpack-update'  /**
    * 资源细分类别，供下载中心分组。可选：旧任务（持久化在 localStorage 里）没有该
    * 字段，此时由 `getTaskGroup` 按 `type` 回退，缺信息的一律进「其他」组——
    * 绝不能默认成 `mod`，否则会把光影/资源包误报成模组。
@@ -454,6 +483,11 @@ export interface DownloadTask {
   /** for file downloads - bytes so far / total bytes */
   downloadedBytes?: number
   totalBytes?: number
+  /**
+   * 失败后可重建的参数。缺省表示该任务无法重试（下载中心据此隐藏重试按钮，
+   * 避免出现「点重试等于删除」）。
+   */
+  retry?: RetrySpec
 }
 
 export interface ResourceDownloadState {

@@ -946,7 +946,7 @@ async fn download_target_files(
         .clone()
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let file_download_source = crate::settings::get_global_file_download_source();
+    let plan = crate::services::source_policy::SourcePlan::load();
     let cf_key = &state.curse_forge_api_key;
     let mgr = state.download_manager.load_full();
     let version_isolation = inst
@@ -968,8 +968,7 @@ async fn download_target_files(
                 // 暂存目录里保持与实例内相同的相对结构：应用阶段只需 rename。
                 let dest = staging.join(modpack_manifest::normalize_rel_path(&rel));
                 let headers = modpack_headers(&url, cf_key);
-                let url =
-                    crate::services::file_mirror::rewrite_file_cdn(&url, file_download_source);
+                let url = crate::services::source_policy::mod_primary(&url, &plan);
                 files.push((url, dest, headers));
                 rels.push(modpack_manifest::normalize_rel_path(&rel));
             }
@@ -1009,8 +1008,7 @@ async fn download_target_files(
                 let rel = format!("mods/{filename}");
                 let dest = staging.join(&rel);
                 let headers = modpack_headers(&url, cf_key);
-                let url =
-                    crate::services::file_mirror::rewrite_file_cdn(&url, file_download_source);
+                let url = crate::services::source_policy::mod_primary(&url, &plan);
                 files.push((url, dest, headers));
                 rels.push(rel);
             }
