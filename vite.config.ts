@@ -31,7 +31,15 @@ export default defineConfig(() => ({
         }
       : undefined,
     watch: {
-      ignored: ["**/src-tauri/**", "**/.minecraft/**", "**/.vs/**"],
+      ignored: [
+        "**/src-tauri/**",
+        "**/.minecraft/**",
+        "**/.vs/**",
+        // Rust 构建产物（含 submodule 的 target/）：构建期间替换文件会让 fs.watch 抛 EBUSY，dev server 直接退出
+        "**/target/**",
+        // gitignored 的本地残留，含 NTFS 保留名，递归遍历会 ENOENT
+        "**/src-backend/Qomicex.Launcher.Backend.Neo/**",
+      ],
     },
     proxy: {
       "/announcements-proxy": {
