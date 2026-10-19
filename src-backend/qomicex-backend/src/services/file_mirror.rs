@@ -291,6 +291,13 @@ pub fn start_health_probe(client: reqwest::Client, interval: std::time::Duration
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 这些用例共享进程级 MIRROR_AVAILABLE 开关，并行执行会互相干扰。
+    static MIRROR_STATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn lock_mirror_state() -> std::sync::MutexGuard<'static, ()> {
+        MIRROR_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
     use crate::services::source_policy::VanillaSource;
 
     fn m() -> (String, String) {
@@ -302,6 +309,7 @@ mod tests {
 
     #[test]
     fn modrinth_mirror_first_orders_mcim_then_qml_then_official() {
+        let _guard = lock_mirror_state();
         set_mirror_available(true);
         let (mr, _) = m();
         let c = candidates(&mr, true);
@@ -316,6 +324,7 @@ mod tests {
 
     #[test]
     fn official_first_keeps_mirrors_as_fallback() {
+        let _guard = lock_mirror_state();
         set_mirror_available(true);
         let (mr, _) = m();
         let c = candidates(&mr, false);
@@ -333,6 +342,7 @@ mod tests {
 
     #[test]
     fn curseforge_skips_mcim_and_goes_qml() {
+        let _guard = lock_mirror_state();
         set_mirror_available(true);
         let (_, cf) = m();
         let c = candidates(&cf, true);
@@ -350,6 +360,7 @@ mod tests {
 
     #[test]
     fn dead_mirror_host_is_gone() {
+        let _guard = lock_mirror_state();
         // lenmei233.dpdns.org 已停止服务，不得再出现在任何候选里。
         set_mirror_available(true);
         let (mr, cf) = m();
@@ -363,6 +374,7 @@ mod tests {
 
     #[test]
     fn mirror_unavailable_degrades_to_official_only() {
+        let _guard = lock_mirror_state();
         set_mirror_available(false);
         let (mr, _) = m();
         assert_eq!(candidates(&mr, true), vec![mr.clone()]);
@@ -372,6 +384,7 @@ mod tests {
 
     #[test]
     fn mirror_url_normalizes_back_to_official() {
+        let _guard = lock_mirror_state();
         set_mirror_available(false);
         let qml = "https://modrinth.qomicex.dpdns.org/data/abc/1.0.jar";
         assert_eq!(
