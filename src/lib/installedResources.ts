@@ -26,6 +26,7 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>()
 const inflight = new Map<string, Promise<InstalledModMap>>()
+const generations = new Map<string, number>()
 const listeners = new Map<string, Set<() => void>>()
 
 function toMap(metadata: Awaited<ReturnType<typeof getModsMetadata>>): InstalledModMap {
@@ -54,14 +55,17 @@ export async function loadInstalledMods(instanceId: string): Promise<InstalledMo
   const pending = inflight.get(instanceId)
   if (pending) return pending
 
+  const generation = generations.get(instanceId) ?? 0
   const task = getModsMetadata(instanceId)
     .then((metadata) => {
       const entries = toMap(metadata)
-      cache.set(instanceId, { at: Date.now(), entries })
+      if ((generations.get(instanceId) ?? 0) === generation) {
+        cache.set(instanceId, { at: Date.now(), entries })
+      }
       return entries
     })
     .finally(() => {
-      inflight.delete(instanceId)
+      if (inflight.get(instanceId) === task) inflight.delete(instanceId)
     })
   inflight.set(instanceId, task)
   return task
@@ -70,6 +74,8 @@ export async function loadInstalledMods(instanceId: string): Promise<InstalledMo
 /** 安装完成后失效该实例的缓存（下次读取重新扫描），并通知正在展示该实例的页面刷新。 */
 export function invalidateInstalledMods(instanceId: string): void {
   cache.delete(instanceId)
+  inflight.delete(instanceId)
+  generations.set(instanceId, (generations.get(instanceId) ?? 0) + 1)
   const set = listeners.get(instanceId)
   if (!set) return
   for (const listener of set) listener()

@@ -154,6 +154,8 @@ export default function ResourceInstallDialog({
       return
     }
     let cancelled = false
+    // 切换实例后先清空，避免旧实例的文件名在加载完成前进入删除清单。
+    setInstalledMain(null)
     loadInstalledMods(selectedInstance.id)
       .then((map) => {
         if (!cancelled) setInstalledMain(map.get(installedResourceKey(source, resourceId)) ?? null)

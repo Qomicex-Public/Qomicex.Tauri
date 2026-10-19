@@ -722,9 +722,13 @@ export default function ResourceCenter() {
     setInstalledMods(new Map())
     if (!instanceId || !modsDetectable) return
     let cancelled = false
+    let refreshSequence = 0
     const refresh = () => {
+      const sequence = ++refreshSequence
       loadInstalledMods(instanceId)
-        .then((map) => { if (!cancelled) setInstalledMods(map) })
+        .then((map) => {
+          if (!cancelled && sequence === refreshSequence) setInstalledMods(map)
+        })
         // 元数据加载失败只是少一个「已安装」角标，不影响列表本身；订阅刷新失败保留旧数据。
         .catch(() => {})
     }
