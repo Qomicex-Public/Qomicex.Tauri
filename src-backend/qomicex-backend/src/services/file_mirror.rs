@@ -32,6 +32,10 @@ const GENERIC_MIRROR_HOSTS: &[&str] = &["mirror.qomicex.dpdns.org", "mirror1.qom
 
 /// BMPLAPI 的三个路径前缀（与 core `bmclapi_download_source` 一致）。
 const BMCLAPI_HOST: &str = "bmclapi2.bangbang93.com";
+/// Forge 官方 maven（安装器与 loader 依赖）。
+const FORGE_MAVEN_HOST: &str = "maven.minecraftforge.net";
+/// NeoForge 官方 maven（制品位于 releases/ 下）。
+const NEOFORGE_MAVEN_HOST: &str = "maven.neoforged.net";
 
 /// 镜像健康探针的 canary 文件（公开、稳定、几十 KB 的 CF 文件）。
 ///
@@ -166,8 +170,10 @@ fn mirror_chain(official: &str) -> Vec<String> {
 ///
 /// 只覆盖路径 1:1 可互换的域名：`libraries.minecraft.net` ↔
 /// `bmclapi2.bangbang93.com/maven`、`resources.download.minecraft.net` ↔
-/// `bmclapi2.bangbang93.com/assets`。客户端 jar 与版本清单在 BMCLAPI 上是另一套
-/// 路径（`version/{id}/client`），无法纯 URL 改写，保持单源。
+/// `bmclapi2.bangbang93.com/assets`、`maven.minecraftforge.net` / NeoForge maven
+/// （`maven.neoforged.net/releases`）↔ `bmclapi2.bangbang93.com/maven`。
+/// 客户端 jar 与版本清单在 BMCLAPI 上是另一套路径（`version/{id}/client`），
+/// 无法纯 URL 改写，保持单源。
 pub fn vanilla_fallback(
     url: &str,
     primary: crate::services::source_policy::VanillaSource,
@@ -186,6 +192,11 @@ fn official_to_bmclapi(url: &str) -> Option<String> {
     match host {
         "libraries.minecraft.net" => Some(format!("https://{BMCLAPI_HOST}/maven/{tail}")),
         "resources.download.minecraft.net" => Some(format!("https://{BMCLAPI_HOST}/assets/{tail}")),
+        FORGE_MAVEN_HOST => Some(format!("https://{BMCLAPI_HOST}/maven/{tail}")),
+        NEOFORGE_MAVEN_HOST => {
+            let rest = tail.strip_prefix("releases/")?;
+            Some(format!("https://{BMCLAPI_HOST}/maven/{rest}"))
+        }
         _ => None,
     }
 }
@@ -197,6 +208,14 @@ fn bmclapi_to_official(url: &str) -> Option<String> {
     }
     let tail = url_tail(url)?;
     if let Some(rest) = tail.strip_prefix("maven/") {
+        // BMCLAPI 的 /maven 同时代理 Mojang、Forge 与 NeoForge 的 maven 仓库，
+        // 只能按坐标前缀还原到对应官方 host。
+        if rest.starts_with("net/minecraftforge/") {
+            return Some(format!("https://{FORGE_MAVEN_HOST}/{rest}"));
+        }
+        if rest.starts_with("net/neoforged/") {
+            return Some(format!("https://{NEOFORGE_MAVEN_HOST}/releases/{rest}"));
+        }
         return Some(format!("https://libraries.minecraft.net/{rest}"));
     }
     if let Some(rest) = tail.strip_prefix("assets/") {
@@ -393,6 +412,32 @@ mod tests {
             "已是镜像形态的 URL 在镜像不可用时也要能回到官方"
         );
         set_mirror_available(true);
+    }
+
+    #[test]
+    fn forge_and_neoforge_maven_swap_to_bmclapi() {
+        let forge = "https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1-47.4.0/forge-1.20.1-47.4.0-installer.jar";
+        let forge_bmcl = "https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge/1.20.1-47.4.0/forge-1.20.1-47.4.0-installer.jar";
+        assert_eq!(
+            vanilla_fallback(forge, VanillaSource::Official),
+            vec![forge_bmcl.to_string()]
+        );
+        assert_eq!(
+            vanilla_fallback(forge_bmcl, VanillaSource::Bmclapi),
+            vec![forge.to_string()]
+        );
+
+        let neo = "https://maven.neoforged.net/releases/net/neoforged/neoforge/21.1.172/neoforge-21.1.172-installer.jar";
+        let neo_bmcl =
+            "https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/21.1.172/neoforge-21.1.172-installer.jar";
+        assert_eq!(
+            vanilla_fallback(neo, VanillaSource::Official),
+            vec![neo_bmcl.to_string()]
+        );
+        assert_eq!(
+            vanilla_fallback(neo_bmcl, VanillaSource::Bmclapi),
+            vec![neo.to_string()]
+        );
     }
 
     #[test]

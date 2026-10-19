@@ -801,10 +801,19 @@ async fn download_installer_jar(
     // BMCLAPI 的 forge/download 端点会回 200 却不发 body（实测），而它的 URL 形状
     // 与官方 maven 不同，下载器无法自行改写。这里按加载器版本补出官方 URL，按偏好
     // 决定主选：官方优先时直接走 maven，镜像优先时留作兜底。
+    // BMCLAPI 的 forge/download/{id} 端点会回 200 空 body，但 BMCLAPI 的 /maven
+    // 路径代理 Forge/NeoForge maven 是正常的（实测 302 → 文件节点 200），因此
+    // 两侧都用 maven URL，彻底绕开那个坏端点。
     let official = official_installer_url(loader, game_version, loader_version);
-    let (primary, fallback) = match official {
-        Some(official) if official != url && prefer_official => (official, Some(url.to_string())),
-        Some(official) if official != url => (url.to_string(), Some(official)),
+    let bmclapi = official.as_deref().and_then(bmclapi_maven_mirror);
+    let (primary, fallback) = match (official, bmclapi) {
+        (Some(official), Some(bmclapi)) => {
+            if prefer_official {
+                (official, Some(bmclapi))
+            } else {
+                (bmclapi, Some(official))
+            }
+        }
         _ => (url.to_string(), None),
     };
     let mut extra = std::collections::HashMap::new();
@@ -845,6 +854,16 @@ fn official_installer_url(
         }),
         _ => None,
     }
+}
+
+/// 官方 maven URL 对应的 BMCLAPI /maven 镜像（不可改写时返回 None）。
+fn bmclapi_maven_mirror(official: &str) -> Option<String> {
+    crate::services::file_mirror::vanilla_fallback(
+        official,
+        crate::services::source_policy::VanillaSource::Official,
+    )
+    .into_iter()
+    .next()
 }
 
 /// 获取加载器缺失依赖库（源 `GetMissLoaderLibraries` 的参数映射逐字对齐）。
