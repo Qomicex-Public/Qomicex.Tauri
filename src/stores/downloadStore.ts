@@ -21,7 +21,12 @@ const SAVE_DEBOUNCE_MS = 500
 function loadTasks(): DownloadTask[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? JSON.parse(raw) : []
+    if (!raw) return []
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    // retryPending 是「本次进程内的重试进行中」标记：启动时一律清掉。
+    // 否则上次退出时正在重建的卡片会永久跳过 SSE 对账、停在排队态。
+    return (parsed as DownloadTask[]).map((t) => ({ ...t, retryPending: false }))
   } catch {
     return []
   }

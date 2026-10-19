@@ -488,6 +488,14 @@ export interface DownloadTask {
    * 避免出现「点重试等于删除」）。
    */
   retry?: RetrySpec
+  /**
+   * 重试已发起、正在重建目标（建实例 / 重新解析整合包清单）。
+   *
+   * 此期间卡片仍带着**旧**的 instanceId，而后端 tracker 会把上一次失败记录
+   * 保留 5 分钟；若不跳过 SSE 对账，下一拍就会把卡片刷回此前那条失败原因
+   * （表现为「点重试立刻又显示超时」）。重建完成、拿到新 instanceId 后清除。
+   */
+  retryPending?: boolean
 }
 
 export interface ResourceDownloadState {

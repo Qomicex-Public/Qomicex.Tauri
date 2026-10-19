@@ -273,10 +273,23 @@ function TaskCard({ task, t }: { task: DownloadTask; t: TFunc }) {
             <Tooltip content={t('downloads.retry')}>
               <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => {
                 // 先置回排队态：重试要重新解析/建实例，耗时数秒，避免用户重复点击。
-                updateTask(task.id, { status: 'queued', progress: 0, error: undefined })
+                // retryPending 让 SSE 对账在重建期间跳过本卡片——旧 instanceId 对应的
+                // 失败记录还在后端保留窗口内，否则会被立刻刷回原失败原因。
+                updateTask(task.id, {
+                  status: 'queued',
+                  progress: 0,
+                  error: undefined,
+                  retryPending: true,
+                })
                 retryTask(task)
-                  .then((patch) => updateTask(task.id, patch))
-                  .catch((e) => updateTask(task.id, { status: 'failed', error: e?.message || t('downloads.errors.downloadFailed') }))
+                  .then((patch) => updateTask(task.id, { ...patch, retryPending: false }))
+                  .catch((e) =>
+                    updateTask(task.id, {
+                      status: 'failed',
+                      error: e?.message || t('downloads.errors.downloadFailed'),
+                      retryPending: false,
+                    }),
+                  )
               }}>
                 <RotateCw className="h-3.5 w-3.5" />
               </Button>
@@ -464,6 +477,9 @@ export default function DownloadCenter() {
 
     const ts = getTasks()
     for (const task of ts) {
+      // 重试重建期间不参与对账：卡片还挂着旧 instanceId，后端那条失败记录仍在
+      // 保留窗口内，参与对账会把刚置的排队态刷回失败（issue #275）。
+      if (task.retryPending) continue
       if (task.status !== 'queued' && task.status !== 'downloading' && task.status !== 'paused') continue
 
       if (task.type === 'java' && task.taskId) {
