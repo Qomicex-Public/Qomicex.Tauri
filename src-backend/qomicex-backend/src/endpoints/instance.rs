@@ -1519,6 +1519,8 @@ async fn install_instance(
     let inst_svc = state.instance.clone();
     let inst_id_inner = instance_id.clone();
 
+    let rollback_dir = instance.game_dir.clone();
+    let rollback_name = instance.name.clone();
     tracker.start(instance_id.clone(), "install", move |handle| async move {
         let result = crate::services::install_service::run_install_pipeline(
             &handle,
@@ -1531,14 +1533,30 @@ async fn install_instance(
         .await;
         if result.is_err() {
             // 回滚：安装失败/取消 → 删除实例记录 + 版本隔离目录，不残留不可用空实例。
-            // 该端点仅由「下载新版本」新建实例流程调用，失败删实例安全。
-            // 目录删除失败（try_delete Err）→ 保留记录防幽灵实例复活，追加提示。
-            if let Err(e) = inst_svc.try_delete(&inst_id_inner) {
-                let msg = format!(
-                    "{result_err}；另：{e}，实例记录已保留，请手动删除或重试",
-                    result_err = result.as_ref().err().map(String::as_str).unwrap_or("")
-                );
-                return Err(msg);
+            // 刚取消时文件常被下载线程/杀软短暂占用，删除重试数轮再放弃（issue #224）。
+            // 先清安装标记：即使目录最终删不掉，后续扫描也不会把它当「正在安装」保留。
+            crate::services::instance::InstanceService::clear_installing(
+                &rollback_dir,
+                &rollback_name,
+            );
+            let mut last_err: Option<String> = None;
+            let mut removed = false;
+            for _ in 0..3 {
+                match inst_svc.try_delete(&inst_id_inner) {
+                    Ok(_) => {
+                        removed = true;
+                        break;
+                    }
+                    Err(e) => last_err = Some(e),
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+            }
+            if !removed {
+                let result_err = result.as_ref().err().map(String::as_str).unwrap_or("");
+                let delete_err = last_err.unwrap_or_default();
+                return Err(format!(
+                    "{result_err}；另：{delete_err}，实例记录已保留，请手动删除或重试"
+                ));
             }
         }
         result
