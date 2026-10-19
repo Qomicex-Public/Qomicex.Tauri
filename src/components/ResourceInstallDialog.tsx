@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { CheckCircle2, ChevronDown, Circle, Layers, RotateCw, Search } from 'lucide-react'
+import { Box, CheckCircle2, ChevronDown, Circle, Layers, RotateCw, Search } from 'lucide-react'
 import { Download as DownloadData, RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from './MorphActionIcon.tsx'
 import { cn } from '../lib/utils.ts'
@@ -17,6 +17,7 @@ import { loadSettings } from '../api/settings.ts'
 import { getInstalledFileNames, getModsMetadata } from '../api/instance-files.ts'
 import { quickInstallViaDownloadCenter } from '../lib/quickInstall.ts'
 import { planDependencyInstall } from '../lib/dependencyInstallPlan.ts'
+import { installedResourceKey, loadInstalledMods, type InstalledModEntry } from '../lib/installedResources.ts'
 import { useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import type { GameInstance, ModMetadata, ResourceVersion, ResolvedDependency } from '../types/index.ts'
@@ -49,6 +50,10 @@ export default function ResourceInstallDialog({
   const { notify } = useMessageBox()
   const [instances, setInstances] = useState<GameInstance[]>([])
   const [selectedInstance, setSelectedInstance] = useState<GameInstance | null>(null)
+  /** 从实例内跳转过来：实例已指定，不再展示选择器。 */
+  const [fixedInstance, setFixedInstance] = useState(false)
+  /** 该实例已安装的本资源（仅模组）；用于「更换版本」时删除旧文件。 */
+  const [installedMain, setInstalledMain] = useState<InstalledModEntry | null>(null)
   const [versions, setVersions] = useState<ResourceVersion[]>([])
   const [selectedVersion, setSelectedVersion] = useState<ResourceVersion | null>(null)
   const [deps, setDeps] = useState<ResolvedDependency[]>([])
@@ -70,6 +75,8 @@ export default function ResourceInstallDialog({
     if (!open) return
     versionCache.clear()
     setSelectedInstance(null)
+    setFixedInstance(false)
+    setInstalledMain(null)
     setSelectedVersion(initialVersion ?? null)
     setDeps([])
     setInstalledNames(new Set())
@@ -89,6 +96,8 @@ export default function ResourceInstallDialog({
         setInstances(all)
         if (all.length > 0) {
           const target = instanceId ? all.find(i => i.id === instanceId) : undefined
+          // URL 里的实例不存在（已删除 / gameDir 已切换）时回退到选择器，不让对话框卡死。
+          setFixedInstance(!!target)
           setSelectedInstance(target ?? all.find(i => i.isDefault) ?? all[0])
         }
       } catch { notify(t('dialogs.resourceInstall.instancesLoadFailed'), 'error') }
@@ -136,6 +145,24 @@ export default function ResourceInstallDialog({
   const versionOptions = useMemo(() => {
     return [...versions].sort((a, b) => new Date(b.datePublished).getTime() - new Date(a.datePublished).getTime())
   }, [versions])
+
+  // 本资源在该实例里的已安装文件：安装时作为旧版本清理掉（先下载成功再删）。
+  // 只有模组有可靠的远程 id；其它类型拿不到身份时不做猜测。
+  useEffect(() => {
+    if (!open || !selectedInstance || category !== 'mod') {
+      setInstalledMain(null)
+      return
+    }
+    let cancelled = false
+    // 切换实例后先清空，避免旧实例的文件名在加载完成前进入删除清单。
+    setInstalledMain(null)
+    loadInstalledMods(selectedInstance.id)
+      .then((map) => {
+        if (!cancelled) setInstalledMain(map.get(installedResourceKey(source, resourceId)) ?? null)
+      })
+      .catch(() => { if (!cancelled) setInstalledMain(null) })
+    return () => { cancelled = true }
+  }, [open, selectedInstance, source, resourceId, category])
 
   useEffect(() => {
     if (!selectedInstance || !selectedVersion) { setDeps([]); setDepVersionOptions({}); return }
@@ -206,13 +233,20 @@ export default function ResourceInstallDialog({
     if (!selectedInstance || !selectedVersion) return
     setStarting(true)
     setInstallError(null)
-    // 已安装的前置一律不重下、不删除（issue #249）。判定与清理口径见
-    // planDependencyInstall：本地文件名与上游文件名不同域，不能用来判定「过期」。
-    const { downloads: depsItems, deletions: toDelete } = planDependencyInstall(
-      deps, installedByProjectId, depSelectedVersion,
-    )
     const mainFile = selectedVersion.downloads[0]
     if (!mainFile) { setInstallError(t('dialogs.resourceInstall.noDownloadableFile')); setStarting(false); return }
+    // 已安装的前置一律不重下、不删除（issue #249）。判定与清理口径见
+    // planDependencyInstall：本地文件名与上游文件名不同域，不能用来判定「过期」。
+    const { downloads: depsItems, deletions: depDeletions } = planDependencyInstall(
+      deps, installedByProjectId, depSelectedVersion,
+    )
+    // 「更换版本」：新文件下载成功后才删旧文件；同名时 quickInstall 会跳过删除。
+    const toDelete = [
+      ...depDeletions,
+      ...(category === 'mod' && installedMain
+        ? [{ fileName: installedMain.fileName, category: 'mod' }]
+        : []),
+    ]
 
     try {
       await quickInstallViaDownloadCenter({
@@ -234,7 +268,7 @@ export default function ResourceInstallDialog({
       setInstallError(errMsg)
       setStarting(false)
     }
-  }, [selectedInstance, selectedVersion, deps, installedByProjectId, depSelectedVersion, category, resourceTitle, onClose, notify, t])
+  }, [selectedInstance, selectedVersion, deps, installedByProjectId, depSelectedVersion, category, installedMain, resourceTitle, resourceIcon, resourceCnName, onClose, notify, t, lang])
 
   return (
     <Dialog open={open} onClose={onClose}>
@@ -251,7 +285,9 @@ export default function ResourceInstallDialog({
 
       <DialogBody className="space-y-4">
         <div className="space-y-1.5">
-          <span className="text-xs font-medium text-muted-foreground">{t('dialogs.resourceInstall.selectInstance')}</span>
+          <span className="text-xs font-medium text-muted-foreground">
+            {t(fixedInstance ? 'dialogs.resourceInstall.targetInstance' : 'dialogs.resourceInstall.selectInstance')}
+          </span>
           {loadingInstance ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <RotateCw className="h-3 w-3 animate-spin" />
@@ -260,6 +296,14 @@ export default function ResourceInstallDialog({
           ) : instances.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border/60 p-3 text-center text-xs text-muted-foreground">
               {t('dialogs.resourceInstall.noInstances')}
+            </div>
+          ) : fixedInstance && selectedInstance ? (
+            <div className="flex items-center gap-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-sm">
+              <Box className="h-4 w-4 shrink-0 text-primary" />
+              <span className="min-w-0 flex-1 truncate font-medium">{selectedInstance.name}</span>
+              <span className="shrink-0 text-[11px] text-muted-foreground">
+                {selectedInstance.gameVersion}{selectedInstance.loader ? ` · ${selectedInstance.loader}` : ''}
+              </span>
             </div>
           ) : (
             <div className="space-y-1.5">
