@@ -50,14 +50,36 @@ pub struct TechnicMeta {
 
 /// 从**已解压**的 `bin/modpack.jar` 解析 loader 元数据（Solder 管线专用）。
 ///
-/// Solder 分发的 Forge 本体在 basemods zip 的 `bin/modpack.jar`（期3 实测），
-/// 该 jar 内**无** `version.json`、**无** `forgeversion.properties`（GTNH 实测），
-/// Forge build 只能从 `fmlversion.properties` 的 `fmlbuild.build.number` 取
-/// （GTNH 实测 = 1614，对应 Forge `1.7.10-10.13.4.1614`）。
+/// 两级来源，优先 `version.json`：
+/// - 现代 Solder 包的 `bin/modpack.jar` 就是 Forge 版本 jar，内含 `version.json`
+///   （GTNH 2.8.4 实测：库坐标 `net.minecraftforge:forge:1.7.10-10.13.4.1614-1.7.10`），
+///   按 `libraries[]` 坐标识别即可拿到完整版本号；
+/// - 古董包只有 `fmlversion.properties`，只能取 `fmlbuild.build.number`（裸 build 号，
+///   如 `1614`；它拼不出可寻址的 artifact，调用方据此判定「探测不出」）。
 ///
-/// 返回 `(loader, loader_version)`；jar 缺失 / 无 fmlversion.properties /
-/// build 号非纯数字一律 `None`（宁可退回 vanilla+jarmod 行为，不造假版本号）。
+/// 返回 `(loader, loader_version)`；jar 缺失 / 两级来源都识别不出 / build 号非纯数字
+/// 一律 `None`（宁可退回 vanilla+jarmod 行为，不造假版本号）。
 pub fn loader_meta_from_modpack_jar(jar_path: &Path) -> (Option<String>, Option<String>) {
+    if let Some(meta) = loader_meta_from_modpack_version_json(jar_path) {
+        return meta;
+    }
+    loader_meta_from_modpack_fml(jar_path)
+}
+
+/// `bin/modpack.jar` 内 `version.json` 的 loader 识别；识别不出返回 None。
+fn loader_meta_from_modpack_version_json(
+    jar_path: &Path,
+) -> Option<(Option<String>, Option<String>)> {
+    let content = read_jar_properties_entry(jar_path, "version.json")?;
+    let root: Value = serde_json::from_str(&content).ok()?;
+    let (loader, version) = detect_loader(&root);
+    loader.as_ref()?;
+    version.as_ref()?;
+    Some((loader, version))
+}
+
+/// `bin/modpack.jar` 内 `fmlversion.properties` 的裸 build 号（古董包兜底）。
+fn loader_meta_from_modpack_fml(jar_path: &Path) -> (Option<String>, Option<String>) {
     let Some(content) = read_jar_properties_entry(jar_path, "fmlversion.properties") else {
         return (None, None);
     };
@@ -848,8 +870,8 @@ mod tests {
 
     #[test]
     fn loader_meta_from_modpack_jar_reads_fml_build() {
-        // GTNH 实测形态：jar 内无 version.json / forgeversion.properties，
-        // 只有 fmlversion.properties（build.number=1614 → Forge 1.7.10-10.13.4.1614）。
+        // 只有 fmlversion.properties 的古董包兜底路径：取裸 build 号
+        // （1614 → 拼不出可寻址 artifact，调用方据此判「探测不出」）。
         let dir = temp_zip_dir("gtnh-probe");
         let jar = write_modpack_jar_file(
             &dir,
@@ -861,6 +883,39 @@ mod tests {
         let (loader, ver) = super::loader_meta_from_modpack_jar(&jar);
         assert_eq!(loader.as_deref(), Some("forge"));
         assert_eq!(ver.as_deref(), Some("1614"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// GTNH 2.8.4 实测形态：`bin/modpack.jar` 内含 `version.json`（库坐标
+    /// `net.minecraftforge:forge:1.7.10-10.13.4.1614-1.7.10`）。必须优先采信它拿到
+    /// **完整版本号**——退回 fmlversion 的裸 build 号 `1614` 拼不出可寻址 artifact，
+    /// 探测会恒失败并退回 vanilla+jarmod（装上却不加载 mod）。
+    #[test]
+    fn loader_meta_from_modpack_jar_prefers_version_json() {
+        let dir = temp_zip_dir("gtnh-probe-vjson");
+        let version_json = serde_json::json!({
+            "id": "1.7.10-Forge10.13.4.1614-1.7.10",
+            "inheritsFrom": "1.7.10",
+            "mainClass": "net.minecraft.launchwrapper.Launch",
+            "libraries": [
+                { "name": "net.minecraftforge:forge:1.7.10-10.13.4.1614-1.7.10" },
+                { "name": "net.minecraft:launchwrapper:1.12" }
+            ]
+        })
+        .to_string();
+        let jar = write_modpack_jar_file(
+            &dir,
+            &[
+                ("version.json", version_json.as_bytes()),
+                (
+                    "fmlversion.properties",
+                    b"fmlbuild.build.number=1614\nfmlbuild.mcversion=1.7.10\n".as_slice(),
+                ),
+            ],
+        );
+        let (loader, ver) = super::loader_meta_from_modpack_jar(&jar);
+        assert_eq!(loader.as_deref(), Some("forge"));
+        assert_eq!(ver.as_deref(), Some("10.13.4.1614"));
         std::fs::remove_dir_all(&dir).ok();
     }
 
