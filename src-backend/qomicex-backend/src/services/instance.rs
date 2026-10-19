@@ -171,57 +171,6 @@ pub enum RenameFailure {
 /// retain、第 5 步 scanned_dirs 兜底、测试三处同源，防漂移）。
 const MODULE_INSTALLING_GRACE: chrono::Duration = chrono::Duration::minutes(10);
 
-/// 安装中标记：安装开始时写入版本目录，成功后删除；异常退出/回滚失败时用于识别残留。
-const INSTALLING_MARKER: &str = ".qomicex-installing";
-/// 标记保鲜期：超过视为崩溃残留，不再保护该目录（防止进程被杀后永久保留）。
-const INSTALLING_MARKER_TTL: std::time::Duration = std::time::Duration::from_secs(2 * 60 * 60);
-
-/// 版本目录里是否有可用的版本 JSON（任意 `*.json`，不限定文件名）。
-fn version_dir_has_json(game_dir: &str, name: &str) -> bool {
-    let dir = std::path::Path::new(game_dir).join("versions").join(name);
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
-    };
-    entries.flatten().any(|e| {
-        e.path()
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
-    })
-}
-
-/// 安装标记是否仍在保鲜期内。
-fn installing_marker_fresh(game_dir: &str, name: &str) -> bool {
-    let marker = std::path::Path::new(game_dir)
-        .join("versions")
-        .join(name)
-        .join(INSTALLING_MARKER);
-    marker
-        .metadata()
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.elapsed().ok())
-        .is_some_and(|age| age < INSTALLING_MARKER_TTL)
-}
-
-fn record_within_grace(created_at: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> bool {
-    matches!(
-        created_at.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()),
-        Some(t) if now.signed_duration_since(t) < MODULE_INSTALLING_GRACE
-    )
-}
-
-/// 是否是「安装没走完」的残留记录（issue #224）。
-///
-/// 只对**安装流程创建的记录**（有 `created_at`）判定：目录里没有版本 JSON、没有
-/// 新鲜安装标记、且已过宽限期 —— 满足这三条说明安装早已中断且回滚失败，记录不应
-/// 再出现在实例列表里。手工放置的版本目录（`created_at` 为空）不在此列。
-fn is_abandoned_install(inst: &GameInstance, now: chrono::DateTime<chrono::Utc>) -> bool {
-    inst.created_at.is_some()
-        && !record_within_grace(inst.created_at.as_deref(), now)
-        && !version_dir_has_json(&inst.game_dir, &inst.name)
-        && !installing_marker_fresh(&inst.game_dir, &inst.name)
-}
-
 /// 实例服务（对应 C# InstanceService）。
 pub struct InstanceService {
     file_path: PathBuf,
@@ -452,25 +401,6 @@ impl InstanceService {
         self.try_delete(id).ok().flatten()
     }
 
-    /// 标记版本目录正在安装（与 `clear_installing` 成对使用）。
-    ///
-    /// 标记让 `sync_from_disk` 在版本 JSON 尚未写出的窗口内保留实例；异常退出留下的
-    /// 标记超过保鲜期后自动失效，避免崩溃残留永久占位。
-    pub fn mark_installing(game_dir: &str, name: &str) {
-        let dir = std::path::Path::new(game_dir).join("versions").join(name);
-        let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(dir.join(INSTALLING_MARKER), b"");
-    }
-
-    /// 清除安装标记（安装成功或回滚开始后）。
-    pub fn clear_installing(game_dir: &str, name: &str) {
-        let marker = std::path::Path::new(game_dir)
-            .join("versions")
-            .join(name)
-            .join(INSTALLING_MARKER);
-        let _ = std::fs::remove_file(marker);
-    }
-
     /// 删除实例记录 + 版本隔离目录（目录删除失败 → Err，记录已回滚保留）。
     ///
     /// 顺序：先删记录（防删除期间被扫描/启动引用），再删目录；目录删除失败时
@@ -631,11 +561,6 @@ impl InstanceService {
                 .join(&inst.name)
                 .is_dir();
             if dir_exists {
-                // 目录存在但没有版本 JSON，且没有新鲜安装标记、记录也已过宽限期：
-                // 未完成安装的残留目录，丢弃记录，避免列表出现「只有 jar」的坏实例。
-                if is_abandoned_install(inst, now) {
-                    return false;
-                }
                 return true;
             }
             match inst
@@ -676,20 +601,6 @@ impl InstanceService {
                     .unwrap_or_else(|| scanned.name.clone()),
             };
             let key = (scanned.game_dir.clone(), dir_name.clone());
-
-            // 只有 jar / 空目录 = 未完成的安装：不据此新建实例记录。
-            // 安装中的目录由标记保护（`INSTALLING_MARKER_TTL` 内），不受此过滤影响。
-            let dir_path = std::path::Path::new(&scanned.game_dir)
-                .join("versions")
-                .join(&dir_name);
-            if !json_index.contains_key(&key)
-                && dir_path.is_dir()
-                && !version_dir_has_json(&scanned.game_dir, &dir_name)
-                && !installing_marker_fresh(&scanned.game_dir, &dir_name)
-            {
-                tracing::warn!(dir = %dir_name, "scan: 跳过缺少版本 JSON 的残留目录");
-                continue;
-            }
 
             if let Some(&json_idx) = json_index.get(&key) {
                 // JSON 中已有记录，合并（磁盘信息 + JSON 元数据）
@@ -783,10 +694,6 @@ impl InstanceService {
                 .join("versions")
                 .join(&inst.name)
                 .is_dir();
-            if dir_exists && is_abandoned_install(inst, now) {
-                // 残留的未完成安装：记录不再列出（目录留给手动清理/重装覆盖）。
-                continue;
-            }
             if scanned_dirs.contains(&inst.game_dir) && !dir_exists {
                 // 同目录已被扫描且该记录的版本目录确实不存在：正常实例已在合并段
                 // 处理；宽限期记录在此兜底（目录尚未落盘的安装中实例）。
@@ -1631,145 +1538,6 @@ mod tests {
 
     /// 回归：幽灵实例防线。try_delete 正常删目录 → Ok；删除失败 → Err 且记录恢复
     /// （否则残留目录会被 sync_from_disk 反推成幽灵实例复活）。
-    /// issue #224：取消安装后残留的「只有 jar、没有 JSON」目录，扫描时不得变成实例。
-    #[test]
-    fn sync_skips_ghost_dir_without_json() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let home = std::env::temp_dir().join(format!("qomicex-224-ghost-{}", uuid::Uuid::new_v4()));
-        let _ = std::fs::create_dir_all(&home);
-        std::env::set_var("QOMICEX_HOME", &home);
-
-        let game_dir = home.join("games").join("mc");
-        let broken = game_dir.join("versions").join("Broken");
-        std::fs::create_dir_all(&broken).unwrap();
-        std::fs::write(broken.join("Broken.jar"), b"jar").unwrap();
-
-        let service = InstanceService::new();
-        let scanned = vec![ScannedVersionInfo {
-            name: "Broken".to_string(),
-            dir_name: Some("Broken".to_string()),
-            game_version: "1.20.1".to_string(),
-            game_dir: game_dir.to_str().unwrap().to_string(),
-            loader: None,
-            loader_version: None,
-            icon_data: None,
-            modpack_name: None,
-            modpack_version: None,
-            modpack_author: None,
-            modpack_summary: None,
-        }];
-        let result = service.sync_from_disk(&scanned);
-        assert!(
-            result.iter().all(|i| i.name != "Broken"),
-            "缺少版本 JSON 的残留目录不应生成实例: {:?}",
-            result.iter().map(|i| &i.name).collect::<Vec<_>>()
-        );
-        let _ = std::fs::remove_dir_all(&home);
-    }
-
-    /// issue #224：安装标记存在时目录必须保留（JSON 要到收尾才写出）。
-    #[test]
-    fn sync_keeps_installing_dir_with_marker() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let home = std::env::temp_dir().join(format!("qomicex-224-mark-{}", uuid::Uuid::new_v4()));
-        let _ = std::fs::create_dir_all(&home);
-        std::env::set_var("QOMICEX_HOME", &home);
-
-        let game_dir = home.join("games").join("mc");
-        let dir = game_dir.join("versions").join("Installing");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("Installing.jar"), b"jar").unwrap();
-        InstanceService::mark_installing(game_dir.to_str().unwrap(), "Installing");
-
-        let service = InstanceService::new();
-        service.create(make_instance(
-            "Installing",
-            game_dir.to_str().unwrap(),
-            Some(true),
-        ));
-        let scanned = vec![ScannedVersionInfo {
-            name: "Installing".to_string(),
-            dir_name: Some("Installing".to_string()),
-            game_version: "1.20.1".to_string(),
-            game_dir: game_dir.to_str().unwrap().to_string(),
-            loader: None,
-            loader_version: None,
-            icon_data: None,
-            modpack_name: None,
-            modpack_version: None,
-            modpack_author: None,
-            modpack_summary: None,
-        }];
-        let result = service.sync_from_disk(&scanned);
-        assert!(
-            result.iter().any(|i| i.name == "Installing"),
-            "安装标记有效期内不得丢弃实例: {:?}",
-            result.iter().map(|i| &i.name).collect::<Vec<_>>()
-        );
-        let _ = std::fs::remove_dir_all(&home);
-    }
-
-    /// issue #224：过了宽限期仍无 JSON 的记录（回滚失败的残留）应从列表移除。
-    #[test]
-    fn sync_drops_stale_record_without_json() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let home = std::env::temp_dir().join(format!("qomicex-224-stale-{}", uuid::Uuid::new_v4()));
-        let _ = std::fs::create_dir_all(&home);
-        std::env::set_var("QOMICEX_HOME", &home);
-
-        let game_dir = home.join("games").join("mc");
-        let dir = game_dir.join("versions").join("Stale");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("Stale.jar"), b"jar").unwrap();
-
-        let service = InstanceService::new();
-        let mut inst = make_instance("Stale", game_dir.to_str().unwrap(), Some(true));
-        inst.created_at = Some(
-            (chrono::Utc::now() - MODULE_INSTALLING_GRACE - chrono::Duration::minutes(1))
-                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-        );
-        service.create(inst);
-
-        let scanned = vec![ScannedVersionInfo {
-            name: "Stale".to_string(),
-            dir_name: Some("Stale".to_string()),
-            game_version: "1.20.1".to_string(),
-            game_dir: game_dir.to_str().unwrap().to_string(),
-            loader: None,
-            loader_version: None,
-            icon_data: None,
-            modpack_name: None,
-            modpack_version: None,
-            modpack_author: None,
-            modpack_summary: None,
-        }];
-        let result = service.sync_from_disk(&scanned);
-        assert!(
-            result.iter().all(|i| i.name != "Stale"),
-            "无 JSON 且无安装标记的过期记录应被移除: {:?}",
-            result.iter().map(|i| &i.name).collect::<Vec<_>>()
-        );
-        let _ = std::fs::remove_dir_all(&home);
-    }
-
-    /// 回滚：标记随删除一起清除；`clear_installing` 幂等。
-    #[test]
-    fn clear_installing_removes_marker_and_is_idempotent() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let home = std::env::temp_dir().join(format!("qomicex-224-clear-{}", uuid::Uuid::new_v4()));
-        let _ = std::fs::create_dir_all(&home);
-        std::env::set_var("QOMICEX_HOME", &home);
-        let game_dir = home.join("games").join("mc");
-        let game = game_dir.to_str().unwrap();
-
-        InstanceService::mark_installing(game, "X");
-        assert!(installing_marker_fresh(game, "X"));
-        InstanceService::clear_installing(game, "X");
-        assert!(!installing_marker_fresh(game, "X"));
-        InstanceService::clear_installing(game, "X");
-        let _ = std::fs::remove_dir_all(&home);
-    }
-
     #[test]
     fn sync_from_disk_grace_period_keeps_installing_isolated_instance() {
         // GTNH 实测缺陷：整合包管线先 create 记录（版本目录未落盘），此期间
