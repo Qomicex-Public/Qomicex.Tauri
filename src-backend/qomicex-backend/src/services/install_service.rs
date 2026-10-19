@@ -380,7 +380,20 @@ pub async fn run_install_pipeline(
                 loader_a.as_deref().unwrap_or("loader"),
                 lver
             ));
-            download_installer_jar(&h_a, &mgr_a, &path, &matched.url, &hdrs_a).await?;
+            let prefer_official = crate::services::source_policy::SourcePlan::load().vanilla
+                == crate::services::source_policy::VanillaSource::Official;
+            download_installer_jar(
+                &h_a,
+                &mgr_a,
+                &path,
+                &matched.url,
+                loader_a.as_deref().unwrap_or(""),
+                &gv_a,
+                lver,
+                &hdrs_a,
+                prefer_official,
+            )
+            .await?;
             h_a.mark_step("installer", "done");
             installer_path = Some(path);
         }
@@ -763,7 +776,11 @@ async fn download_installer_jar(
     mgr: &DownloadManager,
     path: &Path,
     url: &str,
+    loader: &str,
+    game_version: &str,
+    loader_version: &str,
     cf_headers: &[(String, String)],
+    prefer_official: bool,
 ) -> Result<(), String> {
     if path.exists() {
         let valid = std::fs::File::open(path)
@@ -781,13 +798,53 @@ async fn download_installer_jar(
     } else {
         Vec::new()
     };
-    download_batch(
+    // BMCLAPI 的 forge/download 端点会回 200 却不发 body（实测），而它的 URL 形状
+    // 与官方 maven 不同，下载器无法自行改写。这里按加载器版本补出官方 URL，按偏好
+    // 决定主选：官方优先时直接走 maven，镜像优先时留作兜底。
+    let official = official_installer_url(loader, game_version, loader_version);
+    let (primary, fallback) = match official {
+        Some(official) if official != url && prefer_official => (official, Some(url.to_string())),
+        Some(official) if official != url => (url.to_string(), Some(official)),
+        _ => (url.to_string(), None),
+    };
+    let mut extra = std::collections::HashMap::new();
+    if let Some(fallback) = fallback {
+        extra.insert(primary.clone(), vec![fallback]);
+    }
+    download_batch_with_mirrors(
         handle,
         mgr,
-        vec![(url.to_string(), path.to_path_buf(), headers)],
+        vec![(primary, path.to_path_buf(), headers)],
         Some("installer"),
+        extra,
     )
     .await
+}
+
+/// 官方加载器安装器 URL（Forge / NeoForge）。
+///
+/// NeoForge 1.20.1 仍发布在 net/neoforged/forge 坐标下（版本形如 1.20.1-47.1.x），
+/// 1.20.2 起才改为 net/neoforged/neoforge 且版本号不带游戏版本前缀。
+fn official_installer_url(
+    loader: &str,
+    game_version: &str,
+    loader_version: &str,
+) -> Option<String> {
+    match loader.to_ascii_lowercase().as_str() {
+        "forge" => Some(format!(
+            "https://maven.minecraftforge.net/net/minecraftforge/forge/{game_version}-{loader_version}/forge-{game_version}-{loader_version}-installer.jar"
+        )),
+        "neoforge" => Some(if game_version == "1.20.1" {
+            format!(
+                "https://maven.neoforged.net/releases/net/neoforged/forge/{game_version}-{loader_version}/forge-{game_version}-{loader_version}-installer.jar"
+            )
+        } else {
+            format!(
+                "https://maven.neoforged.net/releases/net/neoforged/neoforge/{loader_version}/neoforge-{loader_version}-installer.jar"
+            )
+        }),
+        _ => None,
+    }
 }
 
 /// 获取加载器缺失依赖库（源 `GetMissLoaderLibraries` 的参数映射逐字对齐）。
@@ -1432,6 +1489,24 @@ pub(crate) async fn download_batch(
     files: Vec<DownloadTarget>,
     step_id: Option<&str>,
 ) -> Result<(), String> {
+    download_batch_with_mirrors(
+        handle,
+        mgr,
+        files,
+        step_id,
+        std::collections::HashMap::new(),
+    )
+    .await
+}
+
+/// 与 download_batch 相同，额外按主 URL 附加镜像（安装器等无法从 URL 推导兜底的场景）。
+async fn download_batch_with_mirrors(
+    handle: &InstallHandle,
+    mgr: &DownloadManager,
+    files: Vec<DownloadTarget>,
+    step_id: Option<&str>,
+    mut extra_by_url: std::collections::HashMap<String, Vec<String>>,
+) -> Result<(), String> {
     if files.is_empty() {
         if let Some(sid) = step_id {
             handle.set_step_percent(sid, 100.0);
@@ -1505,12 +1580,14 @@ pub(crate) async fn download_batch(
     for (url, dest, headers) in files {
         // 父目录已在判重前统一创建，这里只兜底极端情况（判重后父目录被删）。
         let mut mirrors = crate::services::source_policy::mod_fallbacks(&url, &plan);
+        let extra = extra_by_url.remove(&url);
         mirrors.extend(crate::services::source_policy::vanilla_fallback_urls(
             &url, &plan,
         ));
         // 查表键与判重键一致；attach_mirrors 会跳过与主 URL 相同的纯冗余项与既有镜像。
         let key = dedup_key(&dest);
         let before = mirrors.len();
+        attach_mirrors(&mut mirrors, &url, extra);
         attach_mirrors(&mut mirrors, &url, extra_mirrors.remove(&key));
         attached_urls += mirrors.len() - before;
         // 补上被合并条目自带的鉴权头（保留条目没有头时）。
@@ -1849,6 +1926,38 @@ async fn poll_task_states(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn official_forge_installer_url_uses_maven_coordinate() {
+        assert_eq!(
+            official_installer_url("Forge", "1.20.1", "47.4.0").as_deref(),
+            Some(
+                "https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1-47.4.0/forge-1.20.1-47.4.0-installer.jar"
+            )
+        );
+    }
+
+    #[test]
+    fn official_neoforge_installer_url_depends_on_game_version() {
+        assert_eq!(
+            official_installer_url("NeoForge", "1.20.1", "47.1.106").as_deref(),
+            Some(
+                "https://maven.neoforged.net/releases/net/neoforged/forge/1.20.1-47.1.106/forge-1.20.1-47.1.106-installer.jar"
+            )
+        );
+        assert_eq!(
+            official_installer_url("NeoForge", "1.21.1", "21.1.172").as_deref(),
+            Some(
+                "https://maven.neoforged.net/releases/net/neoforged/neoforge/21.1.172/neoforge-21.1.172-installer.jar"
+            )
+        );
+    }
+
+    #[test]
+    fn official_installer_url_is_none_for_other_loaders() {
+        assert_eq!(official_installer_url("Fabric", "1.20.1", "0.15.0"), None);
+        assert_eq!(official_installer_url("Cleanroom", "1.12.2", "0.2.5"), None);
+    }
 
     #[cfg(windows)]
     #[test]
