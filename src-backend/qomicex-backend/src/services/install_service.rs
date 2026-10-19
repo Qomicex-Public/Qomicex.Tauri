@@ -133,6 +133,11 @@ pub async fn run_install_pipeline(
     } = data;
 
     let game_root = absolute_path(&game_dir);
+    // 安装中标记：版本 JSON 通常到收尾才写出，期间扫描到「只有 jar」的目录不能当残缺实例。
+    crate::services::instance::InstanceService::mark_installing(
+        game_root.to_str().unwrap_or_default(),
+        &version_dir_name,
+    );
     let mirror = if download_source_id == 1 {
         DownloadMirror::Bmclapi
     } else {
@@ -678,6 +683,10 @@ pub async fn run_install_pipeline(
     }
 
     handle.mark_step("finalize", "done");
+    crate::services::instance::InstanceService::clear_installing(
+        game_root.to_str().unwrap_or_default(),
+        &version_dir_name,
+    );
     let _ = download_threads;
     Ok(())
 }
@@ -771,6 +780,7 @@ pub(crate) fn ensure_not_cancelled(handle: &InstallHandle) -> Result<(), String>
 }
 
 /// 下载加载器安装器 jar；已存在且为有效 zip 时跳过（源 `DownloadLoaderJar`）。
+#[allow(clippy::too_many_arguments)]
 async fn download_installer_jar(
     handle: &InstallHandle,
     mgr: &DownloadManager,
