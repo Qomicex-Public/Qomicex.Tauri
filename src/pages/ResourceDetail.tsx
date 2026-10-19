@@ -111,12 +111,14 @@ function LoaderBadge({ loader }: { loader: string }) {
   )
 }
 
-function DependenciesCard({ resourceId, source, versions, gameVersion, loader, fromCategory, fromSource }: {
+function DependenciesCard({ resourceId, source, versions, gameVersion, loader, fromCategory, fromSource, instanceId }: {
   resourceId: string
   source: string
   versions: ResourceVersion[]
   gameVersion: string
   loader: string
+  /** 指定实例：前置详情与返回都必须继续带着它，否则安装目标会丢。 */
+  instanceId?: string
   /**
    * 来源列表的筛选值：前置模组链是「列表 → 详情 → 前置详情」的第二跳，若不继续
    * 透传，用户在第二跳后返回就彻底丢失聚合上下文。
@@ -168,6 +170,7 @@ function DependenciesCard({ resourceId, source, versions, gameVersion, loader, f
               const dn = new URLSearchParams()
               if (fromCategory !== 'mod') dn.set('fromCategory', fromCategory)
               if (fromSource !== dSource) dn.set('fromSource', fromSource)
+              if (instanceId) dn.set('instanceId', instanceId)
               const depFrom = dn.toString() ? `&${dn.toString()}` : ''
               return (
               <Link
@@ -625,6 +628,7 @@ export default function ResourceDetailPage() {
   backQuery.set('sort', sort)
   if (urlGameVersion) backQuery.set('gameVersion', urlGameVersion)
   if (urlLoader) backQuery.set('loader', urlLoader)
+  if (instanceIdParam) backQuery.set('instanceId', instanceIdParam)
 
   const backHref = fromInstanceMods && instanceIdParam
     ? `/instances/${instanceIdParam}?tab=mods`
@@ -949,6 +953,7 @@ export default function ResourceDetailPage() {
                   loader={selectedLoader}
                   fromCategory={fromCategory}
                   fromSource={fromSource}
+                  instanceId={instanceIdParam || undefined}
                 />
               )}
 

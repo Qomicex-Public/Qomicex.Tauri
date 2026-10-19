@@ -6,6 +6,7 @@ import { deleteMod } from '../api/instance-files.ts'
 import { addTask, updateTask } from '../stores/downloadStore.ts'
 import { waitForCompletion } from './updateMods.ts'
 import { cacheInvalidate } from './simple-cache.ts'
+import { invalidateInstalledMods } from './installedResources.ts'
 import { getSettings } from '../api/settings.ts'
 import { formatDownloadFileName, dedupFileName } from './download-naming.ts'
 import { normalizeResourceKind } from './downloadGroups.ts'
@@ -198,6 +199,8 @@ async function aggregate(
 
     // 缓存必须在删除完成之后失效：否则刷新的列表可能仍含刚删掉的旧文件。
     cacheInvalidate(`api-instance-${instanceId}-mods`)
+    // 「已安装」角标读的是同一批元数据，安装完成后一并失效。
+    invalidateInstalledMods(instanceId)
 
     if (failedCleanup.length > 0) {
       updateTask(batchId, {

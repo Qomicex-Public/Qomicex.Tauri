@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useI18n } from '../i18n/index.tsx'
-import { ChevronDown, Download, Folder, FolderPlus, Heart, Info, Pencil, RotateCw, Search, Tag, Trash2, User, X } from 'lucide-react'
+import { Box, ChevronDown, Download, Folder, FolderPlus, Heart, Info, Pencil, RotateCw, Search, Tag, Trash2, User, X } from 'lucide-react'
 import { RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { Input } from '../components/ui'
@@ -18,6 +18,8 @@ import { Combobox } from '../components/ui'
 import { cn } from '../components/ui'
 import { searchResources, getResourceCategories, getResourceLoaders, toResourceItem, type ResourceCategory } from '../api/resource.ts'
 import { batchLookupChineseNames } from '../api/mcmod.ts'
+import { getInstance } from '../api/instance.ts'
+import { installedResourceKey, loadInstalledMods, subscribeInstalledMods, type InstalledModEntry, type InstalledModMap } from '../lib/installedResources.ts'
 import type { ResourceItem, ResourceFavorite } from '../types/index.ts'
 import { translateCategory } from '../lib/categoryTranslations.ts'
 import ResourceInstallDialog from '../components/ResourceInstallDialog.tsx'
@@ -375,7 +377,7 @@ async function loadCnNames(items: ResourceItem[]): Promise<Record<string, string
 
 function ResourceCard({
   item, category, source, keyword, sort, gameVersion, loader, instanceId, tags, onInstall, cnName,
-  isFavorite, onToggleFavorite, favoriteBusy, folderNames, note, itemTags, onEdit,
+  isFavorite, onToggleFavorite, favoriteBusy, folderNames, note, itemTags, onEdit, installed,
 }: {
   item: ResourceItem
   /** 页面级筛选值（聚合分类下与条目真实类型不同）：决定返回列表时回到哪个筛选。 */
@@ -398,6 +400,8 @@ function ResourceCard({
   note?: string | null
   itemTags?: string[]
   onEdit?: () => void
+  /** 指定实例里已安装的同名模组（仅模组检测）；空 = 未安装或不检测。 */
+  installed?: InstalledModEntry | null
 }) {
   const { t, lang } = useI18n()
   // 卡片动作一律用条目真实类型（聚合分类下每项不同），见 realCategory 注释。
@@ -418,6 +422,15 @@ function ResourceCard({
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-base font-semibold text-foreground">{lang.startsWith('zh') && cnName ? <>{cnName}<span className="ml-1.5 text-xs font-normal text-muted-foreground/60">| {item.title}</span></> : item.title}</h3>
                 <Badge variant="secondary" className="rounded-full px-2.5 py-0.5">{getSourceLabel(item.source)}</Badge>
+                {installed && (
+                  <Badge
+                    variant="outline"
+                    className="rounded-full border-emerald-500/40 bg-emerald-500/10 px-2.5 py-0.5 text-emerald-600 dark:text-emerald-400"
+                    title={installed.version ? `${installed.fileName} · ${installed.version}` : installed.fileName}
+                  >
+                    {t('resource.installed')}
+                  </Badge>
+                )}
                 {item.latestVersion && <Badge variant="outline" className="rounded-full px-2.5 py-0.5">{item.latestVersion}</Badge>}
               </div>
               <p className="line-clamp-2 text-sm leading-6 text-muted-foreground">{item.description}</p>
@@ -482,19 +495,21 @@ function ResourceCard({
           </Badge>
           {/* 右侧动作区：单行 4 个**等尺寸、等样式**的图标按钮（安装 / 详情 / 编辑 / 收藏），
               整体在卡片右侧水平居中排列。安装不再是「放大 + 主色」——四个动作在这里是
-              等价可选项，任何一个都不该比其它更抢眼。
+              等价可选项，任何一个都不该比其它更抢眼。唯一的例外是「已安装」：安装动作
+              变成带文字的「更换版本」，因为此时它不再是安装，而是替换现有版本。
               默认隐藏、hover 卡片时从右侧滑入；键盘可达由 group-focus-within 兜底
               （Tab 到任一按钮即整行显形，避免键盘用户聚焦到「看不见的按钮」）。 */}
           <div className="flex flex-row items-center gap-2 transition-all duration-200 sm:translate-x-3 sm:opacity-0 sm:group-hover:translate-x-0 sm:group-hover:opacity-100 sm:group-focus-within:translate-x-0 sm:group-focus-within:opacity-100">
-            <Tooltip content={t('resource.install')}>
+            <Tooltip content={installed ? t('resource.changeVersion') : t('resource.install')}>
               <Button
                 variant="outline"
-                size="icon"
-                className="h-9 w-9"
-                aria-label={t('resource.install')}
+                size={installed ? 'sm' : 'icon'}
+                className={installed ? 'h-9 px-3' : 'h-9 w-9'}
+                aria-label={installed ? t('resource.changeVersion') : t('resource.install')}
                 onClick={() => onInstall(item)}
               >
                 <Download />
+                {installed && <span>{t('resource.changeVersion')}</span>}
               </Button>
             </Tooltip>
             <Tooltip content={t('resource.viewDetail')}>
@@ -599,6 +614,10 @@ export default function ResourceCenter() {
     return tagsSupported(source, categoryInitFixed) ? normalizeTags(raw, source, categoryInitFixed) : []
   })
   const instanceId = searchParams.get('instanceId') ?? ''
+  /** 指定实例的展示名（实例被删/请求失败时回退显示 id，避免标签空白）。 */
+  const [instanceName, setInstanceName] = useState('')
+  /** 指定实例里已安装的模组索引；仅在模组视图 / 聚合视图加载。 */
+  const [installedMods, setInstalledMods] = useState<InstalledModMap>(() => new Map())
   // 视图不参与 freshEntry 判定：从详情页带 `?view=favorites` 返回时，筛选未变，
   // 应恢复快照（含 items 与 view），从实例内带新筛选跳进来才视为全新进入。
   const urlView = searchParams.get('view')
@@ -686,6 +705,35 @@ export default function ResourceCenter() {
   }, [filtersCollapsed])
 
   useEffect(() => { void loadFavorites() }, [loadFavorites])
+
+  useEffect(() => {
+    if (!instanceId) { setInstanceName(''); return }
+    let cancelled = false
+    getInstance(instanceId)
+      .then((inst) => { if (!cancelled) setInstanceName(inst?.name ?? '') })
+      .catch(() => { if (!cancelled) setInstanceName('') })
+    return () => { cancelled = true }
+  }, [instanceId])
+
+  // 已安装检测只覆盖模组：材质包 / 光影 / 数据包的本地元数据没有可靠远程 id。
+  const modsDetectable = category === 'mod' || category === AGGREGATE_CATEGORY
+  useEffect(() => {
+    // 切实例 / 切分类时先清空，避免把上一个实例的「已安装」角标带到新列表。
+    setInstalledMods(new Map())
+    if (!instanceId || !modsDetectable) return
+    let cancelled = false
+    const refresh = () => {
+      loadInstalledMods(instanceId)
+        .then((map) => { if (!cancelled) setInstalledMods(map) })
+        // 元数据加载失败只是少一个「已安装」角标，不影响列表本身；订阅刷新失败保留旧数据。
+        .catch(() => {})
+    }
+    refresh()
+    // 安装 / 更换版本完成后 quickInstall 会失效缓存，这里跟着重扫一次，角标无需等页面重进。
+    const unsubscribe = subscribeInstalledMods(instanceId, refresh)
+    return () => { cancelled = true; unsubscribe() }
+  }, [instanceId, modsDetectable])
+
   // 收藏夹列表只在收藏视图需要（搜索视图不产生额外请求）。
   useEffect(() => {
     if (view !== 'favorites') return
@@ -1241,8 +1289,31 @@ export default function ResourceCenter() {
 
   const clearVersion = () => setGameVersion('')
   const clearLoader = () => setLoader('')
+  /** 取消实例指定：回到普通资源中心，安装时重新选择实例。 */
+  const clearInstance = () => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('instanceId')
+    setSearchParams(next, { replace: true })
+  }
 
   const currentSortOptions = sortOptionsFor(category, source)
+
+  // 指定实例标签：筛选区展开时跟在加载器后面（按入口顺序），收起时移到顶部工具行，
+  // 保证「这批资源会装到哪里」在任何状态下都可见。
+  const instanceChip = instanceId ? (
+    <span className="inline-flex h-9 max-w-[240px] items-center gap-1.5 rounded-md border border-primary/30 bg-primary/5 px-2.5 text-xs font-medium text-foreground">
+      <Box className="h-3.5 w-3.5 shrink-0 text-primary" />
+      <span className="min-w-0 truncate">{instanceName || instanceId}</span>
+      <button
+        type="button"
+        onClick={clearInstance}
+        aria-label={t('resource.clearInstance')}
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </span>
+  ) : null
 
   // 兜底归一：URL 直接进入聚合分类（或快照恢复）时 sort 可能仍是上一个来源的
   // 值（如 relevance），而聚合只有 downloads 一个选项 —— Select 没有匹配项会
@@ -1466,6 +1537,8 @@ export default function ResourceCenter() {
                 <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', filtersCollapsed && 'rotate-180')} />
               </Button>
             </Tooltip>
+
+            {(filtersCollapsed || view !== 'search') && instanceChip}
           </div>
 
           {/* 可折叠筛选区：默认收起，只留最顶的搜索行。收起时完全不渲染（而非 CSS
@@ -1526,6 +1599,12 @@ export default function ResourceCenter() {
                     </button>
                   )}
                 </div>
+              </div>
+            )}
+            {instanceChip && (
+              <div className="space-y-1">
+                <p className="text-[11px] font-medium text-muted-foreground">{t('resource.instanceLabel')}</p>
+                {instanceChip}
               </div>
             )}
             {tagsSupported(source, category) && (
@@ -1698,6 +1777,9 @@ export default function ResourceCenter() {
               // 卡片动作/收藏态一律用条目真实类型（聚合分类下每项不同）。
               const itemCategory = realCategory(item, category)
               const itemKey = favoriteKey(item.source, item.id, itemCategory)
+              const installed = itemCategory === 'mod'
+                ? installedMods.get(installedResourceKey(item.source, item.id)) ?? null
+                : null
               // 收藏视图下取出该条目的 P2 元数据（夹子名 / 备注 / 标签）与编辑入口。
               const fav = view === 'favorites'
                 ? favorites.find((f) => favoriteKey(f.source, f.id, f.category) === itemKey)
@@ -1727,6 +1809,7 @@ export default function ResourceCenter() {
                     note={fav?.note ?? null}
                     itemTags={fav?.tags ?? []}
                     onEdit={view === 'favorites' ? () => handleEditFavorite(item) : undefined}
+                    installed={installed}
                   />
                 </div>
               )
