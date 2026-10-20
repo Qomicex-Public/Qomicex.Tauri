@@ -11,6 +11,8 @@ export function getSystemInfo(): Promise<SystemInfo> {
 /** 本机区域判定（后端按时区算，见 `services::region`）。 */
 export interface RegionInfo {
   chinaMainland: boolean
+  /** 当前是否禁止新增离线账户（中国大陆 + 风口期开关）。 */
+  offlineLoginRestricted: boolean
 }
 
 export function getRegion(): Promise<RegionInfo> {

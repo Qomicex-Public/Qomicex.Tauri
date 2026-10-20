@@ -31,6 +31,7 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import { listen } from '@tauri-apps/api/event'
 import { useI18n } from '../i18n/index.tsx'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
+import { getRegion } from '../api/system.ts'
 
 function fmtErr(e: unknown): string {
   if (e instanceof ApiError) return e.displayMessage
@@ -120,6 +121,19 @@ export default function Accounts() {
     () => !accounts.some((a) => a.loginMethod === 'Microsoft'),
     [accounts],
   )
+  // 风口期开关：中国大陆禁止新增离线账户（后端同规则，前端只提前置灰）。
+  const [offlineLoginRestricted, setOfflineLoginRestricted] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    getRegion()
+      .then((r) => {
+        if (!cancelled) setOfflineLoginRestricted(r.offlineLoginRestricted)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
   const [addOpen, setAddOpen] = useState(false)
   const [addTab, setAddTab] = useState<'microsoft' | 'offline' | 'yggdrasil' | 'tongyi'>('microsoft')
   const [loading, setLoading] = useState(false)
@@ -260,10 +274,11 @@ export default function Accounts() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 门禁生效（语言切换/账户删除）时，强制回到 Microsoft tab，避免停留在被锁定的 tab 内容
+  // 门禁生效（语言切换/账户删除/区域限制）时，强制回到 Microsoft tab，避免停留在被锁定的 tab 内容
   useEffect(() => {
     if (needOfficial && addTab !== 'microsoft') setAddTab('microsoft')
-  }, [needOfficial, addTab])
+    else if (offlineLoginRestricted && addTab === 'offline') setAddTab('microsoft')
+  }, [needOfficial, offlineLoginRestricted, addTab])
 
   function startAdd() {
     setAddOpen(true)
@@ -855,7 +870,7 @@ export default function Accounts() {
         <DialogBody>
           <div className="mb-4 flex flex-wrap gap-1 rounded-lg bg-muted p-1">
             {(['microsoft', 'offline', 'yggdrasil', 'tongyi'] as const).map((tab) => {
-              const locked = needOfficial && tab !== 'microsoft'
+              const locked = (needOfficial && tab !== 'microsoft') || (offlineLoginRestricted && tab === 'offline')
               return (
                 <button
                   key={tab}
@@ -892,6 +907,13 @@ export default function Accounts() {
                   {t('accounts.goOfficial')}
                 </button>
               </div>
+            </div>
+          )}
+
+          {offlineLoginRestricted && (
+            <div className="mb-4 flex items-start gap-2 rounded-lg border border-border/60 bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+              <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <p className="flex-1">{t('errors.offlineDisabledInCn')}</p>
             </div>
           )}
 
