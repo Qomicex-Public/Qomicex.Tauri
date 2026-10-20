@@ -7,6 +7,7 @@ import gsap from 'gsap'
 import Sidebar from './Sidebar.tsx'
 import { TitleBar } from './TitleBar.tsx'
 import ScrollToTop from './ScrollToTop.tsx'
+import { ComplianceBanner } from './ComplianceBanner.tsx'
 import { getSettings, onSettingsChange } from '../api/settings.ts'
 import { get, API_BASE } from '../api/client.ts'
 import { useMessageBox } from './ui'
@@ -244,6 +245,7 @@ export default function Layout() {
         <Sidebar />
         <div className="flex flex-1 flex-col min-w-0">
           {!isLinux && !isMacos && <TitleBar />}
+          <ComplianceBanner />
           <div className="relative flex flex-1 min-w-0 overflow-hidden">
             <div className="absolute inset-0 bg-background/50" style={{ backdropFilter: blur > 0 ? `blur(${blur}px)` : 'none' }} />
             <main ref={mainRef} className="relative z-10 flex min-h-0 overflow-hidden flex-1">

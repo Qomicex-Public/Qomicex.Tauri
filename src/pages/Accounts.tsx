@@ -81,7 +81,7 @@ type MicrosoftStep = 'idle' | 'fetching-oauth' | 'waiting-auth' | 'fetching-info
 
 export default function Accounts() {
   const navigate = useNavigate()
-  const { t, lang } = useI18n()
+  const { t } = useI18n()
   const { error: msgError, confirm: msgConfirm } = useMessageBox()
 
   function fmtOAuthError(code: string): string {
@@ -113,10 +113,12 @@ export default function Accounts() {
   }
 
   const [accounts, setAccounts] = useState<Account[]>([])
-  // 版权合规：非 zh-CN 语言下需先有至少 1 个 Microsoft 正版账户，才允许新增离线/第三方账户。
+  // 合规前置（ADR-117）：账户库里没有 Microsoft 正版账户时，不允许新增离线账户。
+  // 后端 `AccountService::auto_set_default_on_save` 是同一规则的权威实现，这里只负责
+  // 提前把入口挡住并给出说明。
   const needOfficial = useMemo(
-    () => lang !== 'zh-CN' && !accounts.some((a) => a.loginMethod === 'Microsoft'),
-    [lang, accounts],
+    () => !accounts.some((a) => a.loginMethod === 'Microsoft'),
+    [accounts],
   )
   const [addOpen, setAddOpen] = useState(false)
   const [addTab, setAddTab] = useState<'microsoft' | 'offline' | 'yggdrasil' | 'tongyi'>('microsoft')

@@ -3736,6 +3736,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "http-body-util",
+ "iana-time-zone",
  "libc",
  "lz4_flex",
  "md-5",

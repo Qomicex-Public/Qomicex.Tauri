@@ -39,6 +39,8 @@ const CODE_TO_KEY: Record<string, string> = {
   PLUGIN_SIGNATURE_CERT_INVALID: 'errors.pluginSignatureCertInvalid',
   PLUGIN_SIGNATURE_HASH_MISMATCH: 'errors.pluginSignatureHashMismatch',
   NO_ROLLBACK_SNAPSHOT: 'errors.noRollbackSnapshot',
+  OFFICIAL_ACCOUNT_REQUIRED: 'errors.officialAccountRequired',
+  OFFLINE_DISABLED_IN_CN: 'errors.offlineDisabledInCn',
 }
 
 /** 错误码 → 翻译 key；未映射返回 null（调用方自行回退后端 message） */

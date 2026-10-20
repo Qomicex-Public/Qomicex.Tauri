@@ -27,6 +27,7 @@ pub mod parent_watch;
 pub mod plugin;
 pub mod plugin_signature;
 pub mod plugin_store;
+pub mod region;
 pub mod resource_favorite;
 pub mod resource_favorite_folder;
 pub mod scan_cache;

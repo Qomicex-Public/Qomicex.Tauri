@@ -105,6 +105,7 @@ pub fn router() -> Router<SharedState> {
         .route("/diagnostics/dump", post(diagnostics_dump))
         .route("/system/info", get(sysinfo))
         .route("/systeminfo", get(sysinfo))
+        .route("/system/region", get(region))
         .route("/system/open-url", post(open_url))
         .route("/settings", get(get_settings).put(put_settings))
         .route("/settings/data-dir", get(get_data_dir).put(put_data_dir))
@@ -226,6 +227,12 @@ async fn sysinfo() -> ApiResult<Json<SystemInfoResponse>> {
         git_commit,
         memory: total as i64,
         available_memory: avail as i64,
+    }))
+}
+
+async fn region() -> ApiResult<Json<RegionResponse>> {
+    Ok(Json(RegionResponse {
+        china_mainland: crate::services::region::machine_is_china_mainland(),
     }))
 }
 
