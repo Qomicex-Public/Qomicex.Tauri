@@ -8,6 +8,15 @@ export function getSystemInfo(): Promise<SystemInfo> {
   return get<SystemInfo>('/systeminfo')
 }
 
+/** 本机区域判定（后端按时区算，见 `services::region`）。 */
+export interface RegionInfo {
+  chinaMainland: boolean
+}
+
+export function getRegion(): Promise<RegionInfo> {
+  return get<RegionInfo>('/system/region')
+}
+
 export interface ProcessResourceUsage {
   pid: number
   cpuUsage: number

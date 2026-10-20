@@ -19,7 +19,76 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::error::{ApiError, ApiResult};
+use crate::services::region;
 use crate::settings::resolve_base_dir;
+
+/// 风口期开关：置 `true` 时，中国大陆机器不允许新增离线账户。
+///
+/// 现为 `false`：监管口径尚未明确，避免误伤存量离线玩家。需要收紧时只改这一行，
+/// 调用点与测试都不用动（见 ADR-117）。
+const RESTRICT_OFFLINE_LOGIN_IN_CN: bool = false;
+
+/// 新增账户的合规判定（ADR-117）。
+///
+/// 返回 `Some(error_code)` 表示拒绝。只拦「新增」：更新既有账户（改默认、刷新令牌）
+/// 照旧放行。Microsoft 账户任何时候都能新增——否则开关打开后大陆新用户连正版账户
+/// 都登录不了，等于自我锁死。在账户库里出现 Microsoft 账户之前，离线 / Yggdrasil /
+/// 统一通行证账户一律不允许新增——否则任何一条非官方登录都能绕过正版前置。
+///
+/// 正版凭据只认 Microsoft：Yggdrasil 与统一通行证是第三方认证服务器，不能证明
+/// 账号与正版授权绑定。
+fn account_creation_blocked(
+    login_method: &str,
+    accounts: &[StoredAccount],
+    is_new: bool,
+    restrict_in_china_mainland: bool,
+    is_china_mainland: bool,
+) -> Option<&'static str> {
+    if !is_new {
+        return None;
+    }
+    if login_method.eq_ignore_ascii_case("Microsoft") {
+        return None;
+    }
+    if restrict_in_china_mainland
+        && is_china_mainland
+        && login_method.eq_ignore_ascii_case("Offline")
+    {
+        return Some("OFFLINE_DISABLED_IN_CN");
+    }
+    let has_official = accounts
+        .iter()
+        .any(|a| a.login_method.eq_ignore_ascii_case("Microsoft"));
+    if has_official {
+        None
+    } else {
+        Some("OFFICIAL_ACCOUNT_REQUIRED")
+    }
+}
+
+/// `account_creation_blocked` 的调用封装：把错误码转成 `ApiError`。
+///
+/// 所有新增账户的落库口（`save_account` / `auto_set_default_on_save`）都必须先过这里，
+/// 否则 `/auth/yggdrasil`、`/auth/tongyi` 这类直接写库的路径会绕过规则。
+fn guard_account_creation(
+    login_method: &str,
+    accounts: &[StoredAccount],
+    is_new: bool,
+) -> ApiResult<()> {
+    match account_creation_blocked(
+        login_method,
+        accounts,
+        is_new,
+        RESTRICT_OFFLINE_LOGIN_IN_CN,
+        region::machine_is_china_mainland(),
+    ) {
+        Some(code) => Err(ApiError::forbidden(
+            code,
+            "Sign in with a Microsoft account before adding other accounts",
+        )),
+        None => Ok(()),
+    }
+}
 
 /// 存储的账号（源：StoredAccount，camelCase，随 accounts 列出）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -195,6 +264,7 @@ impl AccountService {
         let mut inner = self.lock.lock().await;
         let mut accounts = read_or_cached(&mut inner, &self.file_path).await?;
         let is_new = !accounts.iter().any(|a| a.uuid == account.uuid);
+        guard_account_creation(&account.login_method, &accounts, is_new)?;
         account.last_used = now_unix();
         if is_new {
             account.is_default = !accounts.iter().any(|a| a.is_default);
@@ -225,6 +295,8 @@ impl AccountService {
     pub async fn save_account(&self, account: &mut StoredAccount) -> ApiResult<()> {
         let mut inner = self.lock.lock().await;
         let mut accounts = read_or_cached(&mut inner, &self.file_path).await?;
+        let is_new = !accounts.iter().any(|a| a.uuid == account.uuid);
+        guard_account_creation(&account.login_method, &accounts, is_new)?;
         account.last_used = now_unix();
         if let Some(idx) = accounts.iter().position(|a| a.uuid == account.uuid) {
             accounts[idx] = account.clone();
@@ -378,3 +450,114 @@ fn now_unix() -> i64 {
 ///   按 CryptHelper 的 v1 头格式（version/salt/nonce/tag/commitment/len/ciphertext）实现。
 ///   此占位仅保证「接口形态」与源对齐，暂不影响功能（账号文件为明文 JSON）。
 fn _crypt_placeholder_open() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn account(login_method: &str) -> StoredAccount {
+        StoredAccount {
+            name: "p".to_string(),
+            uuid: "u".to_string(),
+            token: String::new(),
+            access_token: String::new(),
+            refresh_token: String::new(),
+            login_method: login_method.to_string(),
+            last_used: 0,
+            is_default: false,
+            server_url: None,
+            oauth_provider: None,
+            oauth_refresh_token: None,
+        }
+    }
+
+    #[test]
+    fn account_creation_blocked_without_official_account() {
+        assert_eq!(
+            account_creation_blocked("Offline", &[], true, false, false),
+            Some("OFFICIAL_ACCOUNT_REQUIRED")
+        );
+        let others = [
+            account("Offline"),
+            account("Yggdrasil"),
+            account("统一通行证"),
+        ];
+        assert_eq!(
+            account_creation_blocked("Offline", &others, true, false, false),
+            Some("OFFICIAL_ACCOUNT_REQUIRED")
+        );
+        // Yggdrasil / 统一通行证同样是绕过正版前置的入口。
+        assert_eq!(
+            account_creation_blocked("Yggdrasil", &[], true, false, false),
+            Some("OFFICIAL_ACCOUNT_REQUIRED")
+        );
+        assert_eq!(
+            account_creation_blocked("统一通行证", &[], true, false, false),
+            Some("OFFICIAL_ACCOUNT_REQUIRED")
+        );
+    }
+
+    #[test]
+    fn account_creation_allowed_with_official_account() {
+        let accounts = [account("Offline"), account("Microsoft")];
+        assert_eq!(
+            account_creation_blocked("Offline", &accounts, true, false, false),
+            None
+        );
+    }
+
+    #[test]
+    fn account_creation_guard_ignores_updates_and_official_logins() {
+        // 更新既有离线账户（is_new=false）不受限，存量玩家照常玩。
+        assert_eq!(
+            account_creation_blocked("Offline", &[], false, false, false),
+            None
+        );
+        // 首个账户是 Microsoft：不受「必须先有官方账户」影响。
+        assert_eq!(
+            account_creation_blocked("Microsoft", &[], true, false, false),
+            None
+        );
+    }
+
+    #[test]
+    fn account_creation_restricted_in_china_mainland_when_switch_on() {
+        let accounts = [account("Microsoft")];
+        assert_eq!(
+            account_creation_blocked("Offline", &accounts, true, true, true),
+            Some("OFFLINE_DISABLED_IN_CN")
+        );
+        // 开关打开但不在大陆：仍按「先有官方账户」规则。
+        assert_eq!(
+            account_creation_blocked("Offline", &accounts, true, true, false),
+            None
+        );
+        assert_eq!(
+            account_creation_blocked("Offline", &[], true, true, false),
+            Some("OFFICIAL_ACCOUNT_REQUIRED")
+        );
+    }
+
+    #[test]
+    fn account_creation_switch_on_never_blocks_microsoft_or_third_party() {
+        // 开关打开且在大陆，首个 Microsoft 账户仍可新增：否则新用户无法登录正版。
+        assert_eq!(
+            account_creation_blocked("Microsoft", &[], true, true, true),
+            None
+        );
+        assert_eq!(
+            account_creation_blocked("microsoft", &[], true, true, true),
+            None
+        );
+        // 开关只针对离线登录；已有官方账户时 Yggdrasil / 统一通行证照旧可加。
+        let accounts = [account("Microsoft")];
+        assert_eq!(
+            account_creation_blocked("Yggdrasil", &accounts, true, true, true),
+            None
+        );
+        assert_eq!(
+            account_creation_blocked("统一通行证", &accounts, true, true, true),
+            None
+        );
+    }
+}

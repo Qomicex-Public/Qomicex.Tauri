@@ -2312,6 +2312,9 @@ mod refresh_tests {
         let _lock = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let (accounts, _env) = test_account_service("propagate");
 
+        // 合规前置（ADR-117）：没有 Microsoft 账户时不允许新增第三方账户，先播种一个。
+        accounts.save_account(&mut ms_account()).await.unwrap();
+
         let mk = |uuid: &str, provider: Option<&str>, rt: &str| {
             let mut a = ms_account();
             a.uuid = uuid.into();

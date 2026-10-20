@@ -98,3 +98,10 @@ Thank you to all the people who have contributed to Qomicex Launcher!
 
 - **Pronunciation**: Qomicex `/kˈɑːmaɪsˌɛks/` (q·om·ic·ex)
 - **License**: Distributed under the [GPLv3 License](LICENSE).
+
+### Legal notice
+
+- Game files are downloaded from Mojang's official servers and their public mirrors. This project does not host or redistribute Minecraft itself.
+- Qomicex Launcher is a third-party tool. It is not affiliated with, endorsed by, or sponsored by Mojang, Microsoft or NetEase.
+- Offline accounts are intended for offline play and self-hosted servers. Using an offline account on servers that require authentication may violate those servers' rules.
+- A Microsoft account must be signed in before offline or third-party accounts can be added (see [ADR-117](docs/junsi-dev-docs/1-决策记录/ADR-117-离线账户要求先绑定-Microsoft-账户-并按中国大陆区域展示合规提示.md)).

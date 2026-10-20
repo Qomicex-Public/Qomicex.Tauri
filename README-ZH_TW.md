@@ -98,3 +98,10 @@
 
 - **讀音**：Qomicex `/kˈɑːmaɪsˌɛks/` (q·om·ic·ex)
 - **開源協議**：本專案基於 [GPLv3 協議](LICENSE) 開源。
+
+### 合規聲明
+
+- 遊戲檔案從 Mojang 官方伺服器及其公開鏡像下載。本專案不託管、不轉存 Minecraft 遊戲本體。
+- Qomicex Launcher 是第三方工具，與 Mojang、Microsoft、網易無隸屬、背書或贊助關係。
+- 離線帳戶僅用於離線遊戲與自建伺服器。在要求正版驗證的伺服器上使用離線帳戶可能違反該伺服器的規則。
+- 新增離線 / 第三方登入帳戶前需先登入 Microsoft 帳戶（見 [ADR-117](docs/junsi-dev-docs/1-决策记录/ADR-117-离线账户要求先绑定-Microsoft-账户-并按中国大陆区域展示合规提示.md)）。

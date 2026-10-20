@@ -59,6 +59,13 @@ pub struct OpenPathResponse {
     pub path: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegionResponse {
+    /// 本机时区是否属于中国大陆（见 `services::region`）。
+    pub china_mainland: bool,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenPathRequest {
