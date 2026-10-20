@@ -1700,7 +1700,8 @@ pub(crate) async fn solder_import_impl(
 /// 前者——`z-` 前缀配置包排在清单末尾最后覆盖是 Technic 约定，见 ADR-108），
 /// 然后安装 MC，最后把包内容拷进版本隔离目录。
 ///
-/// `forge_loader_version`：Some（如 `1.7.10-10.13.4.1614`）→ install-game 走
+/// `forge_loader_version`：Some（归一化后的**裸**版本号，如 `10.13.4.1614`；
+/// 安装管线按它宽松匹配列表里的 artifact 形态）→ install-game 走
 /// Forge 安装管线，启动时 FMLTweaker 经 launchwrapper 初始化 FML（1.7.10 的
 /// vanilla JSON 无 launchwrapper，jarmod 派生 jar 路径对它不成立）；
 /// None（1.2.5 时代无 installer，Tekkit 实测）→ 期3 原行为：vanilla 安装 +
@@ -1952,19 +1953,21 @@ fn solder_mod_zip_path(zips_dir: &Path, index: usize, mod_name: &str) -> PathBuf
 
 /// GTNH 型 Solder 包的 Forge 版本探测（install 前同步执行，一次网络往返）。
 ///
-/// 背景（GTNH 实测）：现代 1.7.10 Solder 包的 Forge 本体以 mod 清单内
+/// 背景（GTNH 2.8.4 实测）：现代 1.7.10 Solder 包的 Forge 本体以 mod 清单内
 /// `modpack/modpack-{mc}-{build}.zip` 分发，Solder build 元数据的 `forge` 字段为
-/// `null`；该 zip 解压出 `bin/modpack.jar`（FML 本体，含 `fmlversion.properties`，
-/// 无 `version.json` / `forgeversion.properties`）。FML Tweaker 需要 launchwrapper
-/// 从 classpath 启动，而 1.7.10 的 vanilla 版本 JSON **不含** launchwrapper 库，
-/// 期3 的「vanilla + jarmod 派生 jar」路径对它不成立——JVM 起的是
+/// `null`；该 zip 解压出 `bin/modpack.jar`，它**就是** Forge 版本 jar，内含
+/// `version.json`（库坐标 `net.minecraftforge:forge:1.7.10-10.13.4.1614-1.7.10`）
+/// 与 `fmlversion.properties`。FML Tweaker 需要 launchwrapper 从 classpath 启动，
+/// 而 1.7.10 的 vanilla 版本 JSON **不含** launchwrapper 库，期3 的
+/// 「vanilla + jarmod 派生 jar」路径对它不成立——JVM 起的是
 /// `net.minecraft.client.main.Main`，FML 根本不初始化（GTNH 实测：实例显示
 /// 原版、229 个 mod 全不加载）。
 ///
 /// 探测链：清单里找 `modpack` 前缀条目 → 下载 zip → 提取嵌套 `bin/modpack.jar` →
-/// `loader_meta_from_modpack_jar` 读 `fmlbuild.build.number` → 用 `{mc}-{build}`
-/// 在 Forge 版本列表（官方 Maven 元数据优先，BMCLAPI 回退）中确认存在。任一环节
-/// 失败返回 `(None, None)`，调用方退回期3 原行为（vanilla + jarmod），安装不中断。
+/// `loader_meta_from_modpack_jar`（version.json 优先，fmlversion 裸 build 号兜底）→
+/// 按**裸版本号**在 Forge 版本列表（官方 Maven 元数据优先，BMCLAPI 回退）中确认
+/// 存在。任一环节失败返回 `(None, None)`，调用方退回期3 原行为（vanilla + jarmod），
+/// 安装不中断。
 async fn detect_solder_pack_forge(
     http_client: &reqwest::Client,
     build: &qomicex_core::models::expansion::technic::TechnicSolderBuild,
@@ -2038,28 +2041,43 @@ async fn detect_solder_pack_forge(
             .filter(|s| !s.is_empty())
         {
             let got = format!("{:x}", Digest::finalize(hasher));
-            if !solder_md5_matches(got.as_bytes(), expected) {
-                return Err("modpack zip MD5 不符".to_string());
+            // 摘要已在写入循环里增量算完，这里比对的是**摘要**而非原始字节，
+            // 不能再过一次哈希（见 md5_hex_matches 的说明）。
+            if !md5_hex_matches(&got, expected) {
+                return Err(format!(
+                    "modpack zip MD5 不符（期望 {expected}，实得 {got}，共 {total} 字节）"
+                ));
             }
         }
-        // fmlversion.properties 在外层 zip 的嵌套 bin/modpack.jar 内，先提取。
+        // 加载器元数据在 modpack.jar 内（version.json 优先，fmlversion 兜底），先提取。
         let jar_path = crate::services::technic::extract_modpack_jar_from_zip(&tmp, &jar_tmp)
             .ok_or_else(|| "modpack zip 内无 bin/modpack.jar 或超出大小上限".to_string())?;
-        crate::services::technic::loader_meta_from_modpack_jar(&jar_path)
-            .1
-            .ok_or_else(|| "modpack.jar 内无有效的 fmlbuild.build.number".to_string())
+        match crate::services::technic::loader_meta_from_modpack_jar(&jar_path) {
+            (Some(loader), Some(version)) => Ok((loader, version)),
+            _ => Err("modpack.jar 内识别不出加载器与版本".to_string()),
+        }
     };
     let probe_result = probe.await;
     let _ = std::fs::remove_file(&tmp);
     let _ = std::fs::remove_file(&jar_tmp);
-    let Ok(forge_build) = probe_result else {
-        return (None, None);
+    let (loader, version) = match probe_result {
+        Ok(meta) => meta,
+        Err(e) => {
+            eprintln!("[Solder] modpack zip 探测失败（{e}），退回期3 行为");
+            return (None, None);
+        }
     };
+    if !loader.eq_ignore_ascii_case("forge") {
+        eprintln!("[Solder] modpack.jar 识别出的加载器为 {loader}（非 forge），退回期3 行为");
+        return (None, None);
+    }
 
-    // 在 Forge 版本列表中确认 {mc}-{build} 存在（get_forge_versions 内部已带
-    // Official→BMCLAPI 自动回退；build 号不在列表里则不交付——宁可不切管线，
-    // 也不给安装器一个必然 404 的版本）。
-    let artifact_version = format!("{game_version}-{forge_build}");
+    // 在 Forge 版本列表中确认该版本存在（get_forge_versions 内部已带 Official→BMCLAPI
+    // 自动回退；不在列表里则不交付——宁可不切管线，也不给安装器一个必然 404 的版本）。
+    //
+    // 比对必须按裸版本号：整合包 version.json 给的是 `10.13.4.1614`，官方列表里是
+    // `10.13.4.1614-1.7.10`（artifact = `{mc}-{forge}`，该时代 forge 串自身以
+    // `-{mc}` 结尾）。此前用 `{mc}-{build}` 精确比对，两个来源永不相交，探测恒失败。
     let core = crate::services::install_service::build_core(
         &std::env::temp_dir(),
         qomicex_core::models::download::DownloadMirror::Official,
@@ -2073,14 +2091,25 @@ async fn detect_solder_pack_forge(
         )
         .await
         .unwrap_or_default();
-    if loaders
-        .iter()
-        .any(|l| l.version.eq_ignore_ascii_case(&artifact_version))
+    if crate::services::install_service::pick_forge_loader_by_version(
+        loaders.clone(),
+        &version,
+        game_version,
+    )
+    .is_some()
     {
-        (Some("forge".to_string()), Some(artifact_version))
+        // 实例与启动链记录归一化后的裸版本号（与 UI 展示、Prism 一致）；
+        // 安装管线按它兜底匹配列表里的 artifact 形态。
+        (
+            Some("forge".to_string()),
+            Some(crate::services::install_service::canonical_forge_version(
+                game_version,
+                &version,
+            )),
+        )
     } else {
         eprintln!(
-            "[Solder] Forge {artifact_version} 不在版本列表中（候选 {} 条），退回 vanilla+jarmod 路径",
+            "[Solder] Forge {version} 不在版本列表中（候选 {} 条），退回 vanilla+jarmod 路径",
             loaders.len()
         );
         (None, None)
@@ -2095,8 +2124,16 @@ fn solder_md5_matches(bytes: &[u8], expected: &str) -> bool {
     use md5::Digest;
     let mut hasher = md5::Md5::new();
     Digest::update(&mut hasher, bytes);
-    let got = format!("{:x}", Digest::finalize(hasher));
-    got.eq_ignore_ascii_case(expected.trim())
+    md5_hex_matches(&format!("{:x}", Digest::finalize(hasher)), expected)
+}
+
+/// **已算出**的 hex 摘要与清单 MD5 比对（case-insensitive，`expected` 先 trim）。
+///
+/// 流式下载路径（Solder Forge 探测）为省一次回读，摘要随写入增量计算；此时只能
+/// 用本函数比对摘要本身——走 [`solder_md5_matches`] 会把 hex 字符串再哈希一遍，
+/// 两个值永远不等。
+fn md5_hex_matches(got_hex: &str, expected: &str) -> bool {
+    got_hex.eq_ignore_ascii_case(expected.trim())
 }
 
 /// Solder 管线单元测试（issue #181）。
@@ -2168,6 +2205,27 @@ mod solder_tests {
             b"abc",
             "00000000000000000000000000000000"
         ));
+    }
+
+    #[test]
+    fn streamed_digest_is_compared_without_rehashing() {
+        // Solder Forge 探测是流式下载，摘要增量算完后只剩 hex；拿 hex 喂
+        // `solder_md5_matches` 等于哈希 hex 字符串本身，与清单值恒不等（GTNH
+        // 2.8.4 实测：两侧值完全一致却判定不符，探测整条链路被中断）。
+        let data = b"modpack";
+        let got = {
+            use md5::Digest;
+            let mut h = md5::Md5::new();
+            Digest::update(&mut h, data);
+            format!("{:x}", Digest::finalize(h))
+        };
+        assert!(md5_hex_matches(&got, &format!(" {} ", got.to_uppercase())));
+        assert!(!md5_hex_matches(&got, "00000000000000000000000000000000"));
+        assert!(
+            !solder_md5_matches(got.as_bytes(), &got),
+            "hex 串再哈希必然不等——这正是被修掉的比对形态"
+        );
+        assert!(solder_md5_matches(data, &got));
     }
 }
 

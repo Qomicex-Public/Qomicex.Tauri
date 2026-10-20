@@ -327,7 +327,15 @@ pub async fn run_install_pipeline(
             // 附带候选数量——否则线上只剩一句「找不到 X 的安装器」，无法区分
             // 「列表为空」与「列表非空但缺该版本」。
             let loader_count = loaders.len();
-            let matched = match pick_loader_by_version(loaders, lver) {
+            // Forge 跨来源的版本号形态不一（整合包 version.json 给裸 `10.13.4.1614`，
+            // 官方列表给 `10.13.4.1614-1.7.10`），故用裸版本号兜底匹配；其余加载器保持
+            // 精确匹配，避免版本串被误归一化。
+            let pick = if is_forge {
+                pick_forge_loader_by_version(loaders, lver, &gv_a)
+            } else {
+                pick_loader_by_version(loaders, lver)
+            };
+            let matched = match pick {
                 Some(m) => m,
                 None if is_neoforge => {
                     let retry = core_a
@@ -375,10 +383,14 @@ pub async fn run_install_pipeline(
 
             let temp_dir = root_a.join("temp");
             std::fs::create_dir_all(&temp_dir).map_err(|e| format!("创建 temp 目录失败: {e}"))?;
+            // 安装器直链必须按**列表里的** artifact 形态拼（1.7.10 官方为
+            // `10.13.4.1614-1.7.10`，拼出 `{mc}-{forge}-{mc}`；BMCLAPI 为裸 build 号），
+            // 不能沿用实例里记录的展示版本——整合包给的是裸号，直拼会 404。
+            let effective_lv = matched.version.clone();
             let path = temp_dir.join(format!(
                 "{}-{}-installer.jar",
                 loader_a.as_deref().unwrap_or("loader"),
-                lver
+                effective_lv
             ));
             let prefer_official = crate::services::source_policy::SourcePlan::load().vanilla
                 == crate::services::source_policy::VanillaSource::Official;
@@ -389,7 +401,7 @@ pub async fn run_install_pipeline(
                 &matched.url,
                 loader_a.as_deref().unwrap_or(""),
                 &gv_a,
-                lver,
+                &effective_lv,
                 &hdrs_a,
                 prefer_official,
             )
@@ -758,6 +770,62 @@ fn pick_loader_by_version(
         .find(|l| l.version.eq_ignore_ascii_case(version))
 }
 
+/// Forge 版本号归一化：剥离 MC 版本前缀与回显后缀，得到裸 Forge 版本。
+///
+/// 同一份 Forge 在各来源里的形态不同（1.7.10 实测）：
+/// - 官方 maven 元数据：`10.13.4.1614-1.7.10`（artifact = `{mc}-{forge}`，而该
+///   时代的 Forge 版本串自身就以 `-{mc}` 结尾，于是 artifact 成 `{mc}-{forge}-{mc}`）；
+/// - BMCLAPI 列表：`10.13.4.1614`（裸 build 号）；
+/// - 整合包 `version.json` / Solder 清单：`10.13.4.1614`。
+///
+/// 三者裸版本相同，差异只在 `{mc}` 前后缀。列表里存的必须是**该来源可寻址的
+/// artifact 形态**（拼安装器直链要用它），比对时则统一按裸版本，否则跨来源的
+/// 版本号永不相交（实测：整合包给的 `10.13.4.1614` 匹配不到官方列表的
+/// `10.13.4.1614-1.7.10`，安装以「找不到 forge 的安装器」中止）。
+pub(crate) fn canonical_forge_version(game_version: &str, version: &str) -> String {
+    let version = version.trim();
+    let mc = game_version.trim();
+    if mc.is_empty() {
+        return version.to_string();
+    }
+    let stripped = version
+        .strip_prefix(mc)
+        .map(|rest| rest.strip_prefix('-').unwrap_or(rest))
+        .unwrap_or(version);
+    let stripped = stripped.strip_suffix(&format!("-{mc}")).unwrap_or(stripped);
+    // 只有前缀/后缀本身就是 MC 版本（`1.7.10`）时才会被剥空，此时原串即版本号。
+    if stripped.is_empty() {
+        version.to_string()
+    } else {
+        stripped.to_string()
+    }
+}
+
+/// 与 [`pick_loader_by_version`] 相同，但精确匹配失败时按 Forge 裸版本号兜底。
+///
+/// 返回列表中**真实存在**的条目：其 `version` 是当前数据源可寻址的 artifact 形态，
+/// 拼安装器直链必须用它，不能沿用调用方手里那个来源未知的版本号（见
+/// [`canonical_forge_version`]）。
+pub(crate) fn pick_forge_loader_by_version(
+    loaders: Vec<qomicex_core::models::installer::ModLoaderResult>,
+    version: &str,
+    game_version: &str,
+) -> Option<qomicex_core::models::installer::ModLoaderResult> {
+    // 列表里可能同时存在同一 build 的两种形态（官方 `{forge}-{mc}` 与 BMCLAPI 裸号），
+    // 单趟遍历会让「先出现的那条」决定结果；精确匹配优先，安装器 URL 才不会落到
+    // 调用方没有请求的形态上。
+    if let Some(index) = loaders
+        .iter()
+        .position(|l| l.version.eq_ignore_ascii_case(version))
+    {
+        return loaders.into_iter().nth(index);
+    }
+    let want = canonical_forge_version(game_version, version);
+    loaders
+        .into_iter()
+        .find(|l| canonical_forge_version(game_version, &l.version).eq_ignore_ascii_case(&want))
+}
+
 fn check_cancel(handle: &InstallHandle) -> Result<(), String> {
     if handle.is_cancelled() {
         return Err("安装已取消".to_string());
@@ -805,21 +873,30 @@ async fn download_installer_jar(
     // BMCLAPI 的 forge/download/{id} 端点会回 200 空 body，但 BMCLAPI 的 /maven
     // 路径代理 Forge/NeoForge maven 是正常的（实测 302 → 文件节点 200），因此
     // 两侧都用 maven URL，彻底绕开那个坏端点。
-    let official = official_installer_url(loader, game_version, loader_version);
-    let bmclapi = official.as_deref().and_then(bmclapi_maven_mirror);
-    let (primary, fallback) = match (official, bmclapi) {
-        (Some(official), Some(bmclapi)) => {
-            if prefer_official {
-                (official, Some(bmclapi))
-            } else {
-                (bmclapi, Some(official))
-            }
+    //
+    // Forge 再补一个**双后缀候选**：1.7.10~1.9 时代的 artifact 是 `{mc}-{forge}-{mc}`，
+    // 而 BMCLAPI 列表只给裸 build 号（`10.13.4.1614`），据此拼出的 `{mc}-{forge}`
+    // 实测 404（官方列表形态已含 `-{mc}`，主选即命中，不会走到这个候选）。
+    let official_candidates = official_installer_urls(loader, game_version, loader_version);
+    let mut ordered: Vec<String> = Vec::new();
+    for official in official_candidates {
+        let bmclapi = bmclapi_maven_mirror(&official);
+        if prefer_official {
+            ordered.push(official);
+            ordered.extend(bmclapi);
+        } else {
+            ordered.extend(bmclapi);
+            ordered.push(official);
         }
-        _ => (url.to_string(), None),
+    }
+    let (primary, mirrors) = match ordered.split_first() {
+        Some((primary, rest)) => (primary.clone(), rest.to_vec()),
+        // 非 maven 交付的加载器（如 Cleanroom 的 GitHub Release）：沿用列表给的直链。
+        None => (url.to_string(), Vec::new()),
     };
     let mut extra = std::collections::HashMap::new();
-    if let Some(fallback) = fallback {
-        extra.insert(primary.clone(), vec![fallback]);
+    if !mirrors.is_empty() {
+        extra.insert(primary.clone(), mirrors);
     }
     download_batch_with_mirrors(
         handle,
@@ -829,6 +906,46 @@ async fn download_installer_jar(
         extra,
     )
     .await
+}
+
+/// Forge artifact 采用 `{mc}-{forge}-{mc}` **双后缀**的 MC 版本（该时代 forge 版本串
+/// 自身以 `-{mc}` 结尾，maven 再加一次前缀）。
+///
+/// 来源：官方 `maven-metadata.xml` 全量 5093 条 artifact 实测，满足「artifact 以
+/// `-{mc}` 结尾」的仅此 6 个；1.6.4 / 1.7.2 / 1.10.2 起均为 `{mc}-{forge}` 单后缀。
+const FORGE_DOUBLE_SUFFIX_MC: &[&str] = &["1.7.10", "1.8", "1.8.8", "1.8.9", "1.9", "1.9.4"];
+
+/// 官方加载器安装器 URL 候选（按优先级排列；首项为主选）。
+///
+/// 除 [`official_installer_url`] 的主形态外，[`FORGE_DOUBLE_SUFFIX_MC`] 时代的
+/// Forge 再补出 `{mc}-{forge}-{mc}` 双后缀候选：BMCLAPI 版本列表只给裸 build 号
+/// （`10.13.4.1614`），据此拼出的 `{mc}-{forge}` 实测 404（官方列表形态已含
+/// `-{mc}`，主选即命中，不会走到该候选）。候选由下载器的镜像轮换在主选 404 后接管。
+fn official_installer_urls(loader: &str, game_version: &str, loader_version: &str) -> Vec<String> {
+    let Some(primary) = official_installer_url(loader, game_version, loader_version) else {
+        return Vec::new();
+    };
+    let mut urls = vec![primary];
+    let echo_suffix = format!("-{}", game_version.to_ascii_lowercase());
+    let needs_echo = loader.eq_ignore_ascii_case("forge")
+        && FORGE_DOUBLE_SUFFIX_MC
+            .iter()
+            .any(|mc| mc.eq_ignore_ascii_case(game_version))
+        && !loader_version.is_empty()
+        && !loader_version.to_ascii_lowercase().ends_with(&echo_suffix);
+    let echoed = needs_echo
+        .then(|| {
+            official_installer_url(
+                loader,
+                game_version,
+                &format!("{loader_version}-{game_version}"),
+            )
+        })
+        .flatten();
+    if let Some(echoed) = echoed {
+        urls.push(echoed);
+    }
+    urls
 }
 
 /// 官方加载器安装器 URL（Forge / NeoForge）。
@@ -2054,6 +2171,137 @@ mod tests {
         // 未命中：列表非空但缺目标版本 → None（此前安装因不重试而直接失败）。
         let list = vec![mk("21.1.248"), mk("21.1.249")];
         assert!(pick_loader_by_version(list, "21.1.250").is_none());
+    }
+
+    /// Forge 版本号在各来源里的形态不同（官方列表 `10.13.4.1614-1.7.10` /
+    /// BMCLAPI 与整合包 version.json 的裸 `10.13.4.1614`），归一化后必须相等。
+    #[test]
+    fn canonical_forge_version_strips_mc_prefix_and_echo() {
+        assert_eq!(
+            canonical_forge_version("1.7.10", "10.13.4.1614-1.7.10"),
+            "10.13.4.1614"
+        );
+        assert_eq!(
+            canonical_forge_version("1.8.9", "11.15.1.2318-1.8.9"),
+            "11.15.1.2318"
+        );
+        // 完整 artifact 形态（带 mc 前缀 + 回显后缀）
+        assert_eq!(
+            canonical_forge_version("1.7.10", "1.7.10-10.13.4.1614-1.7.10"),
+            "10.13.4.1614"
+        );
+        // 裸形态 / 单后缀时代：原样返回
+        assert_eq!(
+            canonical_forge_version("1.7.10", "10.13.4.1614"),
+            "10.13.4.1614"
+        );
+        assert_eq!(
+            canonical_forge_version("1.12.2", "14.23.5.2860"),
+            "14.23.5.2860"
+        );
+        // 整串就是 MC 版本时不得剥成空串
+        assert_eq!(canonical_forge_version("1.7.10", "1.7.10"), "1.7.10");
+    }
+
+    /// 回归（实测故障：`找不到 forge 10.13.4.1614 的安装器`）：整合包 version.json
+    /// 给的裸版本号必须能命中官方列表的 artifact 形态，且返回列表里真实存在的那一条
+    /// ——安装器直链要用它的 `version` 拼，沿用裸号会 404。
+    #[test]
+    fn pick_forge_loader_by_version_matches_across_source_forms() {
+        use qomicex_core::models::installer::{ModLoaderResult, ModLoaderType};
+        let mk = |v: &str| ModLoaderResult {
+            r#type: ModLoaderType::Forge,
+            version: v.to_string(),
+            game_version: "1.7.10".to_string(),
+            url: format!("https://example/{v}.jar"),
+            sha1: String::new(),
+            is_recommand: false,
+            release_time: String::new(),
+        };
+
+        let list = vec![mk("10.13.4.1566-1.7.10"), mk("10.13.4.1614-1.7.10")];
+        let got = pick_forge_loader_by_version(list, "10.13.4.1614", "1.7.10")
+            .expect("裸版本号应命中官方 artifact 形态");
+        assert_eq!(got.version, "10.13.4.1614-1.7.10");
+        assert_eq!(got.url, "https://example/10.13.4.1614-1.7.10.jar");
+
+        // 列表已是裸形态（BMCLAPI）时原样命中
+        let list = vec![mk("10.13.4.1614")];
+        assert_eq!(
+            pick_forge_loader_by_version(list, "10.13.4.1614", "1.7.10")
+                .unwrap()
+                .version,
+            "10.13.4.1614"
+        );
+
+        // 列表里确实没有该版本 → None（不造必然 404 的版本号）
+        let list = vec![mk("10.13.4.1566-1.7.10")];
+        assert!(pick_forge_loader_by_version(list, "10.13.4.1614", "1.7.10").is_none());
+
+        // 古董包（Tekkit 1.2.5）的 `modpack.jar` 只有 fmlversion.properties，拿到的是裸
+        // build 号（如 176），官方列表是 `1.2.5-3.4.9.171` 形态：必须匹配不到——一旦
+        // 命中就会切到「1.2.5 无 installer 可用」的 Forge 管线，古董包反而装不上。
+        let list = vec![mk("1.2.5-3.4.9.171")];
+        assert!(pick_forge_loader_by_version(list, "176", "1.2.5").is_none());
+    }
+
+    /// 同一 build 的两种形态同时出现在列表里时，命中调用方请求的那个形态，不受
+    /// 列表顺序影响（否则安装器 URL 会指向没请求的那条）。
+    #[test]
+    fn pick_forge_loader_by_version_prefers_exact_form() {
+        use qomicex_core::models::installer::{ModLoaderResult, ModLoaderType};
+        let mk = |v: &str| ModLoaderResult {
+            r#type: ModLoaderType::Forge,
+            version: v.to_string(),
+            game_version: "1.7.10".to_string(),
+            url: format!("https://example/{v}.jar"),
+            sha1: String::new(),
+            is_recommand: false,
+            release_time: String::new(),
+        };
+
+        let list = vec![mk("10.13.4.1614-1.7.10"), mk("10.13.4.1614")];
+        assert_eq!(
+            pick_forge_loader_by_version(list, "10.13.4.1614", "1.7.10")
+                .unwrap()
+                .version,
+            "10.13.4.1614"
+        );
+
+        let list = vec![mk("10.13.4.1614"), mk("10.13.4.1614-1.7.10")];
+        assert_eq!(
+            pick_forge_loader_by_version(list, "10.13.4.1614-1.7.10", "1.7.10")
+                .unwrap()
+                .version,
+            "10.13.4.1614-1.7.10"
+        );
+    }
+
+    /// BMCLAPI 列表只给裸 build 号时主选 URL 必然 404（实测），必须补出
+    /// `{mc}-{forge}-{mc}` 双后缀候选作镜像兜底。
+    #[test]
+    fn official_installer_urls_adds_double_suffix_forge_candidate() {
+        let urls = official_installer_urls("forge", "1.7.10", "10.13.4.1614");
+        assert_eq!(urls.len(), 2, "裸 build 号应补出双后缀候选: {urls:?}");
+        assert!(
+            urls[0].ends_with("/forge/1.7.10-10.13.4.1614/forge-1.7.10-10.13.4.1614-installer.jar")
+        );
+        assert!(urls[1].ends_with(
+            "/forge/1.7.10-10.13.4.1614-1.7.10/forge-1.7.10-10.13.4.1614-1.7.10-installer.jar"
+        ));
+
+        // 官方列表形态（已含 `-{mc}`）：不重复补候选
+        assert_eq!(
+            official_installer_urls("forge", "1.7.10", "10.13.4.1614-1.7.10").len(),
+            1
+        );
+        // 单后缀时代（1.12.2 无 `{mc}-{forge}-{mc}` artifact）：不补
+        assert_eq!(
+            official_installer_urls("forge", "1.12.2", "14.23.5.2860").len(),
+            1
+        );
+        // 非 maven 交付的加载器：无候选
+        assert!(official_installer_urls("fabric", "1.20.1", "0.15.0").is_empty());
     }
 
     #[test]

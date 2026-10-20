@@ -43,3 +43,4 @@ issue #123 期3 = issue #181。资源中心 Technic 源（期2 #151）里 13/45 
 | 日期 | 版本 | 修改内容 | 修改人 |
 |---|---|---|---|
 | 2026-10-05 | v1.0 | 初版创建 | AI Agent |
+| 2026-10-20 | v1.1 | 修正 install-game 的 Forge 交付判定：不再按 `build.forge`/`{mc}-{build}` 判定，改为读 `bin/modpack.jar`（version.json 优先）→ 归一为裸版本号 → 在 Forge 版本列表宽松匹配 → 有值即走 Forge 安装管线；同时修正探测的 MD5 比对（已算出的 hex 摘要不得二次哈希），该缺陷曾使探测恒回退。详见《Technic 整合包支持：实现地图与排障》§13 | AI Agent |

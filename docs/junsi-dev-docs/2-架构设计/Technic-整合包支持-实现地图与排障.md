@@ -1,6 +1,6 @@
 # Technic 整合包支持：实现地图与排障
 
-> 最后更新：2026-10-05（期3 Solder 实现后）。本文是 Technic 相关开发的**入口文档**：先读本文定位文件与锚点，再按需读 ADR。
+> 最后更新：2026-10-20（期3 Solder Forge 交付修正后，见 §13）。本文是 Technic 相关开发的**入口文档**：先读本文定位文件与锚点，再按需读 ADR。
 > 关联 ADR：[ADR-102（期1 SingleZip 本地导入）](../1-决策记录/ADR-102-Technic-SingleZip-整合包本地导入-issue-123期1.md)、[ADR-105（期2 资源中心 Technic 源 + 401 归因修正）](../1-决策记录/ADR-105-资源中心-Technic-源-API-模型对齐-后端代理安装与-build-参数-401-归因修正-issue-151.md)、[ADR-106（期2 JarMod）](../1-决策记录/ADR-106-JarMod-支持-非破坏性派生-jar-注入古董包-modpack-jar-issue-180.md)、[ADR-108（期3 Solder）](../1-决策记录/ADR-108-Technic-Solder-在线分发支持-逐文件下载管线与-jarmod-落地-issue-181.md)
 > 相关 issue：#123（本体，OPEN）、#151（资源中心源，已实现）、#180（JarMod，已实现）、#181（Solder，已实现 = 期3）
 
@@ -13,7 +13,9 @@
 | 期1 | SingleZip **本地**导入（zip 含 `bin/modpack.jar`，jar 内**有** version.json） | ✅ 已合入 | 主仓 `20b63d53`(#186) / core `dbd8b70`(#4) |
 | 期2-A | 资源中心 **Technic 源**（搜索/详情/一键在线安装） | ✅ 已合入 | 主仓 `732bb176`(#187) / core `4857539`(#5) / i18n #18 |
 | 期2-B | **JarMod**（古董包 jar 内**无** version.json） | ✅ 已合入 | 主仓 `a63bf400`(#190) / core `fd1e982`(#6) |
-| 期3 | **Solder** 在线分发格式（`url=null` + `solder` 有值） | ✅ **已实现**（ADR-108） | 待 PR |
+| 期3 | **Solder** 在线分发格式（`url=null` + `solder` 有值） | ✅ **已实现**（ADR-108）+ **Forge 交付修正**（§13） | 待 PR |
+
+> §12（2026-10-07）与 §13（2026-10-20）是同一症状的两次复盘：§12 的补丁因探测 MD5 二次哈希而从未生效，§13 才是真正修好的那次（含 SingleZip 侧 `找不到 forge` 的修复）。
 
 ---
 
@@ -25,7 +27,7 @@
 |---|---|---|
 | **SingleZip（标准）** | `url` 是字符串直链；且 `bin/modpack.jar` 内**有** `version.json` | 期1 管线：读 version.json 定 MC+loader，jar 本体**不注入** |
 | **SingleZip（古董）** | `url` 是字符串直链；但 `bin/modpack.jar` 内**无** `version.json` | 期2-B **JarMod** 路径：jar 落盘为 jarmod + 派生 jar |
-| **Solder** | `url` 为 `null` 且 `solder` 有值 | 期3 **Solder 管线**（ADR-108）：逐文件下载 + jarmod 落地 |
+| **Solder** | `url` 为 `null` 且 `solder` 有值 | 期3 **Solder 管线**（ADR-108）：逐文件下载；`bin/modpack.jar` 能探出可安装的 Forge（现代包，jar 内有 version.json）→ 走 Forge 安装管线；古董包（jar 内只有 `fmlversion.properties`）→ jarmod 落地（§13） |
 
 实测比例（45 个候选）：32 个 SingleZip、13 个 Solder。1.4.7 时代的知名包（tekkit-classic / hexxit / tekkit-legends）**已全部转为 Solder**。
 
@@ -277,7 +279,7 @@ POST /api/modpack/parse-path  {path:"<无 version.json 且无 fmlversion 的包>
 
 **关键设计决策**（详见 ADR-108）：
 1. **build 选择**：`recommended` → `latest` → builds 末位（降序列表的最旧兜底）；MVP 不露 UI，后续增强。
-2. **Forge 落地**：1.2.5 时代 Forge 本体在 basemods zip 的 `bin/modpack.jar`（实测验证），安装管线装 vanilla，jarmod 机制注入；`forge=164` 仅元数据标注。
+2. **Forge 落地**（**2026-10-20 修正，见 §13**）：1.2.5 时代 Forge 本体在 basemods zip 的 `bin/modpack.jar`（实测验证），安装管线装 vanilla，jarmod 机制注入——该形态无可用 installer，`forge=164` 仅元数据标注；**1.7.10 及以后**（jar 内 `version.json` 给出 `net.minecraftforge:forge` 坐标）改走 **Forge 安装管线**（FMLTweaker 需经 launchwrapper 启动，vanilla JSON 无该库），探测出的版本号归一为裸号后再交管线宽松匹配。
 3. **解压覆盖语义**：按 `mods[]` 数组顺序、**后者覆盖前者**（`z-` 前缀配置包排末尾最后覆盖是 Technic 约定）。
 4. **MD5 硬失败**：`TECHNIC_SOLDER_MD5_MISMATCH`，不静默使用损坏分发。
 5. **安全**：`SolderImportRequest` 非 serde 请求体；清单/URL/基地址全部后端解析。
@@ -304,6 +306,7 @@ POST /api/modpack/parse-path  {path:"<无 version.json 且无 fmlversion 的包>
 | 日期 | 版本 | 修改内容 | 修改人 |
 | 2026-10-05 | v1.0 | 初版创建 | AI Agent |
 | 2026-10-05 | v1.1 | 期3 Solder 实现：状态表/端点实测补充/代码地图/数据流 4.3/§9 落地记录/E2E 记录 | AI Agent |
+| 2026-10-20 | v1.2 | §13 期3 缺陷复盘续：Forge 版本号跨来源归一 + 探测 MD5 二次哈希修正 + 安装器 URL 候选；§12 加更正说明、§0/§1/§9 同步 | AI Agent |
 
 
 ### 2026-10-06 更新
@@ -345,3 +348,42 @@ POST /api/modpack/parse-path  {path:"<无 version.json 且无 fmlversion 的包>
 **回归护栏**：`loader_meta_from_modpack_jar_reads_fml_build`（GTNH 真实属性形态）、`loader_meta_rejects_missing_or_malformed_properties`、`sync_from_disk_grace_period_keeps_installing_isolated_instance`（验证过「抽掉宽限期必失败」）。
 
 **教训**：Solder 包的 Forge 交付形态随 MC 版本代际漂移（1.2.5=裸 jar 可直接进 classpath；1.7.10=必须 launchwrapper+FMLTweaker），「forge 字段为 null」不等于「没有 Forge」——判定 Forge 是否需要安装管线，必须以 mod 清单实际内容为准，元数据字段只是提示。
+
+**更正（2026-10-20，详见 §13）**：本节两条实测记录有误，且本节补丁**从未生效**——① GTNH 的 `bin/modpack.jar` 内**有** `version.json`（不是「无 version.json」），`fmlversion.properties` 只是旧包兜底形态；② 探测在 MD5 步骤因「hex 摘要二次哈希」恒判不符而静默回退，从未走到版本匹配。故 GTNH 装完显示原版的症状在本节之后依然存在，真正的修复见 §13。
+
+### 2026-10-20 更新
+
+## 13. 期3 缺陷复盘续（2026-10-20）：Forge 版本号跨来源形态不一致 → 探测与安装器 URL 双双失效
+
+**症状**（两条路径都拿不到 Forge，表现不同）：
+
+- **Solder（GTNH 2.8.4）**：§12 补丁上线后仍不生效——实例记录 `loader` 为空（探测返回 None），管线按 vanilla 装，启动后 mod 全不加载。
+- **SingleZip（1.7.10，jar 内**有** version.json）**：安装任务在 `installer` 步骤失败，报 `找不到 forge 10.13.4.1614 的安装器`。
+
+**根因（三条，均实测确认）**：
+
+1. **探测的 MD5 比对二次哈希**（`endpoints/modpack.rs`）：`solder_md5_matches(bytes, expected)` 的语义是「对**入参**做 MD5 再比 `expected`」，而探测路径为省一次回读，摘要在流式写入循环里增量算完后只剩 hex 串——把 hex 串再喂给同一个函数，等于比对 `md5(md5_hex)` 与清单值，**恒不成立**。日志把「期望 `c888032a50c4d8cbe65718b7dc847ab1`，实得 `c888032a50c4d8cbe65718b7dc847ab1`」两个完全相同的值打成「MD5 不符」，随后静默回退 vanilla。§12 的补丁因此**从未真正跑通过**。
+2. **版本号形态跨来源不一致**：整合包 `version.json` 的库坐标是 `net.minecraftforge:forge:1.7.10-10.13.4.1614-1.7.10`，归一后是**裸版本号** `10.13.4.1614`；Forge 版本列表（官方 Maven `maven-metadata.xml`）对应条目是 `10.13.4.1614-1.7.10`（artifact = `1.7.10-10.13.4.1614-1.7.10`），BMCLAPI 侧是 `10.13.4.1614`。§12 用 `{mc}-{build}`（`1.7.10-1614`）精确比对，两个来源永不相交 → 探测恒失败；即便探测成功，安装管线拿裸号直接拼 `{mc}-{lv}` 安装器 URL 也必然 404（即上面 SingleZip 的报错）。
+3. **`version.json` 确实存在**（更正 §12）：GTNH `bin/modpack.jar` 内**有** `version.json`（4715 字节，`id: 1.7.10-Forge10.13.4.1614-1.7.10`，库含 `net.minecraftforge:forge:1.7.10-10.13.4.1614-1.7.10` 与 `net.minecraft:launchwrapper:1.12`，`mainClass: net.minecraft.launchwrapper.Launch`）；`fmlversion.properties` 的 `fmlbuild.build.number=1614` 是**旧包**兜底形态。
+
+**修复**：
+
+- `services/install_service.rs`：新增 `canonical_forge_version()`（把 `1.7.10-10.13.4.1614-1.7.10` / `10.13.4.1614-1.7.10` / 裸号统一成裸号 `10.13.4.1614`）与 `pick_forge_loader_by_version()`（按归一后的裸号宽松匹配版本列表）；installer 分支改用**匹配到的列表条目版本**拼安装器 URL 与落盘路径（不再拿实例记录的裸号直接拼）。
+- `services/install_service.rs`：新增 `official_installer_urls()`。除官方 `{mc}-{lv}` 形态外，按**实测出的双后缀 MC 版本表**（`1.7.10` / `1.8` / `1.8.8` / `1.8.9` / `1.9` / `1.9.4`）补 `{mc}-{forge}-{mc}` 候选；该表由官方 `maven-metadata.xml` 全部 5093 条 artifact 逐条测量得出（只有这些 MC 版本的 forge 串自带 `-{mc}` 回显）。官方与 BMCLAPI `/maven` 两套地址按候选顺序交给 downloader，命中 404 时由其镜像轮换兜底。
+- `services/technic.rs`：`loader_meta_from_modpack_jar` 改为**优先** `version.json`（`detect_loader`），`fmlversion.properties` 裸 build 号降为兜底；doc 注释同步更正（旧描述称 Solder 包 jar 内无 version.json）。
+- `endpoints/modpack.rs`：`detect_solder_pack_forge` 改为取 jar 元数据的 `(loader, version)` → 要求 forge → `pick_forge_loader_by_version` 确认可安装 → 返回 `canonical_forge_version(...)`；探测失败不再静默（打印失败原因）；MD5 比对改用新增的 `md5_hex_matches()`（比对**已算出的摘要**本身，不再二次哈希）。
+
+**验收（实测）**：
+
+- **Solder 真机包（GTNH 2.8.4，即用户报告的故障现场）**：`install-direct`（`type=technic`、`projectId=mcnewhorizons`）建出的实例 `loader=forge`、`loaderVersion=10.13.4.1614`、`modpackVersion=2.8.4`（修复前 `loader` 为空）；安装 `completed`，产物版本 JSON `mainClass=net.minecraft.launchwrapper.Launch` + `FMLTweaker`、`net.minecraftforge:forge:1.7.10-10.13.4.1614-1.7.10` + `net.minecraft:launchwrapper:1.12`，`mods/` 落盘 **228 个 jar**、`jarmods/` 为空（Forge 管线不注入 jarmod）；启动后 FML 日志 `Forge Mod Loader version 7.99.40.1614 for Minecraft 1.7.10 loading` → `Forge Mod Loader has identified 309 mods to load` → `Forge Mod Loader has successfully loaded 309 mods`，GregTech 等核心 mod 收到 `FMLLoadCompleteEvent`（修复前：实例显示原版、mod 全不加载）。
+- **SingleZip 真机包**（1.7.10 + jar 内 version.json）：导入全程 `completed`；产物版本 JSON `mainClass=net.minecraft.launchwrapper.Launch`、参数含 `--tweakClass cpw.mods.fml.common.launcher.FMLTweaker`，`forge`/`launchwrapper`/`guava`/`asm-all` 库与 jar 落盘齐全；启动后 FML 日志 `Forge Mod Loader version 7.99.40.1614 for Minecraft 1.7.10 loading`、`Forge Mod Loader has identified 4 mods to load`、`Forge Mod Loader has successfully loaded 4 mods`，放进 `mods/` 的真实 mod 被识别（`Identified a mod of type Lcpw/mods/fml/common/Mod ... - loading`）。
+- **回归护栏**：`canonical_forge_version_strips_mc_prefix_and_echo`、`pick_forge_loader_by_version_matches_across_source_forms`、`official_installer_urls_adds_double_suffix_forge_candidate`、`loader_meta_from_modpack_jar_prefers_version_json`、`streamed_digest_is_compared_without_rehashing`（后两条在修复回退后**必失败**，已实测）。
+
+**未纳入本次范围**：Solder `java`/`memory` 元数据仍未消费；只有 `fmlversion.properties` 的古董包（无 version.json）仍走 vanilla+jarmod（其裸 build 号拼不出可寻址 artifact，判定即「探测不出」）。
+
+**古董包兼容性（实测）**：Tekkit 3.1.2 夹具的 `bin/modpack.jar` 内只有 `fmlversion.properties`（`fmlbuild.build.number=176`，无 version.json），官方 Forge 列表该 MC 版本是 `1.2.5-3.4.9.171` 形态且**没有**裸号条目 → 归一后仍匹配不到 → 判定「探测不出」，继续走期3 原行为（vanilla+jarmod）。回归断言：`pick_forge_loader_by_version([1.2.5-3.4.9.171], "176", "1.2.5").is_none()`。
+
+**教训**：
+
+1. 「同一个版本号」在不同来源里的**字面形态**可以完全不同（`10.13.4.1614` / `10.13.4.1614-1.7.10` / `1.7.10-10.13.4.1614-1.7.10`）。跨来源匹配必须先归一，再决定拼 URL 用哪个形态；用「拼出来的形态」去精确比对另一个来源的列表，是两个来源永不相交的经典写法。
+2. 摘要比对函数只接受一种入参形态（原始字节）。手上是「已算好的 hex」时不能复用它，否则是恒假比较——**恒假比较不报错**，只表现为静默回退，比崩溃更难发现；探测失败路径必须留日志。
