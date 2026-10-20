@@ -811,11 +811,19 @@ pub(crate) fn pick_forge_loader_by_version(
     version: &str,
     game_version: &str,
 ) -> Option<qomicex_core::models::installer::ModLoaderResult> {
+    // 列表里可能同时存在同一 build 的两种形态（官方 `{forge}-{mc}` 与 BMCLAPI 裸号），
+    // 单趟遍历会让「先出现的那条」决定结果；精确匹配优先，安装器 URL 才不会落到
+    // 调用方没有请求的形态上。
+    if let Some(index) = loaders
+        .iter()
+        .position(|l| l.version.eq_ignore_ascii_case(version))
+    {
+        return loaders.into_iter().nth(index);
+    }
     let want = canonical_forge_version(game_version, version);
-    loaders.into_iter().find(|l| {
-        l.version.eq_ignore_ascii_case(version)
-            || canonical_forge_version(game_version, &l.version).eq_ignore_ascii_case(&want)
-    })
+    loaders
+        .into_iter()
+        .find(|l| canonical_forge_version(game_version, &l.version).eq_ignore_ascii_case(&want))
 }
 
 fn check_cancel(handle: &InstallHandle) -> Result<(), String> {
@@ -2235,6 +2243,38 @@ mod tests {
         // 命中就会切到「1.2.5 无 installer 可用」的 Forge 管线，古董包反而装不上。
         let list = vec![mk("1.2.5-3.4.9.171")];
         assert!(pick_forge_loader_by_version(list, "176", "1.2.5").is_none());
+    }
+
+    /// 同一 build 的两种形态同时出现在列表里时，命中调用方请求的那个形态，不受
+    /// 列表顺序影响（否则安装器 URL 会指向没请求的那条）。
+    #[test]
+    fn pick_forge_loader_by_version_prefers_exact_form() {
+        use qomicex_core::models::installer::{ModLoaderResult, ModLoaderType};
+        let mk = |v: &str| ModLoaderResult {
+            r#type: ModLoaderType::Forge,
+            version: v.to_string(),
+            game_version: "1.7.10".to_string(),
+            url: format!("https://example/{v}.jar"),
+            sha1: String::new(),
+            is_recommand: false,
+            release_time: String::new(),
+        };
+
+        let list = vec![mk("10.13.4.1614-1.7.10"), mk("10.13.4.1614")];
+        assert_eq!(
+            pick_forge_loader_by_version(list, "10.13.4.1614", "1.7.10")
+                .unwrap()
+                .version,
+            "10.13.4.1614"
+        );
+
+        let list = vec![mk("10.13.4.1614"), mk("10.13.4.1614-1.7.10")];
+        assert_eq!(
+            pick_forge_loader_by_version(list, "10.13.4.1614-1.7.10", "1.7.10")
+                .unwrap()
+                .version,
+            "10.13.4.1614-1.7.10"
+        );
     }
 
     /// BMCLAPI 列表只给裸 build 号时主选 URL 必然 404（实测），必须补出
