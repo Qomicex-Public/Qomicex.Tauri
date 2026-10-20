@@ -31,9 +31,9 @@ const RESTRICT_OFFLINE_LOGIN_IN_CN: bool = false;
 /// 新增账户的合规判定（ADR-117）。
 ///
 /// 返回 `Some(error_code)` 表示拒绝。只拦「新增」：更新既有账户（改默认、刷新令牌）
-/// 照旧放行。Microsoft 账户本身不受限；在账户库里出现 Microsoft 账户之前，
-/// 离线 / Yggdrasil / 统一通行证账户一律不允许新增——否则任何一条非官方登录都能
-/// 绕过正版前置。
+/// 照旧放行。Microsoft 账户任何时候都能新增——否则开关打开后大陆新用户连正版账户
+/// 都登录不了，等于自我锁死。在账户库里出现 Microsoft 账户之前，离线 / Yggdrasil /
+/// 统一通行证账户一律不允许新增——否则任何一条非官方登录都能绕过正版前置。
 ///
 /// 正版凭据只认 Microsoft：Yggdrasil 与统一通行证是第三方认证服务器，不能证明
 /// 账号与正版授权绑定。
@@ -47,11 +47,14 @@ fn account_creation_blocked(
     if !is_new {
         return None;
     }
-    if restrict_in_china_mainland && is_china_mainland {
-        return Some("OFFLINE_DISABLED_IN_CN");
-    }
     if login_method.eq_ignore_ascii_case("Microsoft") {
         return None;
+    }
+    if restrict_in_china_mainland
+        && is_china_mainland
+        && login_method.eq_ignore_ascii_case("Offline")
+    {
+        return Some("OFFLINE_DISABLED_IN_CN");
     }
     let has_official = accounts
         .iter()
@@ -532,6 +535,29 @@ mod tests {
         assert_eq!(
             account_creation_blocked("Offline", &[], true, true, false),
             Some("OFFICIAL_ACCOUNT_REQUIRED")
+        );
+    }
+
+    #[test]
+    fn account_creation_switch_on_never_blocks_microsoft_or_third_party() {
+        // 开关打开且在大陆，首个 Microsoft 账户仍可新增：否则新用户无法登录正版。
+        assert_eq!(
+            account_creation_blocked("Microsoft", &[], true, true, true),
+            None
+        );
+        assert_eq!(
+            account_creation_blocked("microsoft", &[], true, true, true),
+            None
+        );
+        // 开关只针对离线登录；已有官方账户时 Yggdrasil / 统一通行证照旧可加。
+        let accounts = [account("Microsoft")];
+        assert_eq!(
+            account_creation_blocked("Yggdrasil", &accounts, true, true, true),
+            None
+        );
+        assert_eq!(
+            account_creation_blocked("统一通行证", &accounts, true, true, true),
+            None
         );
     }
 }

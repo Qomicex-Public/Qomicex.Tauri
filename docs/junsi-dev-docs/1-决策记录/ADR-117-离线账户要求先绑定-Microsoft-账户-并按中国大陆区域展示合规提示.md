@@ -51,7 +51,9 @@ const RESTRICT_OFFLINE_LOGIN_IN_CN: bool = false;
 ```
 
 置 `true` 后，中国大陆机器上**任何**离线账户新增都会被拒绝（错误码
-`OFFLINE_DISABLED_IN_CN`），即使已有 Microsoft 账户。默认关闭的原因：监管口径尚未明确，
+`OFFLINE_DISABLED_IN_CN`），即使已有 Microsoft 账户。开关只针对离线登录：
+Microsoft 账户任何时候都能新增，Yggdrasil / 统一通行证不受该开关影响——否则新用户
+在开关打开后将无法登录正版账户。默认关闭的原因：监管口径尚未明确，
 过早关闭会误伤存量离线玩家；需要收紧时只改这一行，判定点与测试无需改动。
 
 ### 3. 区域判定只看系统时区（P1）
