@@ -42,19 +42,24 @@ Qomicex Launcher 的暴露面与上述两者不同：**不托管游戏文件**�
 Yggdrasil（LittleSkin）与统一通行证一并纳入限制：这两者同样是「不拥有正版即可进入游戏」
 的入口，只拦离线会留下等价绕过路径。限制在「新增」这一层，已存在的第三方账户不受影响。
 
-### 2. 中国大陆离线登录开关（预留，默认关闭）
+### 2. 中国大陆离线登录开关（当前打开）
 
 `account.rs` 内保留常量：
 
 ```rust
-const RESTRICT_OFFLINE_LOGIN_IN_CN: bool = false;
+const RESTRICT_OFFLINE_LOGIN_IN_CN: bool = true;
 ```
 
-置 `true` 后，中国大陆机器上**任何**离线账户新增都会被拒绝（错误码
+打开时，中国大陆机器上**任何**离线账户新增都会被拒绝（错误码
 `OFFLINE_DISABLED_IN_CN`），即使已有 Microsoft 账户。开关只针对离线登录：
 Microsoft 账户任何时候都能新增，Yggdrasil / 统一通行证不受该开关影响——否则新用户
-在开关打开后将无法登录正版账户。默认关闭的原因：监管口径尚未明确，
-过早关闭会误伤存量离线玩家；需要收紧时只改这一行，判定点与测试无需改动。
+在开关打开后将无法登录正版账户。
+
+现取 `true`：上游启动器在 2026-10 集体收紧口径，先按最保守方式处理；只拦「新增」，
+存量离线账户照常启动。口径松动后把这一行改回 `false` 即可，判定点与测试无需改动。
+
+`GET /api/system/region` 同时返回 `offlineLoginRestricted`，前端据此提前置灰离线入口
+并说明原因，避免用户填完表单才收到 403。前端开关状态以后端为准。
 
 ### 3. 区域判定只看系统时区（P1）
 
@@ -63,7 +68,8 @@ Microsoft 账户任何时候都能新增，Yggdrasil / 统一通行证不受该�
 中国大陆。**不做 IP 探测、不发任何网络请求**——判定区域不需要把用户出口 IP 交给第三方。
 读取失败按「不在中国大陆」处理（fail-open），避免因环境异常改变默认行为。
 
-`GET /api/system/region` 返回 `{ "chinaMainland": bool }`，供前端决定是否展示提示条。
+`GET /api/system/region` 返回 `{ "chinaMainland": bool, "offlineLoginRestricted": bool }`，
+供前端决定是否展示提示条、是否置灰离线入口。
 
 ### 4. 中国大陆常驻合规提示条
 
@@ -114,3 +120,4 @@ Mojang 官方源及其公开镜像、本软件不托管游戏本体、与 Mojang
 | 日期 | 版本 | 修改内容 | 修改人 |
 |---|---|---|---|
 | 2026-10-20 | v1.0 | 初版创建 | AI Agent |
+| 2026-10-20 | v1.1 | `RESTRICT_OFFLINE_LOGIN_IN_CN` 改为 `true`（风口期先收紧，口径松动后改回）；`/api/system/region` 增加 `offlineLoginRestricted`，前端据此置灰离线入口 | AI Agent |

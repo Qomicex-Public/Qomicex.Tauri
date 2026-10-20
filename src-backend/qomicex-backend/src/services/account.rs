@@ -24,9 +24,17 @@ use crate::settings::resolve_base_dir;
 
 /// 风口期开关：置 `true` 时，中国大陆机器不允许新增离线账户。
 ///
-/// 现为 `false`：监管口径尚未明确，避免误伤存量离线玩家。需要收紧时只改这一行，
-/// 调用点与测试都不用动（见 ADR-117）。
-const RESTRICT_OFFLINE_LOGIN_IN_CN: bool = false;
+/// 现为 `true`：2026-10 上游启动器集体收紧口径，先按最保守方式处理，只影响
+/// 「新增」离线账户，存量离线账户照常启动。口径松动后改回 `false` 即可，判定点与
+/// 测试都不用动（见 ADR-117）。
+const RESTRICT_OFFLINE_LOGIN_IN_CN: bool = true;
+
+/// 当前环境是否禁止新增离线账户（开关打开且位于中国大陆）。
+///
+/// 前端据此提前置灰离线入口，避免用户填完表单才吃 403。
+pub fn offline_login_restricted() -> bool {
+    RESTRICT_OFFLINE_LOGIN_IN_CN && region::machine_is_china_mainland()
+}
 
 /// 新增账户的合规判定（ADR-117）。
 ///
