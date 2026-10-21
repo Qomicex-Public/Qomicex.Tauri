@@ -866,15 +866,9 @@ async fn run_multimc_import(
         .collect();
     if !miss.is_empty() {
         handle.set_current_file(&format!("下载游戏文件（{} 个）...", miss.len()));
-        let files: Vec<crate::services::install_service::DownloadTarget> = miss
+        let files: Vec<(String, std::path::PathBuf, Vec<(String, String)>)> = miss
             .iter()
-            .map(|f| {
-                crate::services::install_service::DownloadTarget::new(
-                    f.url.clone(),
-                    std::path::PathBuf::from(&f.path),
-                )
-                .with_sha1(&f.sha1)
-            })
+            .map(|f| (f.url.clone(), std::path::PathBuf::from(&f.path), Vec::new()))
             .collect();
         download_batch(handle, mgr, files, Some("install-game")).await?;
     }
@@ -1276,13 +1270,15 @@ async fn run_technic_import(
                 f.current_file = "下载整合包包体...".to_string();
             });
             // 复用下载管理器：进度/重试/镜像逻辑与其它安装一致。
-            let target =
-                crate::services::install_service::DownloadTarget::new(url, zip_path.to_path_buf())
-                    .with_headers(technic_download_headers());
+            let targets: Vec<crate::services::install_service::DownloadTarget> = vec![(
+                url.to_string(),
+                zip_path.to_path_buf(),
+                technic_download_headers(),
+            )];
             crate::services::install_service::download_batch(
                 handle,
                 mgr,
-                vec![target],
+                targets,
                 Some("download"),
             )
             .await?;
@@ -1777,13 +1773,11 @@ async fn run_solder_import(
             if url.is_empty() {
                 return None;
             }
-            Some(
-                crate::services::install_service::DownloadTarget::new(
-                    url,
-                    solder_mod_zip_path(zips_dir, i, &m.name),
-                )
-                .with_headers(headers.clone()),
-            )
+            Some((
+                url.to_string(),
+                solder_mod_zip_path(zips_dir, i, &m.name),
+                headers.clone(),
+            ))
         })
         .collect();
     let total_mods = targets.len();
@@ -2764,8 +2758,7 @@ impl ModpackServiceData {
                 files.push(ModpackFileEntry {
                     path: f.filename.clone(),
                     download_url: Some(f.download_url.clone()),
-                    size: Some(f.size),
-                    sha1: f.hashes.as_ref().and_then(|h| h.sha1.clone()),
+                    size: None,
                 });
             }
         }
@@ -2825,8 +2818,7 @@ impl ModpackServiceData {
         let files = vec![ModpackFileEntry {
             path: file_name,
             download_url: Some(download_url),
-            size: (file_info.file_length > 0).then_some(file_info.file_length),
-            sha1: None,
+            size: None,
         }];
         let file_count = files.len() as i32;
 
@@ -3696,10 +3688,7 @@ pub(crate) async fn run_modpack_pipeline(
         download_batch(
             handle,
             mgr,
-            vec![
-                crate::services::install_service::DownloadTarget::new(mirror_url, path.clone())
-                    .with_headers(modpack_headers(url, cf_api_key)),
-            ],
+            vec![(mirror_url, path.clone(), modpack_headers(url, cf_api_key))],
             Some("download-modpack"),
         )
         .await?;
@@ -3801,7 +3790,7 @@ pub(crate) async fn run_modpack_pipeline(
                 let p = parsed_g.as_ref().expect("modrinth 必有解析结果");
                 // 计划落盘的相对路径（清单基线用）与下载目标一并构建：下载后
                 // `files` 被 download_batch 消费，相对路径必须提前留一份。
-                let planned: Vec<(crate::services::install_service::DownloadTarget, String)> = p
+                let planned: Vec<(String, PathBuf, Vec<(String, String)>, String)> = p
                     .files
                     .iter()
                     .filter_map(|f| {
@@ -3812,17 +3801,12 @@ pub(crate) async fn run_modpack_pipeline(
                         let rel = f.path.clone();
                         let dest = modpack_target_path(&gd_g, &vdn_g, version_isolation, &rel);
                         let (url, headers) = mirror_mod_url(url, cf_api_key, &plan);
-                        Some((
-                            crate::services::install_service::DownloadTarget::new(url, dest)
-                                .with_headers(headers)
-                                .with_sha1(f.sha1.as_deref().unwrap_or_default())
-                                .with_size(f.size),
-                            rel,
-                        ))
+                        Some((url, dest, headers, rel))
                     })
                     .collect();
-                let rels: Vec<String> = planned.iter().map(|(_, r)| r.clone()).collect();
-                let files: Vec<_> = planned.into_iter().map(|(t, _)| t).collect();
+                let rels: Vec<String> = planned.iter().map(|(_, _, _, r)| r.clone()).collect();
+                let files: Vec<(String, PathBuf, Vec<(String, String)>)> =
+                    planned.into_iter().map(|(u, d, h, _)| (u, d, h)).collect();
                 if !files.is_empty() {
                     download_batch(&h_g, &mgr_g, files, Some("download-files")).await?;
                 }
@@ -3878,12 +3862,7 @@ pub(crate) async fn run_modpack_pipeline(
                     let dest = modpack_target_path(&gd_g, &vdn_g, version_isolation, &rel);
                     let (download_url, headers) =
                         mirror_mod_url(download_url.to_string(), cf_api_key, &plan);
-                    files.push(
-                        crate::services::install_service::DownloadTarget::new(download_url, dest)
-                            .with_headers(headers)
-                            .with_sha1(info.sha1.as_deref().unwrap_or_default())
-                            .with_size(info.file_length),
-                    );
+                    files.push((download_url, dest, headers));
                     rels.push(rel);
                 }
                 if missing > 0 {
@@ -3906,16 +3885,11 @@ pub(crate) async fn run_modpack_pipeline(
                     .get_miss_libraries(Some(&vdn_g), project_id, file_id)
                     .await
                     .map_err(|e| format!("获取 FTB 整合包文件清单失败: {e}"))?;
-                let files: Vec<crate::services::install_service::DownloadTarget> = libs
+                let files: Vec<(String, PathBuf, Vec<(String, String)>)> = libs
                     .iter()
                     .map(|l| {
                         let (url, headers) = mirror_mod_url(l.url.clone(), cf_api_key, &plan);
-                        crate::services::install_service::DownloadTarget::new(
-                            url,
-                            PathBuf::from(&l.path),
-                        )
-                        .with_headers(headers)
-                        .with_sha1(&l.sha1)
+                        (url, PathBuf::from(&l.path), headers)
                     })
                     .collect();
                 // FTB 的 lib 路径是绝对路径，清单需要相对实例目录的形式：
@@ -3956,12 +3930,7 @@ pub(crate) async fn run_modpack_pipeline(
                         let rel = f.path.clone();
                         let dest = modpack_target_path(&gd_g, &vdn_g, version_isolation, &rel);
                         let (u, h) = mirror_mod_url(url.to_string(), cf_api_key, &plan);
-                        files.push(
-                            crate::services::install_service::DownloadTarget::new(u, dest)
-                                .with_headers(h)
-                                .with_sha1(f.sha1.as_deref().unwrap_or_default())
-                                .with_size(f.size),
-                        );
+                        files.push((u, dest, h));
                         rels.push(rel);
                     } else if let Some((_, fid)) = f.path.split_once(':') {
                         // curseforge 占位：path = "projectID:fileID"
@@ -4004,15 +3973,7 @@ pub(crate) async fn run_modpack_pipeline(
                         let dest = modpack_target_path(&gd_g, &vdn_g, version_isolation, &rel);
                         let (download_url, headers) =
                             mirror_mod_url(download_url.to_string(), cf_api_key, &plan);
-                        files.push(
-                            crate::services::install_service::DownloadTarget::new(
-                                download_url,
-                                dest,
-                            )
-                            .with_headers(headers)
-                            .with_sha1(info.sha1.as_deref().unwrap_or_default())
-                            .with_size(info.file_length),
-                        );
+                        files.push((download_url, dest, headers));
                         rels.push(rel);
                     }
                     if missing > 0 {
@@ -4224,22 +4185,10 @@ pub(crate) fn parse_modrinth_index(zip_path: &Path) -> Result<ParsedModpack, Str
             if path.is_empty() || url.is_empty() {
                 continue;
             }
-            let sha1 = f
-                .get("hashes")
-                .and_then(|h| h.get("sha1"))
-                .and_then(|s| s.as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string);
-            let size = f
-                .get("fileSize")
-                .and_then(|s| s.as_i64())
-                .filter(|n| *n > 0);
             files.push(ModpackFileEntry {
                 path,
                 download_url: Some(url),
-                size,
-                sha1,
+                size: None,
             });
         }
     }
@@ -4286,12 +4235,6 @@ fn parse_qmodpack_index(zip_path: &Path) -> Result<ParsedModpack, String> {
                 .unwrap_or_default()
                 .to_string();
             let size = f.get("size").and_then(|s| s.as_i64());
-            let sha1 = f
-                .get("sha1")
-                .and_then(|s| s.as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string);
             let source = f.get("source").and_then(|s| s.as_str()).unwrap_or_default();
             match source {
                 "modrinth" => {
@@ -4309,7 +4252,6 @@ fn parse_qmodpack_index(zip_path: &Path) -> Result<ParsedModpack, String> {
                         path,
                         download_url: Some(url),
                         size,
-                        sha1,
                     });
                 }
                 "curseforge" => {
@@ -4324,7 +4266,6 @@ fn parse_qmodpack_index(zip_path: &Path) -> Result<ParsedModpack, String> {
                         path: format!("{pid}:{fid}"),
                         download_url: None,
                         size,
-                        sha1,
                     });
                 }
                 _ => continue,
@@ -4401,7 +4342,6 @@ pub(crate) fn parse_curseforge_manifest(zip_path: &Path) -> Result<ParsedModpack
                 path: cf_placeholder_path(proj, fid),
                 download_url: None,
                 size: None,
-                sha1: None,
             });
         }
     }
@@ -4467,7 +4407,6 @@ fn apply_optional_selection(pack: &mut ParsedModpack, selected: Option<&[i64]>) 
                 path: cf_placeholder_path(o.project_id, o.file_id),
                 download_url: None,
                 size: o.size,
-                sha1: None,
             });
         }
     }
@@ -4790,10 +4729,6 @@ pub struct ModpackFileEntry {
     pub download_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<i64>,
-    /// 包索引给出的 SHA-1（mrpack `files[].hashes.sha1` / qmodpack `files[].sha1`）。
-    /// 下载时作为落盘前校验，镜像给了坏字节会被丢弃并换源重下。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sha1: Option<String>,
 }
 
 /// CurseForge `manifest.json` 中 `required: false` 的可选条目（issue #129）。

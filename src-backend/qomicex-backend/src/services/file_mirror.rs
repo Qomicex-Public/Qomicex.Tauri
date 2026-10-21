@@ -174,16 +174,16 @@ fn mirror_chain(official: &str) -> Vec<String> {
 /// （`maven.neoforged.net/releases`）↔ `bmclapi2.bangbang93.com/maven`。
 /// 客户端 jar 与版本清单在 BMCLAPI 上是另一套路径（`version/{id}/client`），
 /// 无法纯 URL 改写，保持单源。
-///
-/// 方向由 **URL 自身所在的源** 决定，不能由调用方的偏好推：同一个安装里，加载器
-/// 安装器 URL 可能是镜像形态（镜像优先时由核心库给出），而版本 JSON 里的库地址
-/// 恒为官方形态。旧实现只按偏好推方向，导致「偏好=镜像 + 官方 URL」完全没有兜底：
-/// NeoForge 版本 JSON 的 `maven.neoforged.net` 库在官方源不可达时重试耗尽、整包安装失败。
-pub fn vanilla_fallback(url: &str) -> Vec<String> {
-    official_to_bmclapi(url)
-        .or_else(|| bmclapi_to_official(url))
-        .into_iter()
-        .collect()
+pub fn vanilla_fallback(
+    url: &str,
+    primary: crate::services::source_policy::VanillaSource,
+) -> Vec<String> {
+    use crate::services::source_policy::VanillaSource;
+    let alt = match primary {
+        VanillaSource::Official => official_to_bmclapi(url),
+        VanillaSource::Bmclapi => bmclapi_to_official(url),
+    };
+    alt.into_iter().collect()
 }
 
 fn official_to_bmclapi(url: &str) -> Option<String> {
@@ -317,6 +317,8 @@ mod tests {
     fn lock_mirror_state() -> std::sync::MutexGuard<'static, ()> {
         MIRROR_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
     }
+    use crate::services::source_policy::VanillaSource;
+
     fn m() -> (String, String) {
         (
             "https://cdn.modrinth.com/data/abc/1.0.jar".to_string(),
@@ -416,36 +418,25 @@ mod tests {
     fn forge_and_neoforge_maven_swap_to_bmclapi() {
         let forge = "https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1-47.4.0/forge-1.20.1-47.4.0-installer.jar";
         let forge_bmcl = "https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge/1.20.1-47.4.0/forge-1.20.1-47.4.0-installer.jar";
-        assert_eq!(vanilla_fallback(forge), vec![forge_bmcl.to_string()]);
-        assert_eq!(vanilla_fallback(forge_bmcl), vec![forge.to_string()]);
+        assert_eq!(
+            vanilla_fallback(forge, VanillaSource::Official),
+            vec![forge_bmcl.to_string()]
+        );
+        assert_eq!(
+            vanilla_fallback(forge_bmcl, VanillaSource::Bmclapi),
+            vec![forge.to_string()]
+        );
 
         let neo = "https://maven.neoforged.net/releases/net/neoforged/neoforge/21.1.172/neoforge-21.1.172-installer.jar";
         let neo_bmcl =
             "https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/21.1.172/neoforge-21.1.172-installer.jar";
-        assert_eq!(vanilla_fallback(neo), vec![neo_bmcl.to_string()]);
-        assert_eq!(vanilla_fallback(neo_bmcl), vec![neo.to_string()]);
-    }
-
-    /// 回归：NeoForge 版本 JSON 里的库地址恒为官方形态（核心库不会改写），兜底必须按
-    /// URL 所属的一侧推导而非「原版源偏好」。修复前镜像优先时这里返回空数组，
-    /// 官方 maven 不可达即 5 次重试后整包安装失败。
-    #[test]
-    fn neoforge_version_json_libraries_always_get_bmclapi_fallback() {
-        let loader = "https://maven.neoforged.net/releases/net/neoforged/fancymodloader/loader/4.0.44/loader-4.0.44.jar";
         assert_eq!(
-            vanilla_fallback(loader),
-            vec![
-                "https://bmclapi2.bangbang93.com/maven/net/neoforged/fancymodloader/loader/4.0.44/loader-4.0.44.jar"
-                    .to_string()
-            ]
+            vanilla_fallback(neo, VanillaSource::Official),
+            vec![neo_bmcl.to_string()]
         );
-        let universal = "https://maven.neoforged.net/releases/net/neoforged/neoforge/21.1.251/neoforge-21.1.251-universal.jar";
         assert_eq!(
-            vanilla_fallback(universal),
-            vec![
-                "https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/21.1.251/neoforge-21.1.251-universal.jar"
-                    .to_string()
-            ]
+            vanilla_fallback(neo_bmcl, VanillaSource::Bmclapi),
+            vec![neo.to_string()]
         );
     }
 
@@ -453,22 +444,22 @@ mod tests {
     fn vanilla_fallback_swaps_libraries_and_assets() {
         let lib = "https://libraries.minecraft.net/net/minecraft/minecraft.jar";
         assert_eq!(
-            vanilla_fallback(lib),
+            vanilla_fallback(lib, VanillaSource::Official),
             vec!["https://bmclapi2.bangbang93.com/maven/net/minecraft/minecraft.jar".to_string()]
         );
         let lib_bmc = "https://bmclapi2.bangbang93.com/maven/net/minecraft/minecraft.jar";
         assert_eq!(
-            vanilla_fallback(lib_bmc),
+            vanilla_fallback(lib_bmc, VanillaSource::Bmclapi),
             vec!["https://libraries.minecraft.net/net/minecraft/minecraft.jar".to_string()],
             "BMCLAPI 形态还原成官方时去掉 maven 前缀"
         );
         let asset = "https://resources.download.minecraft.net/ab/abcdef";
         assert_eq!(
-            vanilla_fallback(asset),
+            vanilla_fallback(asset, VanillaSource::Official),
             vec!["https://bmclapi2.bangbang93.com/assets/ab/abcdef".to_string()]
         );
         // 客户端 jar 路径不可 1:1 互换 → 不给兜底（宁可不猜）
         let jar = "https://piston-data.mojang.com/v1/objects/aa/bb/client.jar";
-        assert!(vanilla_fallback(jar).is_empty());
+        assert!(vanilla_fallback(jar, VanillaSource::Official).is_empty());
     }
 }

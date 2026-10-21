@@ -1246,7 +1246,6 @@ struct VerifyResourcesResponse {
     complete: bool,
     total_count: i32,
     missing_files: Vec<MissingFileDto>,
-    broken_mods: Vec<BrokenModDto>,
 }
 
 #[derive(Serialize)]
@@ -1258,23 +1257,12 @@ struct MissingFileDto {
     sha1: String,
 }
 
-/// `mods/` 下打不开的 `.jar`（相对实例根目录的路径 + 字节数）。
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct BrokenModDto {
-    name: String,
-    path: String,
-    size: u64,
-}
-
 /// `POST /api/instance/{id}/repair-resources` 响应（前端 `RepairResourcesResult`）。
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RepairResourcesResponse {
     status: String,
     missing_count: i32,
-    broken_count: i32,
-    broken_mods: Vec<String>,
 }
 
 /// `POST /api/instance/{id}/repair?threads=` 的请求查询参数。
@@ -1333,48 +1321,7 @@ async fn scan_missing_files(
     Ok((game_dir, version_dir_name, miss_files))
 }
 
-/// 实例内容根目录：版本隔离时是 `{gameDir}/versions/{name}`，否则是 `{gameDir}`。
-///
-/// 与整合包清单的相对路径基准一致（清单里的 `path` 都是相对这里）。
-fn instance_content_root(instance: &GameInstance) -> PathBuf {
-    let version_isolation = instance
-        .version_isolation
-        .unwrap_or_else(crate::settings::get_global_version_isolation);
-    crate::endpoints::modpack::modpack_target_path(
-        &instance.game_dir,
-        &instance.name,
-        version_isolation,
-        "",
-    )
-}
-
-/// 扫描实例 `mods/` 下无法作为 zip 打开的 jar，返回 `(内容根目录, 坏文件)`。
-async fn scan_broken_mods(
-    state: &crate::state::AppState,
-    instance_id: &str,
-) -> ApiResult<(PathBuf, Vec<crate::services::mods_integrity::BrokenJar>)> {
-    let instance = state
-        .instance
-        .get_by_id(instance_id)
-        .ok_or_else(|| instance_not_found(instance_id))?;
-    let root = instance_content_root(&instance);
-    let broken = scan_mods_dir(&root).await?;
-    Ok((root, broken))
-}
-
-/// 扫描是同步 I/O（逐个打开 jar 读 zip 中央目录），大型整合包有数百个 jar，
-/// 直接跑在 tokio 工作线程上会卡住同进程的进度推送，故丢到阻塞线程池。
-async fn scan_mods_dir(root: &Path) -> ApiResult<Vec<crate::services::mods_integrity::BrokenJar>> {
-    let mods_dir = root.join("mods");
-    tokio::task::spawn_blocking(move || {
-        crate::services::mods_integrity::scan_broken_jars(&mods_dir)
-    })
-    .await
-    .map_err(|e| ApiError::internal(format!("扫描 mods 目录失败: {e}")))?
-    .map_err(ApiError::from)
-}
-
-/// GET /api/instance/{id}/verify-resources — 只读校验，返回缺失文件与损坏模组清单。
+/// GET /api/instance/{id}/verify-resources — 只读校验，返回缺失文件清单。
 ///
 /// 只做扫描、**不下载**（`repair-resources` 才下载）。此前该路由不存在，
 /// 前端拿到 404 后又被 `catch` 当成成功，用户会看到假的「资源完整」（issue #138）。
@@ -1384,7 +1331,6 @@ async fn verify_resources(
 ) -> ApiResult<Json<VerifyResourcesResponse>> {
     let (_game_dir, _version_dir_name, miss_files) =
         scan_missing_files(&state, &instance_id).await?;
-    let (_root, broken) = scan_broken_mods(&state, &instance_id).await?;
     let missing_files: Vec<MissingFileDto> = miss_files
         .iter()
         .map(|f| MissingFileDto {
@@ -1394,19 +1340,10 @@ async fn verify_resources(
             sha1: f.sha1.clone(),
         })
         .collect();
-    let broken_mods: Vec<BrokenModDto> = broken
-        .iter()
-        .map(|b| BrokenModDto {
-            name: b.name.clone(),
-            path: b.rel.clone(),
-            size: b.size,
-        })
-        .collect();
     Ok(Json(VerifyResourcesResponse {
-        complete: missing_files.is_empty() && broken_mods.is_empty(),
+        complete: missing_files.is_empty(),
         total_count: missing_files.len() as i32,
         missing_files,
-        broken_mods,
     }))
 }
 
@@ -1419,7 +1356,27 @@ async fn repair_resources(
     State(state): State<SharedState>,
     AxumPath(instance_id): AxumPath<String>,
 ) -> ApiResult<Json<RepairResourcesResponse>> {
-    start_resource_repair(state, instance_id).await
+    let (_game_dir, _version_dir_name, miss_files) =
+        scan_missing_files(&state, &instance_id).await?;
+    let missing_count = miss_files.len() as i32;
+    if missing_count == 0 {
+        // 无需补全：直接完成，避免前端长时间挂着一个空任务。
+        return Ok(Json(RepairResourcesResponse {
+            status: "completed".to_string(),
+            missing_count: 0,
+        }));
+    }
+    let game_dir = state
+        .instance
+        .get_by_id(&instance_id)
+        .ok_or_else(|| instance_not_found(&instance_id))?
+        .game_dir
+        .clone();
+    spawn_repair_task(state, instance_id, game_dir, miss_files);
+    Ok(Json(RepairResourcesResponse {
+        status: "started".to_string(),
+        missing_count,
+    }))
 }
 
 /// POST /api/instance/{id}/repair?threads= — 兼容「补全文件」入口（同 repair-resources）。
@@ -1439,176 +1396,37 @@ async fn repair_instance(
             "instance repair: threads 参数由全局下载并发控制托管，此处仅记录"
         );
     }
-    start_resource_repair(state, instance_id).await
-}
-
-/// 隔离失败的坏 jar（通常是游戏进程还占着文件）→ 409，前端直接把 message 透给用户。
-fn quarantine_failed_error(failed: &[String]) -> ApiError {
-    ApiError::conflict(
-        "MOD_QUARANTINE_FAILED",
-        format!(
-            "损坏的模组无法隔离（文件可能被正在运行的游戏占用，请关闭游戏后重试）：{}",
-            failed.join("; ")
-        ),
-    )
-}
-
-/// 补全 = 版本 JSON 缺失文件 + `mods/` 下坏 jar，两者共用一次后台下载任务。
-async fn start_resource_repair(
-    state: SharedState,
-    instance_id: String,
-) -> ApiResult<Json<RepairResourcesResponse>> {
-    let (game_dir, _version_dir_name, miss_files) =
+    let (_game_dir, _version_dir_name, miss_files) =
         scan_missing_files(&state, &instance_id).await?;
-    let instance = state
-        .instance
-        .get_by_id(&instance_id)
-        .ok_or_else(|| instance_not_found(&instance_id))?;
-    let root = instance_content_root(&instance);
-    let broken = scan_mods_dir(&root).await?;
     let missing_count = miss_files.len() as i32;
-    let broken_count = broken.len() as i32;
-    if missing_count == 0 && broken_count == 0 {
-        // 无需补全：直接完成，避免前端长时间挂着一个空任务。
+    if missing_count == 0 {
         return Ok(Json(RepairResourcesResponse {
             status: "completed".to_string(),
             missing_count: 0,
-            broken_count: 0,
-            broken_mods: Vec::new(),
         }));
     }
-
-    // 先隔离坏文件再补：补下失败时它也不能继续留在 `mods/` 里让游戏崩在启动阶段。
-    let mut broken_names = Vec::with_capacity(broken.len());
-    let mut quarantine_failed: Vec<String> = Vec::new();
-    for jar in &broken {
-        match crate::services::mods_integrity::quarantine(&root, jar) {
-            Ok(new_name) => {
-                tracing::warn!(
-                    instance = %instance_id,
-                    file = %jar.name,
-                    size = jar.size,
-                    renamed_to = %new_name,
-                    "发现损坏的模组文件，已隔离"
-                );
-                broken_names.push(jar.name.clone());
-            }
-            Err(e) => {
-                tracing::warn!(
-                    instance = %instance_id,
-                    file = %jar.name,
-                    error = %e,
-                    "隔离损坏的模组文件失败"
-                );
-                quarantine_failed.push(format!("{}: {e}", jar.name));
-            }
-        }
-    }
-
-    let game_root = PathBuf::from(&game_dir);
-    let mut files: Vec<crate::services::install_service::DownloadTarget> = miss_files
-        .into_iter()
-        .map(|f| {
-            let dest = game_root.join(&f.path);
-            if let Some(parent) = dest.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            crate::services::install_service::DownloadTarget::new(f.url, dest).with_sha1(&f.sha1)
-        })
-        .collect();
-    files.extend(broken_mod_targets(&state, &instance, &root, &broken).await);
-
-    if files.is_empty() {
-        // 坏文件全部隔离、且没有一个能自动补下（本地加的模组 / 清单缺失）。
-        if !quarantine_failed.is_empty() {
-            return Err(quarantine_failed_error(&quarantine_failed));
-        }
-        return Ok(Json(RepairResourcesResponse {
-            status: "completed".to_string(),
-            missing_count,
-            broken_count,
-            broken_mods: broken_names,
-        }));
-    }
-    spawn_repair_task(state, instance_id, files);
-    if !quarantine_failed.is_empty() {
-        // 能补的已经在后台下载，但移不走的坏 jar 仍会让游戏崩在启动阶段——接口必须报失败，
-        // 不能回「已完成」让用户以为修好了。
-        return Err(quarantine_failed_error(&quarantine_failed));
-    }
+    let game_dir = state
+        .instance
+        .get_by_id(&instance_id)
+        .ok_or_else(|| instance_not_found(&instance_id))?
+        .game_dir
+        .clone();
+    spawn_repair_task(state, instance_id, game_dir, miss_files);
     Ok(Json(RepairResourcesResponse {
         status: "started".to_string(),
         missing_count,
-        broken_count,
-        broken_mods: broken_names,
     }))
 }
 
-/// 为坏模组构造补下目标：清单记录的正确 SHA-1 → Modrinth 反查 → 下载地址。
-///
-/// 清单缺失（手工导入的实例）或反查不到（非 Modrinth 托管）时返回空列表，
-/// 这些文件只做隔离，不猜下载地址。
-async fn broken_mod_targets(
-    state: &crate::state::AppState,
-    instance: &GameInstance,
-    root: &Path,
-    broken: &[crate::services::mods_integrity::BrokenJar],
-) -> Vec<crate::services::install_service::DownloadTarget> {
-    use crate::services::install_service::DownloadTarget;
-    use crate::services::modpack_manifest::{normalize_rel_path, ModpackManifest};
-
-    if broken.is_empty() {
-        return Vec::new();
-    }
-    let Some(manifest): Option<ModpackManifest> =
-        crate::services::modpack_manifest::load_manifest(&instance.game_dir, &instance.name)
-    else {
-        return Vec::new();
-    };
-    let by_rel: std::collections::HashMap<&str, &str> = manifest
-        .files
-        .iter()
-        .map(|f| (f.path.as_str(), f.sha1.as_str()))
-        .filter(|(_, sha1)| !sha1.is_empty())
-        .collect();
-
-    let mut wanted: Vec<(String, String)> = Vec::new();
-    for jar in broken {
-        let rel = normalize_rel_path(&jar.rel);
-        if let Some(sha1) = by_rel.get(rel.as_str()) {
-            wanted.push((rel, (*sha1).to_string()));
-        }
-    }
-    if wanted.is_empty() {
-        return Vec::new();
-    }
-    let hashes: Vec<String> = wanted.iter().map(|(_, sha1)| sha1.clone()).collect();
-    let found = crate::services::mods_integrity::resolve_modrinth_urls(&state.core, &hashes).await;
-
-    let mut out = Vec::new();
-    for (rel, sha1) in wanted {
-        let Some((url, size)) = found.get(&sha1.to_ascii_lowercase()) else {
-            tracing::warn!(path = %rel, "损坏的模组无法反查下载地址，仅隔离");
-            continue;
-        };
-        let dest = root.join(&rel);
-        if let Some(parent) = dest.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        out.push(
-            DownloadTarget::new(url.clone(), dest)
-                .with_sha1(&sha1)
-                .with_size(Some(*size)),
-        );
-    }
-    out
-}
-
 /// 把补全交给 `InstallTracker` 后台跑（进度经 `/install/progress` 与 SSE 暴露）。
+///
+/// `game_dir` 必须显式传入：`MissFileInfo.path` 是**相对**路径，直接拿它做目标
+/// 会让文件落到后端进程的工作目录（启动前完整性检查同样要先 join game_root）。
 fn spawn_repair_task(
     state: SharedState,
     instance_id: String,
-    files: Vec<crate::services::install_service::DownloadTarget>,
+    game_dir: String,
+    miss_files: Vec<qomicex_core::models::installer::MissFileInfo>,
 ) {
     let tracker = state.install_tracker.clone();
     let mgr = state.download_manager.load_full();
@@ -1618,7 +1436,7 @@ fn spawn_repair_task(
     tracker.start_resource_completion(instance_id, move |handle| async move {
         handle.set_status(crate::services::install_tracker::InstallStatus::Downloading);
         handle.set_stage("repairing");
-        let total = files.len();
+        let total = miss_files.len();
         handle.update(|f| {
             f.total_files = total as i32;
         });
@@ -1633,6 +1451,17 @@ fn spawn_repair_task(
         handle.mark_step(step_id, "active");
         // 复用批量下载：已含同 dest 合并（issue #122）、镜像备选、暂停/取消与
         // 冷启动/stall 看门狗，无需在补全路径重写一遍。
+        let game_root = std::path::PathBuf::from(&game_dir);
+        let files: Vec<(String, std::path::PathBuf, Vec<(String, String)>)> = miss_files
+            .into_iter()
+            .map(|f| {
+                let dest = game_root.join(&f.path);
+                if let Some(parent) = dest.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                (f.url, dest, Vec::<(String, String)>::new())
+            })
+            .collect();
         let result =
             crate::services::install_service::download_batch(&handle, &mgr, files, Some(step_id))
                 .await;
