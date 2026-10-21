@@ -959,8 +959,7 @@ async fn download_target_files(
             let entries = fetch_mr_files(state, &target.version_id).await?;
             let mut files = Vec::new();
             let mut rels = Vec::new();
-            for entry in entries {
-                let rel = entry.path;
+            for (rel, url) in entries {
                 if !modpack_manifest::is_safe_rel_path(&rel)
                     || modpack_manifest::is_protected_path(&rel)
                 {
@@ -968,14 +967,9 @@ async fn download_target_files(
                 }
                 // 暂存目录里保持与实例内相同的相对结构：应用阶段只需 rename。
                 let dest = staging.join(modpack_manifest::normalize_rel_path(&rel));
-                let headers = modpack_headers(&entry.url, cf_key);
-                let url = crate::services::source_policy::mod_primary(&entry.url, &plan);
-                files.push(
-                    crate::services::install_service::DownloadTarget::new(url, dest)
-                        .with_headers(headers)
-                        .with_sha1(entry.sha1.as_deref().unwrap_or_default())
-                        .with_size(entry.size),
-                );
+                let headers = modpack_headers(&url, cf_key);
+                let url = crate::services::source_policy::mod_primary(&url, &plan);
+                files.push((url, dest, headers));
                 rels.push(modpack_manifest::normalize_rel_path(&rel));
             }
             if !files.is_empty() {
@@ -1015,12 +1009,7 @@ async fn download_target_files(
                 let dest = staging.join(&rel);
                 let headers = modpack_headers(&url, cf_key);
                 let url = crate::services::source_policy::mod_primary(&url, &plan);
-                files.push(
-                    crate::services::install_service::DownloadTarget::new(url, dest)
-                        .with_headers(headers)
-                        .with_sha1(info.sha1.as_deref().unwrap_or_default())
-                        .with_size(info.file_length),
-                );
+                files.push((url, dest, headers));
                 rels.push(rel);
             }
             if !files.is_empty() {
@@ -1038,16 +1027,11 @@ async fn download_target_files(
     }
 }
 
-/// mrpack 索引里的一条内容文件记录。
-struct MrFileRef {
-    path: String,
-    url: String,
-    sha1: Option<String>,
-    size: Option<i64>,
-}
-
-/// 取 mrpack 的内容文件列表（路径、下载 URL 与可用的校验信息）。
-async fn fetch_mr_files(state: &SharedState, version_id: &str) -> Result<Vec<MrFileRef>, String> {
+/// 取 mrpack 的 (相对路径, 下载URL) 列表。
+async fn fetch_mr_files(
+    state: &SharedState,
+    version_id: &str,
+) -> Result<Vec<(String, String)>, String> {
     let mr = state.core.create_modrinth_source();
     let version = mr
         .get_version_info(version_id)
@@ -1077,16 +1061,7 @@ async fn fetch_mr_files(state: &SharedState, version_id: &str) -> Result<Vec<MrF
             else {
                 continue;
             };
-            out.push(MrFileRef {
-                path: path.to_string(),
-                url: dl.to_string(),
-                sha1: f
-                    .get("hashes")
-                    .and_then(|h| h.get("sha1"))
-                    .and_then(|s| s.as_str())
-                    .map(str::to_string),
-                size: f.get("fileSize").and_then(|s| s.as_i64()),
-            });
+            out.push((path.to_string(), dl.to_string()));
         }
     }
     Ok(out)

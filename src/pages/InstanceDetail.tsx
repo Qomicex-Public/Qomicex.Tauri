@@ -3295,18 +3295,8 @@ export default function InstanceDetailPage() {
     setVerifying(true)
     try {
       const result = await verifyResources(id)
-      const brokenMods = result.brokenMods ?? []
       if (result.complete) {
         notify(t('instanceDetail.settingsTab.integrityOk'), 'success')
-      } else if (brokenMods.length > 0) {
-        // 坏 jar 会让 NeoForge/Forge 直接崩在启动阶段，且报错里没有文件名，先把名字说出来。
-        const names =
-          brokenMods
-            .slice(0, 3)
-            .map((m) => m.name)
-            .join(', ') + (brokenMods.length > 3 ? '…' : '')
-        notify(t('instanceDetail.settingsTab.brokenMods', { count: brokenMods.length, names }), 'warning')
-        await handleRepairResources()
       } else if (result.missingFiles.length > 0) {
         notify(t('instanceDetail.settingsTab.missingFiles', { count: result.missingFiles.length }), 'warning')
         await handleRepairResources()

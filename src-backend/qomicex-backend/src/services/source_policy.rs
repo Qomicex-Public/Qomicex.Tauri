@@ -111,13 +111,10 @@ pub fn mod_fallbacks(url: &str, plan: &SourcePlan) -> Vec<String> {
 
 /// 原版文件的兜底 URL（与主选相反的一侧）。
 ///
-/// 只覆盖路径 1:1 可互换的域名（libraries / resources / forge / neoforge maven）；
-/// 客户端 jar 与版本清单在 BMCLAPI 上是另一套路径，无法纯 URL 改写，保持单源。
-///
-/// 兜底方向由 URL 自身决定，与 `plan` 的偏好无关：同一次安装里安装器 URL 可能是
-/// 镜像形态，而版本 JSON 里的库地址恒为官方形态，按偏好推方向会让其中一半没有兜底。
-pub fn vanilla_fallback_urls(url: &str) -> Vec<String> {
-    file_mirror::vanilla_fallback(url)
+/// 只覆盖路径 1:1 可互换的域名（libraries / resources）；客户端 jar 与版本清单
+/// 在 BMCLAPI 上是另一套路径，无法纯 URL 改写，保持单源。
+pub fn vanilla_fallback_urls(url: &str, plan: &SourcePlan) -> Vec<String> {
+    file_mirror::vanilla_fallback(url, plan.vanilla)
 }
 
 #[cfg(test)]

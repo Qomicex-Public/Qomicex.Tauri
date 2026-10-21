@@ -21,7 +21,6 @@ pub mod log_analysis;
 pub mod modpack_export;
 pub mod modpack_manifest;
 pub mod modpack_update;
-pub mod mods_integrity;
 pub mod multimc;
 pub mod options;
 pub mod parent_watch;
