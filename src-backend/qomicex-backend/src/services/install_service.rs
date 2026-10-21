@@ -434,7 +434,9 @@ pub async fn run_install_pipeline(
                         } else {
                             Vec::new()
                         };
-                        (f.url.clone(), root_a.join(&f.path), headers)
+                        DownloadTarget::new(f.url.clone(), root_a.join(&f.path))
+                            .with_headers(headers)
+                            .with_sha1(&f.sha1)
                     })
                     .collect();
                 download_batch(&h_a, &mgr_a, files, Some("loader-libs")).await?;
@@ -476,7 +478,9 @@ pub async fn run_install_pipeline(
                     } else {
                         Vec::new()
                     };
-                    (f.url.clone(), root_b.join(&f.path), headers)
+                    DownloadTarget::new(f.url.clone(), root_b.join(&f.path))
+                        .with_headers(headers)
+                        .with_sha1(&f.sha1)
                 })
                 .collect();
             download_batch(&h_b, &mgr_b, files, Some("game-files")).await?;
@@ -567,7 +571,7 @@ pub async fn run_install_pipeline(
                             crate::state::USER_AGENT.to_string(),
                         ));
                     }
-                    (af.identifier.clone(), dest, headers)
+                    DownloadTarget::new(af.identifier.clone(), dest).with_headers(headers)
                 })
                 .collect();
             download_batch(&h_c, &mgr_c, files, Some("download-addons")).await?;
@@ -659,7 +663,11 @@ pub async fn run_install_pipeline(
         download_batch(
             handle,
             &download_manager,
-            vec![(jar.url.clone(), game_root.join(&jar.path), headers)],
+            vec![
+                DownloadTarget::new(jar.url.clone(), game_root.join(&jar.path))
+                    .with_headers(headers)
+                    .with_sha1(&jar.sha1),
+            ],
             Some("finalize"),
         )
         .await?;
@@ -901,7 +909,7 @@ async fn download_installer_jar(
     download_batch_with_mirrors(
         handle,
         mgr,
-        vec![(primary, path.to_path_buf(), headers)],
+        vec![DownloadTarget::new(primary, path.to_path_buf()).with_headers(headers)],
         Some("installer"),
         extra,
     )
@@ -976,12 +984,9 @@ fn official_installer_url(
 
 /// 官方 maven URL 对应的 BMCLAPI /maven 镜像（不可改写时返回 None）。
 fn bmclapi_maven_mirror(official: &str) -> Option<String> {
-    crate::services::file_mirror::vanilla_fallback(
-        official,
-        crate::services::source_policy::VanillaSource::Official,
-    )
-    .into_iter()
-    .next()
+    crate::services::file_mirror::vanilla_fallback(official)
+        .into_iter()
+        .next()
 }
 
 /// 获取加载器缺失依赖库（源 `GetMissLoaderLibraries` 的参数映射逐字对齐）。
@@ -1349,8 +1354,49 @@ fn normalize_sep(dest: PathBuf) -> PathBuf {
     }
 }
 
-/// 批量下载的单条目标：（下载 URL, 归一化后的目标路径, 任务级请求头）。
-pub(crate) type DownloadTarget = (String, PathBuf, Vec<(String, String)>);
+/// 批量下载的单条目标。
+pub(crate) struct DownloadTarget {
+    /// 主选下载 URL（镜像由 [`download_batch`] 按 URL 追加）。
+    pub url: String,
+    /// 归一化后的目标路径。
+    pub dest: PathBuf,
+    /// 任务级请求头。
+    pub headers: Vec<(String, String)>,
+    /// 期望的 SHA-1（清单/版本 JSON 给出时用于落盘前校验，不符即换源重下）。
+    pub sha1: Option<String>,
+    /// 期望的文件大小（仅在无摘要时用于截断检测）。
+    pub expected_size: Option<u64>,
+}
+
+impl DownloadTarget {
+    pub fn new(url: impl Into<String>, dest: impl Into<PathBuf>) -> Self {
+        Self {
+            url: url.into(),
+            dest: dest.into(),
+            headers: Vec::new(),
+            sha1: None,
+            expected_size: None,
+        }
+    }
+
+    pub fn with_headers(mut self, headers: Vec<(String, String)>) -> Self {
+        self.headers = headers;
+        self
+    }
+
+    /// 设置期望 SHA-1；空串与纯空白视为未提供（版本 JSON 的 `sha1` 常为空）。
+    pub fn with_sha1(mut self, sha1: &str) -> Self {
+        let sha1 = sha1.trim();
+        self.sha1 = (!sha1.is_empty()).then(|| sha1.to_string());
+        self
+    }
+
+    /// 设置期望文件大小；非正数视为未提供。
+    pub fn with_size(mut self, size: Option<i64>) -> Self {
+        self.expected_size = size.and_then(|n| u64::try_from(n).ok()).filter(|n| *n > 0);
+        self
+    }
+}
 
 /// 目标目录所在文件系统是否大小写不敏感（`Foo.jar` 与 `foo.jar` 会落到同一个文件）。
 ///
@@ -1546,8 +1592,8 @@ pub(crate) fn dedup_download_targets(
     let mut seen: HashSet<String> = HashSet::new();
     let mut kept: Vec<DownloadTarget> = Vec::with_capacity(files.len());
     let mut dropped: Vec<DroppedTarget> = Vec::new();
-    for (url, dest, headers) in files {
-        let dest = normalize_sep(dest);
+    for target in files {
+        let dest = normalize_sep(target.dest);
         let key = dedup_key(&dest);
         if !seen.insert(key.clone()) {
             // name 只在重复分支里算：kept 条目的展示名由 download_batch 的 file_names 统一
@@ -1559,12 +1605,12 @@ pub(crate) fn dedup_download_targets(
             dropped.push(DroppedTarget {
                 key,
                 name,
-                url,
-                headers,
+                url: target.url,
+                headers: target.headers,
             });
             continue;
         }
-        kept.push((url, dest, headers));
+        kept.push(DownloadTarget { dest, ..target });
     }
     (kept, dropped)
 }
@@ -1668,8 +1714,8 @@ async fn download_batch_with_mirrors(
     // 才 create_dir_all。先统一建好，探测才不会落到"目录不存在"的保守分支——在不区分大小写
     // 的游戏目录上，两个仅大小写不同的目标若探测不到就会被判为敏感而漏合并，重新争用同一个
     // `.part`（#124 评审）。
-    for (_, dest, _) in &files {
-        if let Some(parent) = dest.parent() {
+    for target in &files {
+        if let Some(parent) = target.dest.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
     }
@@ -1697,10 +1743,11 @@ async fn download_batch_with_mirrors(
     // Pre-compute display names before consuming `files` in the loop below.
     let file_names: Vec<String> = files
         .iter()
-        .map(|(url, dest, _)| {
-            dest.file_name()
+        .map(|t| {
+            t.dest
+                .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| url.split('/').next_back().unwrap_or(url).to_string())
+                .unwrap_or_else(|| t.url.split('/').next_back().unwrap_or(&t.url).to_string())
                 .to_string()
         })
         .collect();
@@ -1714,27 +1761,33 @@ async fn download_batch_with_mirrors(
     // 官方/BMCLAPI 另一侧。两套函数对不匹配的 host 都返回空，可无脑叠加。
     let plan = crate::services::source_policy::SourcePlan::load();
     let mut ids = Vec::new();
-    for (url, dest, headers) in files {
+    for target in files {
+        let url = target.url;
         // 父目录已在判重前统一创建，这里只兜底极端情况（判重后父目录被删）。
         let mut mirrors = crate::services::source_policy::mod_fallbacks(&url, &plan);
         let extra = extra_by_url.remove(&url);
-        mirrors.extend(crate::services::source_policy::vanilla_fallback_urls(
-            &url, &plan,
-        ));
+        mirrors.extend(crate::services::source_policy::vanilla_fallback_urls(&url));
         // 查表键与判重键一致；attach_mirrors 会跳过与主 URL 相同的纯冗余项与既有镜像。
-        let key = dedup_key(&dest);
+        let key = dedup_key(&target.dest);
         let before = mirrors.len();
         attach_mirrors(&mut mirrors, &url, extra);
         attach_mirrors(&mut mirrors, &url, extra_mirrors.remove(&key));
         attached_urls += mirrors.len() - before;
         // 补上被合并条目自带的鉴权头（保留条目没有头时）。
-        let headers = if headers.is_empty() {
-            dropped_headers.remove(&key).unwrap_or(headers)
-        } else {
-            headers
-        };
-        let mut task = DownloadTask::new(url, dest);
+        let mut headers = target.headers;
+        if headers.is_empty() {
+            if let Some(h) = dropped_headers.remove(&key) {
+                headers = h;
+            }
+        }
+        let mut task = DownloadTask::new(&url, target.dest);
         task.headers = headers;
+        if let Some(sha1) = &target.sha1 {
+            task = task.with_sha1_hex(sha1);
+        }
+        if let Some(size) = target.expected_size {
+            task = task.with_expected_size(size);
+        }
         if !mirrors.is_empty() {
             task = task.with_mirrors(mirrors);
         }
@@ -2320,8 +2373,8 @@ mod tests {
         assert_eq!(required_java_from_json(""), 8);
     }
 
-    fn target(url: &str, dest: &str) -> (String, PathBuf, Vec<(String, String)>) {
-        (url.to_string(), PathBuf::from(dest), Vec::new())
+    fn target(url: &str, dest: &str) -> DownloadTarget {
+        DownloadTarget::new(url.to_string(), PathBuf::from(dest))
     }
 
     /// issue #122：同一 dest 的两条（普通 jar 条目 + 同坐标 natives 条目共享
@@ -2348,8 +2401,8 @@ mod tests {
         );
         assert_eq!(dropped.len(), 1);
         assert_eq!(dropped[0].name, "lwjgl-3.3.3.jar");
-        assert_eq!(kept[0].1, PathBuf::from(jar));
-        assert_eq!(kept[1].1, PathBuf::from(natives));
+        assert_eq!(kept[0].dest, PathBuf::from(jar));
+        assert_eq!(kept[1].dest, PathBuf::from(natives));
     }
 
     /// 同 dest 不同 URL 时，被合并的 URL 必须回传给调用方挂镜像备选——它可能是唯一可达
@@ -2361,7 +2414,7 @@ mod tests {
             target("https://mirror/a.jar", "g/a.jar"),
         ]);
         assert_eq!(kept.len(), 1);
-        assert_eq!(kept[0].0, "https://official/a.jar", "保留首次出现的条目");
+        assert_eq!(kept[0].url, "https://official/a.jar", "保留首次出现的条目");
         assert_eq!(dropped.len(), 1);
         assert_eq!(dropped[0].url, "https://mirror/a.jar");
         // 键即判重键：调用方按它就能把保留条目与抢救 URL 对上。
@@ -2388,7 +2441,7 @@ mod tests {
         assert_eq!(dropped.len(), 1);
         // 返回的 dest 已归一化为平台分隔符（Windows 上不带 `/`），可直接 create/rename。
         assert_eq!(
-            kept[0].1,
+            kept[0].dest,
             PathBuf::from(r"C:\g\libraries\org\ow2\asm\asm\9.10.1\asm-9.10.1.jar")
         );
     }
@@ -2414,7 +2467,7 @@ mod tests {
         if dir_is_case_insensitive(&dir) {
             assert_eq!(kept.len(), 1, "该文件系统大小写不敏感 → 只保留一条");
             assert_eq!(dropped.len(), 1);
-            assert_eq!(kept[0].1, foo, "保留条目的路径维持原始大小写");
+            assert_eq!(kept[0].dest, foo, "保留条目的路径维持原始大小写");
         } else {
             // 开发机恰好是大小写敏感卷：两个目标都应保留（这条路径由下面那条用例覆盖）。
             assert_eq!(kept.len(), 2, "该文件系统大小写敏感 → 两条都保留");
