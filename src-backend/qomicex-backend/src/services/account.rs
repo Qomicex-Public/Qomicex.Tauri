@@ -22,26 +22,21 @@ use crate::error::{ApiError, ApiResult};
 use crate::services::region;
 use crate::settings::resolve_base_dir;
 
-/// 风口期开关：置 `true` 时，中国大陆机器不允许新增离线账户。
+/// 境内是否执行离线登录限制（口径与境外一致：新增离线账户前须已有 Microsoft 账户）。
 ///
-/// 现为 `true`：2026-10 上游启动器集体收紧口径，先按最保守方式处理，只影响
-/// 「新增」离线账户，存量离线账户照常启动。口径松动后改回 `false` 即可，判定点与
-/// 测试都不用动（见 ADR-117）。
-const RESTRICT_OFFLINE_LOGIN_IN_CN: bool = true;
-
-/// 当前环境是否禁止新增离线账户（开关打开且位于中国大陆）。
+/// `true`：境内与境外同规则，受「先有官方账户」约束。
+/// `false`：境内始终允许新增离线账户，即便账户库里没有任何 Microsoft 账户。
 ///
-/// 前端据此提前置灰离线入口，避免用户填完表单才吃 403。
-pub fn offline_login_restricted() -> bool {
-    RESTRICT_OFFLINE_LOGIN_IN_CN && region::machine_is_china_mainland()
-}
+/// 现为 `true`。需要给境内留口子时改这一行，判定点与测试都不用动（见 ADR-117）。
+const OFFLINE_DISABLED_IN_CN: bool = true;
 
 /// 新增账户的合规判定（ADR-117）。
 ///
 /// 返回 `Some(error_code)` 表示拒绝。只拦「新增」：更新既有账户（改默认、刷新令牌）
-/// 照旧放行。Microsoft 账户任何时候都能新增——否则开关打开后大陆新用户连正版账户
-/// 都登录不了，等于自我锁死。在账户库里出现 Microsoft 账户之前，离线 / Yggdrasil /
-/// 统一通行证账户一律不允许新增——否则任何一条非官方登录都能绕过正版前置。
+/// 照旧放行。Microsoft 账户任何时候都能新增——否则境内新用户连正版账户都登录不了，
+/// 等于自我锁死。境外在账户库里出现 Microsoft 账户之前，离线 / Yggdrasil / 统一通行证
+/// 一律不允许新增；境内仅在 `OFFLINE_DISABLED_IN_CN` 为 `true` 时套用同一规则，
+/// 为 `false` 时只对离线免除（第三方仍要求先有官方账户）。
 ///
 /// 正版凭据只认 Microsoft：Yggdrasil 与统一通行证是第三方认证服务器，不能证明
 /// 账号与正版授权绑定。
@@ -49,7 +44,7 @@ fn account_creation_blocked(
     login_method: &str,
     accounts: &[StoredAccount],
     is_new: bool,
-    restrict_in_china_mainland: bool,
+    offline_disabled_in_cn: bool,
     is_china_mainland: bool,
 ) -> Option<&'static str> {
     if !is_new {
@@ -58,20 +53,18 @@ fn account_creation_blocked(
     if login_method.eq_ignore_ascii_case("Microsoft") {
         return None;
     }
-    if restrict_in_china_mainland
-        && is_china_mainland
-        && login_method.eq_ignore_ascii_case("Offline")
-    {
-        return Some("OFFLINE_DISABLED_IN_CN");
-    }
     let has_official = accounts
         .iter()
         .any(|a| a.login_method.eq_ignore_ascii_case("Microsoft"));
     if has_official {
-        None
-    } else {
-        Some("OFFICIAL_ACCOUNT_REQUIRED")
+        return None;
     }
+    // 境内且未执行限制：离线登录放行，不受「先有官方账户」约束。
+    if is_china_mainland && !offline_disabled_in_cn && login_method.eq_ignore_ascii_case("Offline")
+    {
+        return None;
+    }
+    Some("OFFICIAL_ACCOUNT_REQUIRED")
 }
 
 /// `account_creation_blocked` 的调用封装：把错误码转成 `ApiError`。
@@ -87,7 +80,7 @@ fn guard_account_creation(
         login_method,
         accounts,
         is_new,
-        RESTRICT_OFFLINE_LOGIN_IN_CN,
+        OFFLINE_DISABLED_IN_CN,
         region::machine_is_china_mainland(),
     ) {
         Some(code) => Err(ApiError::forbidden(
@@ -529,43 +522,57 @@ mod tests {
     }
 
     #[test]
-    fn account_creation_restricted_in_china_mainland_when_switch_on() {
+    fn account_creation_cn_follows_global_rule_when_restriction_on() {
+        // 开关为 true：境内与境外一致，没有官方账户则离线也拒绝。
+        assert_eq!(
+            account_creation_blocked("Offline", &[], true, true, true),
+            Some("OFFICIAL_ACCOUNT_REQUIRED")
+        );
+        // 已有官方账户时境内境外都放行。
         let accounts = [account("Microsoft")];
         assert_eq!(
             account_creation_blocked("Offline", &accounts, true, true, true),
-            Some("OFFLINE_DISABLED_IN_CN")
-        );
-        // 开关打开但不在大陆：仍按「先有官方账户」规则。
-        assert_eq!(
-            account_creation_blocked("Offline", &accounts, true, true, false),
             None
         );
+    }
+
+    #[test]
+    fn account_creation_cn_offline_exempt_when_restriction_off() {
+        // 开关为 false：境内无任何官方账户也允许新增离线账户。
         assert_eq!(
-            account_creation_blocked("Offline", &[], true, true, false),
+            account_creation_blocked("Offline", &[], true, false, true),
+            None
+        );
+        // 只免除离线；第三方仍要求先有官方账户。
+        assert_eq!(
+            account_creation_blocked("Yggdrasil", &[], true, false, true),
+            Some("OFFICIAL_ACCOUNT_REQUIRED")
+        );
+        assert_eq!(
+            account_creation_blocked("统一通行证", &[], true, false, true),
+            Some("OFFICIAL_ACCOUNT_REQUIRED")
+        );
+        // 境外不受该开关影响。
+        assert_eq!(
+            account_creation_blocked("Offline", &[], true, false, false),
             Some("OFFICIAL_ACCOUNT_REQUIRED")
         );
     }
 
     #[test]
-    fn account_creation_switch_on_never_blocks_microsoft_or_third_party() {
-        // 开关打开且在大陆，首个 Microsoft 账户仍可新增：否则新用户无法登录正版。
-        assert_eq!(
-            account_creation_blocked("Microsoft", &[], true, true, true),
-            None
-        );
-        assert_eq!(
-            account_creation_blocked("microsoft", &[], true, true, true),
-            None
-        );
-        // 开关只针对离线登录；已有官方账户时 Yggdrasil / 统一通行证照旧可加。
-        let accounts = [account("Microsoft")];
-        assert_eq!(
-            account_creation_blocked("Yggdrasil", &accounts, true, true, true),
-            None
-        );
-        assert_eq!(
-            account_creation_blocked("统一通行证", &accounts, true, true, true),
-            None
-        );
+    fn account_creation_never_blocks_microsoft() {
+        // 境内开关任意取值，首个 Microsoft 账户都可新增：否则新用户无法登录正版。
+        for flag in [true, false] {
+            for cn in [true, false] {
+                assert_eq!(
+                    account_creation_blocked("Microsoft", &[], true, flag, cn),
+                    None
+                );
+                assert_eq!(
+                    account_creation_blocked("microsoft", &[], true, flag, cn),
+                    None
+                );
+            }
+        }
     }
 }

@@ -64,8 +64,6 @@ pub struct OpenPathResponse {
 pub struct RegionResponse {
     /// 本机时区是否属于中国大陆（见 `services::region`）。
     pub china_mainland: bool,
-    /// 当前是否禁止新增离线账户（开关打开且在中国大陆，见 `services::account`）。
-    pub offline_login_restricted: bool,
 }
 
 #[derive(Deserialize)]

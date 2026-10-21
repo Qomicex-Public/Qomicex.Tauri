@@ -1,11 +1,11 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! 区域判定：只为「中国大陆合规提示」与离线登录的风口期开关服务。
+//! 区域判定：只为「中国大陆合规提示」与境内离线开关服务。
 //!
 //! 只看系统时区名，不发网络请求：避免把用户 IP 交给第三方，也避免网络不可用时
-//! 阻塞启动。时区可被手动篡改，所以结论只当提示依据；若日后需要强约束（把
-//! `RESTRICT_OFFLINE_LOGIN_IN_CN` 打开），应补网络侧判定，见 ADR-117。
+//! 阻塞启动。时区可被手动篡改，所以结论只当提示依据；若日后需要强约束，应补网络侧
+//! 判定，见 ADR-117。
 
 /// 中国大陆时区名（IANA tz database，含历史别名）。
 const CHINA_MAINLAND_TIMEZONES: &[&str] = &[
