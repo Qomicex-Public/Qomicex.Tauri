@@ -1358,7 +1358,7 @@ fn scan_broken_mods(
         .get_by_id(instance_id)
         .ok_or_else(|| instance_not_found(instance_id))?;
     let root = instance_content_root(&instance);
-    let broken = crate::services::mods_integrity::scan_broken_jars(&root.join("mods"));
+    let broken = crate::services::mods_integrity::scan_broken_jars(&root.join("mods"))?;
     Ok((root, broken))
 }
 
@@ -1442,7 +1442,7 @@ async fn start_resource_repair(
         .get_by_id(&instance_id)
         .ok_or_else(|| instance_not_found(&instance_id))?;
     let root = instance_content_root(&instance);
-    let broken = crate::services::mods_integrity::scan_broken_jars(&root.join("mods"));
+    let broken = crate::services::mods_integrity::scan_broken_jars(&root.join("mods"))?;
     let missing_count = miss_files.len() as i32;
     let broken_count = broken.len() as i32;
     if missing_count == 0 && broken_count == 0 {

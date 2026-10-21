@@ -40,10 +40,13 @@ pub struct BrokenJar {
 
 /// 扫描 `mods_dir` 下打不开的 `.jar`。
 ///
-/// 目录不存在 / 不可读时返回空列表：没有 `mods/` 本身不是错误。
-pub fn scan_broken_jars(mods_dir: &Path) -> Vec<BrokenJar> {
-    let Ok(entries) = std::fs::read_dir(mods_dir) else {
-        return Vec::new();
+/// 只有目录不存在才返回空列表（没有 `mods/` 本身不是错误）。目录存在但读不动
+/// （权限、被占用）必须向上传播：吞掉会让校验接口把「读不了」报成「资源完整」。
+pub fn scan_broken_jars(mods_dir: &Path) -> std::io::Result<Vec<BrokenJar>> {
+    let entries = match std::fs::read_dir(mods_dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
     };
     let mut out: Vec<BrokenJar> = Vec::new();
     for entry in entries.flatten() {
@@ -73,7 +76,7 @@ pub fn scan_broken_jars(mods_dir: &Path) -> Vec<BrokenJar> {
         });
     }
     out.sort_by_key(|b| b.name.to_lowercase());
-    out
+    Ok(out)
 }
 
 /// 能否作为 zip 打开（等价于 FML 对 `mods/` 里每个 jar 做的事）。
@@ -189,7 +192,7 @@ mod tests {
         std::fs::write(dir.join("empty.jar"), b"").unwrap();
         std::fs::write(dir.join("notes.txt"), b"not a jar").unwrap();
 
-        let broken = scan_broken_jars(&dir);
+        let broken = scan_broken_jars(&dir).unwrap();
         let names: Vec<&str> = broken.iter().map(|b| b.name.as_str()).collect();
         assert_eq!(names, vec!["empty.jar", "truncated.jar"]);
         assert_eq!(broken[0].rel, "mods/empty.jar");
@@ -201,7 +204,21 @@ mod tests {
     #[test]
     fn missing_mods_dir_is_not_an_error() {
         let dir = std::env::temp_dir().join(format!("qmx-mods-none-{}", std::process::id()));
-        assert!(scan_broken_jars(&dir).is_empty());
+        assert!(scan_broken_jars(&dir).unwrap().is_empty());
+    }
+
+    #[test]
+    fn unreadable_mods_dir_is_an_error() {
+        // 目录位置是个文件：read_dir 必然失败，此时不能报「没有坏 jar」。
+        let dir = std::env::temp_dir().join(format!("qmx-mods-file-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let not_a_dir = dir.join("mods");
+        std::fs::write(&not_a_dir, b"").unwrap();
+
+        assert!(scan_broken_jars(&not_a_dir).is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -255,7 +272,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         write_zip(&dir.join("fine.JAR"), &[("a", b"b")]);
-        assert!(scan_broken_jars(&dir).is_empty());
+        assert!(scan_broken_jars(&dir).unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
