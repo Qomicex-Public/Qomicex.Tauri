@@ -1349,7 +1349,7 @@ fn instance_content_root(instance: &GameInstance) -> PathBuf {
 }
 
 /// 扫描实例 `mods/` 下无法作为 zip 打开的 jar，返回 `(内容根目录, 坏文件)`。
-fn scan_broken_mods(
+async fn scan_broken_mods(
     state: &crate::state::AppState,
     instance_id: &str,
 ) -> ApiResult<(PathBuf, Vec<crate::services::mods_integrity::BrokenJar>)> {
@@ -1358,8 +1358,20 @@ fn scan_broken_mods(
         .get_by_id(instance_id)
         .ok_or_else(|| instance_not_found(instance_id))?;
     let root = instance_content_root(&instance);
-    let broken = crate::services::mods_integrity::scan_broken_jars(&root.join("mods"))?;
+    let broken = scan_mods_dir(&root).await?;
     Ok((root, broken))
+}
+
+/// 扫描是同步 I/O（逐个打开 jar 读 zip 中央目录），大型整合包有数百个 jar，
+/// 直接跑在 tokio 工作线程上会卡住同进程的进度推送，故丢到阻塞线程池。
+async fn scan_mods_dir(root: &Path) -> ApiResult<Vec<crate::services::mods_integrity::BrokenJar>> {
+    let mods_dir = root.join("mods");
+    tokio::task::spawn_blocking(move || {
+        crate::services::mods_integrity::scan_broken_jars(&mods_dir)
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("扫描 mods 目录失败: {e}")))?
+    .map_err(ApiError::from)
 }
 
 /// GET /api/instance/{id}/verify-resources — 只读校验，返回缺失文件与损坏模组清单。
@@ -1372,7 +1384,7 @@ async fn verify_resources(
 ) -> ApiResult<Json<VerifyResourcesResponse>> {
     let (_game_dir, _version_dir_name, miss_files) =
         scan_missing_files(&state, &instance_id).await?;
-    let (_root, broken) = scan_broken_mods(&state, &instance_id)?;
+    let (_root, broken) = scan_broken_mods(&state, &instance_id).await?;
     let missing_files: Vec<MissingFileDto> = miss_files
         .iter()
         .map(|f| MissingFileDto {
@@ -1430,6 +1442,17 @@ async fn repair_instance(
     start_resource_repair(state, instance_id).await
 }
 
+/// 隔离失败的坏 jar（通常是游戏进程还占着文件）→ 409，前端直接把 message 透给用户。
+fn quarantine_failed_error(failed: &[String]) -> ApiError {
+    ApiError::conflict(
+        "MOD_QUARANTINE_FAILED",
+        format!(
+            "损坏的模组无法隔离（文件可能被正在运行的游戏占用，请关闭游戏后重试）：{}",
+            failed.join("; ")
+        ),
+    )
+}
+
 /// 补全 = 版本 JSON 缺失文件 + `mods/` 下坏 jar，两者共用一次后台下载任务。
 async fn start_resource_repair(
     state: SharedState,
@@ -1442,7 +1465,7 @@ async fn start_resource_repair(
         .get_by_id(&instance_id)
         .ok_or_else(|| instance_not_found(&instance_id))?;
     let root = instance_content_root(&instance);
-    let broken = crate::services::mods_integrity::scan_broken_jars(&root.join("mods"))?;
+    let broken = scan_mods_dir(&root).await?;
     let missing_count = miss_files.len() as i32;
     let broken_count = broken.len() as i32;
     if missing_count == 0 && broken_count == 0 {
@@ -1457,6 +1480,7 @@ async fn start_resource_repair(
 
     // 先隔离坏文件再补：补下失败时它也不能继续留在 `mods/` 里让游戏崩在启动阶段。
     let mut broken_names = Vec::with_capacity(broken.len());
+    let mut quarantine_failed: Vec<String> = Vec::new();
     for jar in &broken {
         match crate::services::mods_integrity::quarantine(&root, jar) {
             Ok(new_name) => {
@@ -1476,6 +1500,7 @@ async fn start_resource_repair(
                     error = %e,
                     "隔离损坏的模组文件失败"
                 );
+                quarantine_failed.push(format!("{}: {e}", jar.name));
             }
         }
     }
@@ -1495,6 +1520,9 @@ async fn start_resource_repair(
 
     if files.is_empty() {
         // 坏文件全部隔离、且没有一个能自动补下（本地加的模组 / 清单缺失）。
+        if !quarantine_failed.is_empty() {
+            return Err(quarantine_failed_error(&quarantine_failed));
+        }
         return Ok(Json(RepairResourcesResponse {
             status: "completed".to_string(),
             missing_count,
@@ -1503,6 +1531,11 @@ async fn start_resource_repair(
         }));
     }
     spawn_repair_task(state, instance_id, files);
+    if !quarantine_failed.is_empty() {
+        // 能补的已经在后台下载，但移不走的坏 jar 仍会让游戏崩在启动阶段——接口必须报失败，
+        // 不能回「已完成」让用户以为修好了。
+        return Err(quarantine_failed_error(&quarantine_failed));
+    }
     Ok(Json(RepairResourcesResponse {
         status: "started".to_string(),
         missing_count,
