@@ -375,11 +375,20 @@ export interface VerifyResourcesResult {
   complete: boolean
   totalCount: number
   missingFiles: MissingFile[]
+  brokenMods?: BrokenMod[]
+}
+
+export interface BrokenMod {
+  name: string
+  path: string
+  size: number
 }
 
 export interface RepairResourcesResult {
   status: string
   missingCount: number
+  brokenCount?: number
+  brokenMods?: string[]
 }
 
 export interface InstallStepInfo {
