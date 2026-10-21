@@ -1589,30 +1589,74 @@ pub(crate) fn attach_mirrors(mirrors: &mut Vec<String>, url: &str, extra: Option
 pub(crate) fn dedup_download_targets(
     files: Vec<DownloadTarget>,
 ) -> (Vec<DownloadTarget>, Vec<DroppedTarget>) {
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut seen: HashMap<String, usize> = HashMap::new();
     let mut kept: Vec<DownloadTarget> = Vec::with_capacity(files.len());
     let mut dropped: Vec<DroppedTarget> = Vec::new();
     for target in files {
         let dest = normalize_sep(target.dest);
         let key = dedup_key(&dest);
-        if !seen.insert(key.clone()) {
+        let target = DownloadTarget { dest, ..target };
+        if let Some(&kept_index) = seen.get(&key) {
             // name 只在重复分支里算：kept 条目的展示名由 download_batch 的 file_names 统一
             // 算一次，这里对上千条 miss 每条都算一遍纯属浪费。
-            let name = dest
+            let name = target
+                .dest
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| dest.to_string_lossy().into_owned());
-            dropped.push(DroppedTarget {
-                key,
-                name,
-                url: target.url,
-                headers: target.headers,
-            });
+                .unwrap_or_else(|| target.dest.to_string_lossy().into_owned());
+            if !has_integrity_metadata(&kept[kept_index]) && has_integrity_metadata(&target) {
+                // 重复条目带了校验元数据而先到的那条没有（如先追加的直链 + 后到的
+                // CurseForge 条目）：校验值只描述它自己那条 URL 的字节，不能挪给别的 URL，
+                // 所以让带元数据的条目当主目标，旧 URL 降级成镜像（镜像字节不符会被校验
+                // 拒掉并继续换源）。直接丢弃则整条下载失去校验。
+                let old = std::mem::replace(&mut kept[kept_index], target);
+                dropped.push(DroppedTarget {
+                    key,
+                    name,
+                    url: old.url,
+                    headers: old.headers,
+                });
+            } else if integrity_metadata_conflicts(&kept[kept_index], &target) {
+                // 两个 URL 都给了校验值且对不上：说明它们不是同一个文件，把冲突 URL 当镜像
+                // 只会让下载在「换源 → 校验失败 → 换源」之间空转。
+                tracing::warn!(
+                    key = %key,
+                    kept = %kept[kept_index].url,
+                    duplicate = %target.url,
+                    "download_batch: 重复目标的完整性元数据冲突，忽略冲突 URL"
+                );
+            } else {
+                dropped.push(DroppedTarget {
+                    key,
+                    name,
+                    url: target.url,
+                    headers: target.headers,
+                });
+            }
             continue;
         }
-        kept.push(DownloadTarget { dest, ..target });
+        seen.insert(key, kept.len());
+        kept.push(target);
     }
     (kept, dropped)
+}
+
+/// 是否带可校验内容的信息（SHA-1 或期望字节数）。
+fn has_integrity_metadata(target: &DownloadTarget) -> bool {
+    target.sha1.is_some() || target.expected_size.is_some()
+}
+
+/// 两个目标给出的校验值是否**互相矛盾**（任一侧缺省不算矛盾）。
+fn integrity_metadata_conflicts(a: &DownloadTarget, b: &DownloadTarget) -> bool {
+    let sha1_conflict = match (&a.sha1, &b.sha1) {
+        (Some(left), Some(right)) => !left.eq_ignore_ascii_case(right),
+        _ => false,
+    };
+    let size_conflict = match (a.expected_size, b.expected_size) {
+        (Some(left), Some(right)) => left != right,
+        _ => false,
+    };
+    sha1_conflict || size_conflict
 }
 
 /// 按 `path` 去重 `MissFileInfo`（保留首次出现），返回 `(去重后列表, 被合并的记录)`。
@@ -2419,6 +2463,39 @@ mod tests {
         assert_eq!(dropped[0].url, "https://mirror/a.jar");
         // 键即判重键：调用方按它就能把保留条目与抢救 URL 对上。
         assert_eq!(dropped[0].key, dedup_key(Path::new("g/a.jar")));
+    }
+
+    /// 重复条目带校验值而先到的那条没有时，必须让带校验值的条目当主目标：SHA-1 只描述它
+    /// 自己那条 URL 的字节，挪给别的 URL 会误判；直接丢弃则整条下载失去校验。
+    #[test]
+    fn dedup_download_targets_promotes_target_with_checksum() {
+        let (kept, dropped) = dedup_download_targets(vec![
+            target("https://cdn/a.jar", "mods/a.jar"),
+            target("https://edge.forgecdn.net/a.jar", "mods/a.jar")
+                .with_sha1("AABBCC")
+                .with_size(Some(1024)),
+        ]);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].url, "https://edge.forgecdn.net/a.jar");
+        assert_eq!(kept[0].sha1.as_deref(), Some("AABBCC"));
+        assert_eq!(kept[0].expected_size, Some(1024));
+        // 旧 URL 仍作为镜像备选回传，不能连带丢掉可达源。
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].url, "https://cdn/a.jar");
+        assert_eq!(dropped[0].key, dedup_key(Path::new("mods/a.jar")));
+    }
+
+    /// 两个 URL 都带校验值且对不上：它们不是同一个文件。保留先到的可校验条目，冲突 URL
+    /// 既不能当主目标也不能当镜像（只会让下载在换源与校验失败之间空转）。
+    #[test]
+    fn dedup_download_targets_drops_conflicting_checksum() {
+        let (kept, dropped) = dedup_download_targets(vec![
+            target("https://cdn/a.jar", "mods/a.jar").with_sha1("aabbcc"),
+            target("https://other/a.jar", "mods/a.jar").with_sha1("ddeeff"),
+        ]);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].url, "https://cdn/a.jar");
+        assert!(dropped.is_empty(), "校验冲突的 URL 不应挂成镜像");
     }
 
     /// 归一化必须在判重之前，且由去重函数自己完成（调用方无需先 normalize_sep）：
