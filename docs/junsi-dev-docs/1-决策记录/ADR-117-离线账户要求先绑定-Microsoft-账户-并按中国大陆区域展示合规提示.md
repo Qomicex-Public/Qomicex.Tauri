@@ -42,24 +42,26 @@ Qomicex Launcher 的暴露面与上述两者不同：**不托管游戏文件**�
 Yggdrasil（LittleSkin）与统一通行证一并纳入限制：这两者同样是「不拥有正版即可进入游戏」
 的入口，只拦离线会留下等价绕过路径。限制在「新增」这一层，已存在的第三方账户不受影响。
 
-### 2. 中国大陆离线登录开关（当前打开）
+### 2. 中国大陆离线登录开关
 
 `account.rs` 内保留常量：
 
 ```rust
-const RESTRICT_OFFLINE_LOGIN_IN_CN: bool = true;
+const OFFLINE_DISABLED_IN_CN: bool = true;
 ```
 
-打开时，中国大陆机器上**任何**离线账户新增都会被拒绝（错误码
-`OFFLINE_DISABLED_IN_CN`），即使已有 Microsoft 账户。开关只针对离线登录：
-Microsoft 账户任何时候都能新增，Yggdrasil / 统一通行证不受该开关影响——否则新用户
-在开关打开后将无法登录正版账户。
+它决定**境内是否套用境外的离线限制**，而不是再加一层更强的封禁：
 
-现取 `true`：上游启动器在 2026-10 集体收紧口径，先按最保守方式处理；只拦「新增」，
-存量离线账户照常启动。口径松动后把这一行改回 `false` 即可，判定点与测试无需改动。
+| 取值 | 中国大陆 | 境外 |
+|---|---|---|
+| `true` | 与境外同规则：需先有 Microsoft 账户 | 需先有 Microsoft 账户 |
+| `false` | 离线始终可新增，即使没有任何 Microsoft 账户 | 需先有 Microsoft 账户 |
 
-`GET /api/system/region` 同时返回 `offlineLoginRestricted`，前端据此提前置灰离线入口
-并说明原因，避免用户填完表单才收到 403。前端开关状态以后端为准。
+- 该开关只作用于 `Offline` 登录方式。Yggdrasil / 统一通行证在两种取值下都遵循
+  「先有官方账户」规则，境内不额外豁免。
+- Microsoft 账户在任何取值、任何区域都能新增——否则境内新用户连正版账户都登录不了。
+- 只拦「新增」：存量离线账户照常启动、联机、装模组。
+- 现取 `true`，即境内与境外一致。需要给境内留口子时改成 `false`，判定点与测试无需改动。
 
 ### 3. 区域判定只看系统时区（P1）
 
@@ -68,8 +70,7 @@ Microsoft 账户任何时候都能新增，Yggdrasil / 统一通行证不受该�
 中国大陆。**不做 IP 探测、不发任何网络请求**——判定区域不需要把用户出口 IP 交给第三方。
 读取失败按「不在中国大陆」处理（fail-open），避免因环境异常改变默认行为。
 
-`GET /api/system/region` 返回 `{ "chinaMainland": bool, "offlineLoginRestricted": bool }`，
-供前端决定是否展示提示条、是否置灰离线入口。
+`GET /api/system/region` 返回 `{ "chinaMainland": bool }`，供前端决定是否展示提示条。
 
 ### 4. 中国大陆常驻合规提示条
 
@@ -108,11 +109,12 @@ Mojang 官方源及其公开镜像、本软件不托管游戏本体、与 Mojang
 - 后端：新增 `services/region.rs`、`GET /api/system/region`；`services/account.rs` 增加
   `account_creation_blocked` 与落库前置判定；`Cargo.toml` 增加 `iana-time-zone`
 - 前端：新增 `ComplianceBanner`，`Layout` 挂载；`Accounts.tsx` 去掉语言豁免；
-  `src/api/system.ts` 增加 `getRegion()`；`src/i18n/errors.ts` 增加两个错误码映射
-- i18n（submodule）：7 种语言各新增 `compliance.banner`、
-  `errors.officialAccountRequired`、`errors.offlineDisabledInCn`
-- **行为变化**：全新用户（无任何 Microsoft 账户）无法再直接新增离线账户，需先登录一次
-  正版账户；已有离线账户的用户不受任何影响
+  `src/api/system.ts` 增加 `getRegion()`；`src/i18n/errors.ts` 增加
+  `OFFICIAL_ACCOUNT_REQUIRED` 映射
+- i18n（submodule）：7 种语言各新增 `compliance.banner`、`errors.officialAccountRequired`
+- **行为变化**：境外全新用户（无任何 Microsoft 账户）无法再直接新增离线账户，需先登录一次
+  正版账户；已有离线账户的用户不受任何影响。境内是否套用同一规则由
+  `OFFLINE_DISABLED_IN_CN` 决定，当前与境外一致
 - 不涉及启动期的授权校验：离线账户启动、联机、模组安装均不检查正版
 
 ## 修订记录
@@ -121,3 +123,4 @@ Mojang 官方源及其公开镜像、本软件不托管游戏本体、与 Mojang
 |---|---|---|---|
 | 2026-10-20 | v1.0 | 初版创建 | AI Agent |
 | 2026-10-20 | v1.1 | `RESTRICT_OFFLINE_LOGIN_IN_CN` 改为 `true`（风口期先收紧，口径松动后改回）；`/api/system/region` 增加 `offlineLoginRestricted`，前端据此置灰离线入口 | AI Agent |
+| 2026-10-21 | v1.2 | 开关改名为 `OFFLINE_DISABLED_IN_CN`，语义改为「境内是否套用境外规则」：`true` 境内同境外，`false` 境内离线始终可新增；移除硬封禁错误码 `OFFLINE_DISABLED_IN_CN` 与前端置灰逻辑 | AI Agent |

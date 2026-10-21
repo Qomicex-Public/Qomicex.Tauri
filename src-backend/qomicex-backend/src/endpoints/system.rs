@@ -233,7 +233,6 @@ async fn sysinfo() -> ApiResult<Json<SystemInfoResponse>> {
 async fn region() -> ApiResult<Json<RegionResponse>> {
     Ok(Json(RegionResponse {
         china_mainland: crate::services::region::machine_is_china_mainland(),
-        offline_login_restricted: crate::services::account::offline_login_restricted(),
     }))
 }
 
