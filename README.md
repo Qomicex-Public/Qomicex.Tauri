@@ -29,27 +29,21 @@ Rediscover Minecraft with pure elegance — A modern, fast, and open launcher fo
 
 ### 🚀 Smooth Launch & Easy Setup
 Say goodbye to complicated setups. One-click install for Vanilla, Forge, Fabric, NeoForge, and more. Everything just works, with clear logs if anything ever goes wrong.
-<!-- TODO: Insert screenshot of launch & installation interface -->
 
 ### 🔐 Accounts Made Simple
 Log in securely with your Microsoft account, or hop into offline mode instantly for local testing. Got custom skins? Just drag and drop your skin server link to import it.
-<!-- TODO: Insert screenshot of account login interface -->
 
 ### 🌐 Play Together, No Public IP Needed
 Want to play with friends? Jump straight into online mode without messing with port forwarding. It handles the connection for you, keeps out griefers, and even works smoothly with other popular launchers.
-<!-- TODO: Insert screenshot of multiplayer lobby/room -->
 
 ### 📐 3D Blueprint Previews
 Inspect Litematica schematics in 3D right inside the app before building them in-game. Slide through layers and check material lists without needing any official Mojang assets.
-<!-- TODO: Insert screenshot of 3D schematic preview -->
 
 ### 📦 Clean Mod & Instance Management
 Keep your modpacks, saves, and shaders neatly separated. Search and download directly from Modrinth and CurseForge, and let the launcher automatically fix missing mod dependencies for you.
-<!-- TODO: Insert screenshot of instance manager & resource center -->
 
 ### 📥 Import & Export with Ease
 Got a modpack to share? Export it in a snap or drop a `.zip` / `.mrpack` right in to start playing immediately.
-<!-- TODO: Insert screenshot of import/export modal -->
 
 ---
 
