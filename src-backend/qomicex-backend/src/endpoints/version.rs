@@ -896,13 +896,14 @@ pub(crate) fn detect_loaders(
                 }
                 break;
             }
-            if prev.as_deref() == Some("--fml.forgeVersion") && !s.starts_with("--") {
-                if !has_loader(&types, "Forge") {
-                    types.push(ScannedLoaderEntry {
-                        r#type: "Forge".into(),
-                        version: s.to_string(),
-                    });
-                }
+            if prev.as_deref() == Some("--fml.forgeVersion")
+                && !s.starts_with("--")
+                && !has_loader(&types, "Forge")
+            {
+                types.push(ScannedLoaderEntry {
+                    r#type: "Forge".into(),
+                    version: s.to_string(),
+                });
             }
             prev = Some(s.to_string());
         }
@@ -1235,25 +1236,25 @@ mod tests {
             Some(vdir.join(format!("{name}.jar")))
         );
         let _ = std::fs::remove_dir_all(&base);
+    }
 
-        #[test]
-        fn from_jar_reads_version_json_entry() {
-            use zip::ZipWriter;
+    #[test]
+    fn from_jar_reads_version_json_entry() {
+        use zip::ZipWriter;
 
-            let dir = temp_dir("jar-vjson");
-            std::fs::create_dir_all(&dir).unwrap();
-            let jar_path = dir.join("vjson-probe.jar");
-            let file = std::fs::File::create(&jar_path).unwrap();
-            let mut zip = ZipWriter::new(file);
-            zip.start_file("version.json", zip::write::SimpleFileOptions::default())
-                .unwrap();
-            zip.write_all(br#"{"id":"1.2.3-probe"}"#).unwrap();
-            zip.finish().unwrap();
+        let dir = temp_dir("jar-vjson");
+        std::fs::create_dir_all(&dir).unwrap();
+        let jar_path = dir.join("vjson-probe.jar");
+        let file = std::fs::File::create(&jar_path).unwrap();
+        let mut zip = ZipWriter::new(file);
+        zip.start_file("version.json", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(br#"{"id":"1.2.3-probe"}"#).unwrap();
+        zip.finish().unwrap();
 
-            assert_eq!(
-                super::from_jar_game_version(&jar_path).as_deref(),
-                Some("1.2.3-probe")
-            );
-        }
+        assert_eq!(
+            super::from_jar_game_version(&jar_path).as_deref(),
+            Some("1.2.3-probe")
+        );
     }
 }

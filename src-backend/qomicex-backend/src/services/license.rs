@@ -5,9 +5,9 @@
 //!
 //! Deployment mirrors the C# `#if LICENSE_REQUIRED` model:
 //!   * default build    -> `validate`/`activate` are no-ops returning Empty
-//!                         metadata (no license core is compiled in).
+//!     metadata (no license core is compiled in).
 //!   * `license-required`-> the closed core is compiled in (see license_core)
-//!                         for Ed25519 verification + remote check.
+//!     for Ed25519 verification + remote check.
 
 use std::path::PathBuf;
 

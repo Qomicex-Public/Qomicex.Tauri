@@ -410,7 +410,7 @@ pub(crate) fn spawn_startup_relay_refresh() {
             }
             *mode = Mode::Reloading;
         }
-        let result = reload_relay_nodes_inner(&conn).await;
+        let result = reload_relay_nodes_inner(conn).await;
         {
             let mut mode = conn.mode.lock().await;
             if matches!(&*mode, Mode::Reloading) {
@@ -750,7 +750,7 @@ async fn host_port(
         .as_ref()
         .map(|p| p.player_name.clone())
         .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| fallback_name);
+        .unwrap_or(fallback_name);
     // 房主头像：默认账号优先，无账号用进程 uuid + userType
     let default_account = state.account.get_default().await.ok().flatten();
     let icon = resolve_host_icon(
@@ -1251,7 +1251,7 @@ async fn join_room(
             let code = req.code.clone();
             move |ct| {
                 let conn = connector();
-                Box::pin(async move { join_inner(&conn, &state, &code, ct).await })
+                Box::pin(async move { join_inner(conn, &state, &code, ct).await })
             }
         },
     )
@@ -1444,12 +1444,9 @@ async fn status() -> ApiResult<Json<ConnectorStatusResponse>> {
             }
             // 房主版本信息（qml:game_info 扩展协议）；写回缓存供 match_instances 过滤
             // （此前只写响应不写缓存，guest 端过滤条件永远拿空版本 → 列出全部实例）
-            match guest.send_json::<ConnectorGameInfo>("qml:game_info").await {
-                Ok(info) => {
-                    resp.game_info = Some(info.clone());
-                    *conn.game_info.write().unwrap() = Some(info);
-                }
-                Err(_) => {}
+            if let Ok(info) = guest.send_json::<ConnectorGameInfo>("qml:game_info").await {
+                resp.game_info = Some(info.clone());
+                *conn.game_info.write().unwrap() = Some(info);
             }
         }
     }
@@ -1643,7 +1640,7 @@ async fn match_instances(
     let missing_hashes: Vec<String> = room_mods
         .iter()
         .map(|m| m.hash.clone())
-        .filter(|h| !h.is_empty() && best.map_or(true, |r| !r.local_hashes.contains(h)))
+        .filter(|h| !h.is_empty() && best.is_none_or(|r| !r.local_hashes.contains(h)))
         .collect();
     Ok(Json(MatchInstancesResponse {
         mods: room_mods,
@@ -1816,7 +1813,7 @@ async fn reload_relay_nodes() -> ApiResult<Json<RelayReloadResponse>> {
     }
 
     // 占用之后到换 client 之前，任何 host/join 都会被 Reloading 挡住。
-    let result = reload_relay_nodes_inner(&conn).await;
+    let result = reload_relay_nodes_inner(conn).await;
 
     // 无论成功失败都要复位，否则联机被永久卡死。
     {

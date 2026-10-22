@@ -20,7 +20,7 @@
 //! - The percent-encoding of the channel query value is inlined (`percent_encode`), since no
 //!   external percent-encoding crate is added.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use axum::extract::{Query, State};
 use axum::routing::get;
@@ -115,7 +115,7 @@ async fn fetch_remote(client: &reqwest::Client, url: &str) -> Result<Vec<Announc
 // Cache helpers ({BaseDir})
 // =====================================================================
 
-fn cache_path(data_dir: &PathBuf, channel: Option<&str>) -> PathBuf {
+fn cache_path(data_dir: &Path, channel: Option<&str>) -> PathBuf {
     let dir = data_dir.join("QML").join("announcements");
     let name = match channel {
         Some(c) if !c.is_empty() => format!("announcements-{}.json", c),
@@ -124,7 +124,7 @@ fn cache_path(data_dir: &PathBuf, channel: Option<&str>) -> PathBuf {
     dir.join(name)
 }
 
-fn cache_write(data_dir: &PathBuf, channel: Option<&str>, list: &[AnnouncementDto]) {
+fn cache_write(data_dir: &Path, channel: Option<&str>, list: &[AnnouncementDto]) {
     let path = cache_path(data_dir, channel);
     let dir = path.parent().map(|p| p.to_path_buf());
     if let Some(parent) = dir {
@@ -137,7 +137,7 @@ fn cache_write(data_dir: &PathBuf, channel: Option<&str>, list: &[AnnouncementDt
     }
 }
 
-fn cache_read(data_dir: &PathBuf, channel: Option<&str>) -> Option<Vec<AnnouncementDto>> {
+fn cache_read(data_dir: &Path, channel: Option<&str>) -> Option<Vec<AnnouncementDto>> {
     let path = cache_path(data_dir, channel);
     let bytes = std::fs::read(path).ok()?;
     serde_json::from_slice(&bytes).ok()

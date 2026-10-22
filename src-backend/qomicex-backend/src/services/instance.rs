@@ -563,14 +563,12 @@ impl InstanceService {
             if dir_exists {
                 return true;
             }
-            match inst
-                .created_at
-                .as_deref()
-                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-            {
-                Some(t) if now.signed_duration_since(t) < INSTALLING_GRACE => true,
-                _ => false,
-            }
+            matches!(
+                inst.created_at
+                    .as_deref()
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()),
+                Some(t) if now.signed_duration_since(t) < INSTALLING_GRACE
+            )
         });
 
         // 2. 跟踪已扫描的游戏目录
@@ -643,17 +641,18 @@ impl InstanceService {
                 }
 
                 // 去重：同 key 只保留一个
-                if !seen_keys.contains_key(&key) {
-                    seen_keys.insert(key, result.len());
+                if let std::collections::hash_map::Entry::Vacant(e) = seen_keys.entry(key) {
+                    e.insert(result.len());
                     result.push(inst);
                 }
             } else {
                 // JSON 中无记录，从磁盘信息创建新实例
-                if !seen_keys.contains_key(&key) {
+                let dir_name_for_row = key.1.clone();
+                if let std::collections::hash_map::Entry::Vacant(e) = seen_keys.entry(key) {
                     let inst = GameInstance {
                         // name 是版本隔离目录名（路径基座），必须用目录名而非 JSON id；
                         // 用 id 会让记录指向不存在的目录（重装/改名后错位，issue #244）。
-                        name: key.1.clone(),
+                        name: dir_name_for_row,
                         game_version: scanned.game_version.clone(),
                         game_dir: scanned.game_dir.clone(),
                         loader: scanned.loader.clone(),
@@ -665,7 +664,7 @@ impl InstanceService {
                         modpack_summary: scanned.modpack_summary.clone(),
                         ..Default::default()
                     };
-                    seen_keys.insert(key, result.len());
+                    e.insert(result.len());
                     result.push(inst);
                 }
             }

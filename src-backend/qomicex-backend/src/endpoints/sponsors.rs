@@ -11,7 +11,7 @@
 //! 与 announcement.rs 一致：上游失败时回退到 `{BaseDir}/QML/sponsors.json` 缓存，
 //! 成功则写回缓存，避免上游抖动导致鸣谢列表消失。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use axum::extract::State;
 use axum::routing::get;
@@ -74,11 +74,11 @@ async fn fetch_remote(client: &reqwest::Client, url: &str) -> Result<Vec<Sponsor
 // Cache helpers ({BaseDir}/QML/sponsors.json)
 // =====================================================================
 
-fn cache_path(data_dir: &PathBuf) -> PathBuf {
+fn cache_path(data_dir: &Path) -> PathBuf {
     data_dir.join("QML").join("sponsors.json")
 }
 
-fn cache_write(data_dir: &PathBuf, list: &[SponsorDto]) {
+fn cache_write(data_dir: &Path, list: &[SponsorDto]) {
     let path = cache_path(data_dir);
     if let Some(parent) = path.parent() {
         if std::fs::create_dir_all(parent).is_err() {
@@ -90,7 +90,7 @@ fn cache_write(data_dir: &PathBuf, list: &[SponsorDto]) {
     }
 }
 
-fn cache_read(data_dir: &PathBuf) -> Option<Vec<SponsorDto>> {
+fn cache_read(data_dir: &Path) -> Option<Vec<SponsorDto>> {
     let bytes = std::fs::read(cache_path(data_dir)).ok()?;
     serde_json::from_slice(&bytes).ok()
 }

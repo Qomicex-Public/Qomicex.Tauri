@@ -12,6 +12,7 @@
 //! mcmod.cn search over HTTP. The exposed routes are offline-only:
 //!   - `/mcmod/lookup`  : single English->Chinese name lookup
 //!   - `/mcmod/batch`   : bulk English->Chinese name backfill
+//!
 //! Consequently `state.http_client` is not exercised by these handlers.
 
 use std::collections::HashMap;
@@ -180,7 +181,7 @@ impl McmodData {
             .filter(|(s, _, _)| *s >= 30)
             .map(|(_, id, e)| (id, e))
             .collect();
-        candidates.sort_by(|a, b| a.0.cmp(&b.0));
+        candidates.sort_by_key(|a| a.0);
         let mut out: Vec<CnSearchCandidate> = Vec::new();
         for (_, e) in candidates {
             let cand = to_candidate(e);

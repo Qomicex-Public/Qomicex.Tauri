@@ -435,14 +435,18 @@ impl Section {
             if let Some(add) = &self.add {
                 if i / 2 < add.len() {
                     let nib = add[i / 2];
-                    let v = if i % 2 == 0 { nib & 0x0F } else { nib >> 4 };
+                    let v = if i.is_multiple_of(2) {
+                        nib & 0x0F
+                    } else {
+                        nib >> 4
+                    };
                     id |= (v as u16) << 8;
                 }
             }
             let meta = match &self.data {
                 Some(d) if i / 2 < d.len() => {
                     let nib = d[i / 2];
-                    if i % 2 == 0 {
+                    if i.is_multiple_of(2) {
                         (nib & 0x0F) as u16
                     } else {
                         (nib >> 4) as u16
@@ -539,7 +543,7 @@ pub fn parse_sections(chunk_nbt: &[u8]) -> Result<Vec<Section>, String> {
             });
         }
     }
-    out.sort_by(|a, b| b.y.cmp(&a.y));
+    out.sort_by_key(|s| std::cmp::Reverse(s.y));
     Ok(out)
 }
 
@@ -601,7 +605,7 @@ pub fn parse_sections_modern(chunk_nbt: &[u8]) -> Result<Vec<Section>, String> {
             r.skip(t, 0)?;
         }
     }
-    out.sort_by(|a, b| b.y.cmp(&a.y));
+    out.sort_by_key(|s| std::cmp::Reverse(s.y));
     Ok(out)
 }
 
@@ -787,7 +791,7 @@ pub fn parse_sections_fast_full(
     if !saw_level {
         return Err("chunk has no Level tag".into());
     }
-    out.sort_by(|a, b| b.y.cmp(&a.y));
+    out.sort_by_key(|s| std::cmp::Reverse(s.y));
     Ok((out, legacy_biomes))
 }
 

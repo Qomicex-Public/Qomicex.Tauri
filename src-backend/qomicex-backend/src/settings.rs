@@ -41,7 +41,7 @@ pub(crate) fn is_china_timezone() -> bool {
 }
 
 fn local_app_data_root() -> PathBuf {
-    dirs::data_local_dir().unwrap_or_else(|| std::env::temp_dir())
+    dirs::data_local_dir().unwrap_or_else(std::env::temp_dir)
 }
 
 fn default_dir() -> PathBuf {

@@ -431,7 +431,6 @@ fn collect_export_tree(root: &Path, version_dir_name: &str) -> Result<Vec<Export
     fn walk(
         dir: &Path,
         rel_dir: &str,
-        root: &Path,
         version_json: &str,
         version_jar: &str,
     ) -> Result<Vec<ExportTreeNode>, String> {
@@ -453,7 +452,7 @@ fn collect_export_tree(root: &Path, version_dir_name: &str) -> Result<Vec<Export
                 if EXCLUDED_DIRS.iter().any(|d| lower == *d) {
                     continue;
                 }
-                let children = walk(&path, &rel, root, version_json, version_jar)?;
+                let children = walk(&path, &rel, version_json, version_jar)?;
                 let size: u64 = children.iter().map(|c| c.size).sum();
                 let file_count: u64 = children.iter().map(|c| c.file_count).sum();
                 nodes.push(ExportTreeNode {
@@ -491,7 +490,7 @@ fn collect_export_tree(root: &Path, version_dir_name: &str) -> Result<Vec<Export
         Ok(nodes)
     }
 
-    walk(root, "", root, &version_json, &version_jar)
+    walk(root, "", &version_json, &version_jar)
 }
 
 /// 树先序展平为内容条目（目录在前，文件在后；父目录先于子文件）。

@@ -463,7 +463,7 @@ impl PluginStore {
             if dir
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map_or(false, is_internal_plugin_dir)
+                .is_some_and(is_internal_plugin_dir)
             {
                 continue;
             }
@@ -487,7 +487,7 @@ impl PluginStore {
                 .ok()
                 .and_then(|m| m.created().ok())
                 .map(created_time_o)
-                .unwrap_or_else(|| now_o());
+                .unwrap_or_else(now_o);
             let has_rollback = find_latest_snapshot(&self.plugins_dir, &manifest.id).is_some();
             result.push(PluginInfo {
                 manifest,

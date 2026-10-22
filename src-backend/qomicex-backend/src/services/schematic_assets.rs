@@ -86,6 +86,7 @@ pub fn is_plain_file_name(name: &str) -> bool {
 /// 1. version jar (`versions/{v}/{v}.jar`)
 /// 2. extracted assets under the version folder (`versions/{v}/assets`)
 /// 3. game-root assets (`{gameRoot}/assets`)
+///
 /// Returns Err with a human-readable explanation when nothing is found.
 pub fn locate_asset_source(game_root: &Path, game_version: &str) -> Result<AssetSource, String> {
     let jar = game_root
@@ -155,7 +156,7 @@ pub fn extract_bundle(
         }
         // Strip the namespace: vanilla assets are keyed without it.
         let key = match name.split_once(':') {
-            Some((ns, id)) if ns == "minecraft" => id.to_string(),
+            Some(("minecraft", id)) => id.to_string(),
             _ => {
                 // Non-vanilla blocks have no assets in the vanilla jar → report.
                 bundle.missing_blocks.push(name.to_string());
@@ -248,10 +249,10 @@ pub fn extract_bundle(
                 let tex_id = full.as_str();
                 let probe = if let Some(wood) = tex_id.strip_prefix("entity/signs/hanging/") {
                     Some(format!("textures/block/{wood}_sign.png"))
-                } else if let Some(wood) = tex_id.strip_prefix("entity/signs/") {
-                    Some(format!("textures/block/{wood}_sign.png"))
                 } else {
-                    None
+                    tex_id
+                        .strip_prefix("entity/signs/")
+                        .map(|wood| format!("textures/block/{wood}_sign.png"))
                 };
                 match probe {
                     Some(p) => match read_asset(&mut opened, &p) {

@@ -611,7 +611,7 @@ fn parse_mr_index_paths(index: &str) -> Vec<String> {
             arr.iter()
                 .filter_map(|f| f.get("path").and_then(|p| p.as_str()))
                 .filter(|p| modpack_manifest::is_safe_rel_path(p))
-                .map(|p| modpack_manifest::normalize_rel_path(p))
+                .map(modpack_manifest::normalize_rel_path)
                 .collect()
         })
         .unwrap_or_default()
@@ -786,7 +786,7 @@ async fn run_update_pipeline(
     if !instance_dir.is_dir() {
         return Err(format!("实例目录不存在: {}", instance_dir.display()));
     }
-    let version_isolation = inst
+    let _version_isolation = inst
         .version_isolation
         .unwrap_or_else(crate::settings::get_global_version_isolation);
 

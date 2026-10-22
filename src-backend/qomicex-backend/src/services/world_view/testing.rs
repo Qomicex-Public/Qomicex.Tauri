@@ -6,9 +6,9 @@
 //! 与上游 world-viewer 的 `lib.rs::testing` 模块保持一致，只是把 `crate::`
 //! 换成了 `super::`。仅编译进测试目标。
 
-pub use super::biome::{apply_tint, tint_color, BiomeDef, TintKind};
+pub use super::biome::{tint_color, BiomeDef, TintKind};
 pub use super::palette::Palette;
-pub use super::region::{BlockStates, LegacyBiomes, RegionFile, Section};
+pub use super::region::{BlockStates, LegacyBiomes, Section};
 pub use super::render::{BlockRef, ChunkData, RenderOpts, ScanOpts, TileCache};
 pub use super::world::{resolve_ymax, DimensionInfo, World, YMAX_FULL};
 

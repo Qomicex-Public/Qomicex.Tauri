@@ -273,7 +273,7 @@ pub fn parse_metadata_from_zip(zip_path: &Path) -> Result<MultiMcMetadata, Strin
                 .map(|(d, _)| d)
                 .unwrap_or("")
                 .to_string();
-            if !mc_prefixes.iter().any(|p| *p == dir) {
+            if !mc_prefixes.contains(&dir) {
                 mc_prefixes.push(dir);
             }
         }
@@ -379,7 +379,7 @@ fn build_metadata(
         .get("name")
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .or_else(|| fallback_name)
+        .or(fallback_name)
         .unwrap_or_else(|| "MultiMC 实例".to_string());
 
     // 仅当 Override 时导入启动设置。
@@ -756,7 +756,7 @@ pub async fn build_merged_version_json(
     // 3. 递归解析 requires 闭包。
     loop {
         let mut missing: Vec<(String, String)> = Vec::new();
-        for (_uid, patch) in &patches {
+        for patch in patches.values() {
             if let Some(reqs) = patch.get("requires").and_then(Value::as_array) {
                 for r in reqs {
                     let Some(rid) = r.get("uid").and_then(Value::as_str) else {
@@ -1052,23 +1052,23 @@ fn merge_arguments(base: &mut Value, val: &Value) {
 fn append_to_arr(base: &mut Value, key: &str, val: &Value) {
     let Some(items) = val.as_array() else {
         if !val.is_null() {
-            base.as_object_mut().map(|m| {
+            if let Some(m) = base.as_object_mut() {
                 let arr = m.entry(key.to_string()).or_insert_with(|| json!([]));
                 if let Some(a) = arr.as_array_mut() {
                     a.push(val.clone());
                 }
-            });
+            }
         }
         return;
     };
-    base.as_object_mut().map(|m| {
+    if let Some(m) = base.as_object_mut() {
         let arr = m.entry(key.to_string()).or_insert_with(|| json!([]));
         if let Some(a) = arr.as_array_mut() {
             for it in items {
                 a.push(it.clone());
             }
         }
-    });
+    }
 }
 
 /// compatibleJavaMajors → javaVersion.majorVersion（取 {8,11,16,17,21} 中最大者）。
@@ -1118,12 +1118,12 @@ async fn ensure_downloads_client(
         .and_then(|d| d.get("client"))
         .cloned()
     {
-        merged.as_object_mut().map(|m| {
+        if let Some(m) = merged.as_object_mut() {
             let d = m.entry("downloads").or_insert_with(|| json!({}));
             if let Some(dobj) = d.as_object_mut() {
                 dobj.insert("client".to_string(), client);
             }
-        });
+        }
     }
     Ok(())
 }
@@ -1196,12 +1196,12 @@ fn materialize_library_downloads(base: &mut Value) {
                 )
             }
         };
-        lib.as_object_mut().map(|l| {
+        if let Some(l) = lib.as_object_mut() {
             l.insert(
                 "downloads".to_string(),
                 json!({ "artifact": { "path": artifact_path, "url": url, "size": 0, "sha1": "" } }),
             );
-        });
+        }
     }
 }
 

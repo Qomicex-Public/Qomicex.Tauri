@@ -874,7 +874,7 @@ async fn loaders(
             slug,
         })
         .collect();
-    list.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    list.sort_by_key(|a| a.name.to_lowercase());
     Ok(Json(list))
 }
 
@@ -1077,7 +1077,7 @@ fn aggregate_window(
         .into_iter()
         .filter(|it| seen.insert((it.source.clone(), it.id.clone())))
         .collect();
-    deduped.sort_by(|a, b| b.download_count.cmp(&a.download_count));
+    deduped.sort_by_key(|it| std::cmp::Reverse(it.download_count));
     let offset = ((page - 1).max(0) as usize) * page_size.max(0) as usize;
     deduped
         .into_iter()
@@ -1303,7 +1303,7 @@ async fn search_cn_candidates(
         }
     }
 
-    merged.sort_by(|a, b| b.download_count.cmp(&a.download_count));
+    merged.sort_by_key(|it| std::cmp::Reverse(it.download_count));
     merged.truncate(page_size as usize);
     let total = merged.len() as i32;
     (merged, total)
@@ -2190,7 +2190,6 @@ async fn dependencies(
             &id,
             q.version_id.as_deref(),
             q.game_version.as_deref(),
-            q.loader.as_deref(),
             &state.curse_forge_api_key,
             &mut visited,
             0,
@@ -2835,7 +2834,7 @@ fn apply_cf_filters(
 ///
 /// CDN 链接常把空格编码成 `%20`，直接取末段会把编码原样写到磁盘上。
 fn file_name_from_url(url: &str) -> String {
-    let path = url.split(|c| c == '?' || c == '#').next().unwrap_or(url);
+    let path = url.split(['?', '#']).next().unwrap_or(url);
     let last = path.rsplit('/').next().unwrap_or("");
     urlencoding::decode(last)
         .map(|s| s.into_owned())
@@ -2845,7 +2844,7 @@ fn file_name_from_url(url: &str) -> String {
 fn cf_files_url(id: &str, index: Option<i64>, game_version: Option<&str>) -> String {
     let mut url = format!(
         "https://api.curseforge.com/v1/mods/{}/files?pageSize=50{}",
-        urlinterval(&id),
+        urlinterval(id),
         index.map(|i| format!("&index={}", i)).unwrap_or_default()
     );
     if let Some(gv) = game_version {
@@ -3111,7 +3110,6 @@ fn resolve_cf_deps<'a>(
     mod_id: &'a str,
     file_id: Option<&'a str>,
     game_version: Option<&'a str>,
-    loader: Option<&'a str>,
     api_key: &'a str,
     visited: &'a mut std::collections::HashSet<String>,
     depth: i32,
@@ -3137,14 +3135,13 @@ fn resolve_cf_deps<'a>(
                 Some(b) => b,
                 None => return result,
             };
-            let dep_ids = extract_cf_required_deps(body.get("data").map(|d| d.clone()));
+            let dep_ids = extract_cf_required_deps(body.get("data").cloned());
             for dep_id in dep_ids {
                 let sub = resolve_cf_deps(
                     http,
                     &dep_id,
                     None,
                     game_version,
-                    loader,
                     api_key,
                     &mut *visited,
                     depth + 1,
@@ -3249,14 +3246,13 @@ fn resolve_cf_deps<'a>(
             urlinterval(&best_file_id)
         );
         if let Some(body) = cf_get_raw(http, &deps_url, api_key).await {
-            let dep_ids = extract_cf_required_deps(body.get("data").map(|d| d.clone()));
+            let dep_ids = extract_cf_required_deps(body.get("data").cloned());
             for dep_id in dep_ids {
                 let sub = resolve_cf_deps(
                     http,
                     &dep_id,
                     None,
                     game_version,
-                    loader,
                     api_key,
                     &mut *visited,
                     depth + 1,

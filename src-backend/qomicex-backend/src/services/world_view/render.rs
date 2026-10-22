@@ -734,9 +734,8 @@ fn load_chunks_parallel(
         }
         let mut out = Vec::with_capacity(coords.len());
         for h in handles {
-            match h.join() {
-                Ok(v) => out.extend(v),
-                Err(_) => {}
+            if let Ok(v) = h.join() {
+                out.extend(v)
             }
         }
         out

@@ -374,7 +374,7 @@ impl SkinService {
                 status: StatusCode::UNAUTHORIZED,
             });
         }
-        if code < 200 || code >= 300 {
+        if !(200..300).contains(&code) {
             let truncated = if body.len() > 200 { &body[..200] } else { body }.to_string();
             return Err(ApiError {
                 code: "MC_API_ERROR".to_string(),
@@ -976,7 +976,7 @@ fn check_upload_response(code: u16, body: &str, fail_code: &str) -> ApiResult<()
             status: StatusCode::UNAUTHORIZED,
         });
     }
-    if code < 200 || code >= 300 {
+    if !(200..300).contains(&code) {
         let truncated = if body.len() > 200 { &body[..200] } else { body }.to_string();
         return Err(ApiError {
             code: fail_code.to_string(),

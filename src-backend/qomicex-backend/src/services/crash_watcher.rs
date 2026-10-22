@@ -196,7 +196,7 @@ async fn handle_exit(
 pub fn settle_play_time(instances: &InstanceService, instance_id: &str, started_at: DateTime<Utc>) {
     let elapsed = (Utc::now() - started_at).num_minutes().max(1);
     if let Some(mut updated) = instances.get_by_id(instance_id) {
-        updated.play_time += elapsed as i64;
+        updated.play_time += elapsed;
         updated.last_played = Some(Utc::now().to_rfc3339());
         instances.update(instance_id, updated);
     }
@@ -308,7 +308,7 @@ fn list_matching(dir: &Path, pattern: &str) -> Vec<PathBuf> {
             p.is_file()
                 && p.file_name()
                     .and_then(|n| n.to_str())
-                    .map_or(false, |n| name_matches(n, pattern))
+                    .is_some_and(|n| name_matches(n, pattern))
         })
         .collect()
 }
@@ -334,7 +334,7 @@ fn modified_after(path: &Path, cutoff: DateTime<Utc>) -> bool {
 }
 
 fn sort_by_mtime_desc(files: &mut [PathBuf]) {
-    files.sort_by(|a, b| mtime(b).cmp(&mtime(a)));
+    files.sort_by_key(|p| std::cmp::Reverse(mtime(p)));
 }
 
 fn mtime(path: &Path) -> Option<std::time::SystemTime> {
@@ -386,7 +386,7 @@ fn read_recent_head_tail(
         Ok(size) if size <= MAX_DIRECT_READ => {
             let text = std::fs::read_to_string(path).ok()?;
             let mut lines: Vec<&str> = text.lines().collect();
-            if lines.last().map_or(false, |l| l.is_empty()) {
+            if lines.last().is_some_and(|l| l.is_empty()) {
                 lines.pop();
             }
             lines.into_iter().map(String::from).collect()
@@ -436,7 +436,7 @@ fn tail_lines(path: &Path, n: usize) -> std::io::Result<Vec<String>> {
     }
     let text = String::from_utf8_lossy(&buf);
     let mut lines: Vec<&str> = text.lines().collect();
-    if lines.last().map_or(false, |l| l.is_empty()) {
+    if lines.last().is_some_and(|l| l.is_empty()) {
         lines.pop();
     }
     let take = if lines.len() > n { lines.len() - n } else { 0 };

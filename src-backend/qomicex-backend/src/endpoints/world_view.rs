@@ -163,13 +163,13 @@ async fn tile(
             ))
         }
     };
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "image/png")
         .header(header::CACHE_CONTROL, "no-store")
         .header("X-Tile-Empty", if result.has_data { "0" } else { "1" })
         .body(axum::body::Body::from(result.png))
-        .map_err(|e| ApiError::internal(format!("构造响应失败: {e}")))?)
+        .map_err(|e| ApiError::internal(format!("构造响应失败: {e}")))
 }
 
 /// GET /instance/{id}/world/probe/{key}/{dim}/{x}/{z}?ymax=N

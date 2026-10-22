@@ -342,19 +342,17 @@ async fn create_instance(
     State(state): State<SharedState>,
     Json(req): Json<CreateInstanceRequest>,
 ) -> ApiResult<(StatusCode, Json<GameInstance>)> {
-    let mut instance = GameInstance::default();
-    instance.id = short_id();
-    instance.name = req.name;
-    instance.game_version = req.game_version;
-    instance.loader = req.loader;
-    instance.loader_version = req.loader_version;
-    instance.java_path = req.java_path;
-    if let Some(max_memory) = req.max_memory {
-        instance.max_memory = max_memory;
-    }
-    if let Some(game_dir) = req.game_dir {
-        instance.game_dir = game_dir;
-    }
+    let instance = GameInstance {
+        id: short_id(),
+        name: req.name,
+        game_version: req.game_version,
+        loader: req.loader,
+        loader_version: req.loader_version,
+        java_path: req.java_path,
+        max_memory: req.max_memory.unwrap_or(4096),
+        game_dir: req.game_dir.unwrap_or_else(|| ".minecraft".to_string()),
+        ..Default::default()
+    };
     let created = state.instance.create(instance);
     Ok((StatusCode::CREATED, Json(created)))
 }
@@ -796,19 +794,17 @@ async fn launch_instance(
                         }
                         tokio::select! {
                             ev = rx.recv() => match ev {
-                                Ok(DownloadEvent::StateChanged { id, state, .. }) => {
-                                    if id_set.contains(&id) {
+                                Ok(DownloadEvent::StateChanged { id, state, .. })
+                                    if id_set.contains(&id) => {
                                         match state {
                                             TaskState::Completed => { done_ids.insert(id); }
-                                            TaskState::Failed => {
-                                                if failed.is_none() {
+                                            TaskState::Failed
+                                                if failed.is_none() => {
                                                     failed = Some("文件补全失败".to_string());
                                                 }
-                                            }
                                             _ => {}
                                         }
                                     }
-                                }
                                 _ => {}
                             },
                             _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {}
@@ -844,8 +840,7 @@ async fn launch_instance(
             // Determine required Java major version from the version JSON chain.
             // Pick the Java runtime: user-specified path wins, else auto-recommend.
             let selected_java_path = resolve_java_path(&core, &game_dir, &name, &user_java_path)
-                .await
-                .map_err(|e| e)?;
+                .await?;
 
             if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
                 return Err("启动已取消".to_string());
@@ -1163,7 +1158,7 @@ async fn export_diagnostics(
                         p.is_file()
                             && p.file_name()
                                 .and_then(|n| n.to_str())
-                                .map_or(false, |n| n.starts_with("hs_err_pid"))
+                                .is_some_and(|n| n.starts_with("hs_err_pid"))
                     })
                     .collect();
                 hs_errs.sort_by_key(|p| {

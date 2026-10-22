@@ -1572,7 +1572,7 @@ fn basename_of_url(url: &str) -> Option<String> {
     let parsed = url::Url::parse(url).ok()?;
     parsed
         .path_segments()
-        .and_then(|segments| segments.filter(|s| !s.is_empty()).last())
+        .and_then(|mut segments| segments.rfind(|s| !s.is_empty()))
         .map(|s| s.to_string())
 }
 

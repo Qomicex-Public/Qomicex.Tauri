@@ -331,7 +331,7 @@ struct ModsCacheEntry {
 static REFRESH_LOCK: LazyLock<Mutex<HashMap<String, ()>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-fn mods_cache_path(data_dir: &PathBuf, instance_id: &str) -> PathBuf {
+fn mods_cache_path(data_dir: &Path, instance_id: &str) -> PathBuf {
     data_dir
         .join("QML")
         .join("mods-cache")
@@ -339,7 +339,7 @@ fn mods_cache_path(data_dir: &PathBuf, instance_id: &str) -> PathBuf {
 }
 
 fn read_mods_cache(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     instance_id: &str,
     expected_signature: u64,
     expected_loader: Option<&str>,
@@ -384,7 +384,7 @@ fn loader_matches(cached: Option<&str>, current: Option<&str>) -> bool {
 }
 
 fn read_mods_cache_stale(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     instance_id: &str,
     expected_signature: u64,
     expected_loader: Option<&str>,
@@ -410,7 +410,7 @@ fn read_mods_cache_stale(
 }
 
 fn write_mods_cache(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     instance_id: &str,
     entries: Vec<ModMetadataDto>,
     ttl_secs: i64,
@@ -498,7 +498,7 @@ struct UpdateCacheEntry {
     loader: Option<String>,
 }
 
-fn update_cache_path(data_dir: &PathBuf, instance_id: &str) -> PathBuf {
+fn update_cache_path(data_dir: &Path, instance_id: &str) -> PathBuf {
     data_dir
         .join("QML")
         .join("mods-update-cache")
@@ -512,7 +512,7 @@ fn update_cache_usable(cache: &UpdateCacheEntry, current_loader: Option<&str>) -
 }
 
 fn read_update_cache(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     instance_id: &str,
     current_loader: Option<&str>,
 ) -> Option<UpdateCacheEntry> {
@@ -532,7 +532,7 @@ fn read_update_cache(
 }
 
 fn read_update_cache_stale(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     instance_id: &str,
     current_loader: Option<&str>,
 ) -> Option<UpdateCacheEntry> {
@@ -548,7 +548,7 @@ fn read_update_cache_stale(
 }
 
 fn write_update_cache(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     instance_id: &str,
     updates: Vec<ModUpdateEntryDto>,
     loader: Option<&str>,
@@ -1447,10 +1447,7 @@ async fn refresh_mod_updates(
     // 兼容性回退：实例 loader（如 Cleanroom/LiteLoader）不是 Modrinth 已知加载器，
     // 严格按 loader 过滤可能一个都不匹配；对漏掉的哈希改用「任意 loader + 同游戏版本」重查，
     // 使 Forge 系 mod（如 JEI）仍能检出更新。
-    let mut latest_map = match latest_map_res {
-        Ok(m) => m,
-        Err(_) => HashMap::new(),
-    };
+    let mut latest_map = latest_map_res.unwrap_or_default();
     if !loaders.is_empty() {
         let missed: Vec<String> = sha1s
             .iter()

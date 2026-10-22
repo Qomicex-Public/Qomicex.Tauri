@@ -100,7 +100,7 @@ async fn plan(
     };
 
     tracing::info!("checking update plan for current={current} channel={channel} os={os} arch={arch} mode={mode}");
-    let mut request = state
+    let request = state
         .http_client
         .get(format!("{UPSTREAM_BASE}{UPDATE_PLAN_PATH}"))
         .query(&[
@@ -521,12 +521,11 @@ async fn race_proxies(download_url: &str) -> String {
             if status
                 .as_ref()
                 .is_some_and(|s| s.is_success() || s.as_u16() == 206)
+                && latency < best_latency.load(Ordering::Relaxed)
             {
-                if latency < best_latency.load(Ordering::Relaxed) {
-                    best_latency.store(latency, Ordering::Relaxed);
-                    let mut guard = best_prefix.lock().unwrap();
-                    *guard = prefix;
-                }
+                best_latency.store(latency, Ordering::Relaxed);
+                let mut guard = best_prefix.lock().unwrap();
+                *guard = prefix;
             }
         }));
     }
@@ -655,6 +654,7 @@ impl UpdatePlanResponse {
 /// Option fields are omitted.
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 struct UpdateCheckResponse {
     has_update: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -669,20 +669,6 @@ struct UpdateCheckResponse {
     changelog: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     download_url: Option<String>,
-}
-
-impl Default for UpdateCheckResponse {
-    fn default() -> Self {
-        Self {
-            has_update: false,
-            version: None,
-            r#type: None,
-            required: false,
-            title: None,
-            changelog: None,
-            download_url: None,
-        }
-    }
 }
 
 /// TauriManifestResponse (source Models/UpdateModels.cs). The C# record keeps

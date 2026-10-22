@@ -1104,7 +1104,7 @@ fn technic_pack_meta(archive: &mut zip::ZipArchive<std::fs::File>) -> Option<Pac
     let version_json_text = read_text(archive, "bin/version.json").or_else(|| {
         let jar_bytes = {
             let mut f = archive.by_name("bin/modpack.jar").ok()?;
-            if f.size() as u64 > MAX_JAR_BYTES {
+            if f.size() > MAX_JAR_BYTES {
                 return None;
             }
             let mut b = Vec::new();

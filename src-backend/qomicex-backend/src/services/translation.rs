@@ -182,9 +182,7 @@ fn protect_markdown(
 fn find_url(s: &str) -> Option<(usize, usize)> {
     let start = s.find("http://").or_else(|| s.find("https://"))?;
     let rest = &s[start..];
-    let end = rest
-        .find(|c| c == ' ' || c == '\n' || c == '\t' || c == ')')
-        .unwrap_or(rest.len());
+    let end = rest.find([' ', '\n', '\t', ')']).unwrap_or(rest.len());
     Some((start, start + end))
 }
 

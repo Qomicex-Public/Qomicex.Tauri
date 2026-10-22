@@ -388,7 +388,7 @@ fn b64_val(c: u8) -> Option<u32> {
 
 fn base64_decode(s: &str) -> Option<Vec<u8>> {
     let b = s.trim().as_bytes();
-    if b.is_empty() || b.len() % 4 != 0 {
+    if b.is_empty() || !b.len().is_multiple_of(4) {
         return None;
     }
     let mut out = Vec::with_capacity(b.len() / 4 * 3);

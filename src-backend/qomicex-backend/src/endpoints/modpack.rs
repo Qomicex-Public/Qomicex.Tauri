@@ -241,11 +241,10 @@ async fn parse(
     // 探测阶段不落盘（只读中央目录 + 少量条目）；安装阶段（technic_import）再
     // 解压到临时目录并清理（大包解压耗时，必须后台可见进度，同 MultiMC / #89）。
     if crate::services::technic::is_technic_zip(&path) {
-        let meta = parse_technic_or_api_error(&path).map_err(|e| {
+        let meta = parse_technic_or_api_error(&path).inspect_err(|_e| {
             // 解析失败（含古董包缺 MC 版本）→ 删除上传临时文件，对齐
             // parse_local_pack_file 分支行为（4 GiB 上限的残留不能等 24h 自动清理）。
             let _ = std::fs::remove_file(&path);
-            e
         })?;
         let name = meta.name.clone().unwrap_or_else(|| {
             // 无 name：退化为 zip 文件名（去扩展名）
@@ -281,7 +280,7 @@ async fn parse(
     })?;
 
     let source = parsed.source.clone();
-    let mut result = parsed.to_parse_result();
+    let mut result = parsed.into_parse_result();
     result.file_id = Some(file_id);
     let data = modpack_data(&s);
     enrich_optional_files(&data.core, &data.curse_api_key, &mut result.optional_files).await;
@@ -379,7 +378,7 @@ async fn parse_path(
         .map_err(|e| ApiError::bad_request("MODPACK_PARSE_FAILED", e))?;
 
     let source = parsed.source.clone();
-    let mut result = parsed.to_parse_result();
+    let mut result = parsed.into_parse_result();
     result.file_id = None;
     let data = modpack_data(&s);
     enrich_optional_files(&data.core, &data.curse_api_key, &mut result.optional_files).await;
@@ -457,7 +456,7 @@ async fn multimc_parse_folder(
 /// 校验调用方提供的源路径：必须为绝对路径且不含 `..` 遍历（防读取任意路径）。
 /// 后端为本地无认证服务，路径由受信任 Tauri 前端经文件/文件夹选择器提供；
 /// 此处仅做基础防御。返回规范化后的 `&Path`。
-fn validate_source_path<'a>(raw: &'a str) -> ApiResult<&'a std::path::Path> {
+fn validate_source_path(raw: &str) -> ApiResult<&std::path::Path> {
     let path = std::path::Path::new(raw);
     if !path.is_absolute() {
         return Err(ApiError::bad_request(
@@ -654,28 +653,30 @@ async fn multimc_import_impl(
                 .unwrap_or_else(|| meta.loader_uid.clone()),
         )
     };
-    let mut inst = crate::services::instance::GameInstance::default();
-    inst.name = name.clone();
-    inst.game_version = meta.game_version.clone();
-    inst.loader = loader;
-    inst.loader_version = if meta.loader_version.is_empty() {
-        None
-    } else {
-        Some(meta.loader_version.clone())
+    let inst = crate::services::instance::GameInstance {
+        name: name.clone(),
+        game_version: meta.game_version.clone(),
+        loader,
+        loader_version: if meta.loader_version.is_empty() {
+            None
+        } else {
+            Some(meta.loader_version.clone())
+        },
+        java_path: meta.java_path.clone(),
+        max_memory: meta.max_memory.unwrap_or(4096),
+        game_dir: game_dir.to_string_lossy().into_owned(),
+        version_isolation: Some(version_isolation),
+        // 归一化到缩略图尺寸：否则 instances.json 与 /api/instance 响应里存/发的还是
+        // 512x512 的全尺寸 base64（73 个实例就是 10MB+，每次 GET /api/instance 全量重传）。
+        // 注意这**只**影响实例记录：落盘的 `versions/{name}/icon.png` 仍写原图
+        // （见本函数末尾的 write_pack_icon），原图是用户资产，扫描时会自行缩小。
+        icon_data: meta
+            .icon_data
+            .as_deref()
+            .map(crate::util::pcl_icon::normalize_icon_data_uri),
+        modpack_name: Some(name.clone()),
+        ..Default::default()
     };
-    inst.java_path = meta.java_path.clone();
-    inst.max_memory = meta.max_memory.unwrap_or(4096);
-    inst.game_dir = game_dir.to_string_lossy().into_owned();
-    inst.version_isolation = Some(version_isolation);
-    // 归一化到缩略图尺寸：否则 instances.json 与 /api/instance 响应里存/发的还是
-    // 512x512 的全尺寸 base64（73 个实例就是 10MB+，每次 GET /api/instance 全量重传）。
-    // 注意这**只**影响实例记录：落盘的 `versions/{name}/icon.png` 仍写原图
-    // （见本函数末尾的 write_pack_icon），原图是用户资产，扫描时会自行缩小。
-    inst.icon_data = meta
-        .icon_data
-        .as_deref()
-        .map(crate::util::pcl_icon::normalize_icon_data_uri);
-    inst.modpack_name = Some(name.clone());
     let created = s.instance.create(inst);
     drop(_guard);
     let instance_id = created.id.clone();
@@ -1065,14 +1066,16 @@ async fn technic_import_impl(
         .lock()
         .unwrap_or_else(|p| p.into_inner());
     let name = unique_instance_name(&game_dir, &base_name);
-    let mut inst = crate::services::instance::GameInstance::default();
-    inst.name = name.clone();
-    inst.game_version = game_version.clone();
-    inst.loader = meta.as_ref().and_then(|m| m.loader.clone());
-    inst.loader_version = meta.as_ref().and_then(|m| m.loader_version.clone());
-    inst.game_dir = game_dir.to_string_lossy().into_owned();
-    inst.version_isolation = Some(version_isolation);
-    inst.modpack_name = Some(base_name.clone());
+    let inst = crate::services::instance::GameInstance {
+        name: name.clone(),
+        game_version: game_version.clone(),
+        loader: meta.as_ref().and_then(|m| m.loader.clone()),
+        loader_version: meta.as_ref().and_then(|m| m.loader_version.clone()),
+        game_dir: game_dir.to_string_lossy().into_owned(),
+        version_isolation: Some(version_isolation),
+        modpack_name: Some(base_name.clone()),
+        ..Default::default()
+    };
     let created = s.instance.create(inst);
     drop(_guard);
     let instance_id = created.id.clone();
@@ -1609,18 +1612,20 @@ pub(crate) async fn solder_import_impl(
     static SOLDER_IMPORT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _guard = SOLDER_IMPORT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let name = unique_instance_name(&game_dir, &base_name);
-    let mut inst = crate::services::instance::GameInstance::default();
-    inst.name = name.clone();
-    inst.game_version = game_version.clone();
-    // 探测成功 → forge/可安装版本号（实例显示与启动链一致）；探测失败 →
-    // 期3 原行为（vanilla 实例）。build.forge 裸 build 号不进任何字段（它不是
-    // 可寻址的 Forge 版本，写进去会让实例显示与版本列表对不上）。
-    inst.loader = detected_loader.clone();
-    inst.loader_version = detected_loader_version.clone();
-    inst.game_dir = game_dir.to_string_lossy().into_owned();
-    inst.version_isolation = Some(version_isolation);
-    inst.modpack_name = Some(base_name.clone());
-    inst.modpack_version = Some(build_id.clone());
+    let inst = crate::services::instance::GameInstance {
+        name: name.clone(),
+        game_version: game_version.clone(),
+        // 探测成功 → forge/可安装版本号（实例显示与启动链一致）；探测失败 →
+        // 期3 原行为（vanilla 实例）。build.forge 裸 build 号不进任何字段（它不是
+        // 可寻址的 Forge 版本，写进去会让实例显示与版本列表对不上）。
+        loader: detected_loader.clone(),
+        loader_version: detected_loader_version.clone(),
+        game_dir: game_dir.to_string_lossy().into_owned(),
+        version_isolation: Some(version_isolation),
+        modpack_name: Some(base_name.clone()),
+        modpack_version: Some(build_id.clone()),
+        ..Default::default()
+    };
     let created = s.instance.create(inst);
     drop(_guard);
     let instance_id = created.id.clone();
@@ -2962,18 +2967,20 @@ impl ModpackServiceData {
                 _ => (None, false),
             };
 
-        let mut instance = crate::services::instance::GameInstance::default();
-        instance.name = req.name.clone();
-        instance.game_version = req.game_version.clone();
-        instance.loader = req.loader.clone();
-        instance.loader_version = req.loader_version.clone();
-        instance.game_dir = req.game_dir.clone();
-        instance.max_memory = req.max_memory.unwrap_or(4096);
-        instance.version_isolation = Some(req.version_isolation);
-        instance.modpack_name = req.modpack_name.clone();
-        instance.modpack_version = req.modpack_version.clone();
-        instance.modpack_author = req.modpack_author.clone();
-        instance.modpack_summary = req.modpack_summary.clone();
+        let mut instance = crate::services::instance::GameInstance {
+            name: req.name.clone(),
+            game_version: req.game_version.clone(),
+            loader: req.loader.clone(),
+            loader_version: req.loader_version.clone(),
+            game_dir: req.game_dir.clone(),
+            max_memory: req.max_memory.unwrap_or(4096),
+            version_isolation: Some(req.version_isolation),
+            modpack_name: req.modpack_name.clone(),
+            modpack_version: req.modpack_version.clone(),
+            modpack_author: req.modpack_author.clone(),
+            modpack_summary: req.modpack_summary.clone(),
+            ..Default::default()
+        };
         // === 来源字段（issue #118 原地更新的资格依据）===
         // 判定逻辑集中在 `is_updatable_origin`（纯函数，有单测覆盖）。
         let origin_marked = req
@@ -3225,7 +3232,8 @@ impl ModpackServiceData {
             let parsed = parse_local_pack_file(Path::new(path))
                 .map_err(|e| ApiError::bad_request("MODPACK_PARSE_FAILED", e))?;
             let p = parsed.pack;
-            let result = ModpackParseResult {
+
+            ModpackParseResult {
                 name: parsed.name,
                 summary: parsed.summary,
                 author: parsed.author,
@@ -3245,8 +3253,7 @@ impl ModpackServiceData {
                 pack_type: None,
                 source_id: None,
                 source_path: None,
-            };
-            result
+            }
         } else {
             let project_id = req.project_id.as_deref().unwrap_or_default();
             let file_id = req.file_id.as_deref().unwrap_or_default();
@@ -3715,7 +3722,7 @@ pub(crate) async fn run_modpack_pipeline(
 
     // === 3. 确定 game_version / loader / loader_version ===
     // 详见 resolve_effective_game_version 的文档：game_version 以 manifest 优先。
-    let mut game_version = resolve_effective_game_version(game_version_in, parsed.as_ref());
+    let game_version = resolve_effective_game_version(game_version_in, parsed.as_ref());
     let mut loader = loader_in.unwrap_or_default().to_string();
     let mut loader_version = loader_version_in.unwrap_or_default().to_string();
     if let Some(p) = parsed.as_ref() {
@@ -4464,7 +4471,7 @@ struct LocalPackParse {
 }
 
 impl LocalPackParse {
-    fn to_parse_result(self) -> ModpackParseResult {
+    fn into_parse_result(self) -> ModpackParseResult {
         ModpackParseResult {
             name: self.name,
             summary: self.summary,

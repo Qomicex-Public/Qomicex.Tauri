@@ -36,7 +36,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::services::modpack_manifest::{self, HostedFile, HostedFileKind, ModpackManifest};
+#[cfg(test)]
+use crate::services::modpack_manifest::HostedFileKind;
+use crate::services::modpack_manifest::{self, HostedFile, ModpackManifest};
 
 /// journal 状态机。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

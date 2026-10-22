@@ -12,7 +12,7 @@
 //! 无任何 async / 网络依赖，纯 CPU 同步引擎。
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{LazyLock, OnceLock};
 
 use regex::Regex;
 use serde::Deserialize;
@@ -117,7 +117,7 @@ fn load_patterns() -> &'static Vec<CompiledPattern> {
                         // 编译失败的模式跳过（不该发生，但避免拖垮整个引擎）
                         let re = Regex::new(&raw).unwrap_or_else(|e| {
                             tracing::warn!("错误模式正则编译失败 {:?}: {e}", p.id);
-                            return Regex::new("a^").unwrap();
+                            Regex::new("a^").unwrap()
                         });
                         if raw.starts_with("(?s)") {
                             doc.push(re);
@@ -404,14 +404,18 @@ fn parse_version(lines: &[&str]) -> Option<String> {
     None
 }
 
+static QUILT_VERSION_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)Quilt\s+Loader\s+(\d+\.\d+\.?\d*)").unwrap());
+static FORGE_VERSION_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"Forge[^\d]*(\d+\.\d+\.\d+)").unwrap());
+static FABRIC_VERSION_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)Fabric[^\d]*(\d+\.\d+\.\d+)").unwrap());
+
 fn parse_mod_loader(lines: &[&str]) -> Option<String> {
     for line in lines {
         let lower = line.to_ascii_lowercase();
         if lower.contains("quilt") {
-            let v = Regex::new(r"(?i)Quilt\s+Loader\s+(\d+\.\d+\.?\d*)")
-                .unwrap()
-                .captures(line)
-                .map(|c| c[1].to_string());
+            let v = QUILT_VERSION_RE.captures(line).map(|c| c[1].to_string());
             return Some(
                 format!("Quilt {}", v.unwrap_or_default())
                     .trim_end()
@@ -422,10 +426,7 @@ fn parse_mod_loader(lines: &[&str]) -> Option<String> {
             return Some("NeoForge".to_string());
         }
         if lower.contains("forge") || lower.contains("fml") || lower.contains("modloader") {
-            let v = Regex::new(r"Forge[^\d]*(\d+\.\d+\.\d+)")
-                .unwrap()
-                .captures(line)
-                .map(|c| c[1].to_string());
+            let v = FORGE_VERSION_RE.captures(line).map(|c| c[1].to_string());
             return Some(
                 format!("Forge {}", v.unwrap_or_default())
                     .trim_end()
@@ -433,10 +434,7 @@ fn parse_mod_loader(lines: &[&str]) -> Option<String> {
             );
         }
         if lower.contains("fabric") && !lower.contains("quilt") {
-            let v = Regex::new(r"(?i)Fabric[^\d]*(\d+\.\d+\.\d+)")
-                .unwrap()
-                .captures(line)
-                .map(|c| c[1].to_string());
+            let v = FABRIC_VERSION_RE.captures(line).map(|c| c[1].to_string());
             return Some(
                 format!("Fabric {}", v.unwrap_or_default())
                     .trim_end()

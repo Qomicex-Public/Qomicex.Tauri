@@ -547,10 +547,8 @@ pub async fn run_install_pipeline(
             let files: Vec<_> = all_additional_files
                 .iter()
                 .map(|af| {
-                    let dest = root_c.join(
-                        af.relative_path
-                            .replace('/', &std::path::MAIN_SEPARATOR.to_string()),
-                    );
+                    let dest =
+                        root_c.join(af.relative_path.replace('/', std::path::MAIN_SEPARATOR_STR));
                     let mut headers = Vec::new();
                     if af.source.eq_ignore_ascii_case("modrinth") {
                         headers.push((
@@ -705,6 +703,7 @@ pub async fn run_install_pipeline(
 /// 1) 让 verbatim 语法下 `/` 不再是路径分隔符 → `std::fs::write` 报 os error 123；
 /// 2) **Java/二进制补丁等外部工具解析 `\\?\C:\…` 时会丢掉一个反斜杠**，导致
 ///    binarypatcher 建 `--output` 父目录报 `Could not make output folders` → 退出码 1。
+///
 /// C# 源用 `Path.GetFullPath` 产生**非 verbatim** 的 `C:\…` 绝对路径。此处 canonicalize
 /// 后剥掉 verbatim 前缀，与 C# 行为一致（connector.rs 亦已对 launch 用非 verbatim 的
 /// `instance.game_dir`，共识是非 verbatim 的 game_root 交给 core/外部工具）。
@@ -855,7 +854,7 @@ async fn download_installer_jar(
         let valid = std::fs::File::open(path)
             .ok()
             .and_then(|f| zip::ZipArchive::new(f).ok())
-            .map(|z| z.len() > 0)
+            .map(|z| !z.is_empty())
             .unwrap_or(false);
         if valid {
             return Ok(());
@@ -1828,8 +1827,8 @@ async fn download_batch_with_mirrors(
 
         tokio::select! {
             ev = rx.recv() => match ev {
-                Ok(DownloadEvent::Progress { id, downloaded, total: t, speed_bps, .. }) => {
-                    if id_set.contains(&id) {
+                Ok(DownloadEvent::Progress { id, downloaded, total: t, speed_bps, .. })
+                    if id_set.contains(&id) => {
                         started = true;
                         // 活跃判定用**原始上报值**，与展示用的高水位分开：
                         // 下载器流式路径重试时会把 downloaded 打回 0 再涨回来
@@ -1856,14 +1855,12 @@ async fn download_batch_with_mirrors(
                             task_speed.insert(id, speed_bps);
                         }
                     }
-                }
-                Ok(DownloadEvent::StateChanged { id, state, detail, .. }) => {
-                    if id_set.contains(&id) {
+                Ok(DownloadEvent::StateChanged { id, state, detail, .. })
+                    if id_set.contains(&id) => {
                         last_event = Instant::now();
                         started = true;
                         apply_terminal_state(id, state, detail, &mut done_ids, &mut prog, &mut task_speed, &mut failed);
                     }
-                }
                 _ => {}
             },
             _ = tokio::time::sleep(Duration::from_secs(5)) => {
@@ -2648,7 +2645,6 @@ mod tests {
     /// 复刻事件处理处的钳位（只增不减），并用未修复写法作对照。
     #[test]
     fn per_task_downloaded_is_clamped_monotonic() {
-        let totals = 300u64;
         let seq = [100u64, 200, 0, 100, 300];
 
         // 修复后：仅当 downloaded > e.0 才更新
@@ -2662,9 +2658,8 @@ mod tests {
 
         // 对照：未修复的无条件赋值会回退到 0
         let mut hist = Vec::new();
-        let mut bad = 0u64;
         for dl in seq {
-            bad = dl; // 修复前：`e.0 = downloaded;`
+            let bad = dl; // 修复前：`e.0 = downloaded;`
             hist.push(bad);
         }
         assert_eq!(

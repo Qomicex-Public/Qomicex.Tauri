@@ -129,7 +129,7 @@ impl JavaRuntimeStore {
                     .into_iter()
                     .filter(|e| !e.path.trim().is_empty())
                     .map(|e| StoredJavaRuntime {
-                        path: full_path(&e.path.trim()),
+                        path: full_path(e.path.trim()),
                     })
                     .fold(Vec::new(), |mut acc, e| {
                         if !acc.iter().any(|x| path_eq(&x.path, &e.path)) {
@@ -166,7 +166,7 @@ impl JavaRuntimeStore {
 
     /// 添加自定义运行时（对应 AddCustomAsync）。
     async fn add_custom(&self, path: String) -> ApiResult<JavaRuntimeDto> {
-        let normalized = full_path(&path.trim());
+        let normalized = full_path(path.trim());
         let runtime = self.validate_path(&normalized).await.ok_or_else(|| {
             ApiError::not_found("JAVA_RUNTIME_NOT_FOUND", "无法识别该路径下的 Java 运行时")
         })?;
@@ -181,7 +181,7 @@ impl JavaRuntimeStore {
 
     /// 移除自定义运行时（对应 RemoveCustomAsync）。
     async fn remove_custom(&self, path: String) {
-        let normalized = full_path(&path.trim());
+        let normalized = full_path(path.trim());
         let mut entries = self.load_entries();
         let before = entries.len();
         entries.retain(|e| !path_eq(&e.path, &normalized));
@@ -986,10 +986,7 @@ fn minecraft_to_java_version(mc_version: &str) -> i32 {
         Some(v) => v,
         None => return 8,
     };
-    let build = match next_u32(&mut segments) {
-        Some(v) => v,
-        None => 0,
-    };
+    let build = next_u32(&mut segments).unwrap_or_default();
 
     if major >= 26 {
         // Minecraft 26.1+ requires Java 25

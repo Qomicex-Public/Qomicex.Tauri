@@ -191,9 +191,7 @@ async fn diagnostics_trace_stream(State(state): State<SharedState>) -> Response 
         match rx.recv().await {
             Ok(line) => Some((Ok::<Event, Infallible>(Event::default().data(line)), rx)),
             Err(broadcast::error::RecvError::Lagged(_)) => Some((
-                Ok::<Event, Infallible>(
-                    Event::default().data("[trace] 日志过密，丢弃部分行".to_string()),
-                ),
+                Ok::<Event, Infallible>(Event::default().data("[trace] 日志过密，丢弃部分行")),
                 rx,
             )),
             Err(broadcast::error::RecvError::Closed) => None,
@@ -728,7 +726,7 @@ async fn get_process_resource_usage(
     let process = sys.process(syspid).ok_or_else(|| {
         ApiError::not_found(
             "PROCESS_NOT_FOUND",
-            &format!("Process with PID {} not found", pid),
+            format!("Process with PID {} not found", pid),
         )
     })?;
 
