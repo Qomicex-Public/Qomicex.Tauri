@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! License endpoints (source: Endpoints/LicenseEndpoints.cs).
+//! License endpoints.
 //!
 //! GET  /api/license/status    -> license state + machine code
 //! POST /api/license/activate  -> validate & persist a license token

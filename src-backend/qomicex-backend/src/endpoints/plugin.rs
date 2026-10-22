@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Plugin endpoints (source: Endpoints/PluginEndpoints.cs).
+//! Plugin endpoints.
 //!
 //! All 25 routes live under `/api/plugins`:
 //!   list/get/rescan/install/delete/upload/state, static files, settings,

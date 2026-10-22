@@ -1,12 +1,10 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Instance endpoints (source: Endpoints/InstanceEndpoints.cs).
+//! Instance endpoints.
 //!
-//! Provides game-instance CRUD, default-instance management and mod loader
-//! enumeration. The launch/install flow routes depend on LaunchTracker and
-//! InstallTracker which are ported separately, so they are stubbed here with
-//! 501 NOT_IMPLEMENTED placeholders until those services land.
+//! Provides game-instance CRUD, default-instance management, mod loader
+//! enumeration and the launch/install flow (progress, pause/resume/cancel).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

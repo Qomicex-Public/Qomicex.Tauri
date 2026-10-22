@@ -16,7 +16,7 @@
  *  - `PluginIcon` 渲染时优先查该映射（svg/char/url），未命中回退 FontAwesome。
  *
  * 内置 Catppuccin 预设以 `.qtheme` 迁移（themes/*.json），值同 index.css → 视觉零回归。
- * 计算层 theme.mjs / 字体贡献 UI = v2 之后（TODO）。
+ * 计算层 theme.mjs / 字体贡献 UI = v2 之后。
  */
 
 import { useEffect, useState } from 'react'

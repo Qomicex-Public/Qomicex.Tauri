@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Resource endpoints (source: Endpoints/ResourceEndpoints.cs).
+//! Resource endpoints.
 //!
 //! Implements resource completion checks and install kick-off against the
 //! core version facade.

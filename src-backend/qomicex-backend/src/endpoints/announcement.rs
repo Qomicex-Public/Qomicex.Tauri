@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Announcement endpoints (corresponding source: Endpoints/AnnouncementEndpoints.cs).
+//! Announcement endpoints.
 //!
 //! Source registers the route directly via `app.MapGet("/api/client/announcements", ...)`
 //! (no MapGroup). Inside the axum "/api" nest the route is therefore declared as

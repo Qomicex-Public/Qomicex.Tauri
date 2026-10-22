@@ -1,8 +1,8 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Closed license core (source: the closed-source LicenseCore.cs, ported with
-//! the owner's authorization for this launcher's Rust backend).
+//! Closed license core, ported from the closed-source LicenseCore.cs with the
+//! owner's authorization for this launcher's Rust backend.
 //!
 //! Only compiled when the `license-required` cargo feature is enabled (mirrors
 //! the C# `LICENSE_REQUIRED` build flag). The default build keeps this file a
@@ -426,7 +426,7 @@ mod crypt {
         }
     }
 
-    // --- AES-GCM envelope (source: CryptHelper.cs, v1) ---
+    // --- AES-GCM envelope (ported from CryptHelper.cs, v1) ---
     const PBKDF2_ITERATIONS: u32 = 100_000;
     const KEY_SIZE: usize = 32;
     const SALT_SIZE: usize = 16;

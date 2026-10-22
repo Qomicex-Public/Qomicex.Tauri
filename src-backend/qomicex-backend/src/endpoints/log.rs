@@ -13,7 +13,7 @@
 //!
 //! Dependencies note: the workspace has no `zip`/`base64` crates and this slice
 //! must not add any, so a minimal STORE-method ZIP builder and a base64 decoder
-//! are implemented inline (see the TODO notes). axum's Query extractor already
+//! are implemented inline (see the notes below). axum's Query extractor already
 //! percent-decodes the `path` parameter, matching C# `Uri.UnescapeDataString`.
 
 use std::io::{Result as IoResult, Write};
@@ -40,7 +40,8 @@ const ZIP_SIG_EOCD: u32 = 0x0605_4b50;
 
 /// Approximate the C# `SessionStart` (process start time). We capture the first
 /// time `LogEndpoints` is exercised rather than the true process start; close
-/// enough for the `isCurrentSession` flag. TODO: use an actual start timestamp.
+/// enough for the `isCurrentSession` flag; a true process start timestamp would
+/// be more precise.
 fn session_start() -> SystemTime {
     static START: OnceLock<SystemTime> = OnceLock::new();
     *START.get_or_init(SystemTime::now)
@@ -422,8 +423,8 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
 // ---------------------------------------------------------------------------
 // Minimal STORE-method ZIP builder. Inline because there is no `zip` crate in
 // the workspace and this slice must not add dependencies. Files are stored
-// uncompressed (method 0), which is functionally valid ZIP. TODO: if Deflate
-// compression is ever required, add a crate dependency.
+// uncompressed (method 0), which is functionally valid ZIP. Deflate compression
+// would require adding a crate dependency.
 // ---------------------------------------------------------------------------
 
 fn zip_crc_table() -> &'static [u32; 256] {

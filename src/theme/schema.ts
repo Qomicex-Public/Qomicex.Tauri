@@ -6,7 +6,7 @@
  *
  * v1 只做「颜色主题」：读 `theme.json`（zod 不可用、红线禁新依赖，故手写校验）
  * → 产出 CSS 变量写入 `:root[data-theme="<id>"]`，组件/插件 UI 经 `var(--*)` 即时换肤。
- * 计算层 `theme.mjs` / 图标 / 字体贡献 = v2 之后，此处留 TODO。
+ * 计算层 `theme.mjs` / 图标 / 字体贡献 = v2 之后。
  */
 
 export const THEME_SCHEMA_VERSION = 1

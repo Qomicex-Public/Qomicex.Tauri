@@ -76,7 +76,7 @@ export interface StoreUpdateEntry {
   permissions: string[]
   layers: string[]
   download: { url: string; mirrorUrl?: string }
-  /** 灰度放量百分比（0-100），缺省视为 100 全量；本版本仅透传，灰度 UI 后置 TODO */
+  /** 灰度放量百分比（0-100），缺省视为 100 全量；本版本仅透传，灰度 UI 留待后续版本 */
   rolloutPercent?: number
 }
 

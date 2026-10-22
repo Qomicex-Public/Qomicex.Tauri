@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! License facade (source: Services/LicenseValidator.cs + LicenseConfig.cs).
+//! License facade.
 //!
 //! Deployment mirrors the C# `#if LICENSE_REQUIRED` model:
 //!   * default build    -> `validate`/`activate` are no-ops returning Empty

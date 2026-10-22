@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Mcmod endpoints (source: Endpoints/McmodEndpoints.cs + Services/McmodService.cs).
+//! Mcmod endpoints.
 //!
 //! Mounted under `/api/mcmod`. Provides offline Chinese-name lookup for mods
 //! using an embedded (or runtime-overridden) mcmod.cn dump. The service is a

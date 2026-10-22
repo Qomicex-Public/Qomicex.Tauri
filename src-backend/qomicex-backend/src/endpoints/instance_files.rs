@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Instance files endpoints (source: Endpoints/InstanceFilesEndpoints.cs).
+//! Instance files endpoints.
 //!
 //! Provides per-instance local file management for a single instance's
 //! category directories (mods, resourcepacks, shaderpacks, datapacks,
@@ -9,12 +9,6 @@
 //! version-isolation rules in AGENTS.md: isolated categories live under
 //! `{gameDir}/versions/{inst.Name}/{sub}`, otherwise directly under
 //! `{gameDir}/{sub}`.
-//!
-//! NOT YET PORTED (501 placeholders):
-//! - Upload/multipart: the C# source file has NO upload routes, so none are
-//!   declared here.
-//! - mcmod Chinese-name lookup in mods/metadata: McmodService has no Rust peer
-//!   yet, that enrichment is skipped (see TODO in mods_metadata).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

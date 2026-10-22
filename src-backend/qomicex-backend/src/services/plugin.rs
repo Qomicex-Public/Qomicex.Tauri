@@ -1,8 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Plugin domain services (source: Services/PluginStore.cs, PluginPackageService.cs,
-//! FileAuthService.cs, PluginVersion.cs, PluginGatewayClient.cs + Models/PluginManifest.cs).
+//! Plugin domain services.
 //!
 //! Data layout (BaseDir = settings::resolve_base_dir()):
 //!   BaseDir/plugins/{pluginId}/manifest.json + dist/... (one dir per plugin)
@@ -151,7 +150,7 @@ pub struct PluginInfo {
 }
 
 // =====================================================================
-// SemVer-ish comparison (source: Services/PluginVersion.cs)
+// SemVer-ish comparison (ported from Services/PluginVersion.cs)
 // =====================================================================
 
 pub fn version_satisfies(installed: &str, range: Option<&str>) -> bool {
@@ -910,7 +909,7 @@ fn covers(target: &Path, granted: &Path) -> bool {
 }
 
 // =====================================================================
-// PluginGatewayClient (WASM gateway bridge, source: PluginGatewayClient.cs)
+// PluginGatewayClient (WASM gateway bridge, ported from PluginGatewayClient.cs)
 // =====================================================================
 
 /// Bridges the Tauri WASM gateway (`src-tauri/src/plugin_gateway`). The

@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Skin endpoints (source: Endpoints/SkinEndpoints.cs + Services/SkinService.cs).
+//! Skin endpoints.
 //!
 //! Mounted at `/api/skin`. Provides player profile fetch (Mojang / Yggdrasil /
 //! Offline), skin texture bytes (local override -> remote fetch -> default),
@@ -10,7 +10,7 @@
 //! SkinService is a file-private struct; uploaded skin PNG files are cached
 //! under `{BaseDir}/QML/skins` keyed by uuid-without-dashes. The C# backend
 //! embeds `Alex.png` as the default skin; here a 1x1 transparent PNG is used
-//! as a placeholder (see DEFAULT_SKIN_LITERAL / TODO).
+//! as a placeholder (see DEFAULT_SKIN_LITERAL).
 //!
 //! Login methods (query `type`): "Microsoft", "Offline", "Yggdrasil",
 //! and "TongYiPassport" (matches the Chinese value used by the C# backend,
