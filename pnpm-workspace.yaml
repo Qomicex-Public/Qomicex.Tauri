@@ -9,3 +9,8 @@ onlyBuiltDependencies:
   - esbuild
 overrides:
   '@qomicex/cli': link:packages/qomicex-cli
+  # 传递依赖的安全修复（pnpm audit）：source-map-js / postcss-selector-parser。
+  # braces 的 advisory（GHSA-vfj7-8cjw-p6xm）无已发布修复版本，只能随
+  # tailwindcss v3 → v4 迁移消除。
+  source-map-js: 1.2.2
+  postcss-selector-parser: 7.1.6
