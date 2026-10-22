@@ -994,13 +994,21 @@ async fn download_target_files(
                 .map_err(|e| format!("批量获取 CurseForge 文件信息失败: {e}"))?;
             let mut files = Vec::new();
             let mut rels = Vec::new();
+            let mut blocked: Vec<crate::services::modpack_blocked::BlockedModFile> = Vec::new();
             for fid in &fids {
                 let Some(info) = info_map.get(fid) else {
                     continue;
                 };
-                let Some(url) = info.download_url.clone().filter(|u| !u.is_empty()) else {
+                // 与首次安装同源：downloadUrl 为空 = 作者关闭第三方分发（issue #291）。
+                // 更新同样不能静默丢文件，记进阻塞清单交给手动补全。
+                if let Some(b) =
+                    crate::services::modpack_blocked::blocked_from_batch(info, info.mod_id)
+                {
+                    blocked.push(b);
                     continue;
-                };
+                }
+                // 走到这里 downloadUrl 必为非空：唯一的 null/空分支已被上一行吃掉。
+                let url = info.download_url.clone().unwrap_or_default();
                 let filename = info
                     .file_name
                     .clone()
@@ -1011,6 +1019,30 @@ async fn download_target_files(
                 let url = crate::services::source_policy::mod_primary(&url, &plan);
                 files.push((url, dest, headers));
                 rels.push(rel);
+            }
+            // 目标版本分发受限的文件，若实例里已有同名文件则不算阻塞：更新只差这一版
+            // 的文件时用户手头那个照样能跑，报出来只会让人以为实例坏了。
+            let mods = crate::services::modpack_blocked::mods_dir(
+                &inst.game_dir,
+                &inst.name,
+                version_isolation,
+            );
+            blocked.retain(|b| {
+                b.file_name.trim().is_empty() || !mods.join(b.file_name.trim()).is_file()
+            });
+            if let Err(e) =
+                crate::services::modpack_blocked::save_blocked(&inst.game_dir, &inst.name, &blocked)
+            {
+                tracing::warn!(error = %e, "写入分发受限清单失败（更新继续）");
+            }
+            if !blocked.is_empty() {
+                handle.set_blocked_files(blocked.len() as i32);
+                tracing::warn!(
+                    instance = %inst.name,
+                    count = blocked.len(),
+                    "CurseForge 整合包更新有 {} 个必需文件因作者关闭第三方分发需手动补全",
+                    blocked.len()
+                );
             }
             if !files.is_empty() {
                 crate::services::install_service::download_batch(

@@ -133,6 +133,12 @@ pub fn router() -> Router<SharedState> {
             "/modpack/progress/{instanceId}",
             get(progress).delete(cancel),
         )
+        // 分发受限文件（issue #291）：列出待手动补全清单 / 登记用户下载的文件。
+        .route("/modpack/blocked/{instanceId}", get(blocked_mods))
+        .route(
+            "/modpack/blocked/{instanceId}/submit/{fileId}",
+            post(submit_blocked_mod),
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -2596,6 +2602,92 @@ async fn cancel(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// GET /modpack/blocked/{instanceId} -- 列出因 CurseForge 分发限制待补全的文件。
+///
+/// 清单来自安装/更新时落盘的 `.qomicex/blocked-mods.json`；实例不存在时 404，
+/// 清单为空时返回空数组（前端据此决定不弹窗）。
+async fn blocked_mods(
+    State(s): State<SharedState>,
+    AxumPath(instance_id): AxumPath<String>,
+) -> ApiResult<Json<crate::services::modpack_blocked::BlockedModList>> {
+    let inst = s
+        .instance
+        .get_by_id(&instance_id)
+        .ok_or_else(|| ApiError::not_found("INSTANCE_NOT_FOUND", "Instance not found"))?;
+    let items = crate::services::modpack_blocked::load_blocked(&inst.game_dir, &inst.name);
+    Ok(Json(crate::services::modpack_blocked::BlockedModList::new(
+        items,
+    )))
+}
+
+/// POST /modpack/blocked/{instanceId}/submit/{fileId} -- 登记用户手动下载的 jar。
+///
+/// 请求体 `{"path": "<用户本机文件的绝对路径>"}`，而不是 multipart 上传：
+/// 文件本来就在用户机器上，前端（`plugin-dialog` 选文件）拿到的就是绝对路径，
+/// 再读进内存重传一遍纯属浪费——尤其大整合包里的重型 mod 可能几百 MB。
+/// 这与 `/modpack/parse-path` 同一思路（后端直接读本机路径）。
+///
+/// 之所以要 `fileId` 而不是靠文件名猜：CF 的 `fileName` 可能为空（旧接口），
+/// 且同名不同版本的文件只差哈希，猜错会放进一个版本不对的 jar。
+async fn submit_blocked_mod(
+    State(s): State<SharedState>,
+    AxumPath((instance_id, file_id)): AxumPath<(String, i64)>,
+    Json(req): Json<SubmitBlockedModRequest>,
+) -> ApiResult<Json<crate::services::modpack_blocked::BlockedModList>> {
+    let inst = s
+        .instance
+        .get_by_id(&instance_id)
+        .ok_or_else(|| ApiError::not_found("INSTANCE_NOT_FOUND", "Instance not found"))?;
+    let version_isolation = inst
+        .version_isolation
+        .unwrap_or_else(crate::settings::get_global_version_isolation);
+
+    let src = PathBuf::from(req.path.trim());
+    if !src.is_file() {
+        return Err(ApiError::bad_request(
+            "BLOCKED_UPLOAD_FILE_NOT_FOUND",
+            "文件不存在或已被移动，请重新选择",
+        ));
+    }
+    // 上限挡的是「用户选错成整合包 zip」这类误操作；正常 mod jar 远小于此。
+    if let Ok(meta) = std::fs::metadata(&src) {
+        if meta.len() > BLOCKED_UPLOAD_LIMIT_BYTES {
+            return Err(ApiError::bad_request(
+                "BLOCKED_UPLOAD_TOO_LARGE",
+                "文件过大（单个模组上限 512 MiB）",
+            ));
+        }
+    }
+
+    let entry = crate::services::modpack_blocked::load_blocked(&inst.game_dir, &inst.name)
+        .into_iter()
+        .find(|it| it.file_id == file_id)
+        .ok_or_else(|| {
+            ApiError::not_found(
+                "BLOCKED_ENTRY_NOT_FOUND",
+                "该文件不在待补全清单中（可能已补全或实例已更新）",
+            )
+        })?;
+
+    let result = crate::services::modpack_blocked::accept_manual_file(
+        &inst.game_dir,
+        &inst.name,
+        version_isolation,
+        &src,
+        &entry,
+    );
+    // 源文件是用户自己的下载，不删：可能还有别的实例要用，删了等于替用户清理
+    // 他没让我们动的文件。这里只复制。
+    if let Err(e) = result {
+        return Err(ApiError::bad_request("BLOCKED_UPLOAD_REJECTED", e));
+    }
+
+    let remaining = crate::services::modpack_blocked::load_blocked(&inst.game_dir, &inst.name);
+    Ok(Json(crate::services::modpack_blocked::BlockedModList::new(
+        remaining,
+    )))
+}
+
 /// 安装请求是否应标记为「可原地更新」（issue #118）。
 ///
 /// 白名单式**全条件**判定，任一不满足即不可更新：
@@ -3841,8 +3933,9 @@ pub(crate) async fn run_modpack_pipeline(
                 let mut files = Vec::new();
                 let mut rels: Vec<String> = Vec::new();
                 let mut missing = 0usize;
+                let mut blocked: Vec<crate::services::modpack_blocked::BlockedModFile> = Vec::new();
                 for f in &p.files {
-                    let Some((_, fid)) = f.path.split_once(':') else {
+                    let Some((proj, fid)) = f.path.split_once(':') else {
                         continue;
                     };
                     let Ok(fidn) = fid.parse::<i64>() else {
@@ -3852,11 +3945,18 @@ pub(crate) async fn run_modpack_pipeline(
                         missing += 1;
                         continue;
                     };
-                    let Some(download_url) = info.download_url.as_deref().filter(|u| !u.is_empty())
-                    else {
-                        missing += 1;
+                    // 条目在但 downloadUrl 为空 = 作者关闭了第三方分发开关（issue #291）。
+                    // 这是业务状态而非故障：不绕过（换 key / 拼 CDN 直链均无效且违约），
+                    // 记进阻塞清单由用户手动补全。
+                    let project_id = proj.trim().parse::<i64>().unwrap_or(0);
+                    if let Some(b) =
+                        crate::services::modpack_blocked::blocked_from_batch(info, project_id)
+                    {
+                        blocked.push(b);
                         continue;
-                    };
+                    }
+                    // 走到这里 downloadUrl 必为非空：唯一的 null/空分支已被上一行吃掉。
+                    let download_url = info.download_url.as_deref().unwrap_or_default();
                     let filename = info.file_name.clone().unwrap_or_else(|| {
                         download_url
                             .rsplit('/')
@@ -3870,6 +3970,21 @@ pub(crate) async fn run_modpack_pipeline(
                         mirror_mod_url(download_url.to_string(), cf_api_key, &plan);
                     files.push((download_url, dest, headers));
                     rels.push(rel);
+                }
+                // 空清单也要走一遍：清掉上一次安装残留，避免 UI 报出不存在的阻塞文件。
+                if let Err(e) =
+                    crate::services::modpack_blocked::save_blocked(&gd_g, &vdn_g, &blocked)
+                {
+                    tracing::warn!(error = %e, "写入分发受限清单失败（安装继续）");
+                }
+                if !blocked.is_empty() {
+                    h_g.set_blocked_files(blocked.len() as i32);
+                    tracing::warn!(
+                        instance = %vdn_g,
+                        count = blocked.len(),
+                        "CurseForge 整合包有 {} 个必需文件因作者关闭第三方分发需手动补全",
+                        blocked.len()
+                    );
                 }
                 if missing > 0 {
                     tracing::warn!(
@@ -4435,6 +4550,12 @@ fn read_zip_json(zip_path: &Path, entry_name: &str) -> Result<serde_json::Value,
 /// 上传整合包最大体积（4 GiB，对应 CF zip / mrpack 上限）。
 const MAX_UPLOAD_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
+/// 手动补全单个模组文件的体积上限（512 MiB）。
+///
+/// 与整合包上限分开：补全的是**一个** jar，超过这个量级基本可以确定用户选错了
+/// 文件，与其把磁盘写满不如直接拒绝。
+const BLOCKED_UPLOAD_LIMIT_BYTES: u64 = 512 * 1024 * 1024;
+
 /// 上传临时目录 `{BaseDir}/temp/modpack-uploads/`；顺带清理超过 1 天的残留。
 fn modpack_uploads_dir() -> ApiResult<PathBuf> {
     let dir = crate::settings::resolve_base_dir()
@@ -4821,6 +4942,13 @@ pub struct ModpackInstallRequest {
     /// 当前版本将来若被平台删除，用它作为「更新判定」的排序回退。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version_published_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmitBlockedModRequest {
+    /// 用户本机已下载文件的绝对路径（前端 `plugin-dialog` 选出来的）。
+    pub path: String,
 }
 
 #[derive(Debug, Deserialize)]

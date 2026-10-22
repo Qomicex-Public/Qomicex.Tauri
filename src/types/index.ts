@@ -400,9 +400,39 @@ export interface InstallProgressResponse {
   completedFiles: number
   failedFiles: number
   currentFile: string
+  /**
+   * 因 CurseForge 作者关闭第三方分发而需手动补全的文件数（issue #291）。
+   *
+   * 与 `failedFiles` 分开：它不是下载失败，而是已知且可操作的阻塞——
+   * 安装仍可完成，由用户在实例详情里补上缺的文件。
+   */
+  blockedFiles?: number
   currentFileProgress: number
   speed: number
   isPaused: boolean
+}
+
+/**
+ * 一个因 CurseForge 分发限制无法自动获取的必需文件（issue #291）。
+ *
+ * 后端在安装/更新时把这类条目落盘到实例的 `.qomicex/blocked-mods.json`，
+ * 前端据 `pageUrl` 引导用户手动下载，再用 `sha1` 校验补全。
+ */
+export interface BlockedModFile {
+  projectId: number
+  fileId: number
+  /** 落盘文件名（`mods/` 下）。CF 未提供时为空串，展示用 projectId/fileId 兜底 */
+  fileName: string
+  /** CF 提供的 SHA-1，用于补全时校验；缺失表示该响应没带哈希 */
+  sha1?: string
+  fileLength?: number
+  /** CurseForge 项目页直达链接 */
+  pageUrl: string
+}
+
+export interface BlockedModList {
+  schemaVersion: number
+  items: BlockedModFile[]
 }
 
 /**

@@ -25,6 +25,7 @@ import { updateModsViaDownloadCenter } from '../lib/updateMods.ts'
 import { computeMissingDependencies } from '../lib/modDependencies.ts'
 import { useMessageBox } from '../components/ui'
 import { getInstance, updateInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting, getInstanceGroups } from '../api/instance.ts'
+import { getBlockedMods } from '../api/modpack-blocked.ts'
 import type { InstanceGroup } from '../api/instance.ts'
 import { openFolder, getSettings } from '../api/settings.ts'
 import { getRuntimes, getValidRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
@@ -36,6 +37,7 @@ import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu.tsx
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
 import { ApiError } from '../api/client.ts'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
+import { BlockedModsDialog } from '../components/BlockedModsDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { InstanceIcon, ICON_NAMES } from '../components/InstanceIcon.tsx'
 import { useRunning } from '../contexts/RunningContext.tsx'
@@ -2969,6 +2971,30 @@ export default function InstanceDetailPage() {
   const [repairing, setRepairing] = useState(false)
   const [repairProgress, setRepairProgress] = useState(0)
   const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
+  /** CurseForge 分发受限文件的补全对话框（issue #291）。 */
+  const [blockedModsOpen, setBlockedModsOpen] = useState(false)
+  /**
+   * 待手动补全的文件数（issue #291）。清单在 `.qomicex/blocked-mods.json`，
+   * 为空时后端返回空数组，横幅随之不渲染。
+   *
+   * 单独查、不并入主加载流程：它只是提示，失败不该拖累实例详情的其它数据。
+   */
+  const [blockedModsCount, setBlockedModsCount] = useState(0)
+  useEffect(() => {
+    if (!id) return
+    let cancelled = false
+    getBlockedMods(id)
+      .then(res => {
+        if (!cancelled) setBlockedModsCount((res.items ?? []).length)
+      })
+      .catch(() => {
+        // 读取失败按「无阻塞」处理：提示性信息不值得弹错误打扰用户。
+        if (!cancelled) setBlockedModsCount(0)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [id, blockedModsOpen])
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [savesRefresh, setSavesRefresh] = useState(0)
@@ -3461,6 +3487,24 @@ export default function InstanceDetailPage() {
         <div className="flex-1 min-w-0 overflow-y-auto scroll-fade-mask relative pb-8" style={{ transform: 'translateZ(0)' }}>
           <TabContent activeTab={tab} tabId="overview">
             <div className="space-y-4">
+              {/* CurseForge 分发受限（issue #291）：作者关闭第三方分发导致部分必需
+                  文件装不上。实例能启动，但依赖它们的模组会在游戏内报错，所以这条
+                  提示要显眼且可直达补全入口；0 条时完全不渲染。 */}
+              {blockedModsCount > 0 && (
+                <div className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                  <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
+                  <span className="flex-1">
+                    {t('dialogs.blockedMods.title')}（{blockedModsCount}）
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setBlockedModsOpen(true)}
+                    className="shrink-0 rounded border border-amber-500/30 px-2 py-0.5 font-medium transition-colors hover:bg-amber-500/20"
+                  >
+                    {t('dialogs.blockedMods.chooseFile')}
+                  </button>
+                </div>
+              )}
               <SettingSection title={t('instances.basicInfo')} icon={<Info className="h-4 w-4" />}>
                 <div className="grid grid-cols-2 gap-4 p-4 text-sm">
                   <div>
@@ -3828,6 +3872,14 @@ export default function InstanceDetailPage() {
         onClose={() => setShowMicrosoftReauth(false)}
         expiredAccountUuid={selectedAccountUuid}
       />
+      {id && (
+        <BlockedModsDialog
+          open={blockedModsOpen}
+          instanceId={id}
+          onClose={() => setBlockedModsOpen(false)}
+          onAllResolved={() => setBlockedModsOpen(false)}
+        />
+      )}
       <ConfirmDialog open={deleteConfirmOpen} title={t('instanceDetail.overview.deleteInstance')} message={t('instanceDetail.launch.deleteInstanceConfirm', { name: instance?.name ?? '' })} onConfirm={confirmDelete} onCancel={() => setDeleteConfirmOpen(false)} />
       <ExportModpackDialog
         open={exportOpen}

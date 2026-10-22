@@ -134,6 +134,10 @@ pub struct InstallProgress {
     pub completed_files: i32,
     pub failed_files: i32,
     pub current_file: String,
+    /// 因 CurseForge 作者关闭第三方分发而需用户手动补全的文件数（issue #291）。
+    /// 与 `failed_files` 分开：它是**已知且可操作**的阻塞，不是下载失败。
+    #[serde(default)]
+    pub blocked_files: i32,
     /// 当前文件批次下载进度（0-100，按字节；非下载阶段为 0）。
     pub current_file_progress: f64,
     pub speed: f64,
@@ -218,6 +222,14 @@ impl InstallHandle {
         self.update(|f| f.current_file = file.to_string());
     }
 
+    /// 记录「分发受限、待手动补全」的文件数（issue #291）。
+    ///
+    /// 与失败计数分开维护：这些文件不是下载出错，而是作者明确拒绝第三方分发，
+    /// 属于已知且可操作的阻塞，安装仍可完成。
+    pub fn set_blocked_files(&self, count: i32) {
+        self.update(|f| f.blocked_files = count);
+    }
+
     pub fn set_error(&self, error: impl Into<String>) {
         self.update(|f| f.error = Some(error.into()));
     }
@@ -286,6 +298,8 @@ pub struct ProgressField {
     pub total_files: i32,
     pub completed_files: i32,
     pub failed_files: i32,
+    /// 分发受限、待用户手动补全的文件数（issue #291）。
+    pub blocked_files: i32,
     pub current_file_progress: f64,
     pub speed: f64,
     pub steps: Vec<InstallStep>,
@@ -320,6 +334,7 @@ impl ProgressField {
             completed_files: self.completed_files,
             failed_files: self.failed_files,
             current_file: self.current_file.clone(),
+            blocked_files: self.blocked_files,
             current_file_progress: self.current_file_progress,
             speed: self.speed,
             is_paused,
@@ -426,6 +441,7 @@ impl InstallState {
                 total_files: 0,
                 completed_files: 0,
                 failed_files: 0,
+                blocked_files: 0,
                 current_file_progress: 0.0,
                 speed: 0.0,
                 steps: Vec::new(),
@@ -773,6 +789,7 @@ mod tests {
             total_files: 0,
             completed_files: 0,
             failed_files: 0,
+            blocked_files: 0,
             current_file_progress: 0.0,
             speed: 0.0,
             steps: Vec::new(),
@@ -908,6 +925,7 @@ mod tests {
             completed_files: 0,
             failed_files: 0,
             current_file: String::new(),
+            blocked_files: 0,
             current_file_progress: 0.0,
             speed: 0.0,
             is_paused: false,
