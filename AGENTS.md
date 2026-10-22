@@ -239,11 +239,12 @@ Windows / Linux / macOS 都要支持。
 
 ## 8. 工具链现状（基线）
 
-- **Clippy 存量**：后端 **157**（`qomicex-backend` bin；另 `qomicex-core-rust` lib 1 条），2026-10-09 实测，1.95.0。CI advisory（`continue-on-error`），清到 0 后改阻断
-- **ESLint 存量**：**30 error / 105 warning**（2026-10-09 实测 `pnpm run lint` 全仓）。清理期间不进 CI 阻断
-- **Prettier**：仓库**全量未格式化**（2026-10-09 实测 `prettier --check .` 有 **522** 个文件不符，另有 2 个 YAML 解析报错）。**不要顺手 `pnpm run format`**，格式化必须是一次独立的 `style:` 提交，全量重排单独排期
+- **Clippy 存量**：后端 **64**（`qomicex-backend` bin；2026-10-22 实测，1.95.0）。其中 39 条 `dead_code`（`file_mirror` 健康探针子系统、`world_view` 未用辅助函数等）、24 条 `too_many_arguments` / `type_complexity`（函数签名结构性超限）、1 条在 `qomicex-core-rust` 子模块。CI advisory（`continue-on-error`），清到 0 后改阻断
+- **ESLint 存量**：**0 error / 102 warning**（2026-10-22 实测 `pnpm run lint` 全仓）。清理期间不进 CI 阻断
+- **Prettier**：仓库**全量未格式化**（2026-10-22 实测 `prettier --check .` 有 **380** 个首方文件不符；子模块已排除，解析报错为 0）。**不要顺手 `pnpm run format`**，格式化必须是一次独立的 `style:` 提交，全量重排单独排期
+- **前端依赖审计**：`pnpm audit` 仅剩 `braces` 1 条 high（GHSA-vfj7-8cjw-p6xm，上游未发布修复版本，需 tailwindcss v4 迁移才能消除）
 - **无前端单测框架**：`playwright` 仅用于 `scripts/harness/`
-- **hook 历史写法**：`src/pages/Settings.tsx:645,690`（`useExpandAnimation` 在 `map` 回调内）与 `src/plugins/plugin-loader.tsx:66,152`（`useWebview` 命名像 hook 但在非组件函数里定义/调用）存在 hook 违规，属待修项
+- **hook 写法**：`useExpandAnimation` 已下沉到 `Settings.tsx` 的 `DependencyCategory` 组件；`plugin-loader.tsx` 的 `useWebview` 已改名为 `isWebviewRender`
 
 ---
 
