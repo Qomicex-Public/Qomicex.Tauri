@@ -1,6 +1,6 @@
 # Contributing
 
-本文适用于 issue、discussion、pull request。开发细节见 HACKING.md。
+本文适用于 issue、discussion、pull request。开发细节见 [AGENTS.md](AGENTS.md)。
 
 
 ## 最关键规则：你必须理解你的代码
