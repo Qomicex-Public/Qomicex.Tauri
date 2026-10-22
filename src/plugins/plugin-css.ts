@@ -162,7 +162,7 @@ body{font-family:system-ui,sans-serif;color:hsl(var(--foreground));background:tr
 .p-rounded{border-radius:0.375rem}
 `
 
-export const injectCss = `<style>${pluginCss}<\/style>`
+export const injectCss = `<style>${pluginCss}</style>`
 
 export const THEME_KEYS = [
   'background', 'foreground', 'card', 'card-foreground', 'popover', 'popover-foreground',
@@ -200,7 +200,7 @@ window.addEventListener('message', function (e) {
     root.classList.toggle('light', e.data.scheme === 'light')
   }
 })
-<\/script>`
+</script>`
 
 const themeSyncTargets = new Set<HTMLIFrameElement>()
 let themeObserver: MutationObserver | null = null

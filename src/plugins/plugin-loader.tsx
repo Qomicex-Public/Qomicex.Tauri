@@ -69,7 +69,7 @@ function satisfiesSingle(installed: string, constraint: string): boolean {
 }
 
 /** l4 渲染判定：manifest.render==='webview' 或 layers 含 l4。 */
-function useWebview(plugin: PluginInfo): boolean {
+function isWebviewRender(plugin: PluginInfo): boolean {
   return plugin.manifest.render === 'webview' || plugin.manifest.layers.includes('l4')
 }
 
@@ -199,14 +199,14 @@ export async function activatePlugin(plugin: PluginInfo) {
   desiredState.set(plugin.manifest.id, 'active')
 
   const useSandbox = plugin.manifest.render !== 'inline'
-  const useWebviewRender = useWebview(plugin)
+  const renderInWebview = isWebviewRender(plugin)
   // 库插件（无页面入口）用户永远导航不到，必须激活即隐藏挂载；有页面的插件保持
   // 懒加载，避免启动就执行所有 UI 前端（#260）。
   const hiddenMount = !hasPageEntry(plugin)
 
   if (plugin.manifest.entry.frontend) {
     try {
-      if (useWebviewRender) {
+      if (renderInWebview) {
         await createRemoteWebview(plugin)
         // 创建期间被停用：createRemoteWebview 已关窗，这里不能再注册菜单/置 active
         if (desiredState.get(plugin.manifest.id) === 'disabled') return

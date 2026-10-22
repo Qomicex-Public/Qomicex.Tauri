@@ -235,7 +235,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
       progress: 0,
       isRunning: false,
     })
-    let taskId: string | null = null
+    let taskId: string
     try {
       const catalog = await getJavaDownloadCatalog()
       const vendor = catalog.vendors.find(v => v.versions.includes(required)) ?? catalog.vendors[0]

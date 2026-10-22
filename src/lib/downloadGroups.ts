@@ -118,8 +118,8 @@ export function getTaskGroup(task: Pick<DownloadTask, 'type' | 'resourceKind'>):
   if (explicit) return explicit
 
   switch (task.type) {
-    case 'modpack':
     // 原地更新属于整合包范畴（issue #118）：与安装任务同组展示。
+    case 'modpack':
     case 'modpack-update':
       return 'modpack'
     case 'game':

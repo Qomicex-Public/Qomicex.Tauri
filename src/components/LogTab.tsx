@@ -170,7 +170,7 @@ export default function LogTab() {
     const q = search.toLowerCase()
     const parts: React.ReactNode[] = []
     let i = 0
-    let idx = 0
+    let idx: number
     while ((idx = lower.indexOf(q, i)) >= 0) {
       if (idx > i) parts.push(raw.slice(i, idx))
       parts.push(<mark key={`${key}-${idx}`} className="rounded bg-yellow-400/30 px-0.5 text-foreground">{raw.slice(idx, idx + q.length)}</mark>)

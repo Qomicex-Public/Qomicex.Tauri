@@ -103,12 +103,12 @@ let pluginCache = new Map()
 let idToDir = new Map() // manifest.id -> 目录名（id 与目录名可能不一致，如 top.qomicex.market / Qomicex.Plugin-Market）
 async function scanPluginDirs() {
   let entries = []
-  try { entries = await readdir(PLUGIN_DIR) } catch {}
+  try { entries = await readdir(PLUGIN_DIR) } catch { /* 插件目录可能不存在 */ }
   for (const dir of entries) {
     try {
       const m = JSON.parse(await readFile(join(PLUGIN_DIR, dir, 'manifest.json'), 'utf-8'))
       if (m && m.id) idToDir.set(m.id, dir)
-    } catch {}
+    } catch { /* 单个插件 manifest 解析失败时跳过 */ }
   }
 }
 async function loadPluginInfo(id) {

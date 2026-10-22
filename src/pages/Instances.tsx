@@ -261,8 +261,8 @@ export default function Instances() {
     // 注意：fast 段的结果**不写盘**。JSON 链的 gameVersion 是"猜测值"（可能只是
     // 目录名），而 syncScan / 后端自动修复都会把它持久化；full 段一旦超时/失败，
     // 猜测值就会永久留在 instances.json 里污染 Java 选择与联机实例匹配。
-    let refine = false
-    let versions: ScanResult = [] as ScanResult
+    let refine: boolean
+    let versions: ScanResult
     try {
       versions = await scanVersions(dir, 'fast')
       // 插件若整体接管 scanVersions 时拿不到 scanMeta → 不再发 full（由插件自己负责）。

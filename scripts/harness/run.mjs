@@ -117,7 +117,7 @@ const watchers = srcDirs.map((p) => {
           const src = join(pluginDir, extra)
           const dst = join(pluginDir, 'dist', extra)
           if (existsSync(src) && !existsSync(dst)) {
-            try { copyFileSync(src, dst); console.log(`[hot] 复制 ${extra} → dist/`) } catch {}
+            try { copyFileSync(src, dst); console.log(`[hot] 复制 ${extra} → dist/`) } catch { /* 复制失败不阻断热重载 */ }
           }
         }
         console.log('[hot] ✅ 构建完成，刷新页面…')

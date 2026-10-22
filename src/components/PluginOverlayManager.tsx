@@ -135,7 +135,7 @@ document.addEventListener('DOMContentLoaded',()=>{
       if(panel)panel.style.display=cb.checked?'block':'none'
     })
   })
-})<\/script>`
+})</script>`
 
 function overlayHtml(inner: string, pluginId: string) {
   const styles: string[] = []
@@ -162,7 +162,7 @@ ${styles.join('\n')}
 </head>
 <body>
 <div id="root">${body}</div>
-<script>window.__PLUGIN_ID__ = ${JSON.stringify(pluginId)}<\/script>
+<script>window.__PLUGIN_ID__ = ${JSON.stringify(pluginId)}</script>
 ${apiScript}
 </body>
 </html>`

@@ -238,7 +238,8 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
         const files: string[] = []
         collectFilePaths(node, files)
         if (node.type === 'file') {
-          next.has(node.path) ? next.delete(node.path) : next.add(node.path)
+          if (next.has(node.path)) next.delete(node.path)
+          else next.add(node.path)
         } else if (files.length > 0) {
           const all = files.every((p) => next.has(p))
           for (const p of files) {
@@ -255,7 +256,8 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
   const toggleExpand = useCallback((path: string) => {
     setExpanded((prev) => {
       const next = new Set(prev)
-      next.has(path) ? next.delete(path) : next.add(path)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
       return next
     })
   }, [])

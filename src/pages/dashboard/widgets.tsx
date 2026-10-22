@@ -263,7 +263,7 @@ export function AnnouncementWidget() {
   if (!loaded || announcements.length === 0) return null
 
   const current = announcements[index]
-  const plainText = current.content.replace(/[#*_`\[\]()>~]/g, '').trim()
+  const plainText = current.content.replace(/[#*_`[\]()>~]/g, '').trim()
   const summary = plainText.length > 60 ? plainText.slice(0, 60) + '…' : plainText
 
   function handleClose(e: React.MouseEvent) {

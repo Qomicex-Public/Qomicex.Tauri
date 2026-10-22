@@ -64,6 +64,7 @@ import { cacheInvalidate } from '../lib/simple-cache.ts'
 import type { AppSettings } from '../api/settings.ts'
 import { FILE_NAMING_OPTIONS } from '../lib/download-naming.ts'
 import { APP_INFO, CONTRIBUTORS, DEPENDENCIES, BACKEND_DEPENDENCIES, SERVICES, LICENSE, REPOSITORY_URL, REFERENCE_PROJECTS, USER_AGREEMENT_URL } from '../constants/credits.ts'
+import type { Dependency } from '../constants/credits.ts'
 import { LegalDialog } from '../components/LegalDialog.tsx'
 import { PrivacyDialog } from '../components/PrivacyDialog.tsx'
 import { fetchSponsors, type Sponsor } from '../api/sponsors.ts'
@@ -137,6 +138,75 @@ const DEP_CATEGORY_KEYS: Record<string, string> = {
   '样式与工具': 'settings.about.depStylesTools',
   '动画': 'settings.about.depAnimation',
   '渲染与展示': 'settings.about.depRendering',
+}
+
+/**
+ * 单个依赖分类。展开动画是 hook，必须落在组件实例上；在 map 回调里调用
+ * 会让分类数量变化时 hook 顺序错乱。
+ */
+function DependencyCategory({
+  category,
+  deps,
+  expanded,
+  onToggle,
+  variant,
+}: {
+  category: string
+  deps: Dependency[]
+  expanded: boolean
+  onToggle: () => void
+  variant: 'backend' | 'frontend'
+}) {
+  const { t } = useI18n()
+  const expandRef = useExpandAnimation(expanded)
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-medium hover:bg-accent"
+      >
+        <span>{t(DEP_CATEGORY_KEYS[category] ?? category)}</span>
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary" className="h-5 text-[10px]">{deps.length}</Badge>
+          <MorphIcon icon={expanded ? ChevronDownData : ChevronRightData} className="h-3 w-3 text-muted-foreground" spring="snappy" reducedMotion="user" />
+        </div>
+      </button>
+      <div ref={expandRef} className="mt-1 space-y-1 pl-2">
+        {variant === 'backend'
+          ? deps.map((dep) => (
+              <div
+                key={dep.name}
+                className={cn(
+                  'flex w-full items-center justify-between rounded-lg px-3 py-1.5 text-xs',
+                  dep.license === '自研' ? 'bg-primary/5' : 'hover:bg-accent'
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">{dep.name}</span>
+                  {dep.license === '自研' && <Badge variant="outline" className="h-4 px-1 text-[9px] border-primary/30 text-primary">{t('settings.about.depInHouse')}</Badge>}
+                </div>
+                {dep.url.startsWith('http') ? (
+                  <ExternalLink className="h-2.5 w-2.5 text-muted-foreground/50 cursor-pointer" onClick={() => openUrl(dep.url).catch(() => window.open(dep.url, '_blank'))} />
+                ) : null}
+              </div>
+            ))
+          : deps.map((dep) => (
+              <button
+                key={dep.name}
+                onClick={() => openUrl(dep.url).catch(() => window.open(dep.url, '_blank'))}
+                className="flex w-full items-center justify-between rounded-lg px-3 py-1.5 text-xs hover:bg-accent"
+              >
+                <span className="text-muted-foreground">{dep.name}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground/70">{dep.license}</span>
+                  <ExternalLink className="h-2.5 w-2.5 text-muted-foreground/50" />
+                </div>
+              </button>
+            ))}
+      </div>
+      <Separator className="my-1" />
+    </div>
+  )
 }
 
 /**
@@ -639,43 +709,16 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog, autoInstall, on
       <SettingSection title={t('settings.about.backendDependencies')} icon={<Server className="h-4 w-4" />}>
         <div className="p-2">
           <div className="space-y-1">
-            {Object.entries(BACKEND_DEPENDENCIES).map(([category, deps]) => {
-              const expandRef = useExpandAnimation(expandedDep === category)
-              return (
-              <div key={category}>
-                <button
-                  onClick={() => setExpandedDep(expandedDep === category ? null : category)}
-                  className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-medium hover:bg-accent"
-                >
-                  <span>{t(DEP_CATEGORY_KEYS[category] ?? category)}</span>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="h-5 text-[10px]">{deps.length}</Badge>
-                    <MorphIcon icon={expandedDep === category ? ChevronDownData : ChevronRightData} className="h-3 w-3 text-muted-foreground" spring="snappy" reducedMotion="user" />
-                  </div>
-                </button>
-                <div ref={expandRef} className="mt-1 space-y-1 pl-2">
-                    {deps.map((dep) => (
-                      <div
-                        key={dep.name}
-                        className={cn(
-                          'flex w-full items-center justify-between rounded-lg px-3 py-1.5 text-xs',
-                          dep.license === '自研' ? 'bg-primary/5' : 'hover:bg-accent'
-                        )}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="text-muted-foreground">{dep.name}</span>
-                          {dep.license === '自研' && <Badge variant="outline" className="h-4 px-1 text-[9px] border-primary/30 text-primary">{t('settings.about.depInHouse')}</Badge>}
-                        </div>
-                        {dep.url.startsWith('http') ? (
-                          <ExternalLink className="h-2.5 w-2.5 text-muted-foreground/50 cursor-pointer" onClick={() => openUrl(dep.url).catch(() => window.open(dep.url, '_blank'))} />
-                        ) : null}
-                      </div>
-                    ))}
-                </div>
-                <Separator className="my-1" />
-              </div>
-              )
-            })}
+            {Object.entries(BACKEND_DEPENDENCIES).map(([category, deps]) => (
+              <DependencyCategory
+                key={category}
+                category={category}
+                deps={deps}
+                variant="backend"
+                expanded={expandedDep === category}
+                onToggle={() => setExpandedDep(expandedDep === category ? null : category)}
+              />
+            ))}
           </div>
         </div>
       </SettingSection>
@@ -684,39 +727,16 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog, autoInstall, on
       <SettingSection title={t('settings.about.frontendDependencies')} icon={<Boxes className="h-4 w-4" />}>
         <div className="p-2">
           <div className="space-y-1">
-            {Object.entries(DEPENDENCIES).map(([category, deps]) => {
-              const expandRef = useExpandAnimation(expandedDep === category)
-              return (
-              <div key={category}>
-                <button
-                  onClick={() => setExpandedDep(expandedDep === category ? null : category)}
-                  className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm font-medium hover:bg-accent"
-                >
-                  <span>{t(DEP_CATEGORY_KEYS[category] ?? category)}</span>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="h-5 text-[10px]">{deps.length}</Badge>
-                    <MorphIcon icon={expandedDep === category ? ChevronDownData : ChevronRightData} className="h-3 w-3 text-muted-foreground" spring="snappy" reducedMotion="user" />
-                  </div>
-                </button>
-                <div ref={expandRef} className="mt-1 space-y-1 pl-2">
-                    {deps.map((dep) => (
-                      <button
-                        key={dep.name}
-                        onClick={() => openUrl(dep.url).catch(() => window.open(dep.url, '_blank'))}
-                        className="flex w-full items-center justify-between rounded-lg px-3 py-1.5 text-xs hover:bg-accent"
-                      >
-                        <span className="text-muted-foreground">{dep.name}</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-muted-foreground/70">{dep.license}</span>
-                          <ExternalLink className="h-2.5 w-2.5 text-muted-foreground/50" />
-                        </div>
-                      </button>
-                    ))}
-                </div>
-                <Separator className="my-1" />
-              </div>
-              )
-            })}
+            {Object.entries(DEPENDENCIES).map(([category, deps]) => (
+              <DependencyCategory
+                key={category}
+                category={category}
+                deps={deps}
+                variant="frontend"
+                expanded={expandedDep === category}
+                onToggle={() => setExpandedDep(expandedDep === category ? null : category)}
+              />
+            ))}
           </div>
         </div>
       </SettingSection>
@@ -894,7 +914,6 @@ export default function Settings() {
   const validCount = runtimes.filter((j) => j.state === 'Valid').length
 
   useEffect(() => {
-    let timer: ReturnType<typeof setInterval>
     function refresh() {
       if (!loadedRef.current) return
       getSystemInfo().then((info) => {
@@ -911,7 +930,7 @@ export default function Settings() {
       }).catch(() => {})
     }
     refresh()
-    timer = setInterval(refresh, 5000)
+    const timer = setInterval(refresh, 5000)
     return () => clearInterval(timer)
   }, [])
 
