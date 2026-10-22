@@ -4,6 +4,13 @@ node_modules/
 **/target/
 **/.git/
 
+# 子模块：各仓库独立维护格式，父仓库不得改写其工作树
+qomicex-core-rust/
+qomicex-downloader-rust/
+qomicex-connector-rust/
+qomicex-tauri-i18n/
+Qomicex.Updater/
+
 # 本地运行时数据 / 第三方大目录
 .shots-home/
 .minecraft/
