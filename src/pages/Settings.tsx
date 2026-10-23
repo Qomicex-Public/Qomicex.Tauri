@@ -844,6 +844,8 @@ export default function Settings() {
     const params = new URLSearchParams(window.location.search)
     return params.get('tab') ?? 'launcher'
   })
+  // 深链锚点（?section=xxx）：跳到指定 SettingSection，如联机页设置入口 → relayNodes
+  const [section] = useState(() => new URLSearchParams(window.location.search).get('section'))
   const [settings, setSettings] = useState<AppSettings>({ ...DEFAULT_SETTINGS })
   const settingsRef = useRef(settings)
   settingsRef.current = settings
@@ -871,6 +873,8 @@ export default function Settings() {
   const [removingPath, setRemovingPath] = useState<string | null>(null)
   const autoScanRef = useRef(false)
   const loadedRef = useRef(false)
+  // 锚点滚动用：loadedRef 是给同步 handler 用的，effect 需要能触发重跑的状态
+  const [settingsLoaded, setSettingsLoaded] = useState(false)
   const [backgrounds, setBackgrounds] = useState<string[]>([])
   const [fontList, setFontList] = useState<string[]>([])
 
@@ -878,7 +882,7 @@ export default function Settings() {
     apiLoadSettings().then((s) => {
       setSettings(s)
       loadedRef.current = true
-    }).catch(() => {})
+    }).catch(() => {}).finally(() => setSettingsLoaded(true))
     get<string[]>('/settings/backgrounds').then(setBackgrounds).catch(() => {})
     getSystemFonts().then(setFontList).catch(() => {})
   }, [])
@@ -893,6 +897,20 @@ export default function Settings() {
       fetchLicenseStatus().then(setLicenseStatus).catch(() => {})
     }
   }, [category])
+
+  // ?section= 锚点：目标分区随 tab 首挂载渲染。必须等 apiLoadSettings 落定后再滚动——
+  // launcher tab 有依赖已保存设置的条件渲染（如 effectiveSources 段落），设置加载完
+  // 会改变锚点上方高度；再叠双 rAF 等首帧布局稳定
+  useEffect(() => {
+    if (!section || !settingsLoaded) return
+    let raf2 = 0
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        document.getElementById(section)?.scrollIntoView({ block: 'start' })
+      })
+    })
+    return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2) }
+  }, [section, settingsLoaded])
 
   // 插件 openPluginSettings API：已挂载时监听事件切到插件 tab（未挂载时由 URL ?tab=plugins 初始化兜底）
   useEffect(() => {
@@ -1505,7 +1523,7 @@ export default function Settings() {
               </div>
             </SettingSection>
 
-            <SettingSection title={t('settings.relayNodes.title')} icon={<Globe className="h-4 w-4" />}>
+            <SettingSection id="relayNodes" title={t('settings.relayNodes.title')} icon={<Globe className="h-4 w-4" />}>
               <RelayNodesSection
                 value={settings.relayNodes}
                 // 必须**返回并等待**保存 Promise：`saveSettings` 是 async 的 PUT /settings，
