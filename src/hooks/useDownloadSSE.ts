@@ -15,6 +15,8 @@ export interface InstallState {
   completedFiles: number
   failedFiles: number
   currentFile: string
+  /** 因 CurseForge 分发限制待手动补全的文件数（issue #291）。 */
+  blockedFiles?: number
   currentFileProgress: number
   speed: number
   isPaused: boolean

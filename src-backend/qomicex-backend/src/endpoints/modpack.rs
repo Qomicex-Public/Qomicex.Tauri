@@ -134,7 +134,14 @@ pub fn router() -> Router<SharedState> {
             get(progress).delete(cancel),
         )
         // 分发受限文件（issue #291）：列出待手动补全清单 / 登记用户下载的文件。
-        .route("/modpack/blocked/{instanceId}", get(blocked_mods))
+        .route(
+            "/modpack/blocked/{instanceId}",
+            get(blocked_mods).delete(skip_blocked_mods),
+        )
+        .route(
+            "/modpack/blocked/{instanceId}/submit",
+            post(submit_blocked_mod_by_path),
+        )
         .route(
             "/modpack/blocked/{instanceId}/submit/{fileId}",
             post(submit_blocked_mod),
@@ -2604,8 +2611,9 @@ async fn cancel(
 
 /// GET /modpack/blocked/{instanceId} -- 列出因 CurseForge 分发限制待补全的文件。
 ///
-/// 清单来自安装/更新时落盘的 `.qomicex/blocked-mods.json`；实例不存在时 404，
-/// 清单为空时返回空数组（前端据此决定不弹窗）。
+/// 清单来自安装/更新时落盘的 `.qomicex/blocked-mods.json`。读取时顺带核对
+/// `mods/` 目录：用户可能直接用文件管理器把 jar 放进去，这类条目算已补全，
+/// 清单与等待态一并收尾。实例不存在时 404，清单为空时返回空数组。
 async fn blocked_mods(
     State(s): State<SharedState>,
     AxumPath(instance_id): AxumPath<String>,
@@ -2614,35 +2622,49 @@ async fn blocked_mods(
         .instance
         .get_by_id(&instance_id)
         .ok_or_else(|| ApiError::not_found("INSTANCE_NOT_FOUND", "Instance not found"))?;
-    let items = crate::services::modpack_blocked::load_blocked(&inst.game_dir, &inst.name);
+    let items = blocked_remaining(&s, &inst);
     Ok(Json(crate::services::modpack_blocked::BlockedModList::new(
         items,
     )))
 }
 
-/// POST /modpack/blocked/{instanceId}/submit/{fileId} -- 登记用户手动下载的 jar。
-///
-/// 请求体 `{"path": "<用户本机文件的绝对路径>"}`，而不是 multipart 上传：
-/// 文件本来就在用户机器上，前端（`plugin-dialog` 选文件）拿到的就是绝对路径，
-/// 再读进内存重传一遍纯属浪费——尤其大整合包里的重型 mod 可能几百 MB。
-/// 这与 `/modpack/parse-path` 同一思路（后端直接读本机路径）。
-///
-/// 之所以要 `fileId` 而不是靠文件名猜：CF 的 `fileName` 可能为空（旧接口），
-/// 且同名不同版本的文件只差哈希，猜错会放进一个版本不对的 jar。
-async fn submit_blocked_mod(
-    State(s): State<SharedState>,
-    AxumPath((instance_id, file_id)): AxumPath<(String, i64)>,
-    Json(req): Json<SubmitBlockedModRequest>,
-) -> ApiResult<Json<crate::services::modpack_blocked::BlockedModList>> {
-    let inst = s
-        .instance
-        .get_by_id(&instance_id)
-        .ok_or_else(|| ApiError::not_found("INSTANCE_NOT_FOUND", "Instance not found"))?;
+/// 读取清单并剔除已在 `mods/` 里的条目；清单清空时结束等待态。
+fn blocked_remaining(
+    s: &SharedState,
+    inst: &crate::services::instance::GameInstance,
+) -> Vec<crate::services::modpack_blocked::BlockedModFile> {
     let version_isolation = inst
         .version_isolation
         .unwrap_or_else(crate::settings::get_global_version_isolation);
+    let mut items = crate::services::modpack_blocked::load_blocked(&inst.game_dir, &inst.name);
+    if crate::services::modpack_blocked::drop_present_in_mods(
+        &inst.game_dir,
+        &inst.name,
+        version_isolation,
+        &mut items,
+    ) {
+        if let Err(e) =
+            crate::services::modpack_blocked::save_blocked(&inst.game_dir, &inst.name, &items)
+        {
+            tracing::warn!(error = %e, "更新分发受限清单失败");
+        }
+    }
+    if items.is_empty() {
+        s.install_tracker.finish_awaiting(&inst.id);
+    }
+    items
+}
 
-    let src = PathBuf::from(req.path.trim());
+/// 校验并落盘一个手工补全的文件，返回补全后的剩余清单。
+async fn accept_blocked_file(
+    s: &SharedState,
+    inst: &crate::services::instance::GameInstance,
+    src: &Path,
+    entry: &crate::services::modpack_blocked::BlockedModFile,
+) -> ApiResult<Vec<crate::services::modpack_blocked::BlockedModFile>> {
+    let version_isolation = inst
+        .version_isolation
+        .unwrap_or_else(crate::settings::get_global_version_isolation);
     if !src.is_file() {
         return Err(ApiError::bad_request(
             "BLOCKED_UPLOAD_FILE_NOT_FOUND",
@@ -2650,7 +2672,7 @@ async fn submit_blocked_mod(
         ));
     }
     // 上限挡的是「用户选错成整合包 zip」这类误操作；正常 mod jar 远小于此。
-    if let Ok(meta) = std::fs::metadata(&src) {
+    if let Ok(meta) = std::fs::metadata(src) {
         if meta.len() > BLOCKED_UPLOAD_LIMIT_BYTES {
             return Err(ApiError::bad_request(
                 "BLOCKED_UPLOAD_TOO_LARGE",
@@ -2659,21 +2681,11 @@ async fn submit_blocked_mod(
         }
     }
 
-    let entry = crate::services::modpack_blocked::load_blocked(&inst.game_dir, &inst.name)
-        .into_iter()
-        .find(|it| it.file_id == file_id)
-        .ok_or_else(|| {
-            ApiError::not_found(
-                "BLOCKED_ENTRY_NOT_FOUND",
-                "该文件不在待补全清单中（可能已补全或实例已更新）",
-            )
-        })?;
-
     // SHA-1 计算 + 复制是同步阻塞 I/O，单个文件上限 512 MiB，直接在 async 处理器里
     // 跑会长时间占用 tokio 工作线程，拖慢同一时刻的进度 SSE 等请求。
     let game_dir_owned = inst.game_dir.clone();
     let name_owned = inst.name.clone();
-    let src_owned = src.clone();
+    let src_owned = src.to_path_buf();
     let entry_owned = entry.clone();
     let result = tokio::task::spawn_blocking(move || {
         crate::services::modpack_blocked::accept_manual_file(
@@ -2691,10 +2703,107 @@ async fn submit_blocked_mod(
     if let Err(e) = result {
         return Err(ApiError::bad_request("BLOCKED_UPLOAD_REJECTED", e));
     }
+    Ok(blocked_remaining(s, inst))
+}
 
-    let remaining = crate::services::modpack_blocked::load_blocked(&inst.game_dir, &inst.name);
+/// POST /modpack/blocked/{instanceId}/submit/{fileId} -- 为指定条目登记文件。
+///
+/// 请求体 `{"path": "<用户本机文件的绝对路径>"}`，而不是 multipart 上传：
+/// 文件本来就在用户机器上，前端（`plugin-dialog` 选文件）拿到的就是绝对路径，
+/// 再读进内存重传一遍纯属浪费——尤其大整合包里的重型 mod 可能几百 MB。
+/// 这与 `/modpack/parse-path` 同一思路（后端直接读本机路径）。
+///
+/// 指定 `fileId` 供逐条「选择文件」用：CF 的 `fileName` 可能为空，
+/// 且同名不同版本的文件只差哈希，由用户明确选中的条目最可靠。
+async fn submit_blocked_mod(
+    State(s): State<SharedState>,
+    AxumPath((instance_id, file_id)): AxumPath<(String, i64)>,
+    Json(req): Json<SubmitBlockedModRequest>,
+) -> ApiResult<Json<crate::services::modpack_blocked::BlockedModList>> {
+    let inst = s
+        .instance
+        .get_by_id(&instance_id)
+        .ok_or_else(|| ApiError::not_found("INSTANCE_NOT_FOUND", "Instance not found"))?;
+
+    let entry = crate::services::modpack_blocked::load_blocked(&inst.game_dir, &inst.name)
+        .into_iter()
+        .find(|it| it.file_id == file_id)
+        .ok_or_else(|| {
+            ApiError::not_found(
+                "BLOCKED_ENTRY_NOT_FOUND",
+                "该文件不在待补全清单中（可能已补全或实例已更新）",
+            )
+        })?;
+
+    let remaining = accept_blocked_file(&s, &inst, &PathBuf::from(req.path.trim()), &entry).await?;
     Ok(Json(crate::services::modpack_blocked::BlockedModList::new(
         remaining,
+    )))
+}
+
+/// POST /modpack/blocked/{instanceId}/submit -- 按哈希自动匹配条目后登记文件。
+///
+/// 拖入一次可能带来多个文件，前端无法预知每个文件对应哪条清单，因此由后端按
+/// 清单里的 SHA-1 匹配；CF 未给哈希的旧条目才退回文件名匹配。匹配不到直接拒绝，
+/// 不做「放进 mods/ 再说」的宽松处理。
+async fn submit_blocked_mod_by_path(
+    State(s): State<SharedState>,
+    AxumPath(instance_id): AxumPath<String>,
+    Json(req): Json<SubmitBlockedModRequest>,
+) -> ApiResult<Json<crate::services::modpack_blocked::BlockedModList>> {
+    let inst = s
+        .instance
+        .get_by_id(&instance_id)
+        .ok_or_else(|| ApiError::not_found("INSTANCE_NOT_FOUND", "Instance not found"))?;
+
+    let src = PathBuf::from(req.path.trim());
+    if !src.is_file() {
+        return Err(ApiError::bad_request(
+            "BLOCKED_UPLOAD_FILE_NOT_FOUND",
+            "文件不存在或已被移动，请重新选择",
+        ));
+    }
+    let sha1 = crate::services::modpack_export::sha1_file_hex(&src)
+        .map_err(|e| ApiError::internal(format!("计算文件校验值失败: {e}")))?;
+    let source_name = src
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let entry = crate::services::modpack_blocked::match_source(
+        &crate::services::modpack_blocked::load_blocked(&inst.game_dir, &inst.name),
+        &sha1,
+        &source_name,
+    )
+    .cloned()
+    .ok_or_else(|| {
+        ApiError::bad_request(
+            "BLOCKED_UPLOAD_UNMATCHED",
+            format!("{source_name} 无法对应到待补全清单中的文件"),
+        )
+    })?;
+
+    let remaining = accept_blocked_file(&s, &inst, &src, &entry).await?;
+    Ok(Json(crate::services::modpack_blocked::BlockedModList::new(
+        remaining,
+    )))
+}
+
+/// DELETE /modpack/blocked/{instanceId} -- 放弃补全：清空清单并结束等待态。
+///
+/// 实例保留（缺文件仍能启动，只是依赖它们的模组会在游戏内报错）。
+async fn skip_blocked_mods(
+    State(s): State<SharedState>,
+    AxumPath(instance_id): AxumPath<String>,
+) -> ApiResult<Json<crate::services::modpack_blocked::BlockedModList>> {
+    let inst = s
+        .instance
+        .get_by_id(&instance_id)
+        .ok_or_else(|| ApiError::not_found("INSTANCE_NOT_FOUND", "Instance not found"))?;
+    crate::services::modpack_blocked::save_blocked(&inst.game_dir, &inst.name, &[])
+        .map_err(|e| ApiError::internal(format!("清空待补全清单失败: {e}")))?;
+    s.install_tracker.skip_awaiting(&instance_id);
+    Ok(Json(crate::services::modpack_blocked::BlockedModList::new(
+        Vec::new(),
     )))
 }
 

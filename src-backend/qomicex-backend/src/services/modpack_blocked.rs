@@ -263,6 +263,63 @@ pub fn save_blocked(
     })
 }
 
+/// 从 mods 目录剔除已经补上的条目（用户在文件管理器里直接放入也算补上）。
+///
+/// 有 SHA-1 的条目必须哈希一致才算补上：同名但版本不同的 jar 留在清单里，
+/// 比误删后放行一个错版本安全。返回清单是否发生变化。
+pub fn drop_present_in_mods(
+    game_dir: &str,
+    instance_name: &str,
+    version_isolation: bool,
+    items: &mut Vec<BlockedModFile>,
+) -> bool {
+    let Ok(dir) = mods_dir(game_dir, instance_name, version_isolation) else {
+        return false;
+    };
+    let before = items.len();
+    items.retain(|entry| {
+        let name = entry.file_name.trim();
+        if name.is_empty() || !is_safe_rel_path(name) || name.contains('/') || name.contains('\\') {
+            return true;
+        }
+        let path = dir.join(name);
+        if !path.is_file() {
+            return true;
+        }
+        match entry.sha1.as_deref().filter(|s| !s.is_empty()) {
+            Some(expected) => crate::services::modpack_export::sha1_file_hex(&path)
+                .map(|got| !got.eq_ignore_ascii_case(expected))
+                .unwrap_or(true),
+            None => false,
+        }
+    });
+    items.len() != before
+}
+
+/// 按 SHA-1（优先）或文件名把用户拖入的文件对应到清单条目。
+///
+/// 有哈希的条目只认哈希：同名不同版本的文件只差哈希，按文件名匹配会把错版本
+/// 放进 `mods/`。文件名兜底只对 CF 未给哈希的旧条目生效。
+pub fn match_source<'a>(
+    items: &'a [BlockedModFile],
+    sha1: &str,
+    source_name: &str,
+) -> Option<&'a BlockedModFile> {
+    items
+        .iter()
+        .find(|e| {
+            e.sha1
+                .as_deref()
+                .is_some_and(|s| s.eq_ignore_ascii_case(sha1))
+        })
+        .or_else(|| {
+            items.iter().find(|e| {
+                e.sha1.as_deref().filter(|s| !s.is_empty()).is_none()
+                    && e.file_name.eq_ignore_ascii_case(source_name)
+            })
+        })
+}
+
 /// 手动补全：校验用户提供的文件，通过后放进 `mods/` 并从清单移除。
 ///
 /// 校验强度按清单条目能力递减：
@@ -661,6 +718,59 @@ mod tests {
             load_blocked(&gd, "Nast"),
             good,
             "临时文件残留不能影响已提交的清单"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn match_source_prefers_sha1_and_falls_back_to_name_only_without_sha1() {
+        let hash_a = "a".repeat(40);
+        let hash_b = "b".repeat(40);
+        let hash_c = "c".repeat(40);
+        let items = vec![
+            entry(1, "mmcr.jar", Some(&hash_a)),
+            entry(2, "other.jar", Some(&hash_b)),
+            entry(3, "legacy.jar", None),
+        ];
+
+        // 哈希命中优先：文件名不同也认。
+        assert_eq!(
+            match_source(&items, &hash_b, "mmcr.jar").map(|e| e.file_id),
+            Some(2)
+        );
+        // 有哈希的条目绝不按文件名兜底：同名但哈希不符 → 不匹配。
+        assert!(match_source(&items, &hash_c, "mmcr.jar").is_none());
+        // 无哈希的旧条目才按文件名兜底。
+        assert_eq!(
+            match_source(&items, &hash_c, "legacy.jar").map(|e| e.file_id),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn drop_present_in_mods_requires_matching_sha1() {
+        let root = temp_root("drop-present");
+        let gd = root.to_string_lossy().to_string();
+        let mods = mods_dir(&gd, "Nast", true).unwrap();
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::write(mods.join("good.jar"), b"good").unwrap();
+        std::fs::write(mods.join("bad.jar"), b"bad").unwrap();
+        let good_sha = sha1_file_hex(&mods.join("good.jar")).unwrap();
+
+        let mut items = vec![
+            entry(1, "good.jar", Some(&good_sha)),
+            // 同名但版本不对：哈希不符，保留在清单里。
+            entry(2, "bad.jar", Some(&"0".repeat(40))),
+            // 无哈希：按文件名算已补上。
+            entry(3, "bad.jar", None),
+            entry(4, "missing.jar", None),
+        ];
+        assert!(drop_present_in_mods(&gd, "Nast", true, &mut items));
+        let left: Vec<i64> = items.iter().map(|e| e.file_id).collect();
+        assert_eq!(left, vec![2, 4], "只剔除哈希一致或本无哈希的条目");
+        assert!(
+            !drop_present_in_mods(&gd, "Nast", true, &mut items),
+            "没有变化时不应触发重复落盘"
         );
         let _ = std::fs::remove_dir_all(&root);
     }

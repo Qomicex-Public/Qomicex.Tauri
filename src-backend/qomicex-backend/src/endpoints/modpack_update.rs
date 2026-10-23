@@ -683,6 +683,16 @@ async fn start_update(
 
     // 实例正在运行/启动中 → 拒绝（更新会替换 mods，运行中的实例会读到半更新状态）。
     if let Some(kind) = state.install_tracker.active_kind(&id) {
+        // 待补全不是「进行中」：提示指向下载中心，避免让人等一个不会自己结束的任务。
+        let awaiting = state.install_tracker.get_state(&id).is_some_and(|p| {
+            p.status == crate::services::install_tracker::InstallStatus::AwaitingFiles.as_str()
+        });
+        if awaiting {
+            return Err(ApiError::conflict(
+                "MISSING_MODS_PENDING",
+                "该实例还有待补全的整合包文件，请先在下载中心补全或跳过",
+            ));
+        }
         return Err(ApiError::bad_request(
             "INSTANCE_BUSY",
             format!("该实例已有进行中的任务（{kind}），请等待完成后再更新"),

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Vite config for Puppeteer capture — mocks Tauri APIs
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";

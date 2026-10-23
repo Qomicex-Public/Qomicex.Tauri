@@ -404,7 +404,7 @@ export interface InstallProgressResponse {
    * 因 CurseForge 作者关闭第三方分发而需手动补全的文件数（issue #291）。
    *
    * 与 `failedFiles` 分开：它不是下载失败，而是已知且可操作的阻塞——
-   * 安装仍可完成，由用户在实例详情里补上缺的文件。
+   * 安装仍可完成，由用户在下载中心补上缺的文件。
    */
   blockedFiles?: number
   currentFileProgress: number
@@ -490,13 +490,18 @@ export interface DownloadTask {
   loader?: string
   loaderVersion?: string
   addons?: string[]
-  status: 'queued' | 'downloading' | 'paused' | 'completed' | 'failed' | 'cancelled'
+  status: 'queued' | 'downloading' | 'paused' | 'completed' | 'failed' | 'cancelled' | 'awaiting-files'
   stage?: string
   progress: number
   speed?: number
   currentFile?: string
   totalFiles?: number
   completedFiles?: number
+  /**
+   * 因 CurseForge 分发限制待手动补全的文件数（issue #291）。
+   * 只在 `awaiting-files` 状态有意义；补齐后随之清空。
+   */
+  blockedFiles?: number
   /** 当前文件批次下载进度 0-100（按字节；仅下载阶段 > 0） */
   currentFileProgress?: number
   error?: string
