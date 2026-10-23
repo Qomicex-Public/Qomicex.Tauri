@@ -45,6 +45,10 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
   const [error, setError] = useState('')
   // 关闭/切换实例后，仍在飞的请求不能回写状态（否则会把旧实例的清单灌进新实例）。
   const reqIdRef = useRef(0)
+  // 对话框不销毁、只换 instanceId：异步回调要按发起时的实例核对，不能只靠 reqId
+  // （逐条提交/跳过不走 refresh，旧实例的结果会写到新实例上）。
+  const instanceIdRef = useRef(instanceId)
+  instanceIdRef.current = instanceId
   const busyRef = useRef(false)
   // 回调经 ref 取最新值：调用方通常传内联箭头函数，直接进依赖会让加载 effect 每帧重跑。
   const onResolvedRef = useRef(onResolved)
@@ -112,23 +116,29 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
       setError('')
       let remaining: BlockedModFile[] | null = null
       const failures: string[] = []
-      for (const path of paths) {
-        try {
-          const res = await submitBlockedMod(instanceId, path)
-          remaining = res.items ?? []
-          setItems(remaining)
-        } catch (e: unknown) {
-          failures.push(describeError(e, t('dialogs.blockedMods.submitFailed')))
+      try {
+        for (const path of paths) {
+          if (instanceIdRef.current !== instanceId) return
+          try {
+            const res = await submitBlockedMod(instanceId, path)
+            remaining = res.items ?? []
+            setItems(remaining)
+          } catch (e: unknown) {
+            if (instanceIdRef.current !== instanceId) return
+            failures.push(describeError(e, t('dialogs.blockedMods.submitFailed')))
+          }
+          if (remaining && remaining.length === 0) break
         }
-        if (remaining && remaining.length === 0) break
-      }
-      busyRef.current = false
-      setImporting(false)
-      if (failures.length > 0) setError(failures[0])
-      if (remaining && remaining.length === 0) {
-        notify(t('dialogs.blockedMods.completed'), 'success')
-        onResolvedRef.current?.()
-        onClose()
+        if (instanceIdRef.current !== instanceId) return
+        if (failures.length > 0) setError(failures[0])
+        if (remaining && remaining.length === 0) {
+          notify(t('dialogs.blockedMods.completed'), 'success')
+          onResolvedRef.current?.()
+          onClose()
+        }
+      } finally {
+        busyRef.current = false
+        setImporting(false)
       }
     },
     [describeError, instanceId, notify, onClose, t],
@@ -143,18 +153,25 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
   useEffect(() => {
     if (!open) return
     importDialogActive.current = true
+    let cancelled = false
     const unlisteners: Array<() => void> = []
-    listen<boolean>('file-drop-hover', e => setHover(!!e.payload))
-      .then(fn => unlisteners.push(fn))
-      .catch(() => {})
-    listen<string[]>('file-drop', e => {
-      setHover(false)
-      const paths = e.payload
-      if (paths?.length) dropHandlerRef.current(paths)
-    })
-      .then(fn => unlisteners.push(fn))
-      .catch(() => {})
+    // 卸载早于 listen() 兑现时，回调会落在已清理之后：拿到就用 cancelled 补一次退订。
+    const track = (p: Promise<() => void>) => {
+      p.then(fn => {
+        if (cancelled) fn()
+        else unlisteners.push(fn)
+      }).catch(() => {})
+    }
+    track(listen<boolean>('file-drop-hover', e => setHover(!!e.payload)))
+    track(
+      listen<string[]>('file-drop', e => {
+        setHover(false)
+        const paths = e.payload
+        if (paths?.length) dropHandlerRef.current(paths)
+      }),
+    )
     return () => {
+      cancelled = true
       importDialogActive.current = false
       unlisteners.forEach(fn => fn())
     }
@@ -191,6 +208,8 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
         return
       }
       if (!picked) return
+      // 系统文件选择器期间实例可能已被切走：不要再把文件提交到旧实例。
+      if (instanceIdRef.current !== instanceId) return
 
       busyRef.current = true
       setBusyFileId(item.fileId)
@@ -198,8 +217,10 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
         // 后端直接读这个绝对路径（与 /modpack/parse-path 同一思路），
         // 不把文件读进前端内存再重传。
         const res = await submitBlockedMod(instanceId, picked, item.fileId)
+        if (instanceIdRef.current !== instanceId) return
         applyRemaining(res.items ?? [])
       } catch (e: unknown) {
+        if (instanceIdRef.current !== instanceId) return
         setError(describeError(e, t('dialogs.blockedMods.submitFailed')))
         // 失败也回查一次列表：可能是后端已写入但响应丢失，避免列表停在过期状态。
         void refresh()
@@ -221,8 +242,10 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
     setError('')
     try {
       const res = await getBlockedMods(instanceId)
+      if (instanceIdRef.current !== instanceId) return
       applyRemaining(res.items ?? [])
     } catch (e: unknown) {
+      if (instanceIdRef.current !== instanceId) return
       setError(describeError(e, t('dialogs.blockedMods.loadFailed')))
     } finally {
       busyRef.current = false
@@ -237,11 +260,14 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
     try {
       await skipBlockedMods(instanceId)
     } catch (e: unknown) {
-      setError(describeError(e, t('dialogs.blockedMods.submitFailed')))
-      busyRef.current = false
+      if (instanceIdRef.current === instanceId) {
+        setError(describeError(e, t('dialogs.blockedMods.submitFailed')))
+      }
       return
+    } finally {
+      busyRef.current = false
     }
-    busyRef.current = false
+    if (instanceIdRef.current !== instanceId) return
     onSkipped?.()
     onClose()
   }, [describeError, instanceId, onClose, onSkipped, t])

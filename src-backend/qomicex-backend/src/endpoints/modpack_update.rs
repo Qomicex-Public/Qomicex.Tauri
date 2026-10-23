@@ -698,6 +698,17 @@ async fn start_update(
             format!("该实例已有进行中的任务（{kind}），请等待完成后再更新"),
         ));
     }
+    // 进程重启后 tracker 为空，但待补全清单还在：更新会替换 mods/，同样要挡住。
+    let version_isolation = inst
+        .version_isolation
+        .unwrap_or_else(crate::settings::get_global_version_isolation);
+    if crate::services::modpack_blocked::has_pending(&inst.game_dir, &inst.name, version_isolation)
+    {
+        return Err(ApiError::conflict(
+            "MISSING_MODS_PENDING",
+            "该实例还有待补全的整合包文件，请先在下载中心补全或跳过",
+        ));
+    }
     if state
         .launch_tracker
         .get_progress(&id)

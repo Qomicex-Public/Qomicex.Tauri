@@ -1422,7 +1422,14 @@ fn ensure_no_pending_blocked(state: &SharedState, instance_id: &str) -> ApiResul
         .is_some_and(|p| {
             p.status == crate::services::install_tracker::InstallStatus::AwaitingFiles.as_str()
         });
-    if awaiting {
+    // tracker 可能因进程重启丢失等待态，清单仍在磁盘上。
+    let pending = state.instance.get_by_id(instance_id).is_some_and(|inst| {
+        let version_isolation = inst
+            .version_isolation
+            .unwrap_or_else(crate::settings::get_global_version_isolation);
+        crate::services::modpack_blocked::has_pending(&inst.game_dir, &inst.name, version_isolation)
+    });
+    if awaiting || pending {
         return Err(ApiError::conflict(
             "MISSING_MODS_PENDING",
             "该实例还有待补全的整合包文件，请先在下载中心补全或跳过",

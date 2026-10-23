@@ -2655,6 +2655,19 @@ fn blocked_remaining(
     items
 }
 
+/// 上限挡的是「用户选错成整合包 zip」这类误操作；正常 mod jar 远小于此。
+fn ensure_blocked_upload_size(src: &Path) -> ApiResult<()> {
+    if let Ok(meta) = std::fs::metadata(src) {
+        if meta.len() > BLOCKED_UPLOAD_LIMIT_BYTES {
+            return Err(ApiError::bad_request(
+                "BLOCKED_UPLOAD_TOO_LARGE",
+                "文件过大（单个模组上限 512 MiB）",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// 校验并落盘一个手工补全的文件，返回补全后的剩余清单。
 async fn accept_blocked_file(
     s: &SharedState,
@@ -2672,14 +2685,7 @@ async fn accept_blocked_file(
         ));
     }
     // 上限挡的是「用户选错成整合包 zip」这类误操作；正常 mod jar 远小于此。
-    if let Ok(meta) = std::fs::metadata(src) {
-        if meta.len() > BLOCKED_UPLOAD_LIMIT_BYTES {
-            return Err(ApiError::bad_request(
-                "BLOCKED_UPLOAD_TOO_LARGE",
-                "文件过大（单个模组上限 512 MiB）",
-            ));
-        }
-    }
+    ensure_blocked_upload_size(src)?;
 
     // SHA-1 计算 + 复制是同步阻塞 I/O，单个文件上限 512 MiB，直接在 async 处理器里
     // 跑会长时间占用 tokio 工作线程，拖慢同一时刻的进度 SSE 等请求。
@@ -2763,8 +2769,16 @@ async fn submit_blocked_mod_by_path(
             "文件不存在或已被移动，请重新选择",
         ));
     }
-    let sha1 = crate::services::modpack_export::sha1_file_hex(&src)
-        .map_err(|e| ApiError::internal(format!("计算文件校验值失败: {e}")))?;
+    // 先挡掉超大文件再算哈希：否则一个误选的整合包 zip 要先完整读一遍才被拒绝。
+    ensure_blocked_upload_size(&src)?;
+    // 哈希是同步阻塞 I/O，直接在 async 处理器里跑会占住 tokio 工作线程。
+    let src_for_hash = src.clone();
+    let sha1 = tokio::task::spawn_blocking(move || {
+        crate::services::modpack_export::sha1_file_hex(&src_for_hash)
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("计算文件校验值任务异常: {e}")))?
+    .map_err(|e| ApiError::internal(format!("计算文件校验值失败: {e}")))?;
     let source_name = src
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())

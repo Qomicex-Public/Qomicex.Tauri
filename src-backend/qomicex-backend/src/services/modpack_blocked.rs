@@ -296,6 +296,21 @@ pub fn drop_present_in_mods(
     items.len() != before
 }
 
+/// 是否还有待补全条目。
+///
+/// 前置检查（修复 / 原地更新）不能只看 `InstallTracker`：进程重启后 tracker
+/// 是空的，但清单还在磁盘上，此时放行会覆盖掉用户尚未补齐的 `mods/`。
+/// 读取时按 `mods/` 实况剔除已放好的文件且不落盘，避免用户已经在文件管理器里
+/// 补齐、只是没打开下载中心时被误挡。
+pub fn has_pending(game_dir: &str, instance_name: &str, version_isolation: bool) -> bool {
+    let mut items = load_blocked(game_dir, instance_name);
+    if items.is_empty() {
+        return false;
+    }
+    drop_present_in_mods(game_dir, instance_name, version_isolation, &mut items);
+    !items.is_empty()
+}
+
 /// 按 SHA-1（优先）或文件名把用户拖入的文件对应到清单条目。
 ///
 /// 有哈希的条目只认哈希：同名不同版本的文件只差哈希，按文件名匹配会把错版本
@@ -486,6 +501,26 @@ mod tests {
         let items = vec![entry(9274793, "mmcr.jar", Some("a".repeat(40).as_str()))];
         save_blocked(&gd, "Nast", &items).unwrap();
         assert_eq!(load_blocked(&gd, "Nast"), items);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn has_pending_ignores_files_already_in_mods() {
+        let root = temp_root("pending");
+        let gd = root.to_string_lossy().to_string();
+        let src = root.join("downloaded.jar");
+        std::fs::write(&src, b"mmcr").unwrap();
+        let sha1 = sha1_file_hex(&src).unwrap();
+        let e = entry(9274793, "mmcr.jar", Some(&sha1));
+        save_blocked(&gd, "Nast", std::slice::from_ref(&e)).unwrap();
+
+        assert!(has_pending(&gd, "Nast", true), "清单非空必须算待补全");
+        // 用户直接在文件管理器里放进 mods/：不该再挡住修复/更新，也不写回清单。
+        let mods = mods_dir(&gd, "Nast", true).unwrap();
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::copy(&src, mods.join("mmcr.jar")).unwrap();
+        assert!(!has_pending(&gd, "Nast", true), "已补齐的文件不应算待补全");
+        assert_eq!(load_blocked(&gd, "Nast"), vec![e], "只读检查不能改清单");
         let _ = std::fs::remove_dir_all(&root);
     }
 
