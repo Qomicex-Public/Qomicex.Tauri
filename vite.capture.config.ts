@@ -46,6 +46,11 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     host: "127.0.0.1",
+    // 与 vite.config.ts 对齐：optimizeDeps.entries 只约束依赖扫描，管不到 chokidar。
+    // 不忽略 target/ 时截图服务器仍会监听 Rust 构建产物（数万条目），拖慢启动。
+    watch: {
+      ignored: ["**/src-tauri/**", "**/.minecraft/**", "**/.vs/**"],
+    },
     proxy: {
       "/api": {
         target: "http://localhost:5000",

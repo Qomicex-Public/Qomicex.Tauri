@@ -2978,8 +2978,11 @@ export default function InstanceDetailPage() {
    * 为空时后端返回空数组，横幅随之不渲染。
    *
    * 单独查、不并入主加载流程：它只是提示，失败不该拖累实例详情的其它数据。
+   * `blockedRefreshKey` 用于在「原地更新完成」等清单确实变化的时机重新查询——
+   * 否则后台更新写入新清单后，页面仍显示旧横幅或根本不出现。
    */
   const [blockedModsCount, setBlockedModsCount] = useState(0)
+  const [blockedRefreshKey, setBlockedRefreshKey] = useState(0)
   useEffect(() => {
     if (!id) return
     let cancelled = false
@@ -2994,7 +2997,7 @@ export default function InstanceDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [id, blockedModsOpen])
+  }, [id, blockedModsOpen, blockedRefreshKey])
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [savesRefresh, setSavesRefresh] = useState(0)
@@ -3098,6 +3101,8 @@ export default function InstanceDetailPage() {
       } catch {
         /* 刷新失败不影响更新本身：下次进入页面自然重取 */
       }
+      // 更新会重写阻塞清单，必须重新查询，否则横幅停在更新前的状态。
+      setBlockedRefreshKey(k => k + 1)
     }
   }, [id])
 
@@ -3877,6 +3882,8 @@ export default function InstanceDetailPage() {
           open={blockedModsOpen}
           instanceId={id}
           onClose={() => setBlockedModsOpen(false)}
+          // 部分补全后横幅计数要跟着减；全补完时归零、横幅消失。
+          onCountChange={setBlockedModsCount}
           onAllResolved={() => setBlockedModsOpen(false)}
         />
       )}

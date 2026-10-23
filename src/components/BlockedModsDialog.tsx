@@ -12,6 +12,8 @@ interface Props {
   open: boolean
   instanceId: string
   onClose: () => void
+  /** 剩余条目数变化时回调，父组件据此同步概览页横幅 */
+  onCountChange?: (count: number) => void
   /** 全部补全后回调，调用方据此刷新实例状态 */
   onAllResolved?: () => void
 }
@@ -23,7 +25,13 @@ interface Props {
  * 每个条目独立的「选择已下载的文件」入口。选择后交给后端做 SHA-1 校验——
  * 校验在前端做没有意义，文件最终要落到后端管理的实例目录。
  */
-export function BlockedModsDialog({ open, instanceId, onClose, onAllResolved }: Props) {
+export function BlockedModsDialog({
+  open,
+  instanceId,
+  onClose,
+  onCountChange,
+  onAllResolved,
+}: Props) {
   const { t } = useI18n()
   const [items, setItems] = useState<BlockedModFile[]>([])
   const [loading, setLoading] = useState(false)
@@ -32,24 +40,28 @@ export function BlockedModsDialog({ open, instanceId, onClose, onAllResolved }: 
   // 关闭/切换实例后，仍在飞的请求不能回写状态（否则会把旧实例的清单灌进新实例）。
   const reqIdRef = useRef(0)
 
-  useEffect(() => {
-    if (!open) return
+  const refresh = useCallback(async () => {
     const reqId = ++reqIdRef.current
     setLoading(true)
     setError('')
-    getBlockedMods(instanceId)
-      .then(res => {
-        if (reqId !== reqIdRef.current) return
-        setItems(res.items ?? [])
-      })
-      .catch((e: unknown) => {
-        if (reqId !== reqIdRef.current) return
-        setError(e instanceof Error ? e.message : t('dialogs.blockedMods.loadFailed'))
-      })
-      .finally(() => {
-        if (reqId === reqIdRef.current) setLoading(false)
-      })
-  }, [open, instanceId, t])
+    try {
+      const res = await getBlockedMods(instanceId)
+      if (reqId !== reqIdRef.current) return
+      const list = res.items ?? []
+      setItems(list)
+      onCountChange?.(list.length)
+    } catch (e: unknown) {
+      if (reqId !== reqIdRef.current) return
+      setError(e instanceof Error ? e.message : t('dialogs.blockedMods.loadFailed'))
+    } finally {
+      if (reqId === reqIdRef.current) setLoading(false)
+    }
+  }, [instanceId, onCountChange, t])
+
+  useEffect(() => {
+    if (!open) return
+    void refresh()
+  }, [open, refresh])
 
   const openProjectPage = useCallback(async (url: string) => {
     try {
@@ -57,39 +69,51 @@ export function BlockedModsDialog({ open, instanceId, onClose, onAllResolved }: 
       await openUrl(url)
     } catch {
       // Tauri opener 不可用（浏览器调试模式）时退化为新标签页。
-      window.open(url, '_blank')
+      // noopener/noreferrer：否则被打开的页面可通过 window.opener 反向操作本窗口。
+      window.open(url, '_blank', 'noopener,noreferrer')
     }
   }, [])
 
   const pickFile = useCallback(
     async (item: BlockedModFile) => {
-      const { open: openDialog } = await import('@tauri-apps/plugin-dialog')
-      // 只有 Windows 认 `jar` 过滤；其它平台给通配，否则用户可能选不到自己的文件。
-      const filters = navigator.userAgent.includes('Windows')
-        ? [{ name: 'Mod', extensions: ['jar'] }]
-        : [{ name: 'All', extensions: ['*'] }]
-      const picked = await openDialog({ multiple: false, filters })
-      if (typeof picked !== 'string' || !picked) return
+      setError('')
+      let picked: string | null
+      try {
+        const { open: openDialog } = await import('@tauri-apps/plugin-dialog')
+        // 只有 Windows 认 `jar` 过滤；其它平台给通配，否则用户可能选不到自己的文件。
+        const filters = navigator.userAgent.includes('Windows')
+          ? [{ name: 'Mod', extensions: ['jar'] }]
+          : [{ name: 'All', extensions: ['*'] }]
+        const selected = await openDialog({ multiple: false, filters })
+        picked = typeof selected === 'string' && selected ? selected : null
+      } catch (e: unknown) {
+        // 文件选择器本身失败：必须提示，否则用户点了没反应且控制台才有未处理拒绝。
+        setError(e instanceof Error ? e.message : t('dialogs.blockedMods.submitFailed'))
+        return
+      }
+      if (!picked) return
 
       setBusyFileId(item.fileId)
-      setError('')
-      const reqId = ++reqIdRef.current
       try {
         // 后端直接读这个绝对路径（与 /modpack/parse-path 同一思路），
         // 不把文件读进前端内存再重传。
         const res = await submitBlockedMod(instanceId, item.fileId, picked)
-        if (reqId !== reqIdRef.current) return
         const remaining = res.items ?? []
         setItems(remaining)
+        // 用剩余条目同步父组件计数：部分补全后横幅要跟着减，全补完要消失。
+        onCountChange?.(remaining.length)
         if (remaining.length === 0) onAllResolved?.()
       } catch (e: unknown) {
-        if (reqId !== reqIdRef.current) return
         setError(e instanceof Error ? e.message : t('dialogs.blockedMods.submitFailed'))
+        // 失败也回查一次列表：可能是后端已写入但响应丢失，避免列表停在过期状态。
+        void refresh()
       } finally {
-        if (reqId === reqIdRef.current) setBusyFileId(null)
+        // 无条件清理自己这一条的忙碌态：共用 reqIdRef 时若被新一轮加载推进，
+        // 带条件的清理会让按钮永久禁用。
+        setBusyFileId(prev => (prev === item.fileId ? null : prev))
       }
     },
-    [instanceId, onAllResolved, t],
+    [instanceId, onAllResolved, onCountChange, t, refresh],
   )
 
   return (

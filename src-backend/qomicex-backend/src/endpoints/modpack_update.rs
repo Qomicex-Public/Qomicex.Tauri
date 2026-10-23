@@ -821,7 +821,8 @@ async fn run_update_pipeline(
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging).map_err(|e| format!("创建暂存目录失败: {e}"))?;
 
-    let content_rels = download_target_files(state, handle, inst, &target, &staging).await?;
+    let (content_rels, blocked_mods) =
+        download_target_files(state, handle, inst, &target, &staging).await?;
     handle.mark_step("download", "done");
     handle.mark_step("stage", "done");
     crate::services::install_service::ensure_not_cancelled(handle)?;
@@ -871,6 +872,23 @@ async fn run_update_pipeline(
         }
     }
     handle.mark_step("apply", "done");
+
+    // 阻塞清单在更新提交成功后才落盘：提前写会让下载失败/取消的实例显示
+    // 目标版本的待补全项，而回滚不恢复 sidecar。写失败不阻断更新——文件已经
+    // 应用完毕，回滚代价远大于「用户看不到提示」，但要留日志可追。
+    if let Err(e) =
+        crate::services::modpack_blocked::save_blocked(&inst.game_dir, &inst.name, &blocked_mods)
+    {
+        tracing::warn!(instance = %inst.name, error = %e, "写入分发受限清单失败（更新已完成）");
+    }
+    if !blocked_mods.is_empty() {
+        tracing::warn!(
+            instance = %inst.name,
+            count = blocked_mods.len(),
+            "CurseForge 整合包更新有 {} 个必需文件因作者关闭第三方分发需手动补全",
+            blocked_mods.len()
+        );
+    }
 
     // === 6. 收尾：记录 + 清单 ===
     handle.update(|f| {
@@ -933,14 +951,24 @@ async fn run_update_pipeline(
     Ok(())
 }
 
-/// 把目标版本的文件下载到暂存目录，返回下载计划里的相对路径列表。
+/// 把目标版本的文件下载到暂存目录。
+///
+/// 返回（下载计划里的相对路径, 分发受限条目）。阻塞清单**不在这里落盘**：
+/// 更新尚未提交，此时写入会让「下载失败/取消」的实例显示目标版本的待补全项，
+/// 而回滚只恢复实例与文件、不恢复 sidecar。由调用方在 apply 成功后写入。
 async fn download_target_files(
     state: &SharedState,
     handle: &crate::services::install_tracker::InstallHandle,
     inst: &GameInstance,
     target: &TargetPlan,
     staging: &std::path::Path,
-) -> Result<Vec<String>, String> {
+) -> Result<
+    (
+        Vec<String>,
+        Vec<crate::services::modpack_blocked::BlockedModFile>,
+    ),
+    String,
+> {
     let source = inst
         .modpack_source
         .clone()
@@ -982,7 +1010,7 @@ async fn download_target_files(
                 .await?;
             }
             let _ = version_isolation;
-            Ok(rels)
+            Ok((rels, Vec::new()))
         }
         "curseforge" => {
             // CF：manifest 只给 projectID:fileID，需经 CF API 反查文件名与链接。
@@ -1020,29 +1048,26 @@ async fn download_target_files(
                 files.push((url, dest, headers));
                 rels.push(rel);
             }
-            // 目标版本分发受限的文件，若实例里已有同名文件则不算阻塞：更新只差这一版
-            // 的文件时用户手头那个照样能跑，报出来只会让人以为实例坏了。
-            let mods = crate::services::modpack_blocked::mods_dir(
-                &inst.game_dir,
-                &inst.name,
-                version_isolation,
-            );
+            // 目标版本分发受限、但实例里已有同名文件的条目：按「目标已具备该文件」
+            // 处理，把它的 rel 写进 rels。否则它不在目标清单里，plan_changes 会判成
+            // removed，apply_journal 直接把用户手头那个文件删掉——而且既然已从阻塞
+            // 清单过滤掉，用户连提示都收不到。staging 里没有该文件，
+            // apply_staged_file 会返回 MissingInStaging 并原样保留磁盘文件。
             blocked.retain(|b| {
-                b.file_name.trim().is_empty() || !mods.join(b.file_name.trim()).is_file()
+                let present = crate::services::modpack_blocked::existing_entry_file(
+                    &inst.game_dir,
+                    &inst.name,
+                    version_isolation,
+                    b,
+                )
+                .is_some();
+                if present {
+                    rels.push(format!("mods/{}", b.file_name.trim()));
+                }
+                !present
             });
-            if let Err(e) =
-                crate::services::modpack_blocked::save_blocked(&inst.game_dir, &inst.name, &blocked)
-            {
-                tracing::warn!(error = %e, "写入分发受限清单失败（更新继续）");
-            }
             if !blocked.is_empty() {
                 handle.set_blocked_files(blocked.len() as i32);
-                tracing::warn!(
-                    instance = %inst.name,
-                    count = blocked.len(),
-                    "CurseForge 整合包更新有 {} 个必需文件因作者关闭第三方分发需手动补全",
-                    blocked.len()
-                );
             }
             if !files.is_empty() {
                 crate::services::install_service::download_batch(
@@ -1053,7 +1078,7 @@ async fn download_target_files(
                 )
                 .await?;
             }
-            Ok(rels)
+            Ok((rels, blocked))
         }
         _ => Err("该来源不支持原地更新".to_string()),
     }

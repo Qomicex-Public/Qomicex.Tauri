@@ -2669,13 +2669,23 @@ async fn submit_blocked_mod(
             )
         })?;
 
-    let result = crate::services::modpack_blocked::accept_manual_file(
-        &inst.game_dir,
-        &inst.name,
-        version_isolation,
-        &src,
-        &entry,
-    );
+    // SHA-1 计算 + 复制是同步阻塞 I/O，单个文件上限 512 MiB，直接在 async 处理器里
+    // 跑会长时间占用 tokio 工作线程，拖慢同一时刻的进度 SSE 等请求。
+    let game_dir_owned = inst.game_dir.clone();
+    let name_owned = inst.name.clone();
+    let src_owned = src.clone();
+    let entry_owned = entry.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        crate::services::modpack_blocked::accept_manual_file(
+            &game_dir_owned,
+            &name_owned,
+            version_isolation,
+            &src_owned,
+            &entry_owned,
+        )
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("补全任务异常: {e}")))?;
     // 源文件是用户自己的下载，不删：可能还有别的实例要用，删了等于替用户清理
     // 他没让我们动的文件。这里只复制。
     if let Err(e) = result {
@@ -3971,11 +3981,13 @@ pub(crate) async fn run_modpack_pipeline(
                     files.push((download_url, dest, headers));
                     rels.push(rel);
                 }
-                // 空清单也要走一遍：清掉上一次安装残留，避免 UI 报出不存在的阻塞文件。
+                // 空清单也要写一次：清掉上一次安装残留，避免 UI 报出不存在的阻塞文件。
+                // 写失败直接让安装失败——清单写不进去用户就拿不到待补全提示，
+                // 实例会静默缺模组，比安装报错更难排查。
                 if let Err(e) =
                     crate::services::modpack_blocked::save_blocked(&gd_g, &vdn_g, &blocked)
                 {
-                    tracing::warn!(error = %e, "写入分发受限清单失败（安装继续）");
+                    return Err(format!("写入分发受限清单失败: {e}"));
                 }
                 if !blocked.is_empty() {
                     h_g.set_blocked_files(blocked.len() as i32);
@@ -4043,6 +4055,7 @@ pub(crate) async fn run_modpack_pipeline(
                 let mut files = Vec::new();
                 let mut rels: Vec<String> = Vec::new();
                 let mut placeholder_fids: Vec<i64> = Vec::new();
+                let mut blocked: Vec<crate::services::modpack_blocked::BlockedModFile> = Vec::new();
                 for f in &p.files {
                     if let Some(url) = f.download_url.as_deref() {
                         if url.is_empty() {
@@ -4077,12 +4090,15 @@ pub(crate) async fn run_modpack_pipeline(
                             missing += 1;
                             continue;
                         };
-                        let Some(download_url) =
-                            info.download_url.as_deref().filter(|u| !u.is_empty())
-                        else {
-                            missing += 1;
+                        // 与 curseforge 分支同源：downloadUrl 为空 = 作者关闭第三方分发。
+                        // QML 包里的 CF 占位项同样要登记，否则一样静默缺模组。
+                        if let Some(b) =
+                            crate::services::modpack_blocked::blocked_from_batch(info, info.mod_id)
+                        {
+                            blocked.push(b);
                             continue;
-                        };
+                        }
+                        let download_url = info.download_url.as_deref().unwrap_or_default();
                         let filename = info.file_name.clone().unwrap_or_else(|| {
                             download_url
                                 .rsplit('/')
@@ -4103,6 +4119,22 @@ pub(crate) async fn run_modpack_pipeline(
                             placeholder_fids.len()
                         );
                     }
+                }
+                // 空清单也写一次：清掉上一轮残留。写失败直接让安装失败——用户拿不到
+                // 待补全提示，实例会静默缺模组，比安装报错更难排查。
+                if let Err(e) =
+                    crate::services::modpack_blocked::save_blocked(&gd_g, &vdn_g, &blocked)
+                {
+                    return Err(format!("写入分发受限清单失败: {e}"));
+                }
+                if !blocked.is_empty() {
+                    h_g.set_blocked_files(blocked.len() as i32);
+                    tracing::warn!(
+                        instance = %vdn_g,
+                        count = blocked.len(),
+                        "QML 整合包有 {} 个必需文件因作者关闭第三方分发需手动补全",
+                        blocked.len()
+                    );
                 }
                 if !files.is_empty() {
                     download_batch(&h_g, &mgr_g, files, Some("download-files")).await?;

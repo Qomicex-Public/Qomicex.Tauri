@@ -24,11 +24,11 @@
 //! 与 `modpack-manifest.json` 同目录：实例改名走整目录 `rename`，清单一并搬走，
 //! 不需要额外迁移。清单为空时**删除文件**，避免残留空清单让 UI 误报。
 
+use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::services::modpack_export::sha1_file_hex;
 use crate::services::modpack_manifest::{is_safe_rel_path, QOMICEX_DIR};
 
 /// 阻塞清单文件名。
@@ -115,23 +115,85 @@ pub fn blocked_from_batch(
     })
 }
 
-/// 阻塞清单路径（实例版本目录内）。
-pub fn blocked_path(game_dir: &str, instance_name: &str) -> PathBuf {
-    crate::services::modpack_manifest::instance_version_dir(game_dir, instance_name)
-        .join(QOMICEX_DIR)
-        .join(BLOCKED_FILE)
+/// 实例名是否可作为单一路径分量。
+///
+/// 实例名即 `VersionDirName`，直接参与拼路径。校验放这里而不是只靠调用方：
+/// 新建/更新实例的入口只检查了非空，误填或恶意构造的 `../../x` 会让清单读写
+/// 与补全落盘一起越出实例目录。
+pub fn is_safe_instance_name(name: &str) -> bool {
+    let n = name.trim();
+    if n.is_empty() || n == "." || n == ".." {
+        return false;
+    }
+    if n.contains('/') || n.contains('\\') || n.contains('\0') {
+        return false;
+    }
+    // Windows 盘符与备用数据流（`C:` / `x:y`）。
+    if n.len() >= 2 && n.as_bytes()[1] == b':' && n.as_bytes()[0].is_ascii_alphabetic() {
+        return false;
+    }
+    true
+}
+
+/// 解析 `game_dir` 根，与 `modpack_manifest::instance_version_dir` **同一口径**。
+///
+/// 相对 `game_dir` 必须解析到 `resolve_base_dir()` 下：`blocked_path` 走
+/// `instance_version_dir` 已是该语义，若 `mods_dir` 相对进程 CWD 解析，两者会
+/// 指向不同位置——补全把 jar 复制到实例之外，却已把条目从清单划掉。
+fn resolve_game_root(game_dir: &str) -> PathBuf {
+    if Path::new(game_dir).is_absolute() {
+        PathBuf::from(game_dir)
+    } else {
+        crate::settings::resolve_base_dir().join(game_dir)
+    }
+}
+
+/// 阻塞清单路径（实例版本目录内）。实例名非法时返回错误，由调用方决定降级方式。
+pub fn blocked_path(game_dir: &str, instance_name: &str) -> Result<PathBuf, String> {
+    if !is_safe_instance_name(instance_name) {
+        return Err(format!("实例名非法，拒绝定位阻塞清单: {instance_name}"));
+    }
+    Ok(
+        crate::services::modpack_manifest::instance_version_dir(game_dir, instance_name.trim())
+            .join(QOMICEX_DIR)
+            .join(BLOCKED_FILE),
+    )
 }
 
 /// 实例的 `mods/` 目录（与安装落盘口径一致，见 `modpack_target_path`）。
-pub fn mods_dir(game_dir: &str, instance_name: &str, version_isolation: bool) -> PathBuf {
-    if version_isolation {
-        Path::new(game_dir)
-            .join("versions")
-            .join(instance_name)
-            .join("mods")
-    } else {
-        Path::new(game_dir).join("mods")
+pub fn mods_dir(
+    game_dir: &str,
+    instance_name: &str,
+    version_isolation: bool,
+) -> Result<PathBuf, String> {
+    if !is_safe_instance_name(instance_name) {
+        return Err(format!("实例名非法，拒绝定位 mods 目录: {instance_name}"));
     }
+    let root = resolve_game_root(game_dir);
+    if version_isolation {
+        Ok(root
+            .join("versions")
+            .join(instance_name.trim())
+            .join("mods"))
+    } else {
+        Ok(root.join("mods"))
+    }
+}
+
+/// 清单条目对应的文件是否已在实例里（原地更新时判断还需不需要提示用户）。
+pub fn existing_entry_file(
+    game_dir: &str,
+    instance_name: &str,
+    version_isolation: bool,
+    entry: &BlockedModFile,
+) -> Option<PathBuf> {
+    let name = entry.file_name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let mods = mods_dir(game_dir, instance_name, version_isolation).ok()?;
+    let p = mods.join(name);
+    p.is_file().then_some(p)
 }
 
 /// 读取阻塞清单。文件缺失 / 解析失败 / schema 不认识 → 空清单。
@@ -139,7 +201,9 @@ pub fn mods_dir(game_dir: &str, instance_name: &str, version_isolation: bool) ->
 /// 与 `modpack_manifest::load_manifest` 同样的取舍：清单损坏绝不能反过来阻断
 /// 实例的其它功能，最坏退化成「看起来没有阻塞文件」。
 pub fn load_blocked(game_dir: &str, instance_name: &str) -> Vec<BlockedModFile> {
-    let path = blocked_path(game_dir, instance_name);
+    let Ok(path) = blocked_path(game_dir, instance_name) else {
+        return Vec::new();
+    };
     let Ok(raw) = std::fs::read_to_string(&path) else {
         return Vec::new();
     };
@@ -159,35 +223,56 @@ pub fn load_blocked(game_dir: &str, instance_name: &str) -> Vec<BlockedModFile> 
 }
 
 /// 写入阻塞清单。空清单 → 删除文件（不留 `items: []` 的残骸）。
+///
+/// 先写同目录临时文件再 rename：直接截断写一旦中断会留下半截 JSON，而
+/// `load_blocked` 把解析失败当空清单，等于把全部待补全项静默藏起来。
 pub fn save_blocked(
     game_dir: &str,
     instance_name: &str,
     items: &[BlockedModFile],
-) -> std::io::Result<()> {
-    let path = blocked_path(game_dir, instance_name);
+) -> Result<(), String> {
+    let path = blocked_path(game_dir, instance_name)?;
     if items.is_empty() {
-        match std::fs::remove_file(&path) {
+        return match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e),
-        }
-    } else {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let body = serde_json::to_vec_pretty(&BlockedModList::new(items.to_vec()))
-            .map_err(std::io::Error::other)?;
-        std::fs::write(&path, body)
+            Err(e) => Err(format!("删除阻塞清单失败: {e}")),
+        };
     }
+    let parent = path
+        .parent()
+        .ok_or_else(|| "阻塞清单路径无父目录".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|e| format!("创建 .qomicex 目录失败: {e}"))?;
+
+    let body = serde_json::to_vec_pretty(&BlockedModList::new(items.to_vec()))
+        .map_err(|e| format!("序列化阻塞清单失败: {e}"))?;
+    let tmp = path.with_extension("json.tmp");
+    let write_res = (|| -> std::io::Result<()> {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(&body)?;
+        f.flush()?;
+        f.sync_all()
+    })();
+    if let Err(e) = write_res {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("写入临时清单失败: {e}"));
+    }
+    std::fs::rename(&tmp, &path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("替换阻塞清单失败 {}: {e}", path.display())
+    })
 }
 
 /// 手动补全：校验用户提供的文件，通过后放进 `mods/` 并从清单移除。
 ///
-/// `expected_sha1` 来自清单条目。SHA-1 缺失时只做文件名检查并放行（旧接口降级），
-/// 有值时**必须**匹配——版本不一致的 jar 会让整合包在启动阶段崩，而崩在哪里
-/// 用户很难归因到「补错了文件」。
+/// 校验强度按清单条目能力递减：
+/// - 有 `sha1` → 必须匹配，**且边复制边算哈希**：先验后拷会留出「校验完再被
+///   替换」的窗口，拷进 `mods/` 的就不是被校验过的那份字节；
+/// - 无 `sha1`（旧接口/字段被裁）→ 要求所选文件名与清单 `file_name` 一致，
+///   否则任意文件都会被当成目标模组收下；
+/// - 清单 `file_name` 为空 → 用所选文件的 basename。
 ///
-/// 返回放置后的目标路径，便于调用方区分「补到了哪个文件名」。
+/// 落盘走「临时文件 + rename」：中途失败不会留下半截 jar 被 Minecraft 加载。
 pub fn accept_manual_file(
     game_dir: &str,
     instance_name: &str,
@@ -198,29 +283,41 @@ pub fn accept_manual_file(
     if !src.is_file() {
         return Err("选择的文件不存在或已被移动".to_string());
     }
-    let file_name = entry.file_name.trim();
-    if file_name.is_empty() {
-        return Err("清单条目缺少文件名，无法确定放置位置".to_string());
-    }
-    if !is_safe_rel_path(file_name) || file_name.contains('/') || file_name.contains('\\') {
+    let src_name = src
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let declared = entry.file_name.trim();
+    let file_name = if declared.is_empty() {
+        src_name.clone()
+    } else {
+        declared.to_string()
+    };
+    if file_name.is_empty()
+        || !is_safe_rel_path(&file_name)
+        || file_name.contains('/')
+        || file_name.contains('\\')
+    {
         return Err(format!("文件名非法: {file_name}"));
     }
 
-    if let Some(expected) = entry.sha1.as_deref().filter(|s| !s.is_empty()) {
-        let got = sha1_file_hex(src).map_err(|e| format!("计算文件校验值失败: {e}"))?;
-        if !got.eq_ignore_ascii_case(expected) {
-            return Err(format!(
-                "文件校验失败：期望 SHA-1 {expected}，实际 {got}。请确认下载的是整合包要求的 {file_name}（fileId {}）",
-                entry.file_id
-            ));
-        }
+    let expected = entry.sha1.as_deref().filter(|s| !s.is_empty());
+    if expected.is_none() && !src_name.eq_ignore_ascii_case(&file_name) {
+        return Err(format!(
+            "清单未提供校验值，且所选文件名 {src_name} 与要求的 {file_name} 不一致，无法确认是否为同一文件"
+        ));
     }
 
-    let dest = mods_dir(game_dir, instance_name, version_isolation).join(file_name);
+    let dest = mods_dir(game_dir, instance_name, version_isolation)?.join(&file_name);
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建 mods 目录失败: {e}"))?;
     }
-    std::fs::copy(src, &dest).map_err(|e| format!("写入 {file_name} 失败: {e}"))?;
+    // 临时文件与目标同目录，保证 rename 原子且不跨卷。
+    let tmp = dest.with_extension(format!("{}.part", std::process::id()));
+    if let Err(e) = copy_and_verify(src, &tmp, &dest, expected, entry) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
 
     // 放进 mods/ 后再从清单移除：先移清单、后复制会留下「清单说补过了但文件没到」
     // 的假成功状态。这里失败只影响下次是否重复提示，不回滚已放置的文件。
@@ -232,9 +329,64 @@ pub fn accept_manual_file(
     Ok(dest)
 }
 
+/// 边复制边算 SHA-1，校验通过后再原子 rename 到目标。
+///
+/// 哈希覆盖的是**实际写进临时文件的那份字节**：先校验源文件、再 `fs::copy` 的
+/// 做法在两步之间留下窗口，源文件被替换时落盘内容会与校验值不符。
+fn copy_and_verify(
+    src: &Path,
+    tmp: &Path,
+    dest: &Path,
+    expected: Option<&str>,
+    entry: &BlockedModFile,
+) -> Result<(), String> {
+    use sha1::{Digest, Sha1};
+
+    let mut input = std::fs::File::open(src).map_err(|e| format!("打开所选文件失败: {e}"))?;
+    let mut output = std::fs::File::create(tmp).map_err(|e| format!("创建临时文件失败: {e}"))?;
+    let mut hasher = Sha1::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = input
+            .read(&mut buf)
+            .map_err(|e| format!("读取所选文件失败: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        output
+            .write_all(&buf[..n])
+            .map_err(|e| format!("写入临时文件失败: {e}"))?;
+    }
+    output
+        .flush()
+        .map_err(|e| format!("刷新临时文件失败: {e}"))?;
+    output
+        .sync_all()
+        .map_err(|e| format!("同步临时文件失败: {e}"))?;
+    drop(output);
+
+    if let Some(expected) = expected {
+        let got: String = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        if !got.eq_ignore_ascii_case(expected) {
+            return Err(format!(
+                "文件校验失败：期望 SHA-1 {expected}，实际 {got}。请确认下载的是整合包要求的文件（fileId {}）",
+                entry.file_id
+            ));
+        }
+    }
+    std::fs::rename(tmp, dest).map_err(|e| format!("替换 {} 失败: {e}", dest.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::services::modpack_export::sha1_file_hex;
 
     fn temp_root(tag: &str) -> PathBuf {
         let dir =
@@ -260,10 +412,10 @@ mod tests {
         let root = temp_root("empty");
         let gd = root.to_string_lossy().to_string();
         save_blocked(&gd, "Nast", &[entry(1, "a.jar", None)]).unwrap();
-        assert!(blocked_path(&gd, "Nast").is_file());
+        assert!(blocked_path(&gd, "Nast").unwrap().is_file());
         save_blocked(&gd, "Nast", &[]).unwrap();
         assert!(
-            !blocked_path(&gd, "Nast").is_file(),
+            !blocked_path(&gd, "Nast").unwrap().is_file(),
             "空清单必须删除文件，不能留 items: [] 残骸"
         );
         assert!(load_blocked(&gd, "Nast").is_empty());
@@ -284,7 +436,7 @@ mod tests {
     fn corrupt_sidecar_degrades_to_empty() {
         let root = temp_root("corrupt");
         let gd = root.to_string_lossy().to_string();
-        let path = blocked_path(&gd, "Nast");
+        let path = blocked_path(&gd, "Nast").unwrap();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, b"{ this is not json").unwrap();
         assert!(
@@ -308,7 +460,16 @@ mod tests {
 
         let dest = accept_manual_file(&gd, "Nast", true, &src, &e).unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), payload);
-        assert!(dest.ends_with("mods/mmcr.jar") || dest.ends_with("mods\\mmcr.jar"));
+        // 断言完整目标路径而不是「以 mods/mmcr.jar 结尾」：后者在隔离/共享布局
+        // 写错、或用错 game_dir 时同样会通过。
+        assert_eq!(
+            dest,
+            root.join("versions")
+                .join("Nast")
+                .join("mods")
+                .join("mmcr.jar"),
+            "隔离实例必须落到 versions/Nast/mods/"
+        );
         assert!(
             load_blocked(&gd, "Nast").is_empty(),
             "补全成功后该条目必须从清单移除"
@@ -333,7 +494,10 @@ mod tests {
         let err = accept_manual_file(&gd, "Nast", true, &src, &e).unwrap_err();
         assert!(err.contains("校验失败"), "实际错误: {err}");
         assert!(
-            !mods_dir(&gd, "Nast", true).join("mmcr.jar").is_file(),
+            !mods_dir(&gd, "Nast", true)
+                .unwrap()
+                .join("mmcr.jar")
+                .is_file(),
             "校验失败不能落盘"
         );
         assert_eq!(
@@ -344,20 +508,52 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// 无校验值时必须按文件名匹配，否则任意文件都会被当成目标模组收下。
     #[test]
-    fn accept_without_sha1_still_places() {
+    fn accept_without_sha1_requires_matching_name() {
         let root = temp_root("nosha");
         let gd = root.to_string_lossy().to_string();
-        let src = root.join("unverified.jar");
-        std::fs::write(&src, b"data").unwrap();
-        let e = entry(42, "unverified.jar", None);
+        let wrong = root.join("some-other-mod.jar");
+        std::fs::write(&wrong, b"data").unwrap();
+        let e = entry(42, "wanted.jar", None);
         save_blocked(&gd, "Nast", std::slice::from_ref(&e)).unwrap();
-        let dest = accept_manual_file(&gd, "Nast", false, &src, &e).unwrap();
-        assert!(std::fs::read(&dest).unwrap() == b"data");
-        assert!(
-            load_blocked(&gd, "Nast").is_empty(),
-            "无校验值时按文件名放行"
+
+        let err = accept_manual_file(&gd, "Nast", false, &wrong, &e).unwrap_err();
+        assert!(err.contains("不一致"), "实际错误: {err}");
+        assert_eq!(
+            load_blocked(&gd, "Nast").len(),
+            1,
+            "文件名不匹配必须保留清单条目"
         );
+
+        let right = root.join("wanted.jar");
+        std::fs::write(&right, b"data").unwrap();
+        let dest = accept_manual_file(&gd, "Nast", false, &right, &e).unwrap();
+        assert_eq!(dest, root.join("mods").join("wanted.jar"));
+        assert!(load_blocked(&gd, "Nast").is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// CF 未给 fileName 时用所选文件的 basename 兜底，不能因此无法补全。
+    #[test]
+    fn accept_falls_back_to_source_basename() {
+        let root = temp_root("noname");
+        let gd = root.to_string_lossy().to_string();
+        let src = root.join("mmcr-neoforge.jar");
+        std::fs::write(&src, b"jar").unwrap();
+        let sha1 = sha1_file_hex(&src).unwrap();
+        let e = entry(9, "", Some(&sha1));
+        save_blocked(&gd, "Nast", std::slice::from_ref(&e)).unwrap();
+
+        let dest = accept_manual_file(&gd, "Nast", true, &src, &e).unwrap();
+        assert_eq!(
+            dest,
+            root.join("versions")
+                .join("Nast")
+                .join("mods")
+                .join("mmcr-neoforge.jar")
+        );
+        assert!(load_blocked(&gd, "Nast").is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -375,14 +571,98 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// 实例名即 VersionDirName，参与拼路径，必须挡路径穿越。
     #[test]
-    fn mods_dir_follows_isolation() {
-        let gd = "C:/games/.minecraft";
-        let isolated = mods_dir(gd, "Nast", true);
-        assert!(isolated.ends_with(Path::new("versions").join("Nast").join("mods")));
-        let shared = mods_dir(gd, "Nast", false);
-        assert!(shared.ends_with("mods"));
-        assert!(!shared.to_string_lossy().contains("Nast"));
+    fn instance_name_traversal_is_rejected() {
+        let root = temp_root("nameguard");
+        let gd = root.to_string_lossy().to_string();
+        for bad in ["../escape", "a/b", "a\\b", "..", ".", "", "C:evil"] {
+            assert!(!is_safe_instance_name(bad), "{bad:?} 应被判为非法实例名");
+            assert!(
+                blocked_path(&gd, bad).is_err(),
+                "{bad:?} 不能解析出清单路径"
+            );
+            assert!(
+                mods_dir(&gd, bad, true).is_err(),
+                "{bad:?} 不能解析出 mods 路径"
+            );
+        }
+        for ok in ["Nast", "1.20.1-Forge-47.1.0"] {
+            assert!(is_safe_instance_name(ok), "{ok:?} 应合法");
+            assert!(blocked_path(&gd, ok).is_ok());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 隔离与共享布局必须指向不同且完整的路径。
+    #[test]
+    fn mods_dir_layout_is_exact() {
+        let root = temp_root("layout");
+        let gd = root.to_string_lossy().to_string();
+
+        assert_eq!(
+            mods_dir(&gd, "Nast", true).unwrap(),
+            root.join("versions").join("Nast").join("mods")
+        );
+        assert_eq!(mods_dir(&gd, "Nast", false).unwrap(), root.join("mods"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 相对 game_dir 必须与清单路径同口径解析（都相对 resolve_base_dir）。
+    #[test]
+    fn relative_game_dir_resolves_like_blocked_path() {
+        let rel = ".minecraft";
+        let base = crate::settings::resolve_base_dir();
+        assert_eq!(
+            mods_dir(rel, "Nast", false).unwrap(),
+            base.join(rel).join("mods"),
+            "相对 game_dir 不能相对进程 CWD 解析"
+        );
+        assert_eq!(
+            blocked_path(rel, "Nast").unwrap(),
+            base.join(rel)
+                .join("versions")
+                .join("Nast")
+                .join(QOMICEX_DIR)
+                .join(BLOCKED_FILE)
+        );
+    }
+
+    #[test]
+    fn existing_entry_file_reports_presence() {
+        let root = temp_root("existing");
+        let gd = root.to_string_lossy().to_string();
+        let e = entry(1, "present.jar", None);
+        assert!(existing_entry_file(&gd, "Nast", true, &e).is_none());
+
+        let mods = mods_dir(&gd, "Nast", true).unwrap();
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::write(mods.join("present.jar"), b"x").unwrap();
+        assert_eq!(
+            existing_entry_file(&gd, "Nast", true, &e),
+            Some(mods.join("present.jar"))
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 中断式写入不能把清单写坏：临时文件残留也不该影响读取。
+    #[test]
+    fn interrupted_write_keeps_previous_list_readable() {
+        let root = temp_root("atomic");
+        let gd = root.to_string_lossy().to_string();
+        let good = vec![entry(7, "keep.jar", None)];
+        save_blocked(&gd, "Nast", &good).unwrap();
+
+        let path = blocked_path(&gd, "Nast").unwrap();
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, b"{ truncated mid-write").unwrap();
+
+        assert_eq!(
+            load_blocked(&gd, "Nast"),
+            good,
+            "临时文件残留不能影响已提交的清单"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn batch_info(
