@@ -844,6 +844,8 @@ export default function Settings() {
     const params = new URLSearchParams(window.location.search)
     return params.get('tab') ?? 'launcher'
   })
+  // 深链锚点（?section=xxx）：跳到指定 SettingSection，如联机页设置入口 → relayNodes
+  const [section] = useState(() => new URLSearchParams(window.location.search).get('section'))
   const [settings, setSettings] = useState<AppSettings>({ ...DEFAULT_SETTINGS })
   const settingsRef = useRef(settings)
   settingsRef.current = settings
@@ -893,6 +895,18 @@ export default function Settings() {
       fetchLicenseStatus().then(setLicenseStatus).catch(() => {})
     }
   }, [category])
+
+  // ?section= 锚点：目标分区随 tab 首挂载渲染，双 rAF 等首帧布局稳定后再滚动定位
+  useEffect(() => {
+    if (!section) return
+    let raf2 = 0
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        document.getElementById(section)?.scrollIntoView({ block: 'start' })
+      })
+    })
+    return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2) }
+  }, [section])
 
   // 插件 openPluginSettings API：已挂载时监听事件切到插件 tab（未挂载时由 URL ?tab=plugins 初始化兜底）
   useEffect(() => {
@@ -1505,7 +1519,7 @@ export default function Settings() {
               </div>
             </SettingSection>
 
-            <SettingSection title={t('settings.relayNodes.title')} icon={<Globe className="h-4 w-4" />}>
+            <SettingSection id="relayNodes" title={t('settings.relayNodes.title')} icon={<Globe className="h-4 w-4" />}>
               <RelayNodesSection
                 value={settings.relayNodes}
                 // 必须**返回并等待**保存 Promise：`saveSettings` 是 async 的 PUT /settings，

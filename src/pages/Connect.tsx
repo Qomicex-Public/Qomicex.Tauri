@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { ArrowLeft, DoorOpen, Loader2, LogIn, Minus, Play, Plus, UserX } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { ArrowLeft, DoorOpen, Loader2, LogIn, Minus, Play, Plus, Settings as SettingsIcon, UserX } from 'lucide-react'
 import { Loader2 as Loader2Data, Play as PlayData, Wifi as WifiData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { CopyActionIcon } from '../components/CopyActionIcon.tsx'
@@ -246,6 +247,7 @@ function RoomModsCard({ data, onLaunch, launching, hostVersion, players, loading
 
 export default function Connect() {
   const { t } = useI18n()
+  const navigate = useNavigate()
   const { error: msgError } = useMessageBox()
   const { launchInstance, watchInstance } = useRunning()
   const [status, setStatus] = useState<ConnectorStatus>({
@@ -533,6 +535,11 @@ export default function Connect() {
             <MorphActionIcon active={natTypeBusy} busy={Loader2Data} rest={WifiData} className="mr-1" />
             {t('connect.natCheck')}
           </Button>
+          <Tooltip content={t('connect.openSettings')}>
+            <Button variant="ghost" size="icon" onClick={() => navigate('/settings?tab=launcher&section=relayNodes')} aria-label={t('connect.openSettings')}>
+              <SettingsIcon className="h-4 w-4" />
+            </Button>
+          </Tooltip>
         </div>
       } />
 
