@@ -401,6 +401,11 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
             {task.status === 'downloading' && task.progress > 0 && <span className="tabular-nums">{task.progress}%</span>}
           </span>
         </div>
+        {isAwaiting && (
+          <p className="mt-1.5 text-[11px] leading-relaxed text-amber-400/80">
+            {t('downloads.missingMods.hint')}
+          </p>
+        )}
         {task.status === 'failed' && task.error && (
           <div className="rounded-md bg-red-500/10 px-2.5 py-1.5 text-[11px] text-red-400">
             {task.error}
