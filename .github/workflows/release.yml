@@ -518,10 +518,20 @@ jobs:
       - run: pnpm --filter @qomicex/plugin-ui build
       - name: Build bundles (retry on transient network errors)
         env:
+          LINUX_BUNDLES_INPUT: ${{ github.event.inputs.linuxBundles }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          BUNDLES="${{ github.event.inputs.linuxBundles }}"
+          BUNDLES="${LINUX_BUNDLES_INPUT:-appimage,deb,rpm}"
+          # workflow_dispatch 输入经 API 可绕过 choices 白名单，必须经 step env
+          # 传入并校验 token，直接 run 体插值会把输入当 shell 代码执行
+          IFS=',' read -ra BUNDLE_TOKENS <<< "$BUNDLES"
+          for token in "${BUNDLE_TOKENS[@]}"; do
+            case "$token" in
+              appimage | deb | rpm) ;;
+              *) echo "::error::invalid linuxBundles token: $token"; exit 1 ;;
+            esac
+          done
           OK=0
           for i in 1 2 3; do
             if pnpm exec tauri build --bundles "${BUNDLES:-appimage,deb,rpm}"; then
@@ -536,11 +546,20 @@ jobs:
       # EGL 初始化失败中止；移除后重新打包并重签，后续步骤基于新产物
       - name: Strip bundled Wayland libs from AppImage
         env:
+          LINUX_BUNDLES_INPUT: ${{ github.event.inputs.linuxBundles }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          BUNDLES="${{ github.event.inputs.linuxBundles }}"
-          BUNDLES="${BUNDLES:-appimage,deb,rpm}"
+          BUNDLES="${LINUX_BUNDLES_INPUT:-appimage,deb,rpm}"
+          # workflow_dispatch 输入经 API 可绕过 choices 白名单，必须经 step env
+          # 传入并校验 token，直接 run 体插值会把输入当 shell 代码执行
+          IFS=',' read -ra BUNDLE_TOKENS <<< "$BUNDLES"
+          for token in "${BUNDLE_TOKENS[@]}"; do
+            case "$token" in
+              appimage | deb | rpm) ;;
+              *) echo "::error::invalid linuxBundles token: $token"; exit 1 ;;
+            esac
+          done
           case ",$BUNDLES," in
             *,appimage,*)
               found=0
@@ -680,10 +699,20 @@ jobs:
       - run: pnpm --filter @qomicex/plugin-ui build
       - name: Build bundles (retry on transient network errors)
         env:
+          LINUX_BUNDLES_INPUT: ${{ github.event.inputs.linuxBundles }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          BUNDLES="${{ github.event.inputs.linuxBundles }}"
+          BUNDLES="${LINUX_BUNDLES_INPUT:-appimage,deb,rpm}"
+          # workflow_dispatch 输入经 API 可绕过 choices 白名单，必须经 step env
+          # 传入并校验 token，直接 run 体插值会把输入当 shell 代码执行
+          IFS=',' read -ra BUNDLE_TOKENS <<< "$BUNDLES"
+          for token in "${BUNDLE_TOKENS[@]}"; do
+            case "$token" in
+              appimage | deb | rpm) ;;
+              *) echo "::error::invalid linuxBundles token: $token"; exit 1 ;;
+            esac
+          done
           OK=0
           for i in 1 2 3; do
             if pnpm exec tauri build --bundles "${BUNDLES:-appimage,deb,rpm}"; then
@@ -698,11 +727,20 @@ jobs:
       # EGL 初始化失败中止；移除后重新打包并重签，后续步骤基于新产物
       - name: Strip bundled Wayland libs from AppImage
         env:
+          LINUX_BUNDLES_INPUT: ${{ github.event.inputs.linuxBundles }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          BUNDLES="${{ github.event.inputs.linuxBundles }}"
-          BUNDLES="${BUNDLES:-appimage,deb,rpm}"
+          BUNDLES="${LINUX_BUNDLES_INPUT:-appimage,deb,rpm}"
+          # workflow_dispatch 输入经 API 可绕过 choices 白名单，必须经 step env
+          # 传入并校验 token，直接 run 体插值会把输入当 shell 代码执行
+          IFS=',' read -ra BUNDLE_TOKENS <<< "$BUNDLES"
+          for token in "${BUNDLE_TOKENS[@]}"; do
+            case "$token" in
+              appimage | deb | rpm) ;;
+              *) echo "::error::invalid linuxBundles token: $token"; exit 1 ;;
+            esac
+          done
           case ",$BUNDLES," in
             *,appimage,*)
               found=0

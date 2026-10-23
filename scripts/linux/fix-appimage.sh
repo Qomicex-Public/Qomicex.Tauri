@@ -62,6 +62,8 @@ if [ ! -f "$TOOL" ]; then
   curl -fsSL --retry 3 -o "$TOOL" \
     "https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/${TOOL_ASSET}"
 fi
+# curl -o 不带执行位，直接调用会 Permission denied
+chmod 755 "$TOOL"
 if ! echo "${EXPECTED_SHA256}  ${TOOL}" | sha256sum --check --status; then
   echo "fix-appimage: appimagetool SHA256 mismatch" >&2
   exit 1
