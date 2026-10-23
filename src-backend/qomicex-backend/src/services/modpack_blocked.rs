@@ -193,7 +193,18 @@ pub fn existing_entry_file(
     }
     let mods = mods_dir(game_dir, instance_name, version_isolation).ok()?;
     let p = mods.join(name);
-    p.is_file().then_some(p)
+    if !p.is_file() {
+        return None;
+    }
+    // 有哈希的条目必须一致：同名但版本不同的 jar 不算已补全，否则更新会把清单
+    // 条目删掉、却把错版本留在 mods/。
+    match entry.sha1.as_deref().filter(|s| !s.is_empty()) {
+        Some(expected) => crate::services::modpack_export::sha1_file_hex(&p)
+            .ok()
+            .filter(|got| got.eq_ignore_ascii_case(expected))
+            .map(|_| p),
+        None => Some(p),
+    }
 }
 
 /// 读取阻塞清单。文件缺失 / 解析失败 / schema 不认识 → 空清单。
@@ -335,6 +346,14 @@ pub fn match_source<'a>(
         })
 }
 
+/// 串行化清单的「读-改-写」：并发补全不同条目、或补全与重扫同时进行时，
+/// 后写者会拿着旧副本覆盖先完成的结果（lost update）。
+static BLOCKED_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub(crate) fn lock_blocked_write() -> std::sync::MutexGuard<'static, ()> {
+    BLOCKED_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// 手动补全：校验用户提供的文件，通过后放进 `mods/` 并从清单移除。
 ///
 /// 校验强度按清单条目能力递减：
@@ -393,6 +412,7 @@ pub fn accept_manual_file(
 
     // 放进 mods/ 后再从清单移除：先移清单、后复制会留下「清单说补过了但文件没到」
     // 的假成功状态。这里失败只影响下次是否重复提示，不回滚已放置的文件。
+    let _guard = lock_blocked_write();
     let mut remaining = load_blocked(game_dir, instance_name);
     remaining.retain(|it| it.file_id != entry.file_id);
     if let Err(e) = save_blocked(game_dir, instance_name, &remaining) {
@@ -733,6 +753,29 @@ mod tests {
         assert_eq!(
             existing_entry_file(&gd, "Nast", true, &e),
             Some(mods.join("present.jar"))
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn existing_entry_file_rejects_hash_mismatch() {
+        let root = temp_root("existing-sha");
+        let gd = root.to_string_lossy().to_string();
+        let src = root.join("downloaded.jar");
+        std::fs::write(&src, b"expected").unwrap();
+        let sha1 = sha1_file_hex(&src).unwrap();
+        let e = entry(2, "same-name.jar", Some(&sha1));
+
+        let mods = mods_dir(&gd, "Nast", true).unwrap();
+        std::fs::create_dir_all(&mods).unwrap();
+        // 同名但版本不同：不能算已补全，否则更新会删掉清单条目、留下错版本。
+        std::fs::write(mods.join("same-name.jar"), b"other").unwrap();
+        assert!(existing_entry_file(&gd, "Nast", true, &e).is_none());
+
+        std::fs::copy(&src, mods.join("same-name.jar")).unwrap();
+        assert_eq!(
+            existing_entry_file(&gd, "Nast", true, &e),
+            Some(mods.join("same-name.jar"))
         );
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -2636,6 +2636,8 @@ fn blocked_remaining(
     let version_isolation = inst
         .version_isolation
         .unwrap_or_else(crate::settings::get_global_version_isolation);
+    // 与补全的「读-改-写」串行，避免重扫把并发补全的结果覆盖回去。
+    let _guard = crate::services::modpack_blocked::lock_blocked_write();
     let mut items = crate::services::modpack_blocked::load_blocked(&inst.game_dir, &inst.name);
     if crate::services::modpack_blocked::drop_present_in_mods(
         &inst.game_dir,
