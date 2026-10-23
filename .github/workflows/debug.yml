@@ -435,11 +435,51 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: |
-          BUNDLES="${{ github.event.inputs.linuxBundles }}"
-          pnpm exec tauri build --bundles "${BUNDLES:-appimage,deb,rpm}"
+          BUNDLES="${LINUX_BUNDLES_INPUT:-appimage,deb,rpm}"
+          # workflow_dispatch 输入经 API 可绕过 choices 白名单，必须经 step env
+          # 传入并校验 token，直接 run 体插值会把输入当 shell 代码执行
+          IFS=',' read -ra BUNDLE_TOKENS <<< "$BUNDLES"
+          for token in "${BUNDLE_TOKENS[@]}"; do
+            case "$token" in
+              appimage | deb | rpm) ;;
+              *) echo "::error::invalid linuxBundles token: $token"; exit 1 ;;
+            esac
+          done
+          pnpm exec tauri build --bundles "$BUNDLES"
         env:
+          LINUX_BUNDLES_INPUT: ${{ github.event.inputs.linuxBundles }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      # #202：捆绑的 libwayland-* 遮蔽宿主 Mesa 依赖，较新 Wayland 主机上
+      # EGL 初始化失败中止；移除后重新打包，后续步骤基于新产物
+      - name: Strip bundled Wayland libs from AppImage
+        env:
+          LINUX_BUNDLES_INPUT: ${{ github.event.inputs.linuxBundles }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          BUNDLES="${LINUX_BUNDLES_INPUT:-appimage,deb,rpm}"
+          # workflow_dispatch 输入经 API 可绕过 choices 白名单，必须经 step env
+          # 传入并校验 token，直接 run 体插值会把输入当 shell 代码执行
+          IFS=',' read -ra BUNDLE_TOKENS <<< "$BUNDLES"
+          for token in "${BUNDLE_TOKENS[@]}"; do
+            case "$token" in
+              appimage | deb | rpm) ;;
+              *) echo "::error::invalid linuxBundles token: $token"; exit 1 ;;
+            esac
+          done
+          case ",$BUNDLES," in
+            *,appimage,*)
+              found=0
+              for f in src-tauri/target/release/bundle/appimage/*.AppImage; do
+                [ -e "$f" ] || continue
+                found=1
+                bash scripts/linux/fix-appimage.sh "$f" x86_64
+              done
+              if [ "$found" -ne 1 ]; then echo "::warning::appimage selected but no AppImage bundle found"; fi
+              ;;
+            *) echo "BUNDLES does not include appimage; skipping Wayland strip" ;;
+          esac
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
@@ -529,11 +569,51 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: |
-          BUNDLES="${{ github.event.inputs.linuxBundles }}"
-          pnpm exec tauri build --bundles "${BUNDLES:-appimage,deb,rpm}"
+          BUNDLES="${LINUX_BUNDLES_INPUT:-appimage,deb,rpm}"
+          # workflow_dispatch 输入经 API 可绕过 choices 白名单，必须经 step env
+          # 传入并校验 token，直接 run 体插值会把输入当 shell 代码执行
+          IFS=',' read -ra BUNDLE_TOKENS <<< "$BUNDLES"
+          for token in "${BUNDLE_TOKENS[@]}"; do
+            case "$token" in
+              appimage | deb | rpm) ;;
+              *) echo "::error::invalid linuxBundles token: $token"; exit 1 ;;
+            esac
+          done
+          pnpm exec tauri build --bundles "$BUNDLES"
         env:
+          LINUX_BUNDLES_INPUT: ${{ github.event.inputs.linuxBundles }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      # #202：捆绑的 libwayland-* 遮蔽宿主 Mesa 依赖，较新 Wayland 主机上
+      # EGL 初始化失败中止；移除后重新打包，后续步骤基于新产物
+      - name: Strip bundled Wayland libs from AppImage
+        env:
+          LINUX_BUNDLES_INPUT: ${{ github.event.inputs.linuxBundles }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          BUNDLES="${LINUX_BUNDLES_INPUT:-appimage,deb,rpm}"
+          # workflow_dispatch 输入经 API 可绕过 choices 白名单，必须经 step env
+          # 传入并校验 token，直接 run 体插值会把输入当 shell 代码执行
+          IFS=',' read -ra BUNDLE_TOKENS <<< "$BUNDLES"
+          for token in "${BUNDLE_TOKENS[@]}"; do
+            case "$token" in
+              appimage | deb | rpm) ;;
+              *) echo "::error::invalid linuxBundles token: $token"; exit 1 ;;
+            esac
+          done
+          case ",$BUNDLES," in
+            *,appimage,*)
+              found=0
+              for f in src-tauri/target/release/bundle/appimage/*.AppImage; do
+                [ -e "$f" ] || continue
+                found=1
+                bash scripts/linux/fix-appimage.sh "$f" aarch64
+              done
+              if [ "$found" -ne 1 ]; then echo "::warning::appimage selected but no AppImage bundle found"; fi
+              ;;
+            *) echo "BUNDLES does not include appimage; skipping Wayland strip" ;;
+          esac
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
