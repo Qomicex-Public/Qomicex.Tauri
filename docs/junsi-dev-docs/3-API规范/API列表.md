@@ -2977,3 +2977,88 @@ Query：`allowUnsigned=true` 时跳过强制签名校验（前端风险确认后
 **已知限制：** RFC 3489 的 filtering 测试（进一步区分完全锥形/受限锥形/端口受限锥形）依赖服务器支持 `CHANGE-REQUEST` 属性。实测扫描 30 台公共 STUN 服务器、15 台可达，**无一支持**该属性，故 filtering 无法判定，本端点只返回映射行为结论。`blocked` 表示探测未获响应，不等同于「UDP 被防火墙阻断」——`reason.code` 用于区分具体原因。
 
 ---
+
+
+### 2026-10-22 更新
+### 分发受限文件补全（issue #291）
+
+CurseForge 的作者可以关闭 Project Distribution Toggle。开关关闭后，API 仍返回项目与文件元数据，但 `downloadUrl` 变为 `null`——这是**作者的明确拒绝**，不是接口故障。换 API Key、拼 CDN 直链、特殊 Token 均无效且违反第三方 API 条款，因此启动器不做任何绕过，改为登记阻塞清单并由用户手动补全。
+
+判定逻辑集中在纯函数 `services::modpack_blocked::blocked_from_batch`（`null` 与空串同等对待），首次安装（`endpoints/modpack.rs` 的 CF 分支）与原地更新（`endpoints/modpack_update.rs`）共用。
+
+**落盘位置：** `{gameDir}/versions/{instanceName}/.qomicex/blocked-mods.json`。与 `modpack-manifest.json` 同目录——实例改名走整目录 `rename`，清单一并搬走。清单为空时**删除文件**而非保留 `items: []`，避免 UI 误报。
+
+**进度字段：** `InstallProgress.blockedFiles`（与 `failedFiles` 分开：它不是下载失败，而是已知且可操作的阻塞）。安装产物已落盘，但只要有阻塞条目，任务状态就停在非终态的 `awaiting-files`，下载中心显示「待补全」，由用户手动补齐后才转 `completed`；补全前更新/修复会返回 `MISSING_MODS_PENDING`，避免覆盖等待态。
+
+#### GET `/api/modpack/blocked/{instanceId}`
+
+读取实例的待补全清单。读取时顺带核对 `mods/`：用户直接把 jar 放进目录也算补上（有 `sha1` 的必须哈希一致），剔除后回写清单；清单清空时把等待态任务转 `completed`。
+
+**响应：** `BlockedModList`
+
+```json
+{
+  "schemaVersion": 1,
+  "items": [
+    {
+      "projectId": 1654570,
+      "fileId": 9274793,
+      "fileName": "mmcr-neoforge-mc1.21.1-0.1.3.jar",
+      "sha1": "86674eebcc8a20286dfdaaa1e3c21fd668500847",
+      "fileLength": 5102525,
+      "pageUrl": "https://www.curseforge.com/projects/1654570"
+    }
+  ]
+}
+```
+
+清单为空时返回 `items: []`，下载中心据此把任务卡转完成。
+
+**错误码：** `INSTANCE_NOT_FOUND`(404)
+
+> `pageUrl` 用 `https://www.curseforge.com/projects/{projectId}`：实测该形式 302 到 slug 页（HTTP 200），而 `projects/{id}/files/{fileId}` 是 404。
+
+#### POST `/api/modpack/blocked/{instanceId}/submit`
+
+拖入补全：一次可提交多个文件，前端不知道哪个文件对应哪条清单，由后端按清单 `sha1` 匹配；仅对无哈希的旧条目退回文件名匹配，匹配不到直接拒绝。
+
+**请求体：** 同下方 `{ "path": "..." }`。
+
+**行为：** 计算源文件 SHA-1 → 匹配条目 → 校验并复制到 `mods/` → 返回剩余条目。
+
+**错误码：** 同下方，另有 `BLOCKED_UPLOAD_UNMATCHED`(400 文件无法对应到任何待补条目)
+
+#### POST `/api/modpack/blocked/{instanceId}/submit/{fileId}`
+
+登记用户手动下载的 jar。`fileId` 走**路径**而非表单字段：前端用 `plugin-dialog` 选文件拿到的就是绝对路径，读进内存再重传一遍纯属浪费（重型 mod 可达数百 MB），与既有 `/modpack/parse-path` 同一思路。
+
+**请求体：**
+
+```json
+{ "path": "C:/Users/me/Downloads/mmcr-neoforge-mc1.21.1-0.1.3.jar" }
+```
+
+**行为：** 按 `fileId` 找清单条目 → 用条目 `sha1` 校验 → 通过后复制到 `mods/`（隔离实例为 `versions/{name}/mods/`）并从清单移除 → 返回剩余条目；清单清空时把等待态任务转 `completed`。
+
+- 校验失败**不落盘、不清清单**，返回 `BLOCKED_UPLOAD_REJECTED`(400)，错误消息含期望与实际 SHA-1。
+- 条目无 `sha1`（旧接口/字段被裁）时只做文件名检查并放行。
+- **源文件不删除、不移动**：那是用户自己的下载，可能还有别的实例要用。
+- 文件名经 `is_safe_rel_path` 校验，拒绝 `../`、`a/b`、盘符与 UNC（zip-slip 防护）。
+
+**响应：** `BlockedModList`（补全后的剩余清单，前端直接用它刷新）
+
+**错误码：** `INSTANCE_NOT_FOUND`(404)、`BLOCKED_UPLOAD_FILE_NOT_FOUND`(400 路径不存在)、`BLOCKED_UPLOAD_TOO_LARGE`(400 超 512 MiB)、`BLOCKED_ENTRY_NOT_FOUND`(404 条目已被补全或实例已更新)、`BLOCKED_UPLOAD_REJECTED`(400 校验失败或文件名非法)
+
+#### DELETE `/api/modpack/blocked/{instanceId}`
+
+放弃补全：清空清单并把等待态任务转 `cancelled`。实例保留（缺文件仍能启动，只是依赖它们的模组会在游戏内报错）。
+
+**响应：** `BlockedModList`（空清单）
+
+**错误码：** `INSTANCE_NOT_FOUND`(404)
+
+> **原地更新的额外过滤**：目标版本分发受限的文件，若实例里已有同名文件则**不计入**阻塞清单——更新只差这一版文件时用户手头那个照样能跑，报出来只会让人以为实例坏了。
+
+---
+
+

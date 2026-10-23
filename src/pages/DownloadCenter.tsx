@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
-import { ArrowRight, Box, CheckCircle2, Coffee, Download, Hammer, ListChecks, Package, RotateCw, Square, Trash2, ChevronDown } from 'lucide-react'
+import { ArrowRight, Box, CheckCircle2, Coffee, Download, Hammer, ListChecks, Package, RotateCw, Square, Trash2, ChevronDown, Wrench } from 'lucide-react'
 import { RotateCw as RotateCwData, Trash2 as Trash2Data } from 'lucide'
 import { MorphIcon } from 'morphicons/react'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
@@ -24,12 +24,15 @@ import { groupTasks, readCollapsedGroups, writeCollapsedGroups } from '../lib/do
 import type { DownloadGroup, DownloadGroupKey } from '../lib/downloadGroups.ts'
 import InstallStepsList from '../components/InstallStepsList.tsx'
 import DownloadSpeedGraph from '../components/DownloadSpeedGraph.tsx'
+import { BlockedModsDialog } from '../components/BlockedModsDialog.tsx'
+import { getBlockedMods } from '../api/modpack-blocked.ts'
+import { ApiError } from '../api/client.ts'
 
 import type { DownloadTask, InstallStepInfo } from '../types/index.ts'
 import { useDownloadSSE } from '../hooks/useDownloadSSE.ts'
 import { retryTask } from '../lib/retryTask.ts'
 
-type FilterMode = 'all' | 'downloading' | 'paused' | 'completed' | 'failed'
+type FilterMode = 'all' | 'downloading' | 'paused' | 'awaiting' | 'completed' | 'failed'
 
 /** 资源图标可能是 data URL，也可能是 Modrinth/CurseForge 的 https CDN 地址（CSP img-src 已放行 https:）。 */
 function getSafeIconSrc(icon?: string): string | null {
@@ -93,6 +96,9 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   queued: { label: 'queued', color: 'text-muted-foreground bg-muted border-border' },
   downloading: { label: 'downloading', color: 'text-blue-400 bg-blue-500/10 border-blue-500/25' },
   paused: { label: 'paused', color: 'text-amber-400 bg-amber-500/10 border-amber-500/25' },
+  // 待补全：安装已落地但缺文件，等用户手动补齐（issue #291）。与 paused 同为琥珀色，
+  // 但语义不同（后者是用户主动暂停），卡片上用不同文案与操作区分。
+  'awaiting-files': { label: 'awaiting-files', color: 'text-amber-400 bg-amber-500/10 border-amber-500/25' },
   completed: { label: 'completed', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/25' },
   failed: { label: 'failed', color: 'text-red-400 bg-red-500/10 border-red-500/25' },
   cancelled: { label: 'cancelled', color: 'text-gray-400 bg-gray-500/10 border-gray-500/25' },
@@ -135,6 +141,8 @@ const FILTER_TABS: Tab[] = [
   { id: 'all', label: 'all' },
   { id: 'downloading', label: 'downloading' },
   { id: 'paused', label: 'paused' },
+  // 过滤值的 'awaiting' 对应任务状态 'awaiting-files'（见 filtered 的判定）。
+  { id: 'awaiting', label: 'awaiting' },
   { id: 'completed', label: 'completed' },
   { id: 'failed', label: 'failed' },
 ]
@@ -150,9 +158,11 @@ type TFunc = ReturnType<typeof useI18n>['t']
  * 除 `task` 与 `t` 外，其余依赖（store 操作、API、图标、格式化）都来自模块级导入，
  * 所以这里的 props 面很窄。
  */
-function TaskCard({ task, t }: { task: DownloadTask; t: TFunc }) {
+function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (task: DownloadTask) => void }) {
   const cfg = STATUS_CONFIG[task.status]
   const isActive = task.status === 'downloading' || task.status === 'paused' || task.status === 'queued'
+  /** 待补全：安装管线已结束但缺文件，等用户手动补齐（issue #291）。不算 active——没有可暂停的进程。 */
+  const isAwaiting = task.status === 'awaiting-files'
   const safeIcon = getSafeIconSrc(task.icon)
   const steps = task.steps && task.steps.length > 0 ? task.steps : undefined
   const stepsLive = task.status === 'downloading' || task.status === 'paused'
@@ -168,7 +178,7 @@ function TaskCard({ task, t }: { task: DownloadTask; t: TFunc }) {
         <div className="flex min-w-0 items-start gap-3">
           <div className={cn(
             'flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg',
-            task.status === 'completed' ? 'bg-emerald-500/10' : task.status === 'failed' ? 'bg-red-500/10' : 'bg-primary/10'
+            task.status === 'completed' ? 'bg-emerald-500/10' : task.status === 'failed' ? 'bg-red-500/10' : isAwaiting ? 'bg-amber-500/10' : 'bg-primary/10'
           )}>
             {safeIcon ? (
               <img src={safeIcon} alt="" className="h-full w-full object-cover" />
@@ -177,7 +187,7 @@ function TaskCard({ task, t }: { task: DownloadTask; t: TFunc }) {
                 taskType={task.type}
                 className={cn(
                   'h-5 w-5',
-                  task.status === 'completed' ? 'text-emerald-400' : task.status === 'failed' ? 'text-red-400' : 'text-primary'
+                  task.status === 'completed' ? 'text-emerald-400' : task.status === 'failed' ? 'text-red-400' : isAwaiting ? 'text-amber-400' : 'text-primary'
                 )}
               />
             )}
@@ -269,6 +279,17 @@ function TaskCard({ task, t }: { task: DownloadTask; t: TFunc }) {
               </Tooltip>
             </>
           )}
+          {isAwaiting && onFix && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1 border-amber-500/40 text-amber-300 hover:text-amber-200"
+              onClick={() => onFix(task)}
+            >
+              <Wrench className="h-3.5 w-3.5" />
+              {t('downloads.missingMods.fix')}
+            </Button>
+          )}
           {task.status === 'failed' && task.retry && (
             <Tooltip content={t('downloads.retry')}>
               <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => {
@@ -310,7 +331,7 @@ function TaskCard({ task, t }: { task: DownloadTask; t: TFunc }) {
           <div
             className={cn(
               'h-full rounded-full transition-all duration-500',
-              task.status === 'completed' ? 'bg-emerald-500' : task.status === 'failed' ? 'bg-red-500' : task.status === 'paused' ? 'bg-amber-400' : 'bg-primary'
+              task.status === 'completed' ? 'bg-emerald-500' : task.status === 'failed' ? 'bg-red-500' : task.status === 'paused' || isAwaiting ? 'bg-amber-400' : 'bg-primary'
             )}
             style={{ width: `${task.progress}%` }}
           />
@@ -347,6 +368,7 @@ function TaskCard({ task, t }: { task: DownloadTask; t: TFunc }) {
           <span className="min-w-0 truncate">
             {task.status === 'completed' ? t('downloads.statusText.done') :
              task.status === 'failed' ? (task.error ? t('downloads.statusText.failedWith', { error: task.error }) : t('downloads.statusText.failed')) :
+             isAwaiting ? t('downloads.statusText.awaitingFiles', { count: task.blockedFiles ?? 0 }) :
              task.status === 'paused' ? t('downloads.statusText.pausedProgress', { progress: task.progress }) :
              task.status === 'queued' ? t('downloads.statusText.waiting') :
              // 有 steps 的管线任务：从「权重最大的 active step」派生，避免并行分支
@@ -380,6 +402,11 @@ function TaskCard({ task, t }: { task: DownloadTask; t: TFunc }) {
             {task.status === 'downloading' && task.progress > 0 && <span className="tabular-nums">{task.progress}%</span>}
           </span>
         </div>
+        {isAwaiting && (
+          <p className="mt-1.5 text-[11px] leading-relaxed text-amber-400/80">
+            {t('downloads.missingMods.hint')}
+          </p>
+        )}
         {task.status === 'failed' && task.error && (
           <div className="rounded-md bg-red-500/10 px-2.5 py-1.5 text-[11px] text-red-400">
             {task.error}
@@ -391,11 +418,12 @@ function TaskCard({ task, t }: { task: DownloadTask; t: TFunc }) {
 }
 
 /** 一个资源类型分组：可折叠头部 + 卡片列表。折叠只做视觉隐藏，卡片保持挂载。 */
-function TaskGroupSection({ group, collapsed, onToggle, t }: {
+function TaskGroupSection({ group, collapsed, onToggle, t, onFix }: {
   group: DownloadGroup
   collapsed: boolean
   onToggle: (key: DownloadGroupKey) => void
   t: TFunc
+  onFix?: (task: DownloadTask) => void
 }) {
   const GroupIcon = group.icon
   const contentId = `download-group-${group.key}`
@@ -424,7 +452,7 @@ function TaskGroupSection({ group, collapsed, onToggle, t }: {
       {/* `hidden` 而非条件渲染：卸载会清空 DownloadSpeedGraph 的速度历史，
           也会中断卡片上的 SSE 更新对账。 */}
       <div id={contentId} hidden={collapsed} className="mt-2 space-y-3">
-        {group.tasks.map((task) => <TaskCard key={task.id} task={task} t={t} />)}
+        {group.tasks.map((task) => <TaskCard key={task.id} task={task} t={t} onFix={onFix} />)}
       </div>
     </section>
   )
@@ -438,6 +466,32 @@ export default function DownloadCenter() {
   const [clearing, setClearing] = useState(false)
   /** 已折叠的分组键。默认全部展开；持久化在独立 localStorage 键里（见 downloadGroups.ts）。 */
   const [collapsedGroups, setCollapsedGroups] = useState<DownloadGroupKey[]>(() => readCollapsedGroups())
+  /** 正在补全待补文件的实例（打开 BlockedModsDialog）；null 表示对话框关闭。 */
+  const [fixInstanceId, setFixInstanceId] = useState<string | null>(null)
+
+  const handleFix = useCallback((task: DownloadTask) => {
+    if (task.instanceId) setFixInstanceId(task.instanceId)
+  }, [])
+
+  /** 全部补全：把对应卡片转完成（后端也会推 SSE，这里让点击瞬间生效）。 */
+  const handleResolved = useCallback(() => {
+    if (!fixInstanceId) return
+    const task = getTasks().find(t => t.instanceId === fixInstanceId && t.status === 'awaiting-files')
+    if (!task) return
+    updateTask(task.id, {
+      status: 'completed',
+      progress: 100,
+      blockedFiles: undefined,
+      completedAt: new Date().toISOString(),
+    })
+  }, [fixInstanceId])
+
+  /** 用户放弃补全：卡片转取消（实例保留）。 */
+  const handleSkipped = useCallback(() => {
+    if (!fixInstanceId) return
+    const task = getTasks().find(t => t.instanceId === fixInstanceId && t.status === 'awaiting-files')
+    if (task) updateTask(task.id, { status: 'cancelled', blockedFiles: undefined })
+  }, [fixInstanceId])
 
   const toggleGroup = useCallback((key: DownloadGroupKey) => {
     setCollapsedGroups((prev) => {
@@ -451,6 +505,40 @@ export default function DownloadCenter() {
     const unsub = subscribe(() => setTasks([...getTasks()]))
     return unsub
   }, [])
+
+  /**
+   * 进入下载中心时用磁盘清单刷新等待中的任务（issue #291）：用户可能在资源
+   * 管理器里直接把文件放进了 mods 目录，后端 GET 会核对并在清单清空时收尾。
+   * 实例已删除时后端返回 404，吞掉会让卡片永远停在等待态且没有移除入口。
+   */
+  const reconcileBlockedTask = useCallback((taskId: string, instId: string) => {
+    getBlockedMods(instId)
+      .then(res => {
+        const count = (res.items ?? []).length
+        if (count > 0) {
+          updateTask(taskId, { status: 'awaiting-files', blockedFiles: count })
+        } else {
+          updateTask(taskId, {
+            status: 'completed',
+            progress: 100,
+            blockedFiles: undefined,
+            completedAt: new Date().toISOString(),
+          })
+        }
+      })
+      .catch((e: unknown) => {
+        if (e instanceof ApiError && e.status === 404) {
+          updateTask(taskId, { status: 'cancelled', blockedFiles: undefined })
+        }
+      })
+  }, [])
+
+  useEffect(() => {
+    for (const task of getTasks()) {
+      if (task.status !== 'awaiting-files' || !task.instanceId) continue
+      reconcileBlockedTask(task.id, task.instanceId)
+    }
+  }, [reconcileBlockedTask])
 
   const { data: sseData, reconnectKey } = useDownloadSSE()
   const prevInstallIds = useRef<Set<string>>(new Set())
@@ -480,7 +568,8 @@ export default function DownloadCenter() {
       // 重试重建期间不参与对账：卡片还挂着旧 instanceId，后端那条失败记录仍在
       // 保留窗口内，参与对账会把刚置的排队态刷回失败（issue #275）。
       if (task.retryPending) continue
-      if (task.status !== 'queued' && task.status !== 'downloading' && task.status !== 'paused') continue
+      // awaiting-files 也要对账：它是非终态，后端补全完成后要靠 SSE 推 completed。
+      if (task.status !== 'queued' && task.status !== 'downloading' && task.status !== 'paused' && task.status !== 'awaiting-files') continue
 
       if (task.type === 'java' && task.taskId) {
         const match = sseData.javaDownloads.find((j) => j.taskId === task.taskId)
@@ -570,6 +659,8 @@ if (task.instanceId && task.type !== 'batch') {
           if (match.status === 'completed') newStatus = 'completed'
           else if (match.status === 'cancelled') newStatus = 'cancelled'
           else if (match.status === 'failed') newStatus = 'failed'
+          // 整合包缺文件待补（issue #291）：安装管线已停止，等用户手动补齐。
+          else if (match.status === 'awaiting-files') newStatus = 'awaiting-files'
           else if (match.isPaused) newStatus = 'paused'
           updateTask(task.id, {
             status: newStatus,
@@ -581,11 +672,21 @@ if (task.instanceId && task.type !== 'batch') {
             completedFiles: match.completedFiles || undefined,
             currentFileProgress: match.currentFileProgress,
             steps: match.steps,
+            // 回到终态时必须清空，否则补完后卡片还挂着「待补全」计数。
+            blockedFiles: newStatus === 'completed' || newStatus === 'cancelled'
+              ? undefined
+              : (match.blockedFiles ?? task.blockedFiles),
             error: match.error || undefined,
             completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
           })
         } else if (!checkedStaleInstallIds.current.has(task.instanceId)) {
           checkedStaleInstallIds.current.add(task.instanceId)
+          // 等待补全的任务不依赖 tracker（重启后后端没有这条记录）：以磁盘清单为准，
+          // 否则 not-started 会把「等用户补文件」误判成任务过期。
+          if (task.status === 'awaiting-files') {
+            reconcileBlockedTask(task.id, task.instanceId)
+            continue
+          }
           getInstallProgress(task.instanceId).then(p => {
             if (!p || p.status === 'not-started') {
               if (task.status === 'queued') {
@@ -606,6 +707,13 @@ if (task.instanceId && task.type !== 'batch') {
               // 任务已完成后才被 SSE 剔除（get_all_active 不含 completed），
               // 此处补正终态，否则任务会永远卡在"连接中/下载中"
               updateTask(task.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
+            } else if (p.status === 'awaiting-files') {
+              // 后端重启后 SSE 缺项，但清单仍在：保留等待态，别降级成失败。
+              updateTask(task.id, {
+                status: 'awaiting-files',
+                progress: Math.round(p.progress),
+                blockedFiles: p.blockedFiles ?? task.blockedFiles,
+              })
             } else if (p.status === 'failed' || p.status === 'cancelled') {
               updateTask(task.id, { status: p.status, error: p.error || undefined })
             }
@@ -643,12 +751,15 @@ if (task.instanceId && task.type !== 'batch') {
       }
     }
     prevJavaIds.current = currentJavaIds
-  }, [sseData])
+  }, [sseData, reconcileBlockedTask])
 
   const filterTabs = useMemo(() => FILTER_TABS.map((tab) => ({ ...tab, label: t(`downloads.filter.${tab.id}`) })), [t])
 
   const filtered = useMemo(() => tasks.filter((t) => {
     if (filter === 'all') return true
+    // 过滤标签用 'awaiting'，任务状态是 'awaiting-files'（标签 id 不能带连字符：
+    // 它会被拼成 i18n key `downloads.filter.awaiting`）。
+    if (filter === 'awaiting') return t.status === 'awaiting-files'
     return t.status === filter
   }), [tasks, filter])
 
@@ -656,12 +767,13 @@ if (task.instanceId && task.type !== 'batch') {
   const groups = useMemo(() => groupTasks(filtered), [filtered])
 
   return (
-    <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
+    <>
+      <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
       <PageHeader title={t('downloads.title')} subtitle={t('downloads.subtitle', { count: tasks.length })} actions={
         <Button variant="outline" size="sm" onClick={() => {
           setClearing(true)
           import('../stores/downloadStore.ts').then(m => {
-            m.getTasks().filter(t => t.status !== 'downloading' && t.status !== 'paused' && t.status !== 'queued').forEach(t => m.removeTask(t.id))
+            m.getTasks().filter(t => t.status !== 'downloading' && t.status !== 'paused' && t.status !== 'queued' && t.status !== 'awaiting-files').forEach(t => m.removeTask(t.id))
             setTimeout(() => setClearing(false), 800)
           })
         }} className="gap-1.5">
@@ -694,10 +806,21 @@ if (task.instanceId && task.type !== 'batch') {
               collapsed={collapsedGroups.includes(group.key)}
               onToggle={toggleGroup}
               t={t}
+              onFix={handleFix}
             />
           ))}
         </div>
       )}
-    </PageShell>
+      </PageShell>
+      {fixInstanceId && (
+        <BlockedModsDialog
+          open={fixInstanceId !== null}
+          instanceId={fixInstanceId}
+          onClose={() => setFixInstanceId(null)}
+          onResolved={handleResolved}
+          onSkipped={handleSkipped}
+        />
+      )}
+    </>
   )
 }

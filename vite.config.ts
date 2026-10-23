@@ -19,6 +19,19 @@ export default defineConfig(() => ({
     __GIT_SHA__: JSON.stringify(process.env.GITHUB_SHA || "unknown"),
     __APP_VERSION__: JSON.stringify(appVersion),
   },
+  // 依赖预构建的入口显式指定为 index.html。
+  //
+  // 不指定时 Vite 走 `globEntries("**/*.html")`（config.js 的 computeEntries），
+  // 它会遍历整个仓库：本机实测命中 34,635 个 html，其中 34,617 个在
+  // `src-tauri/target/` 下（`tauri build --release` 产生的 rustdoc 产物），
+  // 逐文件 readFile 会打爆文件句柄上限并报
+  // `EMFILE: too many open files ... [plugin vite:dep-scan]`，dev 启动随之变慢。
+  //
+  // 注意这与 `server.watch.ignored` 是两套机制：那个只管 chokidar 文件监听，
+  // 对 dep-scan 的 glob 无效，所以两处都要各自处理。
+  optimizeDeps: {
+    entries: ["index.html"],
+  },
   server: {
     port: 1420,
     strictPort: true,

@@ -41,6 +41,9 @@ pub enum InstallStatus {
     Completed,
     Failed,
     Cancelled,
+    /// 安装已落地，但有文件因 CurseForge 分发限制未能下载，等待用户手动补齐（issue #291）。
+    /// 非终态：任务留在下载中心，补全后由端点转 completed。
+    AwaitingFiles,
 }
 
 impl InstallStatus {
@@ -56,6 +59,7 @@ impl InstallStatus {
             InstallStatus::Completed => "completed",
             InstallStatus::Failed => "failed",
             InstallStatus::Cancelled => "cancelled",
+            InstallStatus::AwaitingFiles => "awaiting-files",
         }
     }
 
@@ -70,6 +74,7 @@ impl InstallStatus {
             "completed" => InstallStatus::Completed,
             "failed" => InstallStatus::Failed,
             "cancelled" => InstallStatus::Cancelled,
+            "awaiting-files" => InstallStatus::AwaitingFiles,
             _ => InstallStatus::NotStarted,
         }
     }
@@ -134,6 +139,10 @@ pub struct InstallProgress {
     pub completed_files: i32,
     pub failed_files: i32,
     pub current_file: String,
+    /// 因 CurseForge 作者关闭第三方分发而需用户手动补全的文件数（issue #291）。
+    /// 与 `failed_files` 分开：它是**已知且可操作**的阻塞，不是下载失败。
+    #[serde(default)]
+    pub blocked_files: i32,
     /// 当前文件批次下载进度（0-100，按字节；非下载阶段为 0）。
     pub current_file_progress: f64,
     pub speed: f64,
@@ -218,6 +227,24 @@ impl InstallHandle {
         self.update(|f| f.current_file = file.to_string());
     }
 
+    /// 记录「分发受限、待手动补全」的文件数（issue #291）。
+    ///
+    /// 与失败计数分开维护：这些文件不是下载出错，而是作者明确拒绝第三方分发，
+    /// 属于已知且可操作的阻塞，安装仍可完成。
+    pub fn set_blocked_files(&self, count: i32) {
+        self.update(|f| f.blocked_files = count);
+    }
+
+    pub fn blocked_files(&self) -> i32 {
+        let guard = self.0.inner.lock().unwrap_or_else(|p| p.into_inner());
+        guard.blocked_files
+    }
+
+    pub fn status(&self) -> String {
+        let guard = self.0.inner.lock().unwrap_or_else(|p| p.into_inner());
+        guard.status.clone()
+    }
+
     pub fn set_error(&self, error: impl Into<String>) {
         self.update(|f| f.error = Some(error.into()));
     }
@@ -286,6 +313,8 @@ pub struct ProgressField {
     pub total_files: i32,
     pub completed_files: i32,
     pub failed_files: i32,
+    /// 分发受限、待用户手动补全的文件数（issue #291）。
+    pub blocked_files: i32,
     pub current_file_progress: f64,
     pub speed: f64,
     pub steps: Vec<InstallStep>,
@@ -320,6 +349,7 @@ impl ProgressField {
             completed_files: self.completed_files,
             failed_files: self.failed_files,
             current_file: self.current_file.clone(),
+            blocked_files: self.blocked_files,
             current_file_progress: self.current_file_progress,
             speed: self.speed,
             is_paused,
@@ -426,6 +456,7 @@ impl InstallState {
                 total_files: 0,
                 completed_files: 0,
                 failed_files: 0,
+                blocked_files: 0,
                 current_file_progress: 0.0,
                 speed: 0.0,
                 steps: Vec::new(),
@@ -590,6 +621,25 @@ impl InstallTracker {
             // 就吞掉真实原因误报为 cancelled。仅当 outcome 为取消哨兵（"安装已取消"）
             // 时才视为用户取消；其余一律按结果报 completed/failed。
             let status = classify_outcome(handle.is_cancelled(), &outcome);
+            // 整合包：文件已装完，但有条目因 CurseForge 分发限制取不到（issue #291）。
+            // 不能落 completed（下载中心会认为无需处理），改为非终态的 awaiting-files，
+            // 等用户手动补齐后由 `/modpack/blocked/*` 端点转 completed。
+            if status == InstallStatus::Completed && handle.blocked_files() > 0 {
+                handle.update(|f| {
+                    f.set_status(InstallStatus::AwaitingFiles);
+                    f.stage = InstallStatus::AwaitingFiles.as_str().to_string();
+                    f.progress = 100.0;
+                    f.current_file.clear();
+                    f.finish_steps(true);
+                });
+                tracing::info!(
+                    instance = %id_owned,
+                    kind = %kind_owned,
+                    blocked = handle.blocked_files(),
+                    "install: awaiting manual mod files"
+                );
+                return;
+            }
             match status {
                 InstallStatus::Cancelled => {
                     handle.update(|f| {
@@ -712,6 +762,45 @@ impl InstallTracker {
         }
     }
 
+    /// 等待补全的任务：文件已齐 → 转 completed。
+    ///
+    /// 只对 `awaiting-files` 生效，避免误改正在安装/已结束的任务。
+    pub fn finish_awaiting(&self, instance_id: &str) -> bool {
+        let Some(h) = self.get_handle(instance_id) else {
+            return false;
+        };
+        if h.status() != InstallStatus::AwaitingFiles.as_str() {
+            return false;
+        }
+        h.update(|f| {
+            f.blocked_files = 0;
+            f.set_status(InstallStatus::Completed);
+            f.stage = InstallStatus::Completed.as_str().to_string();
+            f.progress = 100.0;
+            f.current_file.clear();
+            f.finish_steps(true);
+        });
+        tracing::info!(instance = %instance_id, "install: manual mod files complete");
+        true
+    }
+
+    /// 用户放弃补全 → cancelled（实例保留，不回收目录）。
+    pub fn skip_awaiting(&self, instance_id: &str) -> bool {
+        let Some(h) = self.get_handle(instance_id) else {
+            return false;
+        };
+        if h.status() != InstallStatus::AwaitingFiles.as_str() {
+            return false;
+        }
+        h.update(|f| {
+            f.blocked_files = 0;
+            f.set_status(InstallStatus::Cancelled);
+            f.stage = InstallStatus::Cancelled.as_str().to_string();
+            f.current_file.clear();
+        });
+        true
+    }
+
     /// 暂停（对应源 `Pause`）。
     pub fn pause(&self, instance_id: &str) {
         if let Some(h) = self.get_handle(instance_id) {
@@ -773,6 +862,7 @@ mod tests {
             total_files: 0,
             completed_files: 0,
             failed_files: 0,
+            blocked_files: 0,
             current_file_progress: 0.0,
             speed: 0.0,
             steps: Vec::new(),
@@ -898,6 +988,17 @@ mod tests {
     }
 
     #[test]
+    fn awaiting_files_is_non_terminal_and_roundtrips() {
+        // issue #291：等待补全期间任务必须留在下载中心，不能被当成终态清掉，
+        // 也不能让 try_start 放行新的安装/更新把它覆盖掉。
+        let status = InstallStatus::AwaitingFiles;
+        assert_eq!(status.as_str(), "awaiting-files");
+        assert_eq!(InstallStatus::from_str("awaiting-files"), status);
+        assert!(!status.is_terminal());
+        assert!(InstallStatus::Completed.is_terminal());
+    }
+
+    #[test]
     fn install_progress_serialization_omits_empty_steps() {
         let p = InstallProgress {
             instance_id: "x".to_string(),
@@ -908,6 +1009,7 @@ mod tests {
             completed_files: 0,
             failed_files: 0,
             current_file: String::new(),
+            blocked_files: 0,
             current_file_progress: 0.0,
             speed: 0.0,
             is_paused: false,

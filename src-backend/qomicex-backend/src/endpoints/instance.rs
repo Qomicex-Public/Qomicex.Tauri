@@ -1349,6 +1349,7 @@ async fn repair_resources(
     State(state): State<SharedState>,
     AxumPath(instance_id): AxumPath<String>,
 ) -> ApiResult<Json<RepairResourcesResponse>> {
+    ensure_no_pending_blocked(&state, &instance_id)?;
     let (_game_dir, _version_dir_name, miss_files) =
         scan_missing_files(&state, &instance_id).await?;
     let missing_count = miss_files.len() as i32;
@@ -1389,6 +1390,7 @@ async fn repair_instance(
             "instance repair: threads 参数由全局下载并发控制托管，此处仅记录"
         );
     }
+    ensure_no_pending_blocked(&state, &instance_id)?;
     let (_game_dir, _version_dir_name, miss_files) =
         scan_missing_files(&state, &instance_id).await?;
     let missing_count = miss_files.len() as i32;
@@ -1409,6 +1411,35 @@ async fn repair_instance(
         status: "started".to_string(),
         missing_count,
     }))
+}
+
+/// 待补全任务占着实例的 tracker 槽位：修复会覆盖它（下载中心的待补卡片会变成
+/// 修复任务，缺失状态随之丢失）。让用户先在下载中心补全或跳过（issue #291）。
+fn ensure_no_pending_blocked(state: &SharedState, instance_id: &str) -> ApiResult<()> {
+    let awaiting = state
+        .install_tracker
+        .get_state(instance_id)
+        .is_some_and(|p| {
+            p.status == crate::services::install_tracker::InstallStatus::AwaitingFiles.as_str()
+        });
+    // tracker 可能因进程重启丢失等待态，清单仍在磁盘上。
+    let pending = state.instance.get_by_id(instance_id).is_some_and(|inst| {
+        let version_isolation = inst
+            .version_isolation
+            .unwrap_or_else(crate::settings::get_global_version_isolation);
+        crate::services::modpack_blocked::has_pending(&inst.game_dir, &inst.name, version_isolation)
+    });
+    if awaiting && !pending {
+        // 用户可能已在文件管理器里补齐：清掉过期等待态，否则修复会被一直挡住。
+        state.install_tracker.finish_awaiting(instance_id);
+    }
+    if pending {
+        return Err(ApiError::conflict(
+            "MISSING_MODS_PENDING",
+            "该实例还有待补全的整合包文件，请先在下载中心补全或跳过",
+        ));
+    }
+    Ok(())
 }
 
 /// 把补全交给 `InstallTracker` 后台跑（进度经 `/install/progress` 与 SSE 暴露）。

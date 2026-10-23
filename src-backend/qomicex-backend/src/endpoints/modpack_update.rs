@@ -681,7 +681,30 @@ async fn start_update(
         .get_by_id(&id)
         .ok_or_else(|| ApiError::not_found("INSTANCE_NOT_FOUND", format!("实例 {id} 不存在")))?;
 
-    // 实例正在运行/启动中 → 拒绝（更新会替换 mods，运行中的实例会读到半更新状态）。
+    // 待补全文件：等待期间不能更新；进程重启后 tracker 为空，靠磁盘清单兜底。
+    let version_isolation = inst
+        .version_isolation
+        .unwrap_or_else(crate::settings::get_global_version_isolation);
+    let pending = crate::services::modpack_blocked::has_pending(
+        &inst.game_dir,
+        &inst.name,
+        version_isolation,
+    );
+    if state.install_tracker.active_kind(&id).is_some() {
+        let awaiting = state.install_tracker.get_state(&id).is_some_and(|p| {
+            p.status == crate::services::install_tracker::InstallStatus::AwaitingFiles.as_str()
+        });
+        // 清单已补齐但 tracker 还停在等待态：先收尾，否则更新永远被挡。
+        if awaiting && !pending {
+            state.install_tracker.finish_awaiting(&id);
+        }
+    }
+    if pending {
+        return Err(ApiError::conflict(
+            "MISSING_MODS_PENDING",
+            "该实例还有待补全的整合包文件，请先在下载中心补全或跳过",
+        ));
+    }
     if let Some(kind) = state.install_tracker.active_kind(&id) {
         return Err(ApiError::bad_request(
             "INSTANCE_BUSY",
@@ -821,7 +844,8 @@ async fn run_update_pipeline(
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging).map_err(|e| format!("创建暂存目录失败: {e}"))?;
 
-    let content_rels = download_target_files(state, handle, inst, &target, &staging).await?;
+    let (content_rels, blocked_mods) =
+        download_target_files(state, handle, inst, &target, &staging).await?;
     handle.mark_step("download", "done");
     handle.mark_step("stage", "done");
     crate::services::install_service::ensure_not_cancelled(handle)?;
@@ -871,6 +895,23 @@ async fn run_update_pipeline(
         }
     }
     handle.mark_step("apply", "done");
+
+    // 阻塞清单在更新提交成功后才落盘：提前写会让下载失败/取消的实例显示
+    // 目标版本的待补全项，而回滚不恢复 sidecar。写失败不阻断更新——文件已经
+    // 应用完毕，回滚代价远大于「用户看不到提示」，但要留日志可追。
+    if let Err(e) =
+        crate::services::modpack_blocked::save_blocked(&inst.game_dir, &inst.name, &blocked_mods)
+    {
+        tracing::warn!(instance = %inst.name, error = %e, "写入分发受限清单失败（更新已完成）");
+    }
+    if !blocked_mods.is_empty() {
+        tracing::warn!(
+            instance = %inst.name,
+            count = blocked_mods.len(),
+            "CurseForge 整合包更新有 {} 个必需文件因作者关闭第三方分发需手动补全",
+            blocked_mods.len()
+        );
+    }
 
     // === 6. 收尾：记录 + 清单 ===
     handle.update(|f| {
@@ -933,14 +974,24 @@ async fn run_update_pipeline(
     Ok(())
 }
 
-/// 把目标版本的文件下载到暂存目录，返回下载计划里的相对路径列表。
+/// 把目标版本的文件下载到暂存目录。
+///
+/// 返回（下载计划里的相对路径, 分发受限条目）。阻塞清单**不在这里落盘**：
+/// 更新尚未提交，此时写入会让「下载失败/取消」的实例显示目标版本的待补全项，
+/// 而回滚只恢复实例与文件、不恢复 sidecar。由调用方在 apply 成功后写入。
 async fn download_target_files(
     state: &SharedState,
     handle: &crate::services::install_tracker::InstallHandle,
     inst: &GameInstance,
     target: &TargetPlan,
     staging: &std::path::Path,
-) -> Result<Vec<String>, String> {
+) -> Result<
+    (
+        Vec<String>,
+        Vec<crate::services::modpack_blocked::BlockedModFile>,
+    ),
+    String,
+> {
     let source = inst
         .modpack_source
         .clone()
@@ -982,7 +1033,7 @@ async fn download_target_files(
                 .await?;
             }
             let _ = version_isolation;
-            Ok(rels)
+            Ok((rels, Vec::new()))
         }
         "curseforge" => {
             // CF：manifest 只给 projectID:fileID，需经 CF API 反查文件名与链接。
@@ -994,13 +1045,21 @@ async fn download_target_files(
                 .map_err(|e| format!("批量获取 CurseForge 文件信息失败: {e}"))?;
             let mut files = Vec::new();
             let mut rels = Vec::new();
+            let mut blocked: Vec<crate::services::modpack_blocked::BlockedModFile> = Vec::new();
             for fid in &fids {
                 let Some(info) = info_map.get(fid) else {
                     continue;
                 };
-                let Some(url) = info.download_url.clone().filter(|u| !u.is_empty()) else {
+                // 与首次安装同源：downloadUrl 为空 = 作者关闭第三方分发（issue #291）。
+                // 更新同样不能静默丢文件，记进阻塞清单交给手动补全。
+                if let Some(b) =
+                    crate::services::modpack_blocked::blocked_from_batch(info, info.mod_id)
+                {
+                    blocked.push(b);
                     continue;
-                };
+                }
+                // 走到这里 downloadUrl 必为非空：唯一的 null/空分支已被上一行吃掉。
+                let url = info.download_url.clone().unwrap_or_default();
                 let filename = info
                     .file_name
                     .clone()
@@ -1012,6 +1071,27 @@ async fn download_target_files(
                 files.push((url, dest, headers));
                 rels.push(rel);
             }
+            // 目标版本分发受限、但实例里已有同名文件的条目：按「目标已具备该文件」
+            // 处理，把它的 rel 写进 rels。否则它不在目标清单里，plan_changes 会判成
+            // removed，apply_journal 直接把用户手头那个文件删掉——而且既然已从阻塞
+            // 清单过滤掉，用户连提示都收不到。staging 里没有该文件，
+            // apply_staged_file 会返回 MissingInStaging 并原样保留磁盘文件。
+            blocked.retain(|b| {
+                let present = crate::services::modpack_blocked::existing_entry_file(
+                    &inst.game_dir,
+                    &inst.name,
+                    version_isolation,
+                    b,
+                )
+                .is_some();
+                if present {
+                    rels.push(format!("mods/{}", b.file_name.trim()));
+                }
+                !present
+            });
+            if !blocked.is_empty() {
+                handle.set_blocked_files(blocked.len() as i32);
+            }
             if !files.is_empty() {
                 crate::services::install_service::download_batch(
                     handle,
@@ -1021,7 +1101,7 @@ async fn download_target_files(
                 )
                 .await?;
             }
-            Ok(rels)
+            Ok((rels, blocked))
         }
         _ => Err("该来源不支持原地更新".to_string()),
     }
