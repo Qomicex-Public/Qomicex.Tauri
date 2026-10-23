@@ -43,6 +43,34 @@ const DEP_STEP = 'download-deps'
 const MAIN_STEP = 'download-main'
 
 /**
+ * 收藏夹批量安装（issue #223）：把多个根资源及其依赖合并为一个 batch 任务。
+ *
+ * 与 `quickInstallViaDownloadCenter` 的差异只有两点：
+ * - 本体是**多个**根资源（收藏夹成员），不是单个；
+ * - 命名去重从调用方接手（`existingFileNames`），因为一批里有多个资源时，
+ *   每个资源各自从空集合开始去重会撞名。
+ *
+ * 其余语义完全一致：`fileNaming` 模板、`download-deps` / `download-main` 两步、
+ * 启动失败 `cancelBatch`、后台 `waitForCompletion` 聚合、成功后失效
+ * `api-instance-{id}-mods`。批量安装**不做删除**，`toDelete` 恒为空。
+ */
+export interface FolderQuickInstallOptions {
+  instanceId: string
+  gameVersion: string
+  /** 根资源（收藏夹成员） */
+  mains: QuickInstallItem[]
+  /** 依赖（已按来源去重，见 favoriteFolderInstallPlan） */
+  deps: QuickInstallItem[]
+  /** 批任务标题（收藏夹名） */
+  taskName: string
+  /** 实例里已有的文件名，作为全局命名预留的初始内容 */
+  existingFileNames: Iterable<string>
+  icon?: string
+  t: TFunc
+  lang?: string
+}
+
+/**
  * 模组快捷安装后台化：并行启动「前置资源组 + 资源本体」下载会话，聚合为一个
  * 带 2-step（无依赖时 1-step）的 batch 任务进入下载中心。
  * 返回的 Promise 在全部会话启动成功后 resolve（返回 batchId）；任一会话启动失败时
@@ -58,22 +86,9 @@ export async function quickInstallViaDownloadCenter(opts: QuickInstallOptions): 
 
   // 资源文件命名格式（ENH-10）：读取设置，按模板生成新文件名。
   // 已存在的目标文件名（下载中/已安装）做序号去重，避免覆盖。
-  const isZh = (opts.lang ?? '').toLowerCase().startsWith('zh')
-  const namingTemplate = getSettings().fileNaming || (isZh ? '[{cn}]{name}-{version}' : '{name}-{version}')
+  const namingTemplate = resolveNamingTemplate(opts.lang)
   const usedNames = new Set<string>()
-  const applyNaming = (item: QuickInstallItem): QuickInstallItem => {
-    const extMatch = item.fileName.match(/\.(jar|zip|mrpack|qmodpack|shaderpacks|mcpack)$/i)
-    const ext = extMatch ? extMatch[0] : ''
-    const version = item.fileName.replace(/\.(jar|zip|mrpack|qmodpack|shaderpacks|mcpack)$/i, '').replace(/^.*-(\d[\w.+]*)$/, '$1')
-    const renamed = formatDownloadFileName(namingTemplate, {
-      name: item.name.replace(/\.(jar|zip|mrpack|qmodpack|mcpack|shaderpacks)$/i, ''),
-      version,
-      cnName: item.cnName ?? null,
-    })
-    const finalName = dedupFileName(`${renamed}${ext}`, usedNames)
-    usedNames.add(finalName)
-    return { ...item, fileName: finalName }
-  }
+  const applyNaming = makeNaming(namingTemplate, usedNames)
 
   const batchId = `quick-install-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const hasDeps = deps.length > 0
@@ -132,18 +147,132 @@ export async function quickInstallViaDownloadCenter(opts: QuickInstallOptions): 
     const mainTaskId = await startOne(main)
     started.push(mainTaskId)
     updateTask(batchId, { batchTaskIds: [...started] })
-    void aggregate(batchId, instanceId, hasDeps, started, steps, t, toDelete, newFileNames)
+    void aggregate(batchId, instanceId, started.slice(0, -1), [mainTaskId], steps, t, toDelete, newFileNames)
     return batchId
   } catch (e) {
     return failStart(e)
   }
 }
 
+/**
+ * 收藏夹批量安装（issue #223）：一次提交多个根资源及其依赖。
+ *
+ * 保留 `quickInstallViaDownloadCenter` 的签名与行为不变，供单资源安装继续使用。
+ * 本函数只做「多本体」扩展，聚合仍复用同一个 `aggregate`。
+ */
+export async function quickInstallViaDownloadCenterForFolder(
+  opts: FolderQuickInstallOptions,
+): Promise<string> {
+  const { instanceId, gameVersion, deps, mains, taskName, t } = opts
+
+  // 命名预留从实例已有文件名起步：一批里有多个资源时，各自从空集合去重会撞名。
+  const namingTemplate = resolveNamingTemplate(opts.lang)
+  const usedNames = new Set<string>(opts.existingFileNames)
+  const applyNaming = makeNaming(namingTemplate, usedNames)
+
+  const batchId = `quick-install-folder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const hasDeps = deps.length > 0
+  const steps: InstallStepInfo[] = hasDeps
+    ? [
+        { id: DEP_STEP, status: 'active', percent: 0 },
+        { id: MAIN_STEP, status: 'active', percent: 0 },
+      ]
+    : [{ id: MAIN_STEP, status: 'active', percent: 0 }]
+  addTask({
+    id: batchId,
+    name: taskName,
+    type: 'batch',
+    gameVersion,
+    status: 'downloading',
+    progress: 0,
+    totalFiles: deps.length + mains.length,
+    completedFiles: 0,
+    createdAt: new Date().toISOString(),
+    instanceId,
+    icon: opts.icon,
+    resourceKind: 'mod',
+    steps,
+    batchTaskIds: [],
+  })
+
+  const started: string[] = []
+  const startOne = async (item: QuickInstallItem): Promise<string> => {
+    const named = applyNaming(item)
+    const { taskId } = await startResourceDownload(instanceId, named.url, named.fileName, named.category)
+    return taskId
+  }
+  const cancelStarted = async () => {
+    if (started.length > 0) await cancelBatch(started).catch(() => {})
+    updateTask(batchId, { status: 'failed' })
+  }
+  const failStart = async (e: unknown): Promise<never> => {
+    await cancelStarted()
+    throw new Error(startErrorMessage(e))
+  }
+
+  const depResults = await Promise.allSettled(deps.map(startOne))
+  for (const r of depResults) {
+    if (r.status === 'fulfilled') started.push(r.value)
+  }
+  const failedDeps = depResults.filter(r => r.status === 'rejected') as PromiseRejectedResult[]
+  if (failedDeps.length > 0) {
+    return failStart(failedDeps[0].reason)
+  }
+
+  try {
+    // 本体按顺序启动：并行启动多个本体时，任一个失败都要回滚，顺序启动能让错误
+    // 归因到具体资源，也避免瞬时打出大量并发请求。
+    const mainTaskIds: string[] = []
+    for (const item of mains) {
+      const id = await startOne(item)
+      mainTaskIds.push(id)
+      started.push(id)
+    }
+    updateTask(batchId, { batchTaskIds: [...started] })
+    // 批量安装不做删除：toDelete 恒为空（只新增，不清除用户已有文件）。
+    void aggregate(batchId, instanceId, started.slice(0, depResults.length), mainTaskIds, steps, t, [], new Set())
+    return batchId
+  } catch (e) {
+    return failStart(e)
+  }
+}
+
+/** 资源命名模板（ENH-10）：读设置，中文环境默认带中文名前缀。 */
+function resolveNamingTemplate(lang?: string): string {
+  const isZh = (lang ?? '').toLowerCase().startsWith('zh')
+  return getSettings().fileNaming || (isZh ? '[{cn}]{name}-{version}' : '{name}-{version}')
+}
+
+/** 按模板生成本地落盘名，并在 `usedNames` 里做全局预留。 */
+function makeNaming(template: string, usedNames: Set<string>) {
+  return (item: QuickInstallItem): QuickInstallItem => {
+    const extMatch = item.fileName.match(/\.(jar|zip|mrpack|qmodpack|shaderpacks|mcpack)$/i)
+    const ext = extMatch ? extMatch[0] : ''
+    const version = item.fileName.replace(/\.(jar|zip|mrpack|qmodpack|shaderpacks|mcpack)$/i, '').replace(/^.*-(\d[\w.+]*)$/, '$1')
+    const renamed = formatDownloadFileName(template, {
+      name: item.name.replace(/\.(jar|zip|mrpack|qmodpack|mcpack|shaderpacks)$/i, ''),
+      version,
+      cnName: item.cnName ?? null,
+    })
+    const finalName = dedupFileName(`${renamed}${ext}`, usedNames)
+    usedNames.add(finalName)
+    return { ...item, fileName: finalName }
+  }
+}
+
+
+/**
+ * 聚合下载终态并驱动 batch 任务进度。
+ *
+ * `depTaskIds` / `mainTaskIds` 由调用方显式传入，**不按位置切分**：收藏夹批量安装
+ * 有多个本体，用 `taskIds.slice(0, -1)` 会把除最后一个之外的本体误算进依赖步骤，
+ * 导致进度与终态错位。
+ */
 async function aggregate(
   batchId: string,
   instanceId: string,
-  hasDeps: boolean,
-  taskIds: string[],
+  depTaskIds: string[],
+  mainTaskIds: string[],
   steps: InstallStepInfo[],
   t: TFunc,
   toDelete: { fileName: string; category: string }[] = [],
@@ -151,7 +280,8 @@ async function aggregate(
 ): Promise<void> {
   const prog = new Map<string, number>()
   const speedMap = new Map<string, number>()
-  const total = taskIds.length
+  const total = depTaskIds.length + mainTaskIds.length
+  const hasDeps = depTaskIds.length > 0
   const setStep = (id: string, patch: Partial<InstallStepInfo>) => {
     const idx = steps.findIndex(s => s.id === id)
     if (idx < 0) return
@@ -174,14 +304,14 @@ async function aggregate(
       return status
     }))
   const [depsStatuses, mainStatus] = await Promise.all([
-    hasDeps ? track(DEP_STEP, taskIds.slice(0, -1)) : ([] as string[]),
-    track(MAIN_STEP, [taskIds[taskIds.length - 1]]),
+    hasDeps ? track(DEP_STEP, depTaskIds) : ([] as string[]),
+    track(MAIN_STEP, mainTaskIds),
   ])
-  setStep(MAIN_STEP, { status: mainStatus[0] === 'completed' ? 'done' : 'failed' })
+  setStep(MAIN_STEP, { status: mainStatus.every(s => s === 'completed') ? 'done' : 'failed' })
   if (hasDeps) {
     setStep(DEP_STEP, { status: depsStatuses.every(s => s === 'completed') ? 'done' : 'failed' })
   }
-  const all = [...depsStatuses, mainStatus[0]]
+  const all = [...depsStatuses, ...mainStatus]
   const failedCount = all.filter(s => s !== 'completed').length
   if (failedCount === 0) {
     // 全部下载成功后才清理旧版本文件（失败时保留原件，用户不会丢数据）。

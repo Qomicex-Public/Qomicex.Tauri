@@ -40,6 +40,8 @@ import { getAccounts, deleteAccount } from '../api/account.ts'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
+import { useFavoritesStore } from '../stores/favoritesStore.ts'
+import { scheduleFavoriteInstall } from '../stores/pendingFavoriteInstallStore.ts'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 import ImportDialog from '../components/ImportDialog.tsx'
 import { cacheInvalidate, cacheGet, cacheSet } from '../lib/simple-cache.ts'
@@ -248,6 +250,8 @@ export default function Instances() {
   const [loaderAddons, setLoaderAddons] = useState<LoaderAddonInfo[]>([])
   const [loadingAddons, setLoadingAddons] = useState(false)
   const [creating, setCreating] = useState(false)
+  /** 新建实例时同时安装的收藏夹 id（issue #223）；空串 = 不安装。 */
+  const [favoriteFolderId, setFavoriteFolderId] = useState('')
 
   const doScan = useCallback(async (dir: string) => {
     if (!dir) { setScannedLocal([]); return }
@@ -363,6 +367,35 @@ export default function Instances() {
       return { ...prev, name: autoInstanceName(prev.gameVersion, prev.loader, v) }
     })
   }, [form.gameVersion, form.loader, form.loaderVersion, loaderVersions])
+
+  // 收藏夹候选（issue #223）：进入配置步骤时才拉，避免每次进页面都请求。
+  const favFolders = useFavoritesStore((s) => s.folders)
+  const favItems = useFavoritesStore((s) => s.favorites)
+  const loadFavs = useFavoritesStore((s) => s.load)
+  const loadFavFolders = useFavoritesStore((s) => s.loadFolders)
+  useEffect(() => {
+    if (step !== 'configure') return
+    void loadFavs()
+    void loadFavFolders()
+  }, [step, loadFavs, loadFavFolders])
+
+  /** 收藏夹 id → 其中的 mod 成员数（0 个 mod 的夹子不提供选择）。 */
+  const favFolderModCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const f of favItems) {
+      if (f.category !== 'mod') continue
+      for (const id of new Set(f.folderIds ?? [])) {
+        counts.set(id, (counts.get(id) ?? 0) + 1)
+      }
+    }
+    return counts
+  }, [favItems])
+
+  /** 可选收藏夹：只列有 mod 的（空夹子选了也没意义）。 */
+  const favFolderOptions = useMemo(
+    () => favFolders.filter((f) => (favFolderModCounts.get(f.id) ?? 0) > 0),
+    [favFolders, favFolderModCounts],
+  )
 
   async function handlePickDir() {
     try {
@@ -526,6 +559,23 @@ export default function Instances() {
           updateTask(instance.id, { status: 'failed', error: e instanceof Error ? e.message : String(e) })
         }
       })
+
+      // 收藏夹后续安装（issue #223）：只登记「待执行」，真正的 mod 下载由编排器
+      // 在 getInstallProgress 返回 completed 之后才发起 —— 此刻实例文件还没落盘。
+      if (favoriteFolderId) {
+        const folder = favFolders.find((f) => f.id === favoriteFolderId)
+        if (folder) {
+          scheduleFavoriteInstall({
+            instanceId: instance.id,
+            folderId: folder.id,
+            folderName: folder.name,
+            members: favItems
+              .filter((f) => f.category === 'mod' && (f.folderIds ?? []).includes(folder.id))
+              .map((f) => ({ source: f.source, id: f.id, title: f.title, category: f.category })),
+            createdAt: new Date().toISOString(),
+          })
+        }
+      }
 
       if (currentDir) await doScan(currentDir)
       navigate('/downloads')
@@ -970,6 +1020,32 @@ export default function Instances() {
                 </div>
               )}
             </div>
+            {/* 同时安装收藏夹（issue #223）：只在有可选收藏夹时出现；原版实例禁用并说明原因。 */}
+            {favFolderOptions.length > 0 && (
+              <div className="space-y-2">
+                <Label>{t('instances.favoriteFolder.label')} <span className="text-xs font-normal text-muted-foreground">{t('instances.optional')}</span></Label>
+                <Select
+                  value={favoriteFolderId}
+                  onChange={setFavoriteFolderId}
+                  placeholder={t('instances.favoriteFolder.none')}
+                  disabled={!form.loader}
+                >
+                  <SelectOption value="">{t('instances.favoriteFolder.none')}</SelectOption>
+                  {favFolderOptions.map((f) => (
+                    <SelectOption key={f.id} value={f.id}>
+                      {t('instances.favoriteFolder.option', { name: f.name, count: favFolderModCounts.get(f.id) ?? 0 })}
+                    </SelectOption>
+                  ))}
+                </Select>
+                {!form.loader ? (
+                  <p className="text-[11px] text-muted-foreground">{t('instances.favoriteFolder.requiresLoader')}</p>
+                ) : favoriteFolderId ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    {t('instances.favoriteFolder.scheduled', { name: favFolders.find((f) => f.id === favoriteFolderId)?.name ?? '' })}
+                  </p>
+                ) : null}
+              </div>
+            )}
             {form.loader && (loadingAddons || loaderAddons.length > 0) && (
               <div className="space-y-2.5">
                 <div className="flex items-center gap-2">
