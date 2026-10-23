@@ -440,6 +440,27 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      # #202：捆绑的 libwayland-* 遮蔽宿主 Mesa 依赖，较新 Wayland 主机上
+      # EGL 初始化失败中止；移除后重新打包，后续步骤基于新产物
+      - name: Strip bundled Wayland libs from AppImage
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          BUNDLES="${{ github.event.inputs.linuxBundles }}"
+          BUNDLES="${BUNDLES:-appimage,deb,rpm}"
+          case ",$BUNDLES," in
+            *,appimage,*)
+              found=0
+              for f in src-tauri/target/release/bundle/appimage/*.AppImage; do
+                [ -e "$f" ] || continue
+                found=1
+                bash scripts/linux/fix-appimage.sh "$f" x86_64
+              done
+              if [ "$found" -ne 1 ]; then echo "::warning::appimage selected but no AppImage bundle found"; fi
+              ;;
+            *) echo "BUNDLES does not include appimage; skipping Wayland strip" ;;
+          esac
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
@@ -534,6 +555,27 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      # #202：捆绑的 libwayland-* 遮蔽宿主 Mesa 依赖，较新 Wayland 主机上
+      # EGL 初始化失败中止；移除后重新打包，后续步骤基于新产物
+      - name: Strip bundled Wayland libs from AppImage
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          BUNDLES="${{ github.event.inputs.linuxBundles }}"
+          BUNDLES="${BUNDLES:-appimage,deb,rpm}"
+          case ",$BUNDLES," in
+            *,appimage,*)
+              found=0
+              for f in src-tauri/target/release/bundle/appimage/*.AppImage; do
+                [ -e "$f" ] || continue
+                found=1
+                bash scripts/linux/fix-appimage.sh "$f" aarch64
+              done
+              if [ "$found" -ne 1 ]; then echo "::warning::appimage selected but no AppImage bundle found"; fi
+              ;;
+            *) echo "BUNDLES does not include appimage; skipping Wayland strip" ;;
+          esac
       - name: Generate update manifest fragment
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
