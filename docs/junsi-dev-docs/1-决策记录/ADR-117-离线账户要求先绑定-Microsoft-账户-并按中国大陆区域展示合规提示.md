@@ -72,14 +72,17 @@ const OFFLINE_DISABLED_IN_CN: bool = true;
 
 `GET /api/system/region` 返回 `{ "chinaMainland": bool }`，供前端决定是否展示提示条。
 
-### 4. 中国大陆常驻合规提示条
+### 4. 中国大陆合规提示（下载新版本页内可关闭）
 
-`src/components/ComplianceBanner.tsx` 在 `Layout` 内、标题栏下方渲染一条不可关闭的细条，
+`src/components/ComplianceNotice.tsx` 在实例页「下载新版本」步骤顶部渲染一条警示条，
 仅在 `chinaMainland == true` 时出现；境外不渲染，也不占布局。文案说明三件事：游戏文件来自
 Mojang 官方源及其公开镜像、本软件不托管游戏本体、与 Mojang / Microsoft / 网易无关，
-离线账户仅用于离线游戏与自建服务器。
+离线账户仅用于离线游戏与自建服务器。用户关闭后写入 localStorage，不再重复展示。
 
 区域接口失败时不展示（fail-open 的展示侧对应实现）。
+
+> 2026-10-23 修订：原方案为 `Layout` 内标题栏下方的常驻不可关闭细条。常驻条长期占用首屏
+> 且无法关闭，体验反馈不佳；改为只在「下载新版本」页展示并允许关闭。
 
 ## 备选方案
 
@@ -108,7 +111,7 @@ Mojang 官方源及其公开镜像、本软件不托管游戏本体、与 Mojang
 
 - 后端：新增 `services/region.rs`、`GET /api/system/region`；`services/account.rs` 增加
   `account_creation_blocked` 与落库前置判定；`Cargo.toml` 增加 `iana-time-zone`
-- 前端：新增 `ComplianceBanner`，`Layout` 挂载；`Accounts.tsx` 去掉语言豁免；
+- 前端：新增 `ComplianceNotice`，挂在实例页「下载新版本」步骤；`Accounts.tsx` 去掉语言豁免；
   `src/api/system.ts` 增加 `getRegion()`；`src/i18n/errors.ts` 增加
   `OFFICIAL_ACCOUNT_REQUIRED` 映射
 - i18n（submodule）：7 种语言各新增 `compliance.banner`、`errors.officialAccountRequired`

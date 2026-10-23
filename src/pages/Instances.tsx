@@ -11,6 +11,7 @@ import { MorphIcon } from 'morphicons/react'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
+import { ComplianceNotice } from '../components/ComplianceNotice.tsx'
 import { invoke } from '@tauri-apps/api/core'
 import { useI18n } from '../i18n/index.tsx'
 
@@ -816,6 +817,7 @@ export default function Instances() {
           title={t('instances.downloadTitle')}
           onBack={() => setStep('list')}
         />
+        <ComplianceNotice />
         <div ref={selectVersionRef} className="glass-surface rounded-xl border border-border/60 bg-card/80 p-4 space-y-4">
           <div className="space-y-2">
             <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground/70">{t('instances.categoryLabel')}</p>
