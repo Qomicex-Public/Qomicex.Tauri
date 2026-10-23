@@ -221,9 +221,10 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
         applyRemaining(res.items ?? [])
       } catch (e: unknown) {
         if (instanceIdRef.current !== instanceId) return
-        setError(describeError(e, t('dialogs.blockedMods.submitFailed')))
+        // refresh 开头会同步清空 error，必须先调用它再写本次错误。
         // 失败也回查一次列表：可能是后端已写入但响应丢失，避免列表停在过期状态。
         void refresh()
+        setError(describeError(e, t('dialogs.blockedMods.submitFailed')))
       } finally {
         // 无条件清理自己这一条的忙碌态：共用 reqIdRef 时若被新一轮加载推进，
         // 带条件的清理会让按钮永久禁用。

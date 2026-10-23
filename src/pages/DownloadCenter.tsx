@@ -26,6 +26,7 @@ import InstallStepsList from '../components/InstallStepsList.tsx'
 import DownloadSpeedGraph from '../components/DownloadSpeedGraph.tsx'
 import { BlockedModsDialog } from '../components/BlockedModsDialog.tsx'
 import { getBlockedMods } from '../api/modpack-blocked.ts'
+import { ApiError } from '../api/client.ts'
 
 import type { DownloadTask, InstallStepInfo } from '../types/index.ts'
 import { useDownloadSSE } from '../hooks/useDownloadSSE.ts'
@@ -508,28 +509,36 @@ export default function DownloadCenter() {
   /**
    * 进入下载中心时用磁盘清单刷新等待中的任务（issue #291）：用户可能在资源
    * 管理器里直接把文件放进了 mods 目录，后端 GET 会核对并在清单清空时收尾。
+   * 实例已删除时后端返回 404，吞掉会让卡片永远停在等待态且没有移除入口。
    */
+  const reconcileBlockedTask = useCallback((taskId: string, instId: string) => {
+    getBlockedMods(instId)
+      .then(res => {
+        const count = (res.items ?? []).length
+        if (count > 0) {
+          updateTask(taskId, { status: 'awaiting-files', blockedFiles: count })
+        } else {
+          updateTask(taskId, {
+            status: 'completed',
+            progress: 100,
+            blockedFiles: undefined,
+            completedAt: new Date().toISOString(),
+          })
+        }
+      })
+      .catch((e: unknown) => {
+        if (e instanceof ApiError && e.status === 404) {
+          updateTask(taskId, { status: 'cancelled', blockedFiles: undefined })
+        }
+      })
+  }, [])
+
   useEffect(() => {
     for (const task of getTasks()) {
       if (task.status !== 'awaiting-files' || !task.instanceId) continue
-      const instId = task.instanceId
-      getBlockedMods(instId)
-        .then(res => {
-          const count = (res.items ?? []).length
-          if (count > 0) {
-            updateTask(task.id, { blockedFiles: count })
-          } else {
-            updateTask(task.id, {
-              status: 'completed',
-              progress: 100,
-              blockedFiles: undefined,
-              completedAt: new Date().toISOString(),
-            })
-          }
-        })
-        .catch(() => {})
+      reconcileBlockedTask(task.id, task.instanceId)
     }
-  }, [])
+  }, [reconcileBlockedTask])
 
   const { data: sseData, reconnectKey } = useDownloadSSE()
   const prevInstallIds = useRef<Set<string>>(new Set())
@@ -675,20 +684,7 @@ if (task.instanceId && task.type !== 'batch') {
           // 等待补全的任务不依赖 tracker（重启后后端没有这条记录）：以磁盘清单为准，
           // 否则 not-started 会把「等用户补文件」误判成任务过期。
           if (task.status === 'awaiting-files') {
-            const instId = task.instanceId
-            getBlockedMods(instId).then(res => {
-              const count = (res.items ?? []).length
-              if (count > 0) {
-                updateTask(task.id, { status: 'awaiting-files', blockedFiles: count })
-              } else {
-                updateTask(task.id, {
-                  status: 'completed',
-                  progress: 100,
-                  blockedFiles: undefined,
-                  completedAt: new Date().toISOString(),
-                })
-              }
-            }).catch(() => {})
+            reconcileBlockedTask(task.id, task.instanceId)
             continue
           }
           getInstallProgress(task.instanceId).then(p => {
@@ -755,7 +751,7 @@ if (task.instanceId && task.type !== 'batch') {
       }
     }
     prevJavaIds.current = currentJavaIds
-  }, [sseData])
+  }, [sseData, reconcileBlockedTask])
 
   const filterTabs = useMemo(() => FILTER_TABS.map((tab) => ({ ...tab, label: t(`downloads.filter.${tab.id}`) })), [t])
 
