@@ -91,7 +91,27 @@ issue #223 要求在已有收藏 / 收藏夹能力（#132）之上增加 mod 快
 - `pnpm run typecheck` 通过
 - `pnpm run lint`：0 error / 102 warning（与 AGENTS.md 基线一致，新增 0 条）
 - `pnpm run build` 通过
-- `pnpm run test:favorite-folder-install-plan`：27 项断言通过
+- `pnpm run test:favorite-folder-install-plan`：31 项断言通过
 - `pnpm run test:dependency-install-plan`：10 项断言通过（无回归）
 - `pnpm run test:i18n-steps`：7 语言覆盖 25 step id + 27 stage
-- `pnpm run license:check`：389 个源文件均声明版权头
+- `pnpm run license:check`：394 个源文件均声明版权头
+
+## 评审修复（v1.1）
+
+首轮评审发现 9 项缺陷，其中 6 项会让功能在正常使用中失效。按严重度修复：
+
+| # | 缺陷 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | 新建实例的收藏夹安装永不触发 | `resumePendingFavoriteInstalls` 只在后端就绪时跑一次，向导新登记的条目无人接管 | `App.tsx` 订阅队列变化，登记后立即接管 |
+| 2 | `not-started` 导致无限轮询 | 后端 tracker 无条目时返回 200 + `not-started`（非 404），落进「继续等」分支 | 把 `not-started` 当缺失状态，纳入重试上限 |
+| 3 | 认领过早，刷新即丢条目 | `claimFavoriteInstall` 在等待开始时就删除 localStorage | 推迟到确认 `completed` 且即将提交时认领；失败保留条目 |
+| 4 | 依赖目录的同名文件被覆盖 | 只取 `mods` 目录已有文件名，而依赖可能在 `shaderpacks` 等目录 | 按解析出的依赖实际 category 分别取 |
+| 5 | 非 mod 条目被静默排除 | 对话框与 `ResourceCenter` 预过滤掉非 mod，规划器 `notMod` 计数恒为 0 | 传全部成员，由规划器统计并展示 |
+| 6 | 查询故障被报成「收藏夹是空的」 | 查询失败与「无兼容版本」都压成 `version: null` | 新增 `lookupFailed` 跳过原因；整批失败时提示错误而非「没有可安装的模组」 |
+| 7 | 依赖查询失败无提示 | 依赖查询 `catch` 后返回空数组 | 新增 `depsLookupFailed`，本体照装但记录 `lookupFailed` |
+| 8 | 并发批次可能互相覆盖 | `usedNames` 是每次调用新建的局部集合，看不到同实例在途下载 | 按实例共享命名预留池，聚合结束时按池身份释放 |
+| 9 | 大小写不同仍算冲突 | `Set.has` 大小写敏感，Windows/macOS 上 `Foo.jar` 与 `foo.jar` 同路径 | 冲突检查走小写归一视图，下载仍用原拼写 |
+
+另修两处：向导仅在 `loader` 有效时登记收藏夹（避免原版实例使用残留选择）；`gotoNewInstance` 重置收藏夹选择。
+
+回归脚本从 27 项断言扩到 31 项，新增「查询失败与无兼容版本必须分开」两条契约。已验证：临时抽掉 `lookupFailed` 判定后该断言以预期原因失败，还原后全绿。

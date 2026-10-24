@@ -1048,13 +1048,22 @@ export default function ResourceCenter() {
    * 刻意不用 `favoriteItems`：那是「视图可见集合」，会随来源 / 分类 / 标签 / 搜索词
    * 变化，而「安装此收藏夹」的语义是安装整个收藏夹，结果不应随搜索词改变。
    * 因此直接从 store 的全量收藏里按 `folderIds` 筛。
+   *
+   * 这里**不过滤非 mod**：非 mod 条目要交给规划器记成 notMod，对话框才能告诉用户
+   * 它们被排除了；提前过滤会让用户以为收藏夹里就只有这么几个条目。
    */
-  const folderModMembers = useMemo<FavoriteFolderMember[]>(() => {
+  const folderMembers = useMemo<FavoriteFolderMember[]>(() => {
     if (favFolder === 'all' || favFolder === UNFILED) return []
     return favorites
-      .filter((f) => f.category === 'mod' && (f.folderIds ?? []).includes(favFolder))
+      .filter((f) => (f.folderIds ?? []).includes(favFolder))
       .map((f) => ({ source: f.source, id: f.id, title: f.title, category: f.category }))
   }, [favorites, favFolder])
+
+  /** 当前收藏夹里的 mod 条数（决定「安装此收藏夹」按钮是否可用）。 */
+  const folderModCount = useMemo(
+    () => folderMembers.filter((m) => m.category === 'mod').length,
+    [folderMembers],
+  )
 
   /** 当前收藏夹名（对话框标题与批任务名用）。 */
   const currentFolderName = useMemo(
@@ -1511,10 +1520,10 @@ export default function ResourceCenter() {
               <Button
                 variant="outline"
                 className="h-10 gap-1.5"
-                disabled={folderModMembers.length === 0}
+                disabled={folderModCount === 0}
                 onClick={() => setFavInstallOpen(true)}
                 title={
-                  folderModMembers.length === 0
+                  folderModCount === 0
                     ? t('resource.favorites.installFolder.noMods')
                     : t('resource.favorites.installFolder.button')
                 }
@@ -1929,7 +1938,7 @@ export default function ResourceCenter() {
           open={true}
           onClose={() => setFavInstallOpen(false)}
           folderName={currentFolderName}
-          members={folderModMembers}
+          members={folderMembers}
         />
       )}
     </PageShell>

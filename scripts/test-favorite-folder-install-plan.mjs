@@ -218,6 +218,30 @@ try {
   check('重复根资源只下一次', dupRoot.downloads.length, 1)
   check('重复根资源记为 duplicate', dupRoot.skipped.map((s) => s.reason), ['duplicate'])
 
+  // ---- 11. 查询失败与「确实没有兼容版本」必须分开 ----
+  // 整批查询失败若报成 noCompatibleVersion，用户会以为收藏夹是空的。
+  const lookupFailedPlan = planFavoriteFolderInstall(
+    [{ root: { source: 'modrinth', id: 'A', title: 'Mod A', category: 'mod' }, version: null, deps: [], lookupFailed: true }],
+    new Set(),
+  )
+  check('查询失败记为 lookupFailed', lookupFailedPlan.skipped.map((s) => s.reason), ['lookupFailed'])
+  check(
+    '确实没有版本仍记为 noCompatibleVersion',
+    planFavoriteFolderInstall(
+      [{ root: { source: 'modrinth', id: 'A', title: 'Mod A', category: 'mod' }, version: null, deps: [] }],
+      new Set(),
+    ).skipped.map((s) => s.reason),
+    ['noCompatibleVersion'],
+  )
+
+  // ---- 12. 依赖查询失败：本体照装，但要记为 lookupFailed 告知用户 ----
+  const depsFailed = planFavoriteFolderInstall(
+    [{ root: { source: 'modrinth', id: 'A', title: 'Mod A', category: 'mod' }, version: ver('a-1.0.jar'), deps: [], depsLookupFailed: true }],
+    new Set(),
+  )
+  check('依赖查询失败时本体仍下载', depsFailed.downloads.map((d) => d.fileName), ['a-1.0.jar'])
+  check('依赖查询失败被记录', depsFailed.skipped.map((s) => s.reason), ['lookupFailed'])
+
   console.log(`\n✓ favoriteFolderInstallPlan: ${checks} 项断言通过`)
 } finally {
   rmSync(outDir, { recursive: true, force: true })

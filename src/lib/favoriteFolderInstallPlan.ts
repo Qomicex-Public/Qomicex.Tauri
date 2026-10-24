@@ -72,6 +72,15 @@ export interface FavoriteRootResolution {
   version: FavoriteVersionLike | null
   /** 该版本的依赖闭包（解析失败时传空数组） */
   deps: readonly FavoriteDepLike[]
+  /**
+   * 版本查询本身失败（网络 / 上游故障），而非「确实没有兼容版本」。
+   *
+   * 与 `version: null` 组合使用：`lookupFailed` 为 true 时表示「查不到」，
+   * 为 false 时才是「确实没有」。
+   */
+  lookupFailed?: boolean
+  /** 依赖查询失败（本体可装，但前置未解析出来） */
+  depsLookupFailed?: boolean
 }
 
 /** 需要下载的文件（对应批任务的下载项）。 */
@@ -103,6 +112,14 @@ export type FavoriteSkipReason =
   | 'notMod'
   /** 同一来源下重复（根资源优先，共享依赖保留首次出现） */
   | 'duplicate'
+  /**
+   * 查询版本失败（网络 / 上游故障）。
+   *
+   * 必须与 `noCompatibleVersion` 区分：前者是「暂时查不到」，后者是「确实没有」。
+   * 混在一起时，整批查询失败会被报成「收藏夹里没有可安装的模组」，
+   * 用户据此以为收藏夹是空的。
+   */
+  | 'lookupFailed'
 
 /** 被跳过的条目。 */
 export interface FavoriteInstallSkip {
@@ -159,7 +176,7 @@ export function planFavoriteFolderInstall(
 
   // ── 第一遍：根资源 ──────────────────────────────────────────────
   // 先跑根资源再跑依赖，保证「既是成员又是依赖」的项目按根资源处理。
-  for (const { root, version } of resolutions) {
+  for (const { root, version, lookupFailed } of resolutions) {
     if (root.category !== 'mod') {
       skip(root.source, root.id, root.title, 'notMod')
       continue
@@ -184,7 +201,9 @@ export function planFavoriteFolderInstall(
     }
     if (!version) {
       claimed.add(key)
-      skip(root.source, root.id, root.title, 'noCompatibleVersion')
+      // 「查不到」与「确实没有」必须分开报：整批查询失败时若报成
+      // noCompatibleVersion，用户会以为收藏夹里没有可装的东西。
+      skip(root.source, root.id, root.title, lookupFailed ? 'lookupFailed' : 'noCompatibleVersion')
       continue
     }
     if (!version.url) {
@@ -207,10 +226,16 @@ export function planFavoriteFolderInstall(
   }
 
   // ── 第二遍：依赖 ────────────────────────────────────────────────
-  for (const { root, deps } of resolutions) {
+  for (const { root, deps, depsLookupFailed } of resolutions) {
     // 根资源自身没被采纳（非 mod / 不支持来源 / 无版本 / 已安装）时，它的依赖也不带进来：
     // 用户要装的是这个 mod，mod 都装不了就没有理由装它的前置。
     if (!acceptedRoots.has(favoriteInstallKey(root.source, root.id))) continue
+
+    // 依赖查询失败：本体照装，但必须让用户知道前置没解析出来，
+    // 否则他会以为装完就能用，实际启动时才缺前置。
+    if (depsLookupFailed) {
+      skip(root.source, root.id, root.title, 'lookupFailed')
+    }
 
     for (const dep of deps) {
       if (!SUPPORTED_SOURCES.has(dep.source.toLowerCase())) {

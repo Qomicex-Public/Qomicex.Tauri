@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { CheckCircle2, Circle, Layers, RotateCw } from 'lucide-react'
 import { cn } from '../lib/utils.ts'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Button, Select, SelectOption, useMessageBox } from './ui'
@@ -34,6 +34,7 @@ const SKIP_REASON_KEYS: Record<FavoriteSkipReason, string> = {
   unsupportedSource: 'unsupportedSource',
   notMod: 'notMod',
   duplicate: 'duplicate',
+  lookupFailed: 'lookupFailed',
 }
 
 export default function FavoriteFolderInstallDialog({
@@ -54,8 +55,9 @@ export default function FavoriteFolderInstallDialog({
   const [planError, setPlanError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
 
-  // 只有 mod 成员参与安装；其余类型在计划里记为 notMod 并展示条数。
-  const modMembers = useMemo(() => members.filter((m) => m.category === 'mod'), [members])
+  // 全部成员都交给规划器：非 mod 条目由它记成 notMod 并在对话框里统计展示。
+  // 在这里预过滤会让规划器的 notMod 计数恒为 0，用户看不到「这些被排除了」。
+  const allMembers = members
 
   // 实例候选：属于当前游戏目录 + 必须有 loader（原版实例装不了 mod）。
   useEffect(() => {
@@ -103,7 +105,7 @@ export default function FavoriteFolderInstallDialog({
           instanceId: selectedInstance.id,
           gameVersion: selectedInstance.gameVersion,
           loader: selectedInstance.loader ?? '',
-          members: modMembers,
+          members: allMembers,
         })
         if (cancelled) return
         setPlan(result.plan)
@@ -118,7 +120,7 @@ export default function FavoriteFolderInstallDialog({
     return () => {
       cancelled = true
     }
-  }, [open, selectedInstance, modMembers, t])
+  }, [open, selectedInstance, allMembers, t])
 
   const handleInstall = useCallback(async () => {
     if (!selectedInstance || !plan || plan.downloads.length === 0) return

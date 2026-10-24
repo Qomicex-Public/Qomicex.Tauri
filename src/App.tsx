@@ -40,6 +40,7 @@ import { get } from './api/client.ts'
 import { initApiTransport, isIpcMode } from './api/ipc.ts'
 import { resumePendingFavoriteInstalls, createFavoriteInstallDeps } from './lib/favoriteFolderInstall.ts'
 import { quickInstallViaDownloadCenterForFolder } from './lib/quickInstall.ts'
+import { subscribePendingFavoriteInstalls } from './stores/pendingFavoriteInstallStore.ts'
 import { fetchUpdatePlan, fetchAutoInstallState, clearPendingInstall as clearPendingInstallFromApi, takeUpdateNotice, takeUpdateError, type UpdatePlan, type UpdateNotice, type UpdateError } from './api/update.ts'
 import { resolveChannel, stagedChannelMatchesCurrent } from './lib/updateChannel.ts'
 import { APP_INFO } from './constants/credits.ts'
@@ -200,31 +201,34 @@ function AppContent() {
   }, [backendState])
 
   // 恢复「新建实例时同时安装收藏夹」的待执行条目（issue #223）。
-  // 只在后端就绪后跑一次：编排器要调 getInstallProgress / 资源接口。
-  // 刷新或重开启动器后，仍停在等待中的条目会继续等实例装完再装 mod。
+  //
+  // 两个触发点：
+  // 1. 后端就绪时跑一次 —— 刷新 / 重开启动器后接管上次未完成的条目；
+  // 2. 订阅队列变化 —— 后端早已就绪时用户在向导里新登记的条目，必须立刻被接管，
+  //    否则它会一直躺在 localStorage 里等下次重启才生效。
   useEffect(() => {
     if (backendState !== 'ready') return
-    resumePendingFavoriteInstalls(
-      createFavoriteInstallDeps({
-        submit: async ({ instanceId, gameVersion, plan, existingFileNames, taskName }) =>
-          quickInstallViaDownloadCenterForFolder({
-            instanceId,
-            gameVersion,
-            mains: plan.downloads
-              .filter((d) => d.isRoot)
-              .map((d) => ({ url: d.url, fileName: d.fileName, category: d.category, name: d.name })),
-            deps: plan.downloads
-              .filter((d) => !d.isRoot)
-              .map((d) => ({ url: d.url, fileName: d.fileName, category: d.category, name: d.name })),
-            taskName,
-            existingFileNames,
-            t,
-            lang,
-          }),
-        notify: (message, level) => notify(message, level),
-        t,
-      }),
-    )
+    const deps = createFavoriteInstallDeps({
+      submit: async ({ instanceId, gameVersion, plan, existingFileNames, taskName }) =>
+        quickInstallViaDownloadCenterForFolder({
+          instanceId,
+          gameVersion,
+          mains: plan.downloads
+            .filter((d) => d.isRoot)
+            .map((d) => ({ url: d.url, fileName: d.fileName, category: d.category, name: d.name })),
+          deps: plan.downloads
+            .filter((d) => !d.isRoot)
+            .map((d) => ({ url: d.url, fileName: d.fileName, category: d.category, name: d.name })),
+          taskName,
+          existingFileNames,
+          t,
+          lang,
+        }),
+      notify: (message, level) => notify(message, level),
+      t,
+    })
+    resumePendingFavoriteInstalls(deps)
+    return subscribePendingFavoriteInstalls(() => resumePendingFavoriteInstalls(deps))
   }, [backendState, notify, t, lang])
 
   useEffect(() => {

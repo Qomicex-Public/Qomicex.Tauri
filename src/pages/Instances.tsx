@@ -485,6 +485,8 @@ export default function Instances() {
     setVersionSearch('')
     setRemoteCategory('all')
     setRemoteSort('recommended')
+    // 新建实例不继承上一次的收藏夹选择，否则会静默把 mod 装进新实例。
+    setFavoriteFolderId('')
     setStep('select-version')
   }
 
@@ -562,15 +564,19 @@ export default function Instances() {
 
       // 收藏夹后续安装（issue #223）：只登记「待执行」，真正的 mod 下载由编排器
       // 在 getInstallProgress 返回 completed 之后才发起 —— 此刻实例文件还没落盘。
-      if (favoriteFolderId) {
+      //
+      // 必须同时校验 loader：用户可能先选了收藏夹再切回原版，原版实例装不了 mod。
+      if (favoriteFolderId && form.loader) {
         const folder = favFolders.find((f) => f.id === favoriteFolderId)
         if (folder) {
           scheduleFavoriteInstall({
             instanceId: instance.id,
             folderId: folder.id,
             folderName: folder.name,
+            // 成员快照带上全部类型（不只 mod）：非 mod 条目交给规划器记成 notMod，
+            // 编排器才能如实汇总「跳过了几个非模组条目」。
             members: favItems
-              .filter((f) => f.category === 'mod' && (f.folderIds ?? []).includes(folder.id))
+              .filter((f) => (f.folderIds ?? []).includes(folder.id))
               .map((f) => ({ source: f.source, id: f.id, title: f.title, category: f.category })),
             createdAt: new Date().toISOString(),
           })

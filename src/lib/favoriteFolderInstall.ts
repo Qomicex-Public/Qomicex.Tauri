@@ -117,7 +117,8 @@ async function resolveOne(
       versions = await getResourceVersions(member.id, member.source, gameVersion, 'forge')
     }
   } catch {
-    return { root, version: null, deps: [] }
+    // 查询失败 ≠ 没有兼容版本：必须标记出来，否则整批故障会被报成「收藏夹是空的」。
+    return { root, version: null, deps: [], lookupFailed: true }
   }
 
   const picked = latestVersion(versions)
@@ -147,8 +148,8 @@ async function resolveOne(
     )
     return { root, version, deps }
   } catch {
-    // 依赖查询失败不影响本体安装：先把本体装上，前置由用户在实例详情里补。
-    return { root, version, deps: [] }
+    // 依赖查询失败不影响本体安装：先把本体装上，但要让用户知道前置没解析出来。
+    return { root, version, deps: [], depsLookupFailed: true }
   }
 }
 
@@ -174,12 +175,7 @@ export async function buildFavoriteFolderPlan(
   const { instanceId, gameVersion, members } = opts
   const loader = (opts.loader || '').toLowerCase()
 
-  // 已安装身份与已有文件名并行读取：两者互不依赖。
-  const [installedMods, existingNames] = await Promise.all([
-    loadInstalledMods(instanceId).catch(() => new Map()),
-    // category 取值与后端目录名一致（mods，不是 mod）。
-    getInstalledFileNames(instanceId, 'mods').catch(() => [] as string[]),
-  ])
+  const installedMods = await loadInstalledMods(instanceId).catch(() => new Map())
 
   // 已安装身份只取模组的远程 id（材质包/光影没有可靠的远程 id，不做名称猜测）。
   const installedKeys = new Set<string>()
@@ -201,6 +197,19 @@ export async function buildFavoriteFolderPlan(
   const resolutions = await mapWithConcurrency(members, RESOLVE_CONCURRENCY, (m) =>
     resolveOne(m, gameVersion, loader),
   )
+
+  // 已有文件名必须**按依赖实际落盘目录**取：依赖可能是 shaderpacks / resourcepacks，
+  // 只取 mods 会让那些目录里的同名文件被覆盖。
+  const categories = new Set<string>(['mods'])
+  for (const r of resolutions) {
+    for (const d of r.deps) {
+      if (d.category) categories.add(d.category)
+    }
+  }
+  const nameLists = await Promise.all(
+    [...categories].map((c) => getInstalledFileNames(instanceId, c).catch(() => [] as string[])),
+  )
+  const existingNames = nameLists.flat()
 
   return {
     plan: planFavoriteFolderInstall(resolutions, installedKeys),
@@ -276,8 +285,12 @@ const runningInstances = new Set<string>()
 /**
  * 等待实例安装到终态，然后在 `completed` 时安装收藏夹。
  *
- * **认领语义**：调用方必须先 `claimFavoriteInstall` 拿到条目再调本函数，或者直接调
- * `resumePending`（内部认领）。本函数不碰 store，保证「谁认领谁执行」。
+ * **认领语义**：条目在整个等待期间**留在队列里**，只有确认实例装好（`completed`）
+ * 且真正提交下载前才认领删除。这样：
+ * - 等待期间刷新 / 退出，`resumePending` 下次仍能接管；
+ * - 提交失败时条目还在，可重试，不会静默丢失。
+ *
+ * 同会话内靠 `runningInstances` 去重，不依赖「先删条目」来防重入。
  */
 export async function runPendingFavoriteInstall(
   entry: PendingFavoriteInstall,
@@ -289,17 +302,22 @@ export async function runPendingFavoriteInstall(
   try {
     const getProgress: ProgressFn = deps.getProgress ?? ((id) => getInstallProgress(id))
 
-    let notFoundStreak = 0
+    // `not-started`（tracker 里没有该实例）与请求异常都算「暂时读不到」：
+    // 后端 `install_progress` 在 tracker 无条目时返回 200 + `not-started`，
+    // 不处理它就会永远落进下面的等待分支，用户永远等不到结果。
+    let missingStreak = 0
     for (;;) {
       let status: string
       try {
         const progress = await getProgress(instanceId)
         status = progress.status
-        notFoundStreak = 0
       } catch {
-        // 404 / 网络抖动：都按「暂时读不到」处理，有限次重试后放弃。
-        notFoundStreak += 1
-        if (notFoundStreak > NOT_FOUND_RETRIES) {
+        status = 'not-started'
+      }
+
+      if (status === 'not-started') {
+        missingStreak += 1
+        if (missingStreak > NOT_FOUND_RETRIES) {
           dropFavoriteInstall(instanceId)
           deps.notify(deps.t('resource.favorites.installFolder.instanceMissing', { name: folderName }), 'error')
           return
@@ -307,6 +325,7 @@ export async function runPendingFavoriteInstall(
         await sleep(INSTALL_POLL_INTERVAL_MS)
         continue
       }
+      missingStreak = 0
 
       if (status === 'completed') break
       if (status === 'failed' || status === 'cancelled') {
@@ -334,10 +353,23 @@ export async function runPendingFavoriteInstall(
       members,
     })
 
+    // 计划里全是查询失败时不能说「没有可安装的模组」：那是服务故障，不是空收藏夹。
+    if (plan.downloads.length === 0 && plan.skipped.every((s) => s.reason === 'lookupFailed')) {
+      dropFavoriteInstall(instanceId)
+      deps.notify(deps.t('resource.favorites.installFolder.lookupFailed', { name: folderName }), 'error')
+      return
+    }
+
     if (plan.downloads.length === 0) {
+      // 确实没有可装的（全都已安装 / 无兼容版本 / 非 mod）：条目使命结束，不重试。
+      dropFavoriteInstall(instanceId)
       deps.notify(deps.t('resource.favorites.installFolder.nothingToInstall', { name: folderName }), 'info')
       return
     }
+
+    // 真正提交前才认领：等待期间条目一直保留，刷新后仍可恢复。
+    // 认领不到说明别处已处理（或用户已删除实例），直接结束。
+    if (!claimFavoriteInstall(instanceId)) return
 
     await deps.submit({
       instanceId,
@@ -354,6 +386,7 @@ export async function runPendingFavoriteInstall(
       'success',
     )
   } catch (e) {
+    // 提交 / 计划失败：条目保留在队列里，用户可重试，或下次启动由 resumePending 接管。
     deps.notify(
       deps.t('resource.favorites.installFolder.failed', {
         name: folderName,
@@ -367,16 +400,16 @@ export async function runPendingFavoriteInstall(
 }
 
 /**
- * 恢复全部待执行条目（应用启动时调一次）。
+ * 恢复全部待执行条目（应用启动时调一次，队列新增条目时也会被订阅回调触发）。
  *
  * 刷新 / 重新打开启动器后，仍停在等待中的条目会继续等实例装完。
+ * 注意这里**不认领**：认领推迟到确认 `completed` 且即将提交时（见
+ * `runPendingFavoriteInstall`），否则等待期间刷新会永久丢条目。
  */
 export function resumePendingFavoriteInstalls(deps: FavoriteInstallOrchestratorDeps): void {
   for (const entry of getPendingFavoriteInstalls()) {
-    // 认领后再跑：避免轮询循环与恢复流程同时处理同一条目。
-    const claimed = claimFavoriteInstall(entry.instanceId)
-    if (!claimed) continue
-    void runPendingFavoriteInstall(claimed, deps)
+    // 同会话内由 runningInstances 去重；跨会话时 runningInstances 为空，正常接管。
+    void runPendingFavoriteInstall(entry, deps)
   }
 }
 
