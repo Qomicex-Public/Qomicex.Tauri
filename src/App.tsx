@@ -38,6 +38,9 @@ import UpdateCompleteDialog from './components/UpdateCompleteDialog.tsx'
 import UpdateReadyToast from './components/UpdateReadyToast.tsx'
 import { get } from './api/client.ts'
 import { initApiTransport, isIpcMode } from './api/ipc.ts'
+import { resumePendingFavoriteInstalls, createFavoriteInstallDeps } from './lib/favoriteFolderInstall.ts'
+import { quickInstallViaDownloadCenterForFolder } from './lib/quickInstall.ts'
+import { subscribePendingFavoriteInstalls } from './stores/pendingFavoriteInstallStore.ts'
 import { fetchUpdatePlan, fetchAutoInstallState, clearPendingInstall as clearPendingInstallFromApi, takeUpdateNotice, takeUpdateError, type UpdatePlan, type UpdateNotice, type UpdateError } from './api/update.ts'
 import { resolveChannel, stagedChannelMatchesCurrent } from './lib/updateChannel.ts'
 import { APP_INFO } from './constants/credits.ts'
@@ -128,8 +131,8 @@ async function resolveAutoInstallPlan(
 function AppContent() {
   const [backendState, setBackendState] = useState<'loading' | 'ready' | 'error'>('loading')
   const { closeWithGuard, Provider } = useCloseGuard()
-  const { alert } = useMessageBox()
-  const { t } = useI18n()
+  const { alert, notify } = useMessageBox()
+  const { t, lang } = useI18n()
   const { crashDialogState, clearCrashDialog } = useRunning()
   /** 正在运行的实例：自动安装前据此推迟，避免把用户正在玩的游戏连启动器一起关掉 */
   const { runningInstances } = useRunning()
@@ -196,6 +199,37 @@ function AppContent() {
     if (backendState !== 'ready') return
     void loadSettings()
   }, [backendState])
+
+  // 恢复「新建实例时同时安装收藏夹」的待执行条目（issue #223）。
+  //
+  // 两个触发点：
+  // 1. 后端就绪时跑一次 —— 刷新 / 重开启动器后接管上次未完成的条目；
+  // 2. 订阅队列变化 —— 后端早已就绪时用户在向导里新登记的条目，必须立刻被接管，
+  //    否则它会一直躺在 localStorage 里等下次重启才生效。
+  useEffect(() => {
+    if (backendState !== 'ready') return
+    const deps = createFavoriteInstallDeps({
+      submit: async ({ instanceId, gameVersion, plan, existingFileNames, taskName }) =>
+        quickInstallViaDownloadCenterForFolder({
+          instanceId,
+          gameVersion,
+          mains: plan.downloads
+            .filter((d) => d.isRoot)
+            .map((d) => ({ url: d.url, fileName: d.fileName, category: d.category, name: d.name })),
+          deps: plan.downloads
+            .filter((d) => !d.isRoot)
+            .map((d) => ({ url: d.url, fileName: d.fileName, category: d.category, name: d.name })),
+          taskName,
+          existingFileNames,
+          t,
+          lang,
+        }),
+      notify: (message, level) => notify(message, level),
+      t,
+    })
+    resumePendingFavoriteInstalls(deps)
+    return subscribePendingFavoriteInstalls(() => resumePendingFavoriteInstalls(deps))
+  }, [backendState, notify, t, lang])
 
   useEffect(() => {
     if (backendState !== 'ready') return

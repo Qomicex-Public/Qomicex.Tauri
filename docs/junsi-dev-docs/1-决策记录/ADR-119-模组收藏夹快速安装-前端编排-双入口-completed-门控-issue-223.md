@@ -1,0 +1,139 @@
+# ADR-119：模组收藏夹快速安装——前端编排、双入口、completed 门控（issue #223）
+
+| 属性 | 内容 |
+|---|---|
+| 状态 | 已采纳 |
+| 日期 | 2026-10-23 |
+| 决策者 | AI Agent |
+| 关联 | issue #223、ADR-091（收藏持久化）、ADR-096（收藏夹分组）、ADR-112（前置计划纯函数）、ADR-118（分发受限） |
+
+## 背景
+
+issue #223 要求在已有收藏 / 收藏夹能力（#132）之上增加 mod 快速安装，两个入口：
+
+1. **资源中心收藏夹视图**：把一个收藏夹内的全部 mod 一键安装到某个已有实例。
+2. **新建版本向导**：选择收藏夹，实例安装完成后自动安装其中的 mod。
+
+验收标准三条：两处 UI 可见、新建版本时可快速安装收藏夹资源、收藏夹页面可一键安装。
+
+现状约束：
+
+- 收藏数据由后端 JSON 持久化，`GET /resource-favorites` 一次返回全部收藏；收藏夹只是逻辑分组，成员关系挂在每条收藏的 `folderIds` 上（ADR-096）。
+- 单资源安装链路是 `ResourceInstallDialog` → `getResourceVersions` / `getResourceDependencies` → `planDependencyInstall` → `quickInstallViaDownloadCenter`，后者创建 batch 任务并在后台聚合，不依赖组件存活。
+- 新建实例链路是 `createInstance` → `startInstall`，后端在 `tokio::spawn` 里异步安装；SSE 里条目消失、进度到 100% 都**不代表**安装成功。
+- `quickInstallViaDownloadCenter` 只接受**单个**主资源 + 依赖数组，且命名去重用的 `usedNames` 是函数内局部集合。
+
+## 决策
+
+### 1. 前端编排，不新增后端 API
+
+复用既有 versions / dependencies / download 接口与 `quickInstall` 的批任务与聚合机制。新增后端任务 API 需要补齐目标文件预留、实例删除协调、重启恢复等保障，属大改且会变更公开 API，与最小改动原则冲突。
+
+### 2. 三层结构：解析编排 → 纯函数规划器 → 批任务
+
+- `src/lib/favoriteFolderInstallPlan.ts`：纯函数规划器。**不 import `src/types`**（与 ADR-112 同因：会把类型模块拉进编译程序，tsc 的 rootDir 上移导致产物路径与回归脚本约定不符）。
+- `src/lib/favoriteFolderInstall.ts`：解析编排（固定并发 3，避免一次触发大量 90s 超时请求；单个资源失败只记跳过）+ 完成门控编排器。
+- `src/lib/quickInstall.ts`：新增 `quickInstallViaDownloadCenterForFolder`，支持多主资源与外部传入的已用文件名集合；原函数签名与行为不变。
+
+### 3. 身份与去重口径
+
+- 身份是**来源 + 项目 ID**（`modrinth:abc` / `curseforge:12345`），绝不用文件名比较——本地名经命名模板重写，与上游名不同域，那正是 issue #249 的根因。
+- **已安装的项目跳过，不重下、不替换、不删除**（ADR-112 同口径）。
+- 根资源优先于依赖：同一项目既是收藏成员又是依赖时按根资源处理；共享依赖只下一次，保留首次出现的版本。
+- `deletions` 恒为空：批量安装只做新增，绝不清除用户已有文件。
+
+### 4. 命名去重在批任务的命名域里做
+
+规划器输出的 `fileName` 是**上游原名**，原样透传。落盘名由 `quickInstall` 的命名阶段按 `fileNaming` 模板生成，去重也在那里完成（`existingFileNames` 参数把实例已有文件名作为全局预留的初始内容）。若在规划器里给上游名追加序号，批任务反推版本号的正则 `^.*-(\d[\w.+]*)$` 会把序号当版本号，生成 `xxx-2.jar` 这类错误文件名。
+
+### 5. 新建实例以 `completed` 为门控，队列持久化 + 认领执行一次
+
+- 待执行队列以 **instanceId 为键**持久化到 localStorage（`src/stores/pendingFavoriteInstallStore.ts`，手写 localStorage 与 `downloadStore.ts` 一致）。
+- 编排器轮询 `getInstallProgress(instanceId)`，**只有 `completed` 才继续**；`failed` / `cancelled` 丢弃条目并提示；读不到进度时有限次重试（`NOT_FOUND_RETRIES`）后才放弃——不能把「后端还没登记」当成「实例不存在」。
+- **不得**把 `installInstance` 返回、SSE 条目消失、进度 100%、步骤列表完成作为触发信号。
+- 执行前先从队列**删除**条目再开始（认领），保证轮询与 `resumePending` 并发时只执行一次。
+- 执行时重新读取实例信息取权威 `gameVersion` / `loader`，因为向导提交时的值可能被后端校正。
+- 应用根组件（`App.tsx`）在后端就绪后调一次 `resumePendingFavoriteInstalls`，使刷新或重开启动器后仍能继续等待。
+
+### 6. 安装范围是收藏夹的全部 mod 成员
+
+不使用 `favoriteItems`（视图可见集合），因为它会随来源 / 分类 / 标签 / 搜索词变化；「安装此收藏夹」的语义是安装整个收藏夹，结果不应随搜索词改变。按钮只在 `favFolder` 为具体收藏夹 id 时出现，`all` 与 `UNFILED` 不显示。
+
+## 已知限制
+
+- **Modrinth 子依赖可能回退到不兼容版本**：后端依赖解析在找不到匹配版本时的回退策略不在本工单范围内。
+- **CurseForge 子依赖不按 loader 过滤**：同上，属后端解析行为。
+- **部分失败不回滚**：批任务里某个文件下载失败只让该 batch 标记 failed，已成功落盘的文件保留（与单资源安装一致）。
+- **已安装判定只覆盖模组**：材质包 / 光影 / 数据包没有可靠的远程 id（core 反查仍为 UNMAPPED），不做名称猜测，因此这些类型的收藏不参与批量安装（记为 `notMod`）。
+
+## 影响范围
+
+新增：
+
+- `src/lib/favoriteFolderInstallPlan.ts`、`src/lib/favoriteFolderInstall.ts`
+- `src/stores/pendingFavoriteInstallStore.ts`
+- `src/components/FavoriteFolderInstallDialog.tsx`
+- `scripts/test-favorite-folder-install-plan.mjs`（31 项断言）
+
+修改：
+
+- `src/lib/quickInstall.ts`（新增多主资源导出函数；`aggregate` 改为显式接收依赖/本体两组任务 id，不再按位置切分——多本体时位置切分会把除最后一个之外的本体误算进依赖步骤）
+- `src/pages/ResourceCenter.tsx`（收藏夹视图安装按钮 + 对话框）
+- `src/pages/Instances.tsx`（配置步骤收藏夹下拉 + 提交后登记队列）
+- `src/App.tsx`（启动时恢复待执行条目）
+- `package.json`（`test:favorite-folder-install-plan`）
+- `qomicex-tauri-i18n` 子模块（`resource.favorites.installFolder.*`、`instances.favoriteFolder.*`，7 语言）
+
+不修改：后端 Rust 代码与收藏相关 API、`ResourceInstallDialog.tsx`、`planDependencyInstall` 的既有契约。
+
+## 验证
+
+- `pnpm run typecheck` 通过
+- `pnpm run lint`：0 error / 102 warning（与 AGENTS.md 基线一致，新增 0 条）
+- `pnpm run build` 通过
+- `pnpm run test:favorite-folder-install-plan`：31 项断言通过
+- `pnpm run test:download-name-pool`：18 项断言通过
+- `pnpm run test:dependency-install-plan`：10 项断言通过（无回归）
+- `pnpm run test:i18n-steps`：7 语言覆盖 25 step id + 27 stage
+- `pnpm run license:check`：396 个源文件均声明版权头
+
+## 评审修复（v1.1）
+
+首轮评审发现 9 项缺陷，其中 6 项会让功能在正常使用中失效。按严重度修复：
+
+| # | 缺陷 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | 新建实例的收藏夹安装永不触发 | `resumePendingFavoriteInstalls` 只在后端就绪时跑一次，向导新登记的条目无人接管 | `App.tsx` 订阅队列变化，登记后立即接管 |
+| 2 | `not-started` 导致无限轮询 | 后端 tracker 无条目时返回 200 + `not-started`（非 404），落进「继续等」分支 | 把 `not-started` 当缺失状态，纳入重试上限 |
+| 3 | 认领过早，刷新即丢条目 | `claimFavoriteInstall` 在等待开始时就删除 localStorage | 推迟到确认 `completed` 且即将提交时认领；失败保留条目 |
+| 4 | 依赖目录的同名文件被覆盖 | 只取 `mods` 目录已有文件名，而依赖可能在 `shaderpacks` 等目录 | 按解析出的依赖实际 category 分别取 |
+| 5 | 非 mod 条目被静默排除 | 对话框与 `ResourceCenter` 预过滤掉非 mod，规划器 `notMod` 计数恒为 0 | 传全部成员，由规划器统计并展示 |
+| 6 | 查询故障被报成「收藏夹是空的」 | 查询失败与「无兼容版本」都压成 `version: null` | 新增 `lookupFailed` 跳过原因；整批失败时提示错误而非「没有可安装的模组」 |
+| 7 | 依赖查询失败无提示 | 依赖查询 `catch` 后返回空数组 | 新增 `depsLookupFailed`，本体照装但记录 `lookupFailed` |
+| 8 | 并发批次可能互相覆盖 | `usedNames` 是每次调用新建的局部集合，看不到同实例在途下载 | 按实例共享命名预留池，聚合结束时按池身份释放 |
+| 9 | 大小写不同仍算冲突 | `Set.has` 大小写敏感，Windows/macOS 上 `Foo.jar` 与 `foo.jar` 同路径 | 冲突检查走小写归一视图，下载仍用原拼写 |
+
+另修两处：向导仅在 `loader` 有效时登记收藏夹（避免原版实例使用残留选择）；`gotoNewInstance` 重置收藏夹选择。
+
+回归脚本从 27 项断言扩到 31 项，新增「查询失败与无兼容版本必须分开」两条契约。已验证：临时抽掉 `lookupFailed` 判定后该断言以预期原因失败，还原后全绿。
+
+## 评审修复（v1.2）
+
+次轮评审指出 v1.1 对「并发批次覆盖」的修复并不完整 —— 这条自查成立，两个缺陷同源：
+
+| # | 缺陷 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | 命名池共享形同虚设 | `makeNaming` 在创建时把共享池快照成 `normalized`，之后别人预留的名字对它不可见 | 去掉快照，预留直接读写池（池存小写键） |
+| 2 | 池引用计数缺失 | `releaseNamePool` 按池身份删除，先结束的批次会删掉仍在跑的批次共享的池，新批次建出空池 | 改为按实例引用计数，归零才释放 |
+| 3 | 启动失败泄漏池 | 启动失败走 `failStart`，`aggregate` 不执行，池永不释放 | `failStart` 与 `aggregate` 共用 `releasePoolOnce` 幂等释放 |
+| 4 | 非 mod 成员白跑远程查询 | 传全部成员后，非 mod / 不支持来源也各发一次版本查询 | `resolveOne` 入口先挡掉，省掉注定无用的请求 |
+| 5 | ADR 里断言数过期 | 文件清单写 27，验证段已是 31 | 更正为 31 |
+
+第 1、2 条是同一个 bug 的两面：池共享了但比较口径没共享。这类缺陷藏在下载批次内部，只能靠人读、回归无声，因此把命名池抽为 `src/lib/downloadNamePool.ts`（零 import，模板渲染由调用方注入，以便按仓库既有约定单文件编译断言），并新增 `scripts/test-download-name-pool.mjs`（18 项断言）守住：并发批次共享池、大小写不敏感、引用计数、归零释放、种子名规范化、真实拼写保留。
+
+回归验证（两条都实测会被捕获）：
+
+- 把预留改回快照 → `后一批次避让前一批次已预留的名字` 失败（期望 `fabric-api-0.1(2).jar`，实际 `fabric-api-0.1(1).jar`）
+- 去掉引用计数 → `仍有持有者时池保留` 失败（期望 true，实际 false）
+
+评审另提出「ADR 首行标题应与文件名逐字一致」—— 经核对仓库现状（ADR-044/047/049/086/087/097/102 首行均为可读标题，含 `——`），本 ADR 与 ADR-097/102 同构，故不改。

@@ -23,6 +23,8 @@ import { installedResourceKey, loadInstalledMods, subscribeInstalledMods, type I
 import type { ResourceItem, ResourceFavorite } from '../types/index.ts'
 import { translateCategory } from '../lib/categoryTranslations.ts'
 import ResourceInstallDialog from '../components/ResourceInstallDialog.tsx'
+import FavoriteFolderInstallDialog from '../components/FavoriteFolderInstallDialog.tsx'
+import type { FavoriteFolderMember } from '../lib/favoriteFolderInstall.ts'
 import ModpackQuickInstallDialog from '../components/ModpackQuickInstallDialog.tsx'
 import { Tabs } from '../components/ui'
 import { Popover } from '../components/ui'
@@ -691,6 +693,8 @@ export default function ResourceCenter() {
   const [editFavorite, setEditFavorite] = useState<ResourceFavorite | null>(null)
   /** 收藏夹下拉是否展开（Popover 受控，选完/新建完要收起）。 */
   const [favFolderMenuOpen, setFavFolderMenuOpen] = useState(false)
+  /** 收藏夹一键安装对话框是否打开（issue #223）。 */
+  const [favInstallOpen, setFavInstallOpen] = useState(false)
   /** 收藏视图的本地搜索（标题 / 作者 / 标签，纯前端过滤，不发请求）。 */
   const [favQuery, setFavQuery] = useState('')
   /** 顶部筛选区（来源 / 分类 / 排序 / 版本 / 加载器 / 标签）是否收起。默认收起，只留最顶搜索行。 */
@@ -1036,6 +1040,35 @@ export default function ResourceCenter() {
         })
         .map(toResourceItem),
     [favorites, favoriteMatchesScope, favFolder, folderMap, favTags, favQuery],
+  )
+
+  /**
+   * 当前收藏夹的**全部** mod 成员（issue #223）。
+   *
+   * 刻意不用 `favoriteItems`：那是「视图可见集合」，会随来源 / 分类 / 标签 / 搜索词
+   * 变化，而「安装此收藏夹」的语义是安装整个收藏夹，结果不应随搜索词改变。
+   * 因此直接从 store 的全量收藏里按 `folderIds` 筛。
+   *
+   * 这里**不过滤非 mod**：非 mod 条目要交给规划器记成 notMod，对话框才能告诉用户
+   * 它们被排除了；提前过滤会让用户以为收藏夹里就只有这么几个条目。
+   */
+  const folderMembers = useMemo<FavoriteFolderMember[]>(() => {
+    if (favFolder === 'all' || favFolder === UNFILED) return []
+    return favorites
+      .filter((f) => (f.folderIds ?? []).includes(favFolder))
+      .map((f) => ({ source: f.source, id: f.id, title: f.title, category: f.category }))
+  }, [favorites, favFolder])
+
+  /** 当前收藏夹里的 mod 条数（决定「安装此收藏夹」按钮是否可用）。 */
+  const folderModCount = useMemo(
+    () => folderMembers.filter((m) => m.category === 'mod').length,
+    [folderMembers],
+  )
+
+  /** 当前收藏夹名（对话框标题与批任务名用）。 */
+  const currentFolderName = useMemo(
+    () => folderMap.get(favFolder)?.name ?? '',
+    [folderMap, favFolder],
   )
 
   /** 左侧收藏夹栏的条目（全部 / 未分组 / 各夹子 + 计数）。 */
@@ -1481,6 +1514,25 @@ export default function ResourceCenter() {
               </Popover>
             )}
 
+            {/* 收藏夹一键安装（issue #223）：只在选中**具体收藏夹**时出现。
+                `all` / `UNFILED` 不是可安装的集合，不显示该按钮。 */}
+            {view === 'favorites' && favFolder !== 'all' && favFolder !== UNFILED && (
+              <Button
+                variant="outline"
+                className="h-10 gap-1.5"
+                disabled={folderModCount === 0}
+                onClick={() => setFavInstallOpen(true)}
+                title={
+                  folderModCount === 0
+                    ? t('resource.favorites.installFolder.noMods')
+                    : t('resource.favorites.installFolder.button')
+                }
+              >
+                <Download className="h-4 w-4" />
+                {t('resource.favorites.installFolder.button')}
+              </Button>
+            )}
+
             {/* 搜索框：两模式共用同一位置。收藏模式本地过滤；搜索模式回车或点「搜索」检索。 */}
             <div className="relative min-w-[200px] flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -1878,6 +1930,15 @@ export default function ResourceCenter() {
           projectId={modpackInstallItem.id}
           source={modpackInstallItem.source}
           iconUrl={modpackInstallItem.iconUrl}
+        />
+      )}
+
+      {favInstallOpen && currentFolderName && (
+        <FavoriteFolderInstallDialog
+          open={true}
+          onClose={() => setFavInstallOpen(false)}
+          folderName={currentFolderName}
+          members={folderMembers}
         />
       )}
     </PageShell>
