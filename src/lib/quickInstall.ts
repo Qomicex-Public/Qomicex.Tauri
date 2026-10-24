@@ -9,6 +9,7 @@ import { cacheInvalidate } from './simple-cache.ts'
 import { invalidateInstalledMods } from './installedResources.ts'
 import { getSettings } from '../api/settings.ts'
 import { formatDownloadFileName } from './download-naming.ts'
+import { acquireNamePool, releaseNamePool, makeNaming } from './downloadNamePool.ts'
 import { normalizeResourceKind } from './downloadGroups.ts'
 import type { InstallStepInfo } from '../types/index.ts'
 
@@ -88,7 +89,7 @@ export async function quickInstallViaDownloadCenter(opts: QuickInstallOptions): 
   // 已存在的目标文件名（下载中/已安装）做序号去重，避免覆盖。
   const namingTemplate = resolveNamingTemplate(opts.lang)
   const usedNames = new Set<string>()
-  const applyNaming = makeNaming(namingTemplate, usedNames)
+  const applyNaming = makeNaming<QuickInstallItem>(namingTemplate, usedNames, formatDownloadFileName)
 
   const batchId = `quick-install-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const hasDeps = deps.length > 0
@@ -169,7 +170,16 @@ export async function quickInstallViaDownloadCenterForFolder(
   // 只靠快照会让并发批次互相看不见对方在途的下载，从而分配出同一个目标名。
   const namingTemplate = resolveNamingTemplate(opts.lang)
   const usedNames = acquireNamePool(instanceId, opts.existingFileNames)
-  const applyNaming = makeNaming(namingTemplate, usedNames)
+  const applyNaming = makeNaming<QuickInstallItem>(namingTemplate, usedNames, formatDownloadFileName)
+
+  // 池要且只要释放一次：正常结束由 aggregate 释放，启动失败由下面这段释放。
+  // 两条路径互斥但仍加标志位兜底，避免计数被多减一次。
+  let poolReleased = false
+  const releasePoolOnce = () => {
+    if (poolReleased) return
+    poolReleased = true
+    releaseNamePool(instanceId)
+  }
 
   const batchId = `quick-install-folder-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const hasDeps = deps.length > 0
@@ -208,6 +218,8 @@ export async function quickInstallViaDownloadCenterForFolder(
   }
   const failStart = async (e: unknown): Promise<never> => {
     await cancelStarted()
+    // 启动失败不会有 aggregate 跑，池必须在这里释放，否则引用计数永不归零。
+    releasePoolOnce()
     throw new Error(startErrorMessage(e))
   }
 
@@ -231,7 +243,7 @@ export async function quickInstallViaDownloadCenterForFolder(
     }
     updateTask(batchId, { batchTaskIds: [...started] })
     // 批量安装不做删除：toDelete 恒为空（只新增，不清除用户已有文件）。
-    void aggregate(batchId, instanceId, started.slice(0, depResults.length), mainTaskIds, steps, t, [], new Set(), usedNames)
+    void aggregate(batchId, instanceId, started.slice(0, depResults.length), mainTaskIds, steps, t, [], new Set(), releasePoolOnce)
     return batchId
   } catch (e) {
     return failStart(e)
@@ -242,85 +254,6 @@ export async function quickInstallViaDownloadCenterForFolder(
 function resolveNamingTemplate(lang?: string): string {
   const isZh = (lang ?? '').toLowerCase().startsWith('zh')
   return getSettings().fileNaming || (isZh ? '[{cn}]{name}-{version}' : '{name}-{version}')
-}
-
-/**
- * 同一实例**正在进行中**的批任务命名预留池（instanceId → 已占用的落盘名）。
- *
- * 为什么需要：`usedNames` 若只从「实例已安装文件名」快照起步，同一实例并发两个
- * 批次时彼此看不到对方在途的下载，可能给不同资源分配同一个目标名 —— 后下的覆盖
- * 先下的，两个批次都显示完成，实例里却少一个 mod。
- *
- * 池在批次启动时登记、聚合结束时释放（见 `aggregate` 的 finally）。
- */
-const instanceNamePools = new Map<string, Set<string>>()
-
-function acquireNamePool(instanceId: string, seed: Iterable<string>): Set<string> {
-  let pool = instanceNamePools.get(instanceId)
-  if (!pool) {
-    pool = new Set<string>()
-    instanceNamePools.set(instanceId, pool)
-  }
-  for (const n of seed) pool.add(n)
-  return pool
-}
-
-/**
- * 释放命名池。
- *
- * 只在该实例的池**仍是调用方持有的那个**时才删：并发批次共享同一个池，
- * 先结束的批次不能把后结束批次还在用的池摘掉，否则后者失去预留保护。
- */
-function releaseNamePool(instanceId: string, pool: Set<string>): void {
-  if (instanceNamePools.get(instanceId) === pool) instanceNamePools.delete(instanceId)
-}
-
-/**
- * 按模板生成本地落盘名，并在 `usedNames` 里做全局预留。
- *
- * 冲突检查**大小写不敏感**：Windows / macOS 默认的文件系统不区分大小写，
- * 实例里已有 `Foo.jar` 时 `foo.jar` 实际会写到同一个路径。实际下载仍用生成时的
- * 拼写（保留用户看到的名称），只让比较口径归一。
- */
-function makeNaming(template: string, usedNames: Set<string>) {
-  /** 已占用名的归一化视图（小写）→ 用于冲突判定。 */
-  const normalized = new Set<string>()
-  for (const n of usedNames) normalized.add(n.toLowerCase())
-
-  const reserve = (candidate: string): boolean => {
-    const key = candidate.toLowerCase()
-    if (normalized.has(key)) return false
-    normalized.add(key)
-    usedNames.add(candidate)
-    return true
-  }
-
-  return (item: QuickInstallItem): QuickInstallItem => {
-    const extMatch = item.fileName.match(/\.(jar|zip|mrpack|qmodpack|shaderpacks|mcpack)$/i)
-    const ext = extMatch ? extMatch[0] : ''
-    const version = item.fileName.replace(/\.(jar|zip|mrpack|qmodpack|shaderpacks|mcpack)$/i, '').replace(/^.*-(\d[\w.+]*)$/, '$1')
-    const renamed = formatDownloadFileName(template, {
-      name: item.name.replace(/\.(jar|zip|mrpack|qmodpack|mcpack|shaderpacks)$/i, ''),
-      version,
-      cnName: item.cnName ?? null,
-    })
-    const desired = `${renamed}${ext}`
-    // 与 dedupFileName 同形（追加 (i)），但走大小写不敏感的比较口径。
-    let finalName = desired
-    if (!reserve(finalName)) {
-      const dot = finalName.lastIndexOf('.')
-      const base = dot > 0 ? finalName.slice(0, dot) : finalName
-      const suffix = dot > 0 ? finalName.slice(dot) : ''
-      for (let i = 1; i < 100; i++) {
-        const candidate = `${base}(${i})${suffix}`
-        if (reserve(candidate)) {
-          finalName = candidate
-          break
-        }
-      }
-    }
-    return { ...item, fileName: finalName }
-  }
 }
 
 
@@ -340,7 +273,7 @@ async function aggregate(
   t: TFunc,
   toDelete: { fileName: string; category: string }[] = [],
   newFileNames: Set<string> = new Set(),
-  namePool?: Set<string>,
+  onSettled?: () => void,
 ): Promise<void> {
   const prog = new Map<string, number>()
   const speedMap = new Map<string, number>()
@@ -408,7 +341,8 @@ async function aggregate(
     updateTask(batchId, { status: 'failed', error: t('dialogs.common.downloadFailed') })
   }
   // 释放该实例的命名预留池：下载已全部结束，后续批次应重新以「已安装文件名」为基线。
-  if (namePool) releaseNamePool(instanceId, namePool)
+  // 走回调是为了让调用方控制「只释放一次」（启动失败路径同样会释放）。
+  onSettled?.()
 }
 
 function startErrorMessage(e: unknown): string {

@@ -148,6 +148,16 @@ export interface FavoriteFolderInstallPlan {
 /** 支持批量安装的来源。 */
 const SUPPORTED_SOURCES = new Set(['modrinth', 'curseforge'])
 
+/**
+ * 该来源是否支持批量安装。
+ *
+ * 导出给解析层用：不支持的来源与「非 mod 成员」都不必发远程版本查询，
+ * 它们最终都会被规划器记为 unsupportedSource / notMod。
+ */
+export function isSupportedFavoriteSource(source: string): boolean {
+  return SUPPORTED_SOURCES.has(source.toLowerCase())
+}
+
 /** 远程身份键（`source:id`，来源小写）。 */
 export function favoriteInstallKey(source: string, projectId: string): string {
   return `${source.toLowerCase()}:${projectId}`

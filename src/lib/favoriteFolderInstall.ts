@@ -8,6 +8,7 @@ import { loadInstalledMods, installedResourceKey } from './installedResources.ts
 import {
   planFavoriteFolderInstall,
   favoriteInstallKey,
+  isSupportedFavoriteSource,
   type FavoriteFolderInstallPlan,
   type FavoriteRootLike,
   type FavoriteRootResolution,
@@ -107,6 +108,12 @@ async function resolveOne(
     id: member.id,
     title: member.title,
     category: member.category,
+  }
+
+  // 非 mod 成员与不支持的来源最终都会被规划器跳过（notMod / unsupportedSource），
+  // 在这里先挡掉，省掉一次注定无用的远程版本查询 —— 一个收藏夹里可能有一半是这类条目。
+  if (member.category !== 'mod' || !isSupportedFavoriteSource(member.source)) {
+    return { root, version: null, deps: [] }
   }
 
   let versions: ResourceVersion[]

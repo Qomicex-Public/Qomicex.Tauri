@@ -73,7 +73,7 @@ issue #223 要求在已有收藏 / 收藏夹能力（#132）之上增加 mod 快
 - `src/lib/favoriteFolderInstallPlan.ts`、`src/lib/favoriteFolderInstall.ts`
 - `src/stores/pendingFavoriteInstallStore.ts`
 - `src/components/FavoriteFolderInstallDialog.tsx`
-- `scripts/test-favorite-folder-install-plan.mjs`（27 项断言）
+- `scripts/test-favorite-folder-install-plan.mjs`（31 项断言）
 
 修改：
 
@@ -92,9 +92,10 @@ issue #223 要求在已有收藏 / 收藏夹能力（#132）之上增加 mod 快
 - `pnpm run lint`：0 error / 102 warning（与 AGENTS.md 基线一致，新增 0 条）
 - `pnpm run build` 通过
 - `pnpm run test:favorite-folder-install-plan`：31 项断言通过
+- `pnpm run test:download-name-pool`：18 项断言通过
 - `pnpm run test:dependency-install-plan`：10 项断言通过（无回归）
 - `pnpm run test:i18n-steps`：7 语言覆盖 25 step id + 27 stage
-- `pnpm run license:check`：394 个源文件均声明版权头
+- `pnpm run license:check`：396 个源文件均声明版权头
 
 ## 评审修复（v1.1）
 
@@ -115,3 +116,24 @@ issue #223 要求在已有收藏 / 收藏夹能力（#132）之上增加 mod 快
 另修两处：向导仅在 `loader` 有效时登记收藏夹（避免原版实例使用残留选择）；`gotoNewInstance` 重置收藏夹选择。
 
 回归脚本从 27 项断言扩到 31 项，新增「查询失败与无兼容版本必须分开」两条契约。已验证：临时抽掉 `lookupFailed` 判定后该断言以预期原因失败，还原后全绿。
+
+## 评审修复（v1.2）
+
+次轮评审指出 v1.1 对「并发批次覆盖」的修复并不完整 —— 这条自查成立，两个缺陷同源：
+
+| # | 缺陷 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | 命名池共享形同虚设 | `makeNaming` 在创建时把共享池快照成 `normalized`，之后别人预留的名字对它不可见 | 去掉快照，预留直接读写池（池存小写键） |
+| 2 | 池引用计数缺失 | `releaseNamePool` 按池身份删除，先结束的批次会删掉仍在跑的批次共享的池，新批次建出空池 | 改为按实例引用计数，归零才释放 |
+| 3 | 启动失败泄漏池 | 启动失败走 `failStart`，`aggregate` 不执行，池永不释放 | `failStart` 与 `aggregate` 共用 `releasePoolOnce` 幂等释放 |
+| 4 | 非 mod 成员白跑远程查询 | 传全部成员后，非 mod / 不支持来源也各发一次版本查询 | `resolveOne` 入口先挡掉，省掉注定无用的请求 |
+| 5 | ADR 里断言数过期 | 文件清单写 27，验证段已是 31 | 更正为 31 |
+
+第 1、2 条是同一个 bug 的两面：池共享了但比较口径没共享。这类缺陷藏在下载批次内部，只能靠人读、回归无声，因此把命名池抽为 `src/lib/downloadNamePool.ts`（零 import，模板渲染由调用方注入，以便按仓库既有约定单文件编译断言），并新增 `scripts/test-download-name-pool.mjs`（18 项断言）守住：并发批次共享池、大小写不敏感、引用计数、归零释放、种子名规范化、真实拼写保留。
+
+回归验证（两条都实测会被捕获）：
+
+- 把预留改回快照 → `后一批次避让前一批次已预留的名字` 失败（期望 `fabric-api-0.1(2).jar`，实际 `fabric-api-0.1(1).jar`）
+- 去掉引用计数 → `仍有持有者时池保留` 失败（期望 true，实际 false）
+
+评审另提出「ADR 首行标题应与文件名逐字一致」—— 经核对仓库现状（ADR-044/047/049/086/087/097/102 首行均为可读标题，含 `——`），本 ADR 与 ADR-097/102 同构，故不改。
