@@ -47,7 +47,7 @@ try {
     { stdio: 'inherit' },
   )
   const require = createRequire(import.meta.url)
-  const { parseDeepLink, isAllowedRoute, isTrustedInstallUrl, isTrustedOrigin, splitLaunchTarget, matchLaunchTarget, DEEP_LINK_SCHEME } =
+  const { parseDeepLink, isAllowedRoute, isTrustedInstallUrl, isTrustedShareOrigin, splitLaunchTarget, matchLaunchTarget, DEEP_LINK_SCHEME } =
     require(join(outDir, 'deepLink.js'))
 
   const S = `${DEEP_LINK_SCHEME}://`
@@ -160,12 +160,15 @@ try {
   check('官方域裸域', isTrustedInstallUrl('https://qomicex.top/a.qplugin'), true)
   check('后缀相同的钓鱼域', isTrustedInstallUrl('https://evil-qomicex.top/a.qplugin'), false)
   check('http 官方域不免确认', isTrustedInstallUrl('http://api.qomicex.top/a.qplugin'), false)
-  // 分享页安装链接的 `from` 自报来源，同一份白名单判定是否免确认。
-  check('分享页来源', isTrustedOrigin('https://share.qomicex.cn/r/modrinth/x'), true)
-  check('分享页来源必须是 https', isTrustedOrigin('http://share.qomicex.cn/r/modrinth/x'), false)
-  check('分享页域名后缀钓鱼', isTrustedOrigin('https://share.qomicex.cn.attacker.example/'), false)
-  check('非官方来源', isTrustedOrigin('https://example.com/share'), false)
-  check('非法 URL', isTrustedOrigin('not-a-url'), false)
+  // 分享站只免整合包确认，不托管插件：不能继承插件 URL 安装的 `allowUnsigned`。
+  check('分享站不是插件下载源', isTrustedInstallUrl('https://share.qomicex.cn/a.qplugin'), false)
+  // 分享页安装链接的 `from` 自报来源，单独一份分享域白名单。
+  check('分享页来源', isTrustedShareOrigin('https://share.qomicex.cn/r/modrinth/x'), true)
+  check('分享页来源必须是 https', isTrustedShareOrigin('http://share.qomicex.cn/r/modrinth/x'), false)
+  check('分享页域名后缀钓鱼', isTrustedShareOrigin('https://share.qomicex.cn.attacker.example/'), false)
+  check('非官方来源', isTrustedShareOrigin('https://example.com/share'), false)
+  check('接口域不是分享来源', isTrustedShareOrigin('https://api.qomicex.top/r/x'), false)
+  check('非法 URL', isTrustedShareOrigin('not-a-url'), false)
 
   // ---- 路由白名单边界 ----
   check('白名单外', isAllowedRoute('/plugins/p/x'), false)

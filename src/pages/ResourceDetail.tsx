@@ -214,6 +214,8 @@ export default function ResourceDetailPage() {
   const fromInstanceMods = searchParams.get('from') === 'instance'
 
   const [detail, setDetail] = useState<ResourceDetail | null>(null)
+  /** 详情加载完成时对应的路由键（`source:category:id`）。与当前路由不一致时不提供分享。 */
+  const [detailLoadedKey, setDetailLoadedKey] = useState('')
   const [versions, setVersions] = useState<ResourceVersion[]>([])
   const [instance, setInstance] = useState<GameInstance | null>(null)
   const [loading, setLoading] = useState(true)
@@ -294,7 +296,12 @@ export default function ResourceDetailPage() {
   )
 
   /** 分享页不支持存档（地图）类型：给出链接也只会被当成模组解析。 */
-  const shareable = category !== 'save' && !!detail && normalizeShareSource(detail.source) !== null
+  const detailReady = !!detail && detailLoadedKey === `${source}:${category}:${resourceId ?? ''}`
+  const shareable =
+    detailReady &&
+    detail !== null &&
+    (detail.category ?? category) !== 'save' &&
+    normalizeShareSource(detail.source) !== null
 
   useEffect(() => { void loadFavorites() }, [loadFavorites])
   // 收藏夹列表只在「已收藏」时才需要（未收藏时没有编辑入口，不产生额外请求）。
@@ -466,6 +473,7 @@ export default function ResourceDetailPage() {
   useEffect(() => {
     if (!resourceId) return
     const id = resourceId
+    const key = `${source}:${category}:${id}`
 
     let cancelled = false
 
@@ -475,6 +483,8 @@ export default function ResourceDetailPage() {
       setTranslation(null)
       setBodyTranslation(null)
       setMcmodId(null)
+      // 先失效：请求未回来前不能拿上一个资源的 detail 生成分享链接。
+      setDetailLoadedKey('')
       // mcmod 词条查询与详情请求并行、失败静默（增强项，不阻塞详情渲染）。
       // 序号防竞态：缓存命中时会先查一次、详情返回后再查一次，两次的返回顺序不确定，
       // 若不加序号，先发后到的旧结果会覆盖新结果（中文名与跳转入口都写错）。
@@ -494,13 +504,14 @@ export default function ResourceDetailPage() {
         const cacheKey = `api-resource-detail-${id}-${source}`
         const cached = cacheGet<ResourceDetail>(cacheKey)
         if (cached) {
-          setDetail(cached); setLoading(false)
+          setDetail(cached); setLoading(false); setDetailLoadedKey(key)
           // 缓存命中时立即查 mcmod：网络请求失败/慢时标题也不缺翻译与跳转入口
           if (category === 'mod') loadMcmod(cached.title, cached.slug)
         }
         const resourceDetail = await getResourceDetail(id, source, category)
         if (cancelled) return
         setDetail(resourceDetail)
+        setDetailLoadedKey(key)
         cacheSet(cacheKey, resourceDetail)
         if (category === 'mod') loadMcmod(resourceDetail.title, resourceDetail.slug)
         setLoading(false)
@@ -619,6 +630,13 @@ export default function ResourceDetailPage() {
     loadVersions()
     return () => { cancelled = true; abortController?.abort() }
   }, [resourceId, source, instanceIdParam, urlGameVersion, urlLoader, detailRefreshKey])
+
+  // 路由切到另一个资源（深链直达）时重置筛选：沿用旧资源的版本/加载器选择，
+  // 新资源可能一条都不匹配，页面会表现成「没有可用版本」。
+  useEffect(() => {
+    setSelectedGameVersion(urlGameVersion || 'all')
+    setSelectedLoader(urlLoader || 'all')
+  }, [resourceId, urlGameVersion, urlLoader])
 
   const gameVersionOptions = useMemo(() => {
     return ['all', ...new Set(versions.flatMap((version) => version.gameVersions).filter(Boolean))]

@@ -19,7 +19,7 @@
 ## 决策
 
 1. `open` 动作在白名单路由之外增加查询参数白名单（source/category/gameVersion/loader/keyword/sort/tags/instanceId/from/fromCategory/fromSource，单值 ≤200 字符），由 `buildOpenQuery` 重新编码后拼到 navigate 目标。分享页改为 open/resource-center/{projectId}?source=&category=，直接进详情。
-2. install/modpack 深链新增可选 `from=<来源页>`；`isTrustedOrigin` 要求 https 且主机精确命中官方域白名单（新增 share.qomicex.cn），命中时跳过确认，其余仍确认。该字段由链接自报、可伪造，免确认只作为体验优化，安全边界仍是安装内容来自官方平台 API。
+2. install/modpack 深链新增可选 `from=<来源页>`；`isTrustedShareOrigin` 要求 https 且主机精确命中分享域白名单 `TRUSTED_SHARE_HOSTS`（`share.qomicex.cn`），命中时跳过确认，其余仍确认。该白名单与插件 URL 安装用的 `AUTO_INSTALL_HOSTS` 分开，避免分享站继承插件的 `allowUnsigned` 权限。`from` 由链接自报、可伪造，免确认只作为体验优化，安全边界仍是安装内容来自官方平台 API。
 3. 启动器新增 `src/lib/share.ts`（与分享页 /r、/room 参数一一对应）与 `ShareLinkDialog`；资源详情页顶部提供「分享」（分享项目），版本列表每条提供「分享此版本」（带 fileId，分享页可一键安装该版本）；联机页房主卡片提供「分享房间」。
 4. 冷启动兜底：DeepLinkHandler 在窗口重新获得焦点时重读 take_pending_deep_link；Rust 侧为 take/complete 增加条数与未命中回执的日志（不含 URL 原文，避免房间码落盘）。
 
@@ -41,7 +41,7 @@
 - 为何不选：必须让启动器保留受控查询参数，详情才能定位到同一条目。
 
 ## 影响
-- src/lib/deepLink.ts：open 查询白名单、install/modpack from、AUTO_INSTALL_HOSTS 增加 share.qomicex.cn
+- src/lib/deepLink.ts：open 查询白名单、install/modpack from、新增 `TRUSTED_SHARE_HOSTS` + `isTrustedShareOrigin`（`AUTO_INSTALL_HOSTS` 不含分享站）
 - src/components/DeepLinkHandler.tsx：open 带查询跳转、官方域免确认、窗口聚焦重读待处理集合
 - src/lib/share.ts、src/components/ShareLinkDialog.tsx：分享链接构造与弹窗（新增）
 - src/pages/ResourceDetail.tsx、src/pages/Connect.tsx：分享入口

@@ -19,7 +19,7 @@ import { ApiError } from '../api/client.ts'
 import {
   DEEP_LINK_EVENT,
   isTrustedInstallUrl,
-  isTrustedOrigin,
+  isTrustedShareOrigin,
   matchLaunchTarget,
   parseDeepLink,
   sourceNeedsFileId,
@@ -124,6 +124,8 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
   const seenRef = useRef(new Map<string, number>())
   /** 正在处理中的 URL：防止「事件」与「集合」同时投递同一条时并发跑两遍。 */
   const inFlightRef = useRef(new Set<string>())
+  /** 动作已完成但回执失败的 URL：重聚焦补读时只重试回执，不再跑一遍副作用。 */
+  const ackRetryRef = useRef(new Set<string>())
   /** 当前挂载是否有效；卸载后取回的结果转入模块缓冲而不是丢弃。 */
   const aliveRef = useRef(true)
 
@@ -247,7 +249,7 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
           }
           const finalName = name || action.projectId
           // `from` 由分享页自报、可伪造；命中官方域仅省一次确认，不构成安全边界。
-          const trusted = !!action.from && isTrustedOrigin(action.from)
+          const trusted = !!action.from && isTrustedShareOrigin(action.from)
           if (!trusted) {
             const ok = await confirm(
               t('deepLink.installModpackConfirmDesc', { name: finalName, source: action.source }),
@@ -274,17 +276,28 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
       }
     }
 
-    /** 回执：告诉 Rust 这条已处理完，可从待处理集合移除。 */
+    /** 回执：告诉 Rust 这条已处理完，可从待处理集合移除；失败记下来，重聚焦时只重试回执。 */
     async function ack(raw: string) {
       try {
         await invoke<boolean>('complete_deep_link', { url: raw })
+        ackRetryRef.current.delete(raw)
       } catch (e) {
+        ackRetryRef.current.add(raw)
         console.error('[deep-link] ack failed:', e)
       }
     }
 
     /** 处理一条深链，无论成败都回执（失败已弹提示，重试由用户重新点链接发起）。 */
     async function process(raw: string) {
+      // 动作已跑完、只差回执：重试回执即可。重放一遍安装/联机不是「重试」而是重复副作用。
+      if (ackRetryRef.current.has(raw)) {
+        void ack(raw)
+        return
+      }
+      // 正在处理中：这一轮由在飞的那次负责回执，此处不能再回执，否则会在它完成前
+      // 就把条目移除，中途退出便失去「留在集合里可重试」的保障。
+      if (inFlightRef.current.has(raw)) return
+
       const now = Date.now()
       const seen = seenRef.current
       const last = seen.get(raw)
@@ -295,9 +308,6 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
         void ack(raw)
         return
       }
-      // 正在处理中：这一轮由在飞的那次负责回执，此处不能再回执，否则会在它完成前
-      // 就把条目移除，失败时失去「留在集合里可重试」的保障。
-      if (inFlightRef.current.has(raw)) return
 
       const action = parseDeepLink(raw)
       if (!action) {

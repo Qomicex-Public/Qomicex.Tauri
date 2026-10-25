@@ -38,7 +38,8 @@
  * # 安全
  *
  * 深链可被任意网页触发，因此**凡是要落地代码的动作都必须经用户确认**：
- * 只有来源主机命中 `AUTO_INSTALL_HOSTS`（官方域）时才免确认，其余一律弹窗。
+ * 只有来源主机命中官方域时才免确认，其余一律弹窗——插件看下载 URL 的
+ * `AUTO_INSTALL_HOSTS`，整合包看分享页自报 `from` 的 `TRUSTED_SHARE_HOSTS`。
  * `install/modpack` 的来源不是下载 URL，只能由分享页在链接里自报 `from`；
  * 该字段可被伪造，免确认仅是体验优化——真正的边界是包内容来自官方平台 API。
  * `open` 只接受白名单内的内部路由，避免任意路径注入。
@@ -59,8 +60,15 @@ export const DEEP_LINK_EVENT = 'deep-link://action'
 export const AUTO_INSTALL_HOSTS: readonly string[] = [
   'api.qomicex.top',
   'qomicex.top',
-  'share.qomicex.cn',
 ]
+
+/**
+ * 免确认整合包安装的分享来源主机（`install/modpack` 的 `from`）。
+ *
+ * 与 `AUTO_INSTALL_HOSTS` 分开：那条白名单还会让插件 URL 安装走 `allowUnsigned`，
+ * 分享站不托管插件，不应继承该权限。
+ */
+export const TRUSTED_SHARE_HOSTS: readonly string[] = ['share.qomicex.cn']
 
 /** `open` 允许透传的查询参数白名单（资源详情页 + 列表筛选上下文）。 */
 const OPEN_QUERY_KEYS: readonly string[] = [
@@ -381,26 +389,31 @@ export function isAllowedRoute(route: string): boolean {
 }
 
 /**
- * 该 URL 是否来自官方域（免确认安装）。
+ * 该 URL 是否来自官方域（免确认安装 + 插件 `allowUnsigned`）。
  *
  * 协议必须是 https：http 上的同主机名可被中间人替换为任意包，不能免确认。
  */
 export function isTrustedInstallUrl(raw: string): boolean {
-  return isTrustedOrigin(raw)
+  return isHttpsHostIn(raw, AUTO_INSTALL_HOSTS)
 }
 
 /**
- * 来源页是否命中官方域（`install/modpack` 的 `from`）。
+ * 来源页是否命中官方分享域（`install/modpack` 的 `from`）。
  *
  * `from` 由链接自报、可被任意网页伪造：免确认只能当作体验优化，
  * 不能替代「安装内容来自官方平台 API」这一实际边界。
  */
-export function isTrustedOrigin(raw: string): boolean {
+export function isTrustedShareOrigin(raw: string): boolean {
+  return isHttpsHostIn(raw, TRUSTED_SHARE_HOSTS)
+}
+
+/** 主机名精确匹配（不做后缀匹配）且协议为 https。 */
+function isHttpsHostIn(raw: string, hosts: readonly string[]): boolean {
   let url: URL
   try {
     url = new URL(raw)
   } catch {
     return false
   }
-  return url.protocol === 'https:' && AUTO_INSTALL_HOSTS.includes(url.hostname.toLowerCase())
+  return url.protocol === 'https:' && hosts.includes(url.hostname.toLowerCase())
 }
