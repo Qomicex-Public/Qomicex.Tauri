@@ -47,15 +47,35 @@ try {
     { stdio: 'inherit' },
   )
   const require = createRequire(import.meta.url)
-  const { parseDeepLink, isAllowedRoute, isTrustedInstallUrl, splitLaunchTarget, matchLaunchTarget, DEEP_LINK_SCHEME } =
+  const { parseDeepLink, isAllowedRoute, isTrustedInstallUrl, isTrustedOrigin, splitLaunchTarget, matchLaunchTarget, DEEP_LINK_SCHEME } =
     require(join(outDir, 'deepLink.js'))
 
   const S = `${DEEP_LINK_SCHEME}://`
 
   // ---- 正常解析（防修复误伤）----
-  check('open 根路径', parseDeepLink(`${S}open/`), { kind: 'open', route: '/' })
-  check('open 白名单页', parseDeepLink(`${S}open/settings`), { kind: 'open', route: '/settings' })
-  check('open 子路径', parseDeepLink(`${S}open/instances/abc`), { kind: 'open', route: '/instances/abc' })
+  check('open 根路径', parseDeepLink(`${S}open/`), { kind: 'open', route: '/', search: '' })
+  check('open 白名单页', parseDeepLink(`${S}open/settings`), { kind: 'open', route: '/settings', search: '' })
+  check('open 子路径', parseDeepLink(`${S}open/instances/abc`), {
+    kind: 'open',
+    route: '/instances/abc',
+    search: '',
+  })
+  // 资源详情页必须拿到 source / category 才能定位同一条目（分享页深链）。
+  check('open 透传详情参数', parseDeepLink(`${S}open/resource-center/abc?source=curseforge&category=modpack`), {
+    kind: 'open',
+    route: '/resource-center/abc',
+    search: 'source=curseforge&category=modpack',
+  })
+  check(
+    'open 丢弃非白名单参数',
+    parseDeepLink(`${S}open/resource-center/abc?source=modrinth&category=mod&evil=1&redirect=https%3A%2F%2Fx`),
+    { kind: 'open', route: '/resource-center/abc', search: 'source=modrinth&category=mod' },
+  )
+  check(
+    'open 丢弃超长参数值',
+    parseDeepLink(`${S}open/resource-center/abc?category=${'a'.repeat(201)}&source=modrinth`),
+    { kind: 'open', route: '/resource-center/abc', search: 'source=modrinth' },
+  )
   check('launch（纯名字）', parseDeepLink(`${S}launch?target=1.20.1-Forge`), {
     kind: 'launch',
     target: '1.20.1-Forge',
@@ -101,7 +121,20 @@ try {
     projectId: 'P',
     fileId: 'F',
     name: undefined,
+    from: undefined,
   })
+  check(
+    'install modpack 带来源页',
+    parseDeepLink(`${S}install/modpack?type=cf&projectId=P&fileId=F&name=N&from=${encodeURIComponent('https://share.qomicex.cn')}`),
+    {
+      kind: 'installModpack',
+      source: 'curseforge',
+      projectId: 'P',
+      fileId: 'F',
+      name: 'N',
+      from: 'https://share.qomicex.cn',
+    },
+  )
 
   // ---- 路径穿越必须被拒（审计评论 #13；修复前 escapesWhitelist=true）----
   check('编码斜杠 + ..', parseDeepLink(`${S}open/settings/%2F..%2F..%2Fplugins%2Fp%2Fx`), null)
@@ -127,6 +160,12 @@ try {
   check('官方域裸域', isTrustedInstallUrl('https://qomicex.top/a.qplugin'), true)
   check('后缀相同的钓鱼域', isTrustedInstallUrl('https://evil-qomicex.top/a.qplugin'), false)
   check('http 官方域不免确认', isTrustedInstallUrl('http://api.qomicex.top/a.qplugin'), false)
+  // 分享页安装链接的 `from` 自报来源，同一份白名单判定是否免确认。
+  check('分享页来源', isTrustedOrigin('https://share.qomicex.cn/r/modrinth/x'), true)
+  check('分享页来源必须是 https', isTrustedOrigin('http://share.qomicex.cn/r/modrinth/x'), false)
+  check('分享页域名后缀钓鱼', isTrustedOrigin('https://share.qomicex.cn.attacker.example/'), false)
+  check('非官方来源', isTrustedOrigin('https://example.com/share'), false)
+  check('非法 URL', isTrustedOrigin('not-a-url'), false)
 
   // ---- 路由白名单边界 ----
   check('白名单外', isAllowedRoute('/plugins/p/x'), false)

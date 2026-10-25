@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import { useRunning } from '../contexts/RunningContext.tsx'
@@ -18,6 +19,7 @@ import { ApiError } from '../api/client.ts'
 import {
   DEEP_LINK_EVENT,
   isTrustedInstallUrl,
+  isTrustedOrigin,
   matchLaunchTarget,
   parseDeepLink,
   sourceNeedsFileId,
@@ -166,7 +168,8 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
         }
 
         case 'open': {
-          navigate(action.route)
+          // 查询参数已在解析层过滤：资源详情页靠 `source`/`category` 定位条目。
+          navigate(action.search ? `${action.route}?${action.search}` : action.route)
           return
         }
 
@@ -243,11 +246,15 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
             }
           }
           const finalName = name || action.projectId
-          const ok = await confirm(
-            t('deepLink.installModpackConfirmDesc', { name: finalName, source: action.source }),
-            t('deepLink.installModpackConfirmTitle'),
-          )
-          if (!ok) return cancel()
+          // `from` 由分享页自报、可伪造；命中官方域仅省一次确认，不构成安全边界。
+          const trusted = !!action.from && isTrustedOrigin(action.from)
+          if (!trusted) {
+            const ok = await confirm(
+              t('deepLink.installModpackConfirmDesc', { name: finalName, source: action.source }),
+              t('deepLink.installModpackConfirmTitle'),
+            )
+            if (!ok) return cancel()
+          }
           try {
             await installModpackDirect({
               id: finalName,
@@ -327,6 +334,25 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
     dispatchCurrent = accept
 
     const unlisteners: Array<() => void> = []
+
+    /** 读一次 Rust 侧待处理集合；失败只记日志（事件监听路径仍可用）。 */
+    async function drainPending() {
+      try {
+        const urls = await invoke<string[]>('take_pending_deep_link')
+        if (!aliveRef.current) {
+          // 组件已卸载但集合已读出：转入模块缓冲交给下一个挂载实例，
+          // 而不是丢掉（Rust 侧未收到回执，条目仍在，两端不会各说各话）。
+          for (const url of urls ?? []) {
+            if (!pendingBuffer.includes(url)) pendingBuffer.push(url)
+          }
+          return
+        }
+        for (const url of urls ?? []) accept(url)
+      } catch (e) {
+        console.error('[deep-link] take pending failed:', e)
+      }
+    }
+
     // 先注册监听、等它落地后再读集合：「读集合」与「事件投递」之间到达的 URL
     // 否则会两边都捞不到（集合已读走、监听还没挂上）。
     void (async () => {
@@ -344,19 +370,23 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
         // 监听注册失败也要继续读集合：能处理多少算多少。
         console.error('[deep-link] listen failed:', e)
       }
+      await drainPending()
+    })()
+
+    // 窗口重新获得焦点时补读一次集合：外部唤起时浏览器仍在前台，若事件与首轮读取
+    // 都没落到本实例，用户切回启动器即可自愈，不必再点一次链接。
+    void (async () => {
       try {
-        const urls = await invoke<string[]>('take_pending_deep_link')
+        const fn = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+          if (focused && aliveRef.current) void drainPending()
+        })
         if (!aliveRef.current) {
-          // 组件已卸载但集合已读出：转入模块缓冲交给下一个挂载实例，
-          // 而不是丢掉（Rust 侧未收到回执，条目仍在，两端不会各说各话）。
-          for (const url of urls ?? []) {
-            if (!pendingBuffer.includes(url)) pendingBuffer.push(url)
-          }
+          fn()
           return
         }
-        for (const url of urls ?? []) accept(url)
+        unlisteners.push(fn)
       } catch (e) {
-        console.error('[deep-link] take pending failed:', e)
+        console.error('[deep-link] focus listen failed:', e)
       }
     })()
 

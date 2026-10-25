@@ -15,12 +15,15 @@
  *
  * ```
  * qomicex-launcher://launch?target=<实例名或ID 或 游戏目录:实例名>
- * qomicex-launcher://open/<route>                      // 仅白名单路由
+ * qomicex-launcher://open/<route>[?source=…&category=…]   // 仅白名单路由 + 白名单查询参数
  * qomicex-launcher://join?code=<房间码>
  * qomicex-launcher://install/plugin?slug=<slug>&version=<v>
  * qomicex-launcher://install/plugin?url=<https://….qplugin>
- * qomicex-launcher://install/modpack?type=modrinth|curseforge&projectId=<p>&fileId=<f>[&name=<实例名>]
+ * qomicex-launcher://install/modpack?type=modrinth|curseforge&projectId=<p>&fileId=<f>[&name=<实例名>][&from=<来源页>]
  * ```
+ *
+ * `open` 的查询参数只透传 `OPEN_QUERY_KEYS`（资源详情页需要 `source` / `category`
+ * 才能定位到同一条目）；其余参数一律丢弃，避免把外部构造的任意状态带进路由。
  *
  * `launch`/`join` 的参数必须走 query 而不是 path：真实房间码格式为
  * `U/XXXX-XXXX-XXXX-XXXX`（connector `RoomCode` 的 `PREFIX = "U/"`），实例路径同样
@@ -36,6 +39,8 @@
  *
  * 深链可被任意网页触发，因此**凡是要落地代码的动作都必须经用户确认**：
  * 只有来源主机命中 `AUTO_INSTALL_HOSTS`（官方域）时才免确认，其余一律弹窗。
+ * `install/modpack` 的来源不是下载 URL，只能由分享页在链接里自报 `from`；
+ * 该字段可被伪造，免确认仅是体验优化——真正的边界是包内容来自官方平台 API。
  * `open` 只接受白名单内的内部路由，避免任意路径注入。
  */
 
@@ -51,7 +56,29 @@ export const DEEP_LINK_EVENT = 'deep-link://action'
  * 只有这里列出的主机才允许「点链接即装」；其余（含任意第三方 CDN）必须弹窗确认。
  * 注意这是**主机**精确匹配，不做后缀匹配——`evil-qomicex.top` 不应因后缀相同而放行。
  */
-export const AUTO_INSTALL_HOSTS: readonly string[] = ['api.qomicex.top', 'qomicex.top']
+export const AUTO_INSTALL_HOSTS: readonly string[] = [
+  'api.qomicex.top',
+  'qomicex.top',
+  'share.qomicex.cn',
+]
+
+/** `open` 允许透传的查询参数白名单（资源详情页 + 列表筛选上下文）。 */
+const OPEN_QUERY_KEYS: readonly string[] = [
+  'source',
+  'category',
+  'gameVersion',
+  'loader',
+  'keyword',
+  'sort',
+  'tags',
+  'instanceId',
+  'from',
+  'fromCategory',
+  'fromSource',
+]
+
+/** 单个查询值上限：超长值只可能来自构造，直接丢弃。 */
+const OPEN_QUERY_VALUE_MAX = 200
 
 /** `open` 允许跳转的内部路由前缀白名单。 */
 const ALLOWED_ROUTES: readonly string[] = [
@@ -68,10 +95,18 @@ const ALLOWED_ROUTES: readonly string[] = [
 
 export type DeepLinkAction =
   | { kind: 'launch'; target: string; dir?: string; raw: string }
-  | { kind: 'open'; route: string }
+  | { kind: 'open'; route: string; search: string }
   | { kind: 'join'; code: string }
   | { kind: 'installPlugin'; slug?: string; version?: string; url?: string }
-  | { kind: 'installModpack'; source: ModpackSource; projectId: string; fileId: string; name?: string }
+  | {
+      kind: 'installModpack'
+      source: ModpackSource
+      projectId: string
+      fileId: string
+      name?: string
+      /** 来源页（自报，可伪造）：命中官方域时免确认。 */
+      from?: string
+    }
 
 /**
  * `launch/` 后面那一段的解析结果。
@@ -221,6 +256,22 @@ export function sourceNeedsFileId(source: ModpackSource): boolean {
 }
 
 /**
+ * 只保留白名单键的查询串（重新编码），用于 `open` 动作。
+ *
+ * `URLSearchParams.toString()` 把空格编码成 `+`；这里产出的串只交给 BrowserRouter，
+ * 前端再用 `useSearchParams` 解析，编码口径一致。
+ */
+export function buildOpenQuery(params: URLSearchParams): string {
+  const out = new URLSearchParams()
+  for (const key of OPEN_QUERY_KEYS) {
+    const value = params.get(key)?.trim()
+    if (!value || value.length > OPEN_QUERY_VALUE_MAX) continue
+    out.set(key, value)
+  }
+  return out.toString()
+}
+
+/**
  * 解析一条深链 URL。
  *
  * 注意 `URL` 会把 host 小写化（`//Launch/` → host `launch`），因此动作名比较统一用小写；
@@ -266,7 +317,9 @@ export function parseDeepLink(raw: string): DeepLinkAction | null {
       // 白名单外的插件路由。判定必须发生在**拼路由之前**，且要看解码后的内容。
       if (hasPathEscape(segments)) return null
       const route = `/${segments.join('/')}`
-      return isAllowedRoute(route) ? { kind: 'open', route } : null
+      return isAllowedRoute(route)
+        ? { kind: 'open', route, search: buildOpenQuery(url.searchParams) }
+        : null
     }
     case 'join': {
       const code = (url.searchParams.get('code') ?? '').trim()
@@ -291,7 +344,8 @@ export function parseDeepLink(raw: string): DeepLinkAction | null {
         if (!projectId) return null
         if (sourceNeedsFileId(source) && !fileId) return null
         const name = url.searchParams.get('name')?.trim() || undefined
-        return { kind: 'installModpack', source, projectId, fileId: fileId ?? '', name }
+        const from = url.searchParams.get('from')?.trim() || undefined
+        return { kind: 'installModpack', source, projectId, fileId: fileId ?? '', name, from }
       }
       return null
     }
@@ -332,6 +386,16 @@ export function isAllowedRoute(route: string): boolean {
  * 协议必须是 https：http 上的同主机名可被中间人替换为任意包，不能免确认。
  */
 export function isTrustedInstallUrl(raw: string): boolean {
+  return isTrustedOrigin(raw)
+}
+
+/**
+ * 来源页是否命中官方域（`install/modpack` 的 `from`）。
+ *
+ * `from` 由链接自报、可被任意网页伪造：免确认只能当作体验优化，
+ * 不能替代「安装内容来自官方平台 API」这一实际边界。
+ */
+export function isTrustedOrigin(raw: string): boolean {
   let url: URL
   try {
     url = new URL(raw)
