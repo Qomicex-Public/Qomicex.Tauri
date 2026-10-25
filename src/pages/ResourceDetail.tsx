@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { Link, useParams, useSearchParams, useLocation } from 'react-router-dom'
-import { ArrowLeft, BookOpen, ChevronDown, Download, ExternalLink, Folder, Heart, Languages, Layers, Pencil, RotateCw, Save, StickyNote, Tag, User } from 'lucide-react'
+import { ArrowLeft, BookOpen, ChevronDown, Download, ExternalLink, Folder, Heart, Languages, Layers, Pencil, RotateCw, Save, Share2, StickyNote, Tag, User } from 'lucide-react'
 import { RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { CopyActionIcon } from '../components/CopyActionIcon.tsx'
@@ -39,6 +39,8 @@ import { loadSettings } from '../api/settings.ts'
 import ModpackInstallDialog from '../components/ModpackInstallDialog.tsx'
 import ResourceInstallDialog from '../components/ResourceInstallDialog.tsx'
 import { useI18n } from '../i18n/index.tsx'
+import { ShareLinkDialog } from '../components/ShareLinkDialog.tsx'
+import { buildResourceShareUrl, normalizeShareSource, shareProjectId } from '../lib/share.ts'
 
 /**
  * 解析一个资源的 mcmod 词条：优先用标题精确匹配（CurseForge 标题常带括号后缀，
@@ -212,6 +214,8 @@ export default function ResourceDetailPage() {
   const fromInstanceMods = searchParams.get('from') === 'instance'
 
   const [detail, setDetail] = useState<ResourceDetail | null>(null)
+  /** 详情加载完成时对应的路由键（`source:category:id`）。与当前路由不一致时不提供分享。 */
+  const [detailLoadedKey, setDetailLoadedKey] = useState('')
   const [versions, setVersions] = useState<ResourceVersion[]>([])
   const [instance, setInstance] = useState<GameInstance | null>(null)
   const [loading, setLoading] = useState(true)
@@ -264,6 +268,40 @@ export default function ResourceDetailPage() {
     .filter((fid) => folderMap.has(fid))
     .map((fid) => folderMap.get(fid)!.name)
   const [editOpen, setEditOpen] = useState(false)
+  /** 分享链接弹窗内容（保留最后一次内容，避免关闭动画期间闪空框）。 */
+  const [share, setShare] = useState<{ url: string; title: string } | null>(null)
+  const [shareOpen, setShareOpen] = useState(false)
+
+  /**
+   * 分享页 `/r/{source}/{projectId}[/{fileId}]` 的链接。
+   * `fileId` 只在「分享此版本」时给，给了分享页就能一键安装该版本。
+   */
+  const buildShareUrl = useCallback(
+    (fileId?: string): string | null => {
+      if (!detail) return null
+      const source = normalizeShareSource(detail.source)
+      if (!source) return null
+      return buildResourceShareUrl({
+        source,
+        projectId: shareProjectId(detail.source, detail.id, detail.slug),
+        fileId,
+        type: detail.category ?? category,
+        name: detail.title,
+        icon: detail.iconUrl || undefined,
+        summary: detail.description || undefined,
+        link: detail.projectUrl || undefined,
+      })
+    },
+    [detail, category],
+  )
+
+  /** 分享页不支持存档（地图）类型：给出链接也只会被当成模组解析。 */
+  const detailReady = !!detail && detailLoadedKey === `${source}:${category}:${resourceId ?? ''}`
+  const shareable =
+    detailReady &&
+    detail !== null &&
+    (detail.category ?? category) !== 'save' &&
+    normalizeShareSource(detail.source) !== null
 
   useEffect(() => { void loadFavorites() }, [loadFavorites])
   // 收藏夹列表只在「已收藏」时才需要（未收藏时没有编辑入口，不产生额外请求）。
@@ -435,6 +473,7 @@ export default function ResourceDetailPage() {
   useEffect(() => {
     if (!resourceId) return
     const id = resourceId
+    const key = `${source}:${category}:${id}`
 
     let cancelled = false
 
@@ -444,6 +483,8 @@ export default function ResourceDetailPage() {
       setTranslation(null)
       setBodyTranslation(null)
       setMcmodId(null)
+      // 先失效：请求未回来前不能拿上一个资源的 detail 生成分享链接。
+      setDetailLoadedKey('')
       // mcmod 词条查询与详情请求并行、失败静默（增强项，不阻塞详情渲染）。
       // 序号防竞态：缓存命中时会先查一次、详情返回后再查一次，两次的返回顺序不确定，
       // 若不加序号，先发后到的旧结果会覆盖新结果（中文名与跳转入口都写错）。
@@ -463,13 +504,14 @@ export default function ResourceDetailPage() {
         const cacheKey = `api-resource-detail-${id}-${source}`
         const cached = cacheGet<ResourceDetail>(cacheKey)
         if (cached) {
-          setDetail(cached); setLoading(false)
+          setDetail(cached); setLoading(false); setDetailLoadedKey(key)
           // 缓存命中时立即查 mcmod：网络请求失败/慢时标题也不缺翻译与跳转入口
           if (category === 'mod') loadMcmod(cached.title, cached.slug)
         }
         const resourceDetail = await getResourceDetail(id, source, category)
         if (cancelled) return
         setDetail(resourceDetail)
+        setDetailLoadedKey(key)
         cacheSet(cacheKey, resourceDetail)
         if (category === 'mod') loadMcmod(resourceDetail.title, resourceDetail.slug)
         setLoading(false)
@@ -589,6 +631,13 @@ export default function ResourceDetailPage() {
     return () => { cancelled = true; abortController?.abort() }
   }, [resourceId, source, instanceIdParam, urlGameVersion, urlLoader, detailRefreshKey])
 
+  // 路由切到另一个资源（深链直达）时重置筛选：沿用旧资源的版本/加载器选择，
+  // 新资源可能一条都不匹配，页面会表现成「没有可用版本」。
+  useEffect(() => {
+    setSelectedGameVersion(urlGameVersion || 'all')
+    setSelectedLoader(urlLoader || 'all')
+  }, [resourceId, urlGameVersion, urlLoader])
+
   const gameVersionOptions = useMemo(() => {
     return ['all', ...new Set(versions.flatMap((version) => version.gameVersions).filter(Boolean))]
   }, [versions])
@@ -683,6 +732,26 @@ export default function ResourceDetailPage() {
                   </a>
                 </Button>
               ) : null}
+              {shareable && (
+                <Tooltip content={t('common.share')}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-label={t('common.share')}
+                    disabled={!detail}
+                    onClick={() => {
+                      const url = buildShareUrl()
+                      if (url) {
+                        setShare({ url, title: t('common.shareResource') })
+                        setShareOpen(true)
+                      }
+                    }}
+                  >
+                    <Share2 className="h-3.5 w-3.5" />
+                    {t('common.share')}
+                  </Button>
+                </Tooltip>
+              )}
             </div>
           }
         />
@@ -1050,7 +1119,26 @@ export default function ResourceDetailPage() {
                                 </div>
                               </div>
 
-                              {category === 'modpack' ? (
+                              <div className="flex shrink-0 items-start gap-1.5">
+                                {shareable && (
+                                  <Tooltip content={t('common.shareVersion')}>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      aria-label={t('common.shareVersion')}
+                                      onClick={() => {
+                                        const url = buildShareUrl(version.id)
+                                        if (url) {
+                                          setShare({ url, title: t('common.shareVersion') })
+                                          setShareOpen(true)
+                                        }
+                                      }}
+                                    >
+                                      <Share2 className="h-3 w-3" />
+                                    </Button>
+                                  </Tooltip>
+                                )}
+                                {category === 'modpack' ? (
                                 <div className="flex shrink-0 gap-1.5">
                                   <Button
                                     size="sm"
@@ -1134,6 +1222,7 @@ export default function ResourceDetailPage() {
                                   {t('resourceDetail.noDownload')}
                                 </Button>
                               )}
+                              </div>
                             </div>
                           </div>
                         ))}
@@ -1198,6 +1287,13 @@ export default function ResourceDetailPage() {
           onSaved={() => notify(t('resource.favorites.edit.saved'), 'success')}
         />
       )}
+
+      <ShareLinkDialog
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        title={share?.title ?? ''}
+        url={share?.url ?? ''}
+      />
     </PageShell>
   )
 }

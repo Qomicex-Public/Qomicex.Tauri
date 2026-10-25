@@ -430,13 +430,19 @@ pub fn handle_second_instance(app: &AppHandle, argv: &[String]) {
 /// 取走**全部**待处理深链（不清空；前端处理完需逐条回执）。前端挂载或后端就绪时调用。
 #[tauri::command]
 pub fn take_pending_deep_link(state: tauri::State<'_, PendingDeepLink>) -> Vec<String> {
-    state.take_pending()
+    let urls = state.take_pending();
+    crate::tauri_log!("deep-link", "frontend took {} pending url(s)", urls.len());
+    urls
 }
 
 /// 前端回执：某条深链已处理完毕，可从待处理集合移除。返回是否确实移除。
 #[tauri::command]
 pub fn complete_deep_link(state: tauri::State<'_, PendingDeepLink>, url: String) -> bool {
-    state.complete(&url)
+    let removed = state.complete(&url);
+    if !removed {
+        crate::tauri_log!("deep-link", "ack did not match any pending url");
+    }
+    removed
 }
 
 /// 协议关联状态快照（设置页开关的初始值）。
