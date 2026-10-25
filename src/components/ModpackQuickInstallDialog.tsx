@@ -16,6 +16,9 @@ import type { ResourceVersion } from '../types/index.ts'
 import { useNavigate } from 'react-router-dom'
 import { addTask, updateTask, removeTask } from '../stores/downloadStore.ts'
 import { useI18n } from '../i18n/index.tsx'
+import { collectInstallModes, invokeInstallMode } from '../plugins/install-modes.ts'
+import type { PluginInstallMode } from '../plugins/install-modes.ts'
+import { PluginIcon } from './PluginIcon.tsx'
 
 interface ModpackQuickInstallDialogProps {
   open: boolean
@@ -47,6 +50,10 @@ export default function ModpackQuickInstallDialog({
   const [loadingVersions, setLoadingVersions] = useState(false)
   const [gameDir, setGameDir] = useState('')
   const [versionIsolation, setVersionIsolation] = useState(true)
+  // 插件贡献的安装方式（contributes.installModes，如「安装为服务端」）：
+  // 打开对话框时收集一次；选中插件方式时确认按钮走插件管线而不是实例安装。
+  const [pluginModes, setPluginModes] = useState<PluginInstallMode[]>([])
+  const [selectedMode, setSelectedMode] = useState<string>('') // '' = 内置「创建实例」
 
   useEffect(() => {
     if (!open) return
@@ -55,6 +62,8 @@ export default function ModpackQuickInstallDialog({
     setError('')
     setSelectedVersion(null)
     setVersions([])
+    setPluginModes(collectInstallModes('modpack'))
+    setSelectedMode('')
     let cancelled = false
     ;(async () => {
       try {
@@ -86,6 +95,30 @@ export default function ModpackQuickInstallDialog({
   }, [open, modpackName, projectId, source, t])
 
   const handleInstall = async () => {
+    // 插件安装方式：交给对应插件处理（如「安装为服务端」→ server-manager 插件）。
+    // 插件自己负责发起后端任务并把进度登记进下载中心。
+    const mode = pluginModes.find(m => `${m.pluginId}:${m.id}` === selectedMode)
+    if (mode) {
+      setStep('starting')
+      setError('')
+      try {
+        await invokeInstallMode(mode, {
+          kind: 'modpack',
+          source,
+          projectId,
+          fileId: selectedVersion?.id,
+          name: instanceName || modpackName,
+          gameVersion: selectedVersion?.gameVersions?.[0],
+          iconUrl,
+        })
+        onClose()
+        navigate('/downloads')
+      } catch (e: any) {
+        setError(e.message || String(e))
+        setStep('config')
+      }
+      return
+    }
     const technic = isTechnic(source)
     // 非 Technic 必须有选中版本；Technic 无版本概念，跳过该前置。
     if (!technic && !selectedVersion) return
@@ -255,6 +288,39 @@ export default function ModpackQuickInstallDialog({
               )}
             </div>
             <Separator />
+            {pluginModes.length > 0 && (
+              <div className="space-y-1.5">
+                <Label>{t('dialogs.modpackInstall.installTarget')}</Label>
+                <div className="space-y-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedMode('')}
+                    className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${selectedMode === '' ? 'border-primary bg-primary/5 text-foreground' : 'border-border text-muted-foreground hover:bg-accent'}`}
+                  >
+                    <Layers className="h-4 w-4 shrink-0" />
+                    <span className="flex-1">{t('dialogs.modpackInstall.targetInstance')}</span>
+                  </button>
+                  {pluginModes.map(m => {
+                    const key = `${m.pluginId}:${m.id}`
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setSelectedMode(key)}
+                        title={m.description}
+                        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${selectedMode === key ? 'border-primary bg-primary/5 text-foreground' : 'border-border text-muted-foreground hover:bg-accent'}`}
+                      >
+                        <PluginIcon pluginId={m.pluginId} icon={m.icon || 'fa-solid fa-puzzle-piece'} fallback="🧩" className="h-4 w-4 shrink-0" />
+                        <span className="flex-1">
+                          {m.label}
+                          <span className="ml-1.5 text-xs opacity-60">{m.pluginName}</span>
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
             <div>
               <Label htmlFor="inst-name">{t('dialogs.modpackInstall.instanceName')}</Label>
               <Input id="inst-name" value={instanceName} onChange={e => setInstanceName(e.target.value)} />
@@ -270,7 +336,7 @@ export default function ModpackQuickInstallDialog({
       {step === 'config' && (
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
-          <Button onClick={handleInstall} disabled={(!isTechnic(source) && !selectedVersion) || loadingVersions}>{t('dialogs.modpackInstall.startInstall')}</Button>
+          <Button onClick={handleInstall} disabled={selectedMode === '' && (!isTechnic(source) && !selectedVersion)}>{t('dialogs.modpackInstall.startInstall')}</Button>
         </DialogFooter>
       )}
     </Dialog>

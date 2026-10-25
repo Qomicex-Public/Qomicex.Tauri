@@ -13,13 +13,19 @@ interface InstallStepsListProps {
   keyPrefix?: string
 }
 
-/** 安装管线分步列表（后端 SSE 下发的 steps 渲染；活跃步骤显示字节百分比）。 */
+/** 安装管线分步列表（后端 SSE 下发的 steps 渲染；活跃步骤显示字节百分比）。
+ * 标签解析优先级：step.label（管线自带，插件/新管线无需动启动器 i18n）>
+ * `downloads.steps.{id}`（启动器内置管线的词条）。两者皆缺 → 原样显示 id
+ * （i18n 回退行为），因此管线作者应尽量提供 label 或在启动器 i18n 补词条。 */
 export default function InstallStepsList({ steps, className, keyPrefix = 'downloads.steps' }: InstallStepsListProps) {
   const { t } = useI18n()
   return (
     <ul className={cn('space-y-1', className)}>
       {steps.map((step) => {
         const labelKey = `${keyPrefix}.${step.id}` as const
+        // t() 对缺失 key 会返回 key 本身：只有当返回值不等于 key 时才算命中词条
+        const translated = t(labelKey)
+        const label = step.label || (translated !== labelKey ? translated : step.id)
         return (
           <li key={step.id} className="flex items-center gap-2 text-xs">
             {step.status === 'done' ? (
@@ -43,7 +49,7 @@ export default function InstallStepsList({ steps, className, keyPrefix = 'downlo
                 step.status === 'failed' && 'text-red-400'
               )}
             >
-              {t(labelKey)}
+              {label}
             </span>
             {step.status === 'active' && (step.percent ?? 0) > 0 && (
               <span className="ml-auto shrink-0 tabular-nums text-primary">{Math.round(step.percent!)}%</span>

@@ -98,9 +98,10 @@ pub struct InstallStepSpec {
 /// 安装管线分步状态（下载中心卡片渲染步骤列表的数据源）。
 ///
 /// `id` 是稳定标识（如 "fetch-json"/"installer"），文案由前端 i18n 映射；
-/// `percent` 仅在 active 步骤有字节级进度时由 download_batch 推进（0-100），
-/// 扫描/安装等无字节进度的阶段保持 0，前端不渲染百分比。
-/// 并行管线中多个步骤可同时处于 active 状态。
+/// `label` 是管线自带的显示标签（可选）——插件/新管线无需改启动器 i18n 就能
+/// 命名自己的步骤，渲染时优先于 i18n 词条。`percent` 仅在 active 步骤有字节级
+/// 进度时由 download_batch 推进（0-100），扫描/安装等无字节进度的阶段保持 0，
+/// 前端不渲染百分比。并行管线中多个步骤可同时处于 active 状态。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallStep {
@@ -110,6 +111,9 @@ pub struct InstallStep {
     pub percent: f64,
     /// 合成总进度权重
     pub weight: f64,
+    /// 管线自带显示标签（可选，优先于前端 i18n 词条）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 impl InstallStep {
@@ -119,6 +123,7 @@ impl InstallStep {
             status: "pending".to_string(),
             percent: 0.0,
             weight,
+            label: None,
         }
     }
 }
@@ -152,6 +157,10 @@ pub struct InstallProgress {
     /// 前端据此区分「安装整合包」与「更新整合包」的卡片文案与操作按钮。
     #[serde(default)]
     pub kind: String,
+    /// 任务标题（如「服务端搭建 · xxx」）。前端对 SSE 里未知任务自动补卡时用它
+    /// 做显示名；后端安装的任务（插件发起）没有本地卡片，没有它就只能显示 id。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     /// 分步状态；未定义计划的旧任务/其他 kind 为空数组（序列化时省略）。
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub steps: Vec<InstallStep>,
@@ -176,6 +185,11 @@ impl InstallHandle {
 
     pub fn set_stage(&self, stage: &str) {
         self.update(|f| f.stage = stage.to_string());
+    }
+
+    /// 设置任务显示标题（前端自动补卡用；仅后端发起的任务需要）。
+    pub fn set_title(&self, title: &str) {
+        self.update(|f| f.title = Some(title.to_string()));
     }
 
     /// 追加分步计划（可多次调用：嵌套管线把子步骤追加进同一张表）。
@@ -211,6 +225,15 @@ impl InstallHandle {
                 step.percent = percent.clamp(0.0, 100.0);
             }
             f.recompute_progress();
+        });
+    }
+
+    /// 设置某步骤的显示标签（管线自带命名，渲染优先于前端 i18n 词条）。
+    pub fn set_step_label(&self, id: &str, label: &str) {
+        self.update(|f| {
+            if let Some(step) = f.steps.iter_mut().find(|s| s.id == id) {
+                step.label = Some(label.to_string());
+            }
         });
     }
 
@@ -318,6 +341,8 @@ pub struct ProgressField {
     pub current_file_progress: f64,
     pub speed: f64,
     pub steps: Vec<InstallStep>,
+    /// 任务显示标题（见 InstallProgress.title）。
+    pub title: Option<String>,
     /// 进入终态（completed/failed/cancelled）的时刻，用于 SSE 时效过滤。
     /// 非终态为 `None`；状态被重置回非终态时清空。
     pub terminal_at: Option<std::time::Instant>,
@@ -355,6 +380,7 @@ impl ProgressField {
             is_paused,
             stage: self.stage.clone(),
             kind: kind.to_string(),
+            title: self.title.clone(),
             steps: self.steps.clone(),
         }
     }
@@ -460,6 +486,7 @@ impl InstallState {
                 current_file_progress: 0.0,
                 speed: 0.0,
                 steps: Vec::new(),
+                title: None,
                 terminal_at: None,
             }),
             cancelled: AtomicBool::new(false),
@@ -866,6 +893,7 @@ mod tests {
             current_file_progress: 0.0,
             speed: 0.0,
             steps: Vec::new(),
+            title: None,
             terminal_at: None,
         }
     }
@@ -1003,6 +1031,7 @@ mod tests {
         let p = InstallProgress {
             instance_id: "x".to_string(),
             status: "downloading".to_string(),
+            title: None,
             progress: 10.0,
             error: None,
             total_files: 0,
@@ -1028,6 +1057,7 @@ mod tests {
             status: "active".to_string(),
             percent: 30.0,
             weight: 5.0,
+            label: None,
         }];
         let json2 = serde_json::to_value(&p2).unwrap();
         assert_eq!(json2["steps"][0]["id"], "fetch-json");

@@ -90,6 +90,54 @@ export interface PluginModpackInstallOptions {
   maxMemory?: number
 }
 
+/** process.spawn 选项（issue #295：插件常驻进程管理）。 */
+export interface PluginProcessSpawnOptions {
+  command: string
+  args?: string[]
+  cwd?: string
+  env?: Record<string, string>
+}
+
+export interface PluginProcessHandleInfo {
+  pid: number
+  command: string
+  args: string[]
+  startedAtMs: number
+  alive: boolean
+  exitCode: number | null
+  oldestSeq: number
+  nextSeq: number
+}
+
+export interface PluginProcessLogLine {
+  seq: number
+  /** "out" | "err" */
+  stream: string
+  text: string
+}
+
+export interface PluginProcessLogsResult {
+  lines: PluginProcessLogLine[]
+  nextSeq: number
+  oldestSeq: number
+  alive: boolean
+  exitCode: number | null
+}
+
+export interface PluginFileEntry {
+  name: string
+  path: string
+  isDir: boolean
+  size: number
+  modifiedMs?: number | null
+}
+
+export interface PluginDialogOptions {
+  title?: string
+  defaultPath?: string
+  filters?: { name: string; extensions: string[] }[]
+}
+
 export interface PluginBridge {
   getSettings: () => Promise<Record<string, unknown>>
   setSettings: (key: string, value: unknown) => Promise<void>
@@ -139,6 +187,34 @@ export interface PluginBridge {
   modpack: {
     install: (opts: PluginModpackInstallOptions) => Promise<{ instanceId: string }>
   }
+  /** 常驻进程管理（issue #295）：spawn 拉起进程，logs 按 seq 游标增量轮询，
+   * stdin 写控制台命令，kill 走进程树终止。插件只能管理自己拉起的进程。 */
+  process: {
+    spawn: (opts: PluginProcessSpawnOptions) => Promise<{ pid: number; startedAtMs: number }>
+    stdin: (pid: number, data: string, opts?: { appendNewline?: boolean }) => Promise<void>
+    kill: (pid: number) => Promise<{ message: string }>
+    alive: (pid: number) => Promise<PluginProcessHandleInfo>
+    logs: (pid: number, afterSeq?: number) => Promise<PluginProcessLogsResult>
+    list: () => Promise<PluginProcessHandleInfo[]>
+  }
+  /** 系统/原生文件选择对话框（主窗口 Tauri pick_dialog 中转）。取消返回 null。 */
+  pickFile: (opts?: PluginDialogOptions & { multiple?: boolean }) => Promise<string | null>
+  pickDirectory: (opts?: PluginDialogOptions) => Promise<string | null>
+  /** 本地 zip 解压到目标目录（zip-slip 防护 + 体积上限）。需两个路径的 FS 授权。 */
+  extractArchive: (archivePath: string, destPath: string) => Promise<{ destPath: string }>
+  /** 列举目录条目（名称/类型/大小/mtime）。 */
+  listDir: (path: string, opts?: { recursive?: boolean; maxEntries?: number }) => Promise<PluginFileEntry[]>
+  /** 系统级通知（WebView Notification API）；不可用/被拒返回 false（可降级 showToast）。 */
+  sendNotification: (opts: { title: string; body?: string }) => Promise<boolean>
+  /** 插件自持 i18n：返回本插件合并后的字符串包（bundle.json 打底、当前 locale
+   * 覆盖）。插件运行时 UI 用它渲染自己的文案，不依赖启动器 i18n。 */
+  getPluginStrings: () => Promise<Record<string, string>>
+  /** 启动器当前 locale（如 'zh-CN'），与 getPluginStrings 的覆盖层一致。 */
+  getLocale: () => Promise<string>
+  /** 内置图标 SVG 数据（Font Awesome 类名，如 'fa-solid fa-server'）→
+   * { width, height, path }。插件用内联 <svg><path/></svg> 渲染（currentColor
+   * 跟随主题色），不引入图标字体。未知类名返回 null。 */
+  getIconSvg: (cls: string) => Promise<{ width: number; height: number; path: string } | null>
 }
 
 export function createPluginBridge(pluginId: string): PluginBridge {
@@ -180,8 +256,22 @@ export function createPluginBridge(pluginId: string): PluginBridge {
         headers: body ? { 'Content-Type': 'application/json' } : undefined,
         body: body ? JSON.stringify(body) : undefined
       })
-      if (!res.ok) throw new Error(`Backend error: ${res.status}`)
-      return res.status === 204 ? null : res.json()
+      if (!res.ok) {
+        // 后端 ApiError 形如 { code, message }：把 message 带出来，插件侧的
+        // "Backend error: 422" 才有排障价值（422 多为请求体形状不符）。
+        const err = await res.json().catch(() => null)
+        const detail = err?.message ?? err?.error
+        throw new Error(`Backend error: ${res.status}${detail ? ` - ${detail}` : ''}`)
+      }
+      // 200/204 且空 body 的端点（如 /settings/open-folder）没有 JSON 可解析，
+      // res.json() 会抛 "Unexpected end of JSON input"——按 null 处理。
+      const text = await res.text()
+      if (!text) return null
+      try {
+        return JSON.parse(text)
+      } catch {
+        return text
+      }
     },
     uploadPlugin: async (fileData, fileName) => {
       const file = new File([new Uint8Array(fileData)], fileName)
@@ -431,7 +521,168 @@ export function createPluginBridge(pluginId: string): PluginBridge {
         return res.json()
       },
     },
+    process: {
+      spawn: async (opts) => {
+        const res = await fetch(`${API_BASE}/plugins/process/${encodeURIComponent(pluginId)}/spawn`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(opts)
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(() => null)
+          throw new Error(err?.message ?? `Process spawn failed: ${res.status}`)
+        }
+        return res.json()
+      },
+      stdin: async (pid, data, opts) => {
+        const res = await fetch(`${API_BASE}/plugins/process/${encodeURIComponent(pluginId)}/${pid}/stdin`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data, appendNewline: opts?.appendNewline ?? true })
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(() => null)
+          throw new Error(err?.message ?? `Process stdin failed: ${res.status}`)
+        }
+      },
+      kill: async (pid) => {
+        const res = await fetch(`${API_BASE}/plugins/process/${encodeURIComponent(pluginId)}/${pid}/kill`, { method: 'POST' })
+        if (!res.ok) {
+          const err = await res.json().catch(() => null)
+          throw new Error(err?.message ?? `Process kill failed: ${res.status}`)
+        }
+        return res.json()
+      },
+      alive: async (pid) => {
+        const res = await fetch(`${API_BASE}/plugins/process/${encodeURIComponent(pluginId)}/${pid}/alive`)
+        if (!res.ok) throw new Error(`Process alive check failed: ${res.status}`)
+        return res.json()
+      },
+      logs: async (pid, afterSeq) => {
+        const q = afterSeq !== undefined ? `?after=${afterSeq}` : ''
+        const res = await fetch(`${API_BASE}/plugins/process/${encodeURIComponent(pluginId)}/${pid}/logs${q}`)
+        if (!res.ok) {
+          const err = await res.json().catch(() => null)
+          throw new Error(err?.message ?? `Process logs failed: ${res.status}`)
+        }
+        return res.json()
+      },
+      list: async () => {
+        const res = await fetch(`${API_BASE}/plugins/process/${encodeURIComponent(pluginId)}/list`)
+        if (!res.ok) throw new Error(`Process list failed: ${res.status}`)
+        return res.json()
+      },
+    },
+    pickFile: async (opts) => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core')
+        return await invoke<string | null>('pick_dialog', {
+          options: {
+            title: opts?.title,
+            defaultPath: opts?.defaultPath,
+            filters: opts?.filters,
+            multiple: opts?.multiple,
+          }
+        })
+      } catch {
+        // 浏览器 dev 环境无 Tauri：按用户取消处理
+        return null
+      }
+    },
+    pickDirectory: async (opts) => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core')
+        return await invoke<string | null>('pick_dialog', {
+          options: {
+            title: opts?.title,
+            defaultPath: opts?.defaultPath,
+            directory: true,
+          }
+        })
+      } catch {
+        return null
+      }
+    },
+    extractArchive: async (archivePath, destPath) => {
+      const res = await extractWithAuth(pluginId, archivePath, destPath)
+      return res as { destPath: string }
+    },
+    listDir: async (path, opts) => {
+      const res = await fileOpWithAuth(pluginId, path, () => fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/list`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, recursive: opts?.recursive, maxEntries: opts?.maxEntries })
+      }))
+      return res as PluginFileEntry[]
+    },
+    sendNotification: async (opts) => {
+      try {
+        if (typeof Notification === 'undefined') return false
+        let perm = Notification.permission
+        if (perm === 'default') perm = await Notification.requestPermission()
+        if (perm !== 'granted') return false
+        new Notification(opts.title, { body: opts.body })
+        return true
+      } catch {
+        return false
+      }
+    },
+    getPluginStrings: async () => {
+      const l10nDir = await fetch(`${API_BASE}/plugins/${encodeURIComponent(pluginId)}`)
+        .then(r => (r.ok ? r.json() : null))
+        .then((p: { manifest?: { l10n?: string } } | null) => p?.manifest?.l10n)
+        .catch(() => null)
+      if (!l10nDir) return {}
+      const { getPluginBundle, currentLocale } = await import('./l10n.ts')
+      return getPluginBundle(pluginId, l10nDir, currentLocale())
+    },
+    getLocale: async () => {
+      const { currentLocale } = await import('./l10n.ts')
+      return currentLocale()
+    },
+    getIconSvg: async (cls) => {
+      const { resolveFaIcon } = await import('../components/BuiltinIcons.tsx')
+      const def = resolveFaIcon(cls)
+      if (!def) return null
+      // FA IconDefinition（solid）：icon = [width, height, path | path[]]
+      const icon = def.icon as unknown as number[] & { 2: string | string[] }
+      const raw = icon[2]
+      const path = Array.isArray(raw) ? raw.join(' ') : raw
+      return { width: icon[0], height: icon[1], path }
+    },
   }
+}
+
+/** extractArchive 的授权流：涉及读压缩包 + 写目标目录两条路径，
+ * 403 时合并为一次确认、两个前缀都授权后重试（比逐路径弹两次窗更贴近用户意图）。 */
+async function extractWithAuth(pluginId: string, archivePath: string, destPath: string): Promise<unknown> {
+  const op = () => fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/extract`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ archivePath, destPath })
+  })
+  let res = await op()
+  if (res.status === 403) {
+    const err = await res.json().catch(() => null)
+    if (err?.code === 'FS_AUTHORIZATION_REQUIRED') {
+      const ok = window.confirm(i18nKey('plugins.fileAuthRequest', { pluginId, path: `${archivePath} → ${destPath}` }))
+      if (!ok) throw new Error(i18nKey('plugins.fileAuthDenied'))
+      for (const p of [archivePath, destPath]) {
+        const authRes = await fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/authorize`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: p, allow: true })
+        })
+        if (!authRes.ok) throw new Error(i18nKey('plugins.fileAuthFailed'))
+      }
+      res = await op()
+    }
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => null)
+    throw new Error(err?.message ?? `Extract failed: ${res.status}`)
+  }
+  return res.json()
 }
 
 async function fileOpWithAuth(pluginId: string, path: string, op: () => Promise<Response>): Promise<unknown> {

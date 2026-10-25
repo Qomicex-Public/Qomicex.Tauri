@@ -20,8 +20,11 @@ export interface InstallState {
   currentFileProgress: number
   speed: number
   isPaused: boolean
-  /** 任务类型："install" / "modpack" / "modpack-update" / "resource"（issue #118）。 */
+  /** 任务类型："install" / "modpack" / "modpack-update" / "resource"（issue #118）。
+   * "server" = 服务端搭建（整合包一键开服，插件经 /server/setup 发起）。 */
   kind?: string
+  /** 任务显示标题（后端发起、前端没有本地卡片的任务用它做名称）。 */
+  title?: string
   steps?: InstallStepInfo[]
 }
 

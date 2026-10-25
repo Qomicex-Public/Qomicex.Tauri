@@ -47,6 +47,8 @@ export const PERMISSION_CATALOG: Record<string, PermissionInfo> = {
   'shell:execute':       { id: 'shell:execute',       risk: 'danger' },
   'filesystem:read':     { id: 'filesystem:read',     risk: 'warning' },
   'filesystem:write':    { id: 'filesystem:write',    risk: 'danger' },
+  'process:manage':      { id: 'process:manage',      risk: 'danger' },
+  'dialog:open':         { id: 'dialog:open',         risk: 'normal' },
 }
 
 // 桥方法 → 所需权限（与 src/plugins/sandbox.ts METHOD_PERMISSIONS 保持一致，供权限最小化扫描）
@@ -54,11 +56,15 @@ export const METHOD_PERMISSIONS: Record<string, string> = {
   getSettings: 'config:read', setSettings: 'config:write', setCache: 'cache:access', getCache: 'cache:access', callBackend: 'network:fetch', uploadPlugin: 'plugin:install', proxyFetch: 'network:cors_proxy', proxyFetchStream: 'network:cors_proxy',
   registerMethod: 'config:write', callPlugin: 'network:fetch', callWasm: 'wasm:execute', listWasmPlugins: 'wasm:execute',
   readText: 'filesystem:read', readBytes: 'filesystem:read', writeText: 'filesystem:write', writeBytes: 'filesystem:write', deleteFile: 'filesystem:write', execCommand: 'shell:execute',
-  navigate: 'config:read', showToast: 'ui:toast', getSystemInfo: 'system:info', openUrl: 'system:notification', listPlugins: 'plugin:list',
-  log: 'plugin:log',
+  navigate: 'config:read', openPluginSettings: 'config:read', addMenuItem: 'ui:inject_sidebar', showToast: 'ui:toast', getSystemInfo: 'system:info', openUrl: 'system:notification', listPlugins: 'plugin:list',
+  log: 'plugin:log', registerHook: 'hook:register',
   getThemeColor: 'config:read', applyThemeOverride: 'config:write', clearThemeOverride: 'config:write',
   'overlay.create': 'ui:sub_window', 'overlay.show': 'ui:sub_window', 'overlay.hide': 'ui:sub_window',
   'overlay.destroy': 'ui:sub_window', 'overlay.setHtml': 'ui:sub_window', 'overlay.setPosition': 'ui:sub_window',
   'download.addTask': 'download:manage', 'download.progress': 'download:manage', 'download.cancel': 'download:manage', 'download.list': 'download:manage', 'download.registerInstall': 'instance:write',
   'modpack.install': 'instance:write',
+  'process.spawn': 'process:manage', 'process.stdin': 'process:manage', 'process.kill': 'process:manage', 'process.alive': 'process:manage', 'process.logs': 'process:manage', 'process.list': 'process:manage',
+  pickFile: 'dialog:open', pickDirectory: 'dialog:open',
+  extractArchive: 'filesystem:write', listDir: 'filesystem:read',
+  sendNotification: 'system:notification',
 }

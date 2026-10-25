@@ -1130,7 +1130,7 @@ async fn install_loader(
 /// 按所需 Java 大版本经 `recommand` 选最优。旧实现 Deep 全盘扫描取第一个 Valid，
 /// 既重复扫描，又会把 Apple JavaAppletPlugin 等遗留 Java 8 误选去跑需要 Java 17
 /// 的 Forge/NeoForge 处理器，导致 binarypatcher 等退出码 1）。
-async fn resolve_java_path(core: &Arc<GameCore>, required_java: i32) -> Result<String, String> {
+pub(crate) async fn resolve_java_path(core: &Arc<GameCore>, required_java: i32) -> Result<String, String> {
     let javas = crate::endpoints::java::merged_java_runtimes(core).await;
     let javas: Vec<JavaResult> = javas
         .into_iter()
@@ -1720,6 +1720,8 @@ async fn download_batch_with_mirrors(
         mirrors.extend(crate::services::source_policy::vanilla_fallback_urls(
             &url, &plan,
         ));
+        // 加载器 meta/installer（QML-Mirror ↔ 官方互换，流量分工见 file_mirror 模块头）
+        mirrors.extend(crate::services::file_mirror::loader_fallback_urls(&url));
         // 查表键与判重键一致；attach_mirrors 会跳过与主 URL 相同的纯冗余项与既有镜像。
         let key = dedup_key(&dest);
         let before = mirrors.len();

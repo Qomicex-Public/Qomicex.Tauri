@@ -13,8 +13,9 @@ import { Tooltip } from '../components/ui'
 import { Tabs } from '../components/ui'
 import type { Tab } from '../components/ui'
 import { useNavigate } from 'react-router-dom'
-import { getTasks, subscribe, removeTask, updateTask } from '../stores/downloadStore.ts'
+import { getTasks, subscribe, removeTask, updateTask, addTask } from '../stores/downloadStore.ts'
 import { pauseInstall, resumeInstall, cancelInstall, getInstallProgress } from '../api/instance.ts'
+import { API_BASE } from '../api/client.ts'
 import { cancelResourceDownload, getResourceDownloadProgress } from '../api/resource-download.ts'
 import { cancelJavaDownload, pauseJavaDownload, resumeJavaDownload, getJavaDownloadProgress } from '../api/java.ts'
 import { refreshCustomRuntimes } from '../stores/javaStore.ts'
@@ -148,6 +149,19 @@ const FILTER_TABS: Tab[] = [
 ]
 
 type TFunc = ReturnType<typeof useI18n>['t']
+
+/** 用户主动清除过的后端任务（instanceId）：SSE 保留窗口内不再自动补卡。
+ * 模块级集合——跨组件重挂载（切页面）仍生效；应用重启自然清空。 */
+const dismissedBackendTaskIds = new Set<string>()
+
+/** 步骤显示标签：管线自带 label 优先（插件/新管线的命名通道），其次启动器
+ * i18n 词条，都没有 → 原样显示 id（t() 对缺失 key 返回 key 本身）。 */
+function stepLabel(step: InstallStepInfo, t: TFunc): string {
+  if (step.label) return step.label
+  const key = `downloads.steps.${step.id}`
+  const translated = t(key)
+  return translated === key ? step.id : translated
+}
 
 /**
  * 单张下载任务卡片。
@@ -318,7 +332,12 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
           )}
           {(task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled' || task.status === 'queued') && (
             <Tooltip content={t('downloads.remove')}>
-              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => removeTask(task.id)}>
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
+                // 后端发起的任务（process 管线）在 SSE 保留窗口内会被自动补卡——
+                // 用户点删除时登记 instanceId，补卡逻辑据此跳过，否则清除后复活。
+                if (task.instanceId) dismissedBackendTaskIds.add(task.instanceId)
+                removeTask(task.id)
+              }}>
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
             </Tooltip>
@@ -377,7 +396,7 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
              // （避免把合成总进度误读成该步完成度）。
              activeStep ? (
                <>
-                 {t(`downloads.steps.${activeStep.id}`)}
+                 {stepLabel(activeStep, t)}
                  {(activeStep.percent ?? 0) > 0 && ` (${Math.round(activeStep.percent!)}%)`}
                </>
              ) :
@@ -470,7 +489,25 @@ export default function DownloadCenter() {
   const [fixInstanceId, setFixInstanceId] = useState<string | null>(null)
 
   const handleFix = useCallback((task: DownloadTask) => {
-    if (task.instanceId) setFixInstanceId(task.instanceId)
+    if (!task.instanceId) return
+    // 服务端搭建任务不是实例：补全方式是把缺失文件手动拷入服务端目录，
+    // 然后标记完成——不能打开实例语义的 BlockedModsDialog（会报 Instance not
+    // found，且其 Skip 会把等待态误标成取消）。
+    if (task.kind === 'server') {
+      fetch(`${API_BASE}/server/setup/progress/${encodeURIComponent(task.instanceId)}/complete`, { method: 'POST' })
+        .then(res => {
+          if (!res.ok) throw new Error(String(res.status))
+          updateTask(task.id, {
+            status: 'completed',
+            progress: 100,
+            blockedFiles: undefined,
+            completedAt: new Date().toISOString(),
+          })
+        })
+        .catch(() => { /* 后端 400 = 不在等待态，SSE 会把卡片刷回真实状态 */ })
+      return
+    }
+    setFixInstanceId(task.instanceId)
   }, [])
 
   /** 全部补全：把对应卡片转完成（后端也会推 SSE，这里让点击瞬间生效）。 */
@@ -512,6 +549,22 @@ export default function DownloadCenter() {
    * 实例已删除时后端返回 404，吞掉会让卡片永远停在等待态且没有移除入口。
    */
   const reconcileBlockedTask = useCallback((taskId: string, instId: string) => {
+    // 服务端搭建任务的等待态对账走 tracker 进度（它不是实例，modpack 的
+    // 阻塞清单端点会 404 → 此前把等待卡误刷成取消）。
+    const task = getTasks().find(t => t.id === taskId)
+    if (task?.kind === 'server') {
+      getInstallProgress(instId)
+        .then(p => {
+          if (!p) return
+          updateTask(taskId, {
+            status: p.status as DownloadTask['status'],
+            progress: Math.round(p.progress),
+            blockedFiles: p.blockedFiles ?? undefined,
+          })
+        })
+        .catch(() => { /* 后端未起/任务回收：保持现状 */ })
+      return
+    }
     getBlockedMods(instId)
       .then(res => {
         const count = (res.items ?? []).length
@@ -562,6 +615,37 @@ export default function DownloadCenter() {
 
   useEffect(() => {
     if (!sseData) return
+
+    // 后端/插件发起的安装（如服务端搭建）没有本地任务卡片：自动补建。
+    // 只补进行中的任务；SSE 不推 completed，无需担心反复补卡。
+    const existingInstanceIds = new Set(getTasks().map(t => t.instanceId).filter(Boolean) as string[])
+    // 清理掉已消失的登记项（任务离开 SSE 后，同 id 不会再出现；防集合无限增长）
+    for (const id of [...dismissedBackendTaskIds]) {
+      if (!sseData.installs.some(i => i.instanceId === id)) dismissedBackendTaskIds.delete(id)
+    }
+    for (const inst of sseData.installs) {
+      if (existingInstanceIds.has(inst.instanceId)) continue
+      if (dismissedBackendTaskIds.has(inst.instanceId)) continue
+      addTask({
+        id: inst.instanceId,
+        name: inst.title || inst.instanceId,
+        // 后端安装管线与整合包卡片同一渲染路径（分步进度等）；server 任务
+        // 借用 modpack 类型展示（无 retry 描述符 → 不显示重试按钮）。
+        type: 'modpack',
+        gameVersion: '',
+        status: 'downloading',
+        stage: inst.stage,
+        progress: Math.round(inst.progress),
+        currentFile: inst.currentFile || undefined,
+        totalFiles: inst.totalFiles || undefined,
+        completedFiles: inst.completedFiles || undefined,
+        blockedFiles: inst.blockedFiles || undefined,
+        createdAt: new Date().toISOString(),
+        instanceId: inst.instanceId,
+        kind: inst.kind,
+        steps: inst.steps,
+      })
+    }
 
     const ts = getTasks()
     for (const task of ts) {
@@ -663,6 +747,8 @@ if (task.instanceId && task.type !== 'batch') {
           else if (match.status === 'awaiting-files') newStatus = 'awaiting-files'
           else if (match.isPaused) newStatus = 'paused'
           updateTask(task.id, {
+            // 后端发起的任务（如服务端搭建）标题晚于首帧 SSE 到达：随快照回填
+            name: match.title || task.name,
             status: newStatus,
             stage: match.stage,
             progress: Math.round(match.progress),

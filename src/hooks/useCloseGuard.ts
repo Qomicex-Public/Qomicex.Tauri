@@ -6,6 +6,7 @@ import { getTasks, removeTask } from '../stores/downloadStore.ts'
 import { useMessageBox } from '../components/ui'
 import { useI18n } from '../i18n/index.tsx'
 import { CloseGuardContext } from './closeGuardContext.ts'
+import { broadcastPluginLifecycle } from '../plugins/sandbox.ts'
 
 function hasActiveTasks() {
   return getTasks().some(t =>
@@ -31,6 +32,8 @@ export default function useCloseGuard() {
       if (!ok) return
       clearActiveTasks()
     }
+    // 关窗已成定局：通知插件做同步收尾（onLauncherExit，尽力而为）
+    broadcastPluginLifecycle('launcher-exit')
     try {
       const { getCurrentWindow } = await import('@tauri-apps/api/window')
       await getCurrentWindow().close()
@@ -48,10 +51,14 @@ export default function useCloseGuard() {
         const { getCurrentWindow } = await import('@tauri-apps/api/window')
         const win = getCurrentWindow()
         unlisten = await win.onCloseRequested(async (event) => {
-          if (!hasActiveTasks()) return
+          if (!hasActiveTasks()) {
+            broadcastPluginLifecycle('launcher-exit')
+            return
+          }
           const ok = await confirm(closeConfirmMsg)
           if (mounted && ok) {
             clearActiveTasks()
+            broadcastPluginLifecycle('launcher-exit')
           } else {
             event.preventDefault()
           }
@@ -68,6 +75,7 @@ export default function useCloseGuard() {
       }
     }
     const onUnload = () => {
+      broadcastPluginLifecycle('launcher-exit')
       clearActiveTasks()
     }
 

@@ -31,7 +31,12 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   const setLanguage = useCallback((l: LangChoice) => {
     localStorage.setItem(STORAGE_KEY, l)
-    setLang(resolveLang(l))
+    const next = resolveLang(l)
+    setLang(next)
+    // 通知插件沙箱语言切换（插件重拉自己的 l10n 包）+ 重解析插件 manifest 文案；
+    // 动态 import 防循环依赖
+    void import('../plugins/sandbox.ts').then(m => m.broadcastPluginLocale(next))
+    void import('../plugins/l10n.ts').then(m => m.retranslateStoreManifests()).catch(() => {})
   }, [])
 
   // 后端持久化的 settings.language 变化时同步（含启动 loadSettings 完成后的广播）
@@ -41,6 +46,8 @@ export function I18nProvider({ children }: { children: ReactNode }) {
         const next = resolveLang(s.language)
         if (cur === next) return cur
         localStorage.setItem(STORAGE_KEY, s.language)
+        void import('../plugins/sandbox.ts').then(m => m.broadcastPluginLocale(next))
+        void import('../plugins/l10n.ts').then(m => m.retranslateStoreManifests()).catch(() => {})
         return next
       })
     })

@@ -82,14 +82,11 @@ const FILE_DOWNLOAD_SOURCES: &[(i32, &str, &str)] = &[
     ),
 ];
 
-/// 镜像源（id=1）的探测节点，**按实际下载顺序排列**：rewrite_file_cdn 先把文件
-/// 指到 MCIM，MCIM 不可用才依次回退 QML 节点。**不含官方 CDN 兜底**——全部镜像
-/// 节点失败时镜像源必须报告不可用，让 auto-select 直接选官方源，而不是选中镜像
-/// 后先撞一遍死节点。
+/// 镜像源（id=1）的探测节点，**按实际下载顺序排列**：模组镜像链只保留 MCIM
+/// （自有节点已撤下，见 services/file_mirror.rs 模块头）。**不含官方 CDN 兜底**——
+/// MCIM 失败时镜像源必须报告不可用，让 auto-select 直接选官方源。
 const FILE_MIRROR_PING_URLS: &[&str] = &[
     "https://mod.mcimirror.top/data/AANobbMI/versions/OihdIimA/sodium-fabric-0.5.13%2Bmc1.20.1.jar",
-    "https://modrinth1.qomicex.dpdns.org/data/AANobbMI/versions/OihdIimA/sodium-fabric-0.5.13%2Bmc1.20.1.jar",
-    "https://modrinth.qomicex.dpdns.org/data/AANobbMI/versions/OihdIimA/sodium-fabric-0.5.13%2Bmc1.20.1.jar",
 ];
 
 /// 官方源 ping 目标（pinned 真实文件，见 FILE_DOWNLOAD_SOURCES 注释）。
@@ -210,7 +207,7 @@ async fn diagnostics_dump(State(state): State<SharedState>) -> ApiResult<Json<Op
     }))
 }
 
-async fn sysinfo() -> ApiResult<Json<SystemInfoResponse>> {
+async fn sysinfo(State(state): State<SharedState>) -> ApiResult<Json<SystemInfoResponse>> {
     let (total, avail) = crate::util::sysinfo::memory();
     let git_commit = option_env!("QOMICEX_GIT_HASH")
         .unwrap_or("unknown")
@@ -225,6 +222,7 @@ async fn sysinfo() -> ApiResult<Json<SystemInfoResponse>> {
         git_commit,
         memory: total as i64,
         available_memory: avail as i64,
+        data_dir: state.data_dir.to_string_lossy().into_owned(),
     }))
 }
 

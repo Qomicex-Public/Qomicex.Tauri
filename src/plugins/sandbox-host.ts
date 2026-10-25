@@ -34,7 +34,10 @@ export function createHost(pluginId: string): HTMLDivElement {
 export function createIframeHost(pluginId: string, hiddenMount: boolean) {
   const host = createHost(pluginId)
   const iframe = document.createElement('iframe')
-  iframe.setAttribute('sandbox', 'allow-scripts')
+  // allow-forms：L2 插件的 <form> 提交（如服务端控制台命令输入）此前被沙箱静默
+  // 拦截——表单类交互对所有插件都是坏的。allow-forms 不放宽脚本/同源边界，
+  // 仅恢复插件自身 UI 的表单能力。
+  iframe.setAttribute('sandbox', 'allow-scripts allow-forms')
   iframe.style.cssText = 'border:none;width:100%;height:100%'
   host.appendChild(iframe)
   if (hiddenMount) attachHost(host)

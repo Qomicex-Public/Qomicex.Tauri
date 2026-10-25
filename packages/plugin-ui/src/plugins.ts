@@ -15,6 +15,8 @@ export interface PluginManifest {
   render?: 'inline' | 'iframe' | 'webview'
   contributes?: PluginContributes
   icon?: string
+  /** 插件自持 i18n 目录（如 `"l10n"`），manifest 字符串用 `%key%` 引用其词条。 */
+  l10n?: string
 }
 
 export interface PluginDependency {
@@ -109,4 +111,6 @@ export const PERMISSION_CATALOG: Record<string, PermissionInfo> = {
   'shell:execute':         { id: 'shell:execute',         key: 'plugins.permission.shellExecute',         risk: 'danger' },
   'filesystem:read':       { id: 'filesystem:read',       key: 'plugins.permission.filesystemRead',       risk: 'warning' },
   'filesystem:write':      { id: 'filesystem:write',      key: 'plugins.permission.filesystemWrite',      risk: 'danger' },
+  'process:manage':        { id: 'process:manage',        key: 'plugins.permission.processManage',        risk: 'danger' },
+  'dialog:open':           { id: 'dialog:open',           key: 'plugins.permission.dialogOpen',           risk: 'normal' },
 }

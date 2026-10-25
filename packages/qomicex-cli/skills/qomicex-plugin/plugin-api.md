@@ -59,7 +59,8 @@ await api.proxyFetchStream(req, { onChunk, onError })   // 流式请求
 | | 仅文件不支持目录；授权制 | |
 | **execCommand** | `call('execCommand', command, timeoutMs?) → { exitCode, stdout, stderr }` | `shell:execute` |
 | | Windows → powershell，Unix → /bin/sh。默认超时 15s，范围 1-120s | |
-| **getSystemInfo** | `call('getSystemInfo') → { Os, Architecture, LauncherVersion, ... }` | `system:info` |
+| **getSystemInfo** | `call('getSystemInfo') → { Os, Architecture, LauncherVersion, dataDir, ... }` | `system:info` |
+| | `dataDir` = 启动器数据目录（插件默认工作区定位用，等价 `callBackend('/settings/data-dir')`） | |
 | **openUrl** | `call('openUrl', url)` | `system:notification` |
 | | 仅 http/https，沙箱内 window.open 被拦时应使用 | |
 | **listPlugins** | `call('listPlugins') → [{ id, name, version, status }]` | `plugin:list` |
@@ -84,7 +85,44 @@ await api.proxyFetchStream(req, { onChunk, onError })   // 流式请求
 | | 仅登记安装任务到下载中心，不创建真实下载 | |
 | **modpack.install** | `call('modpack.install', { id, gameDir, path | (type, projectId, fileId), ... }) → { instanceId }` | `instance:write` |
 | | 一键安装整合包（本地 zip / mrpack 或在线 Modrinth/CurseForge/FTB） | |
-| **addMenuItem** | `addMenuItem(item: PluginMenuItem)` | 无需权限 |
+| **（callBackend）/server/setup** | `call('callBackend', '/server/setup', { name, dir, source?, projectId?, fileId?, packPath?, vanilla?, mcVersion?, javaPath?, xmxMb? }) → { taskId, dir }` | `network:fetch` |
+| | 整合包一键开服。安装来源三选一（扁平字段，缺项返回 400 `SERVER_SOURCE_INVALID`）：`packPath`（本地 zip/mrpack）\| `source:'modrinth'\|'cf'` + `projectId` + `fileId`（在线）\| `vanilla:true` + `mcVersion`（纯净服）。后端装服务端运行时（forge/neo 走 `--installServer`）、下载 mods 并隔离 client-only（移入 `mods-client-only/`）、释放 overrides、写 eula/server.properties/`user_jvm_args.txt`。进度复用 InstallTracker（kind='server'），自动进下载中心 SSE | |
+| **（callBackend）/server/setup/progress/{taskId}** | GET → InstallProgress；`_method:'DELETE'` 取消 | `network:fetch` |
+| | 完成后读 `{dir}/.qml-server/launch.json`（`{ mode:'argfile'\|'jar', windowsArgfile?, unixArgfile?, jar?, gameVersion, loader }`）组装启动命令：argfile → `java @<windowsArgfile或unixArgfile>`，jar → `java -jar <jar>`；受限文件清单在 `{dir}/.qml-server/blocked-mods.json` | |
+| **process.spawn** | `call('process.spawn', { command, args?, cwd?, env? }) → { pid, startedAtMs }` | `process:manage` |
+| | 拉起常驻进程（piped stdio、CREATE_NO_WINDOW）。插件只能管理自己 spawn 的进程；stdout/stderr 逐行进环形缓冲（2000 行），按 seq 游标增量拉取 | |
+| **process.stdin** | `call('process.stdin', pid, text, { appendNewline? }?)` | `process:manage` |
+| | 向进程标准输入写入（默认补 `\n`，交互式控制台命令用） | |
+| **process.kill** | `call('process.kill', pid) → { message }` | `process:manage` |
+| | 终止整个进程树（taskkill /T /F）；对已退出进程幂等返回 | |
+| **process.alive** | `call('process.alive', pid) → { pid, alive, exitCode, ... }` | `process:manage` |
+| **process.logs** | `call('process.logs', pid, afterSeq?) → { lines: [{ seq, stream, text }], nextSeq, oldestSeq, alive, exitCode }` | `process:manage` |
+| | 游标式增量日志。轮询示例：保存 `nextSeq` 作为下次 `afterSeq`；进程退出后日志保留 10 分钟 | |
+| **process.list** | `call('process.list') → snapshot[]` | `process:manage` |
+| | 本插件的全部受管进程（插件页重载后凭此找回 pid） | |
+| **pickFile** | `call('pickFile', { title?, defaultPath?, filters?: [{ name, extensions }], multiple? }?) → path | null` | `dialog:open` |
+| | 系统文件选择对话框（主窗口 Tauri 中转）；取消/浏览器环境返回 null | |
+| **pickDirectory** | `call('pickDirectory', { title?, defaultPath? }?) → path | null` | `dialog:open` |
+| **extractArchive** | `call('extractArchive', archivePath, destPath) → { destPath }` | `filesystem:write` |
+| | 本地 zip 解压到目标目录（zip-slip 防护 + 条目/体积上限，复用整合包同款解压器）；压缩包路径需读授权、目标需写授权（一次确认同时授权两个前缀） | |
+| **listDir** | `call('listDir', path, { recursive?, maxEntries? }?) → [{ name, path, isDir, size, modifiedMs }]` | `filesystem:read` |
+| | 目录列举（目录优先、名称排序）；maxEntries 默认 1000、上限 10000 | |
+| **sendNotification** | `call('sendNotification', { title, body? }) → boolean` | `system:notification` |
+| | 系统级通知（WebView Notification API，首次触发授权询问）；失败/被拒返回 false，可降级 showToast | |
+| **openPluginSettings** | `call('openPluginSettings', targetPluginId?)` | `config:read` |
+| | 打开「设置 → 插件 → 插件设置」并定位目标插件 | |
+| **registerHook** | `registerHook(method, handler)` | `hook:register` |
+| | 洋葱式拦截启动器方法（launchInstance/syncScan/scanVersions/launchInstanceFlow）；manifest 需 `contributes.hooks` 声明 | |
+| **onLauncherExit** | `onLauncherExit(callback)` | 无需权限（被动事件） |
+| | 启动器关窗前广播（尽力而为、同步、不等待插件）。回调里只做同步快速收尾（保存状态等），不能发新请求 | |
+| **getPluginStrings** | `call('getPluginStrings') → Record<string, string>` | 无需权限（自持有数据） |
+| | 插件自持 i18n：返回 `l10n/` 目录合并后的字符串包（`bundle.json` 打底、当前 locale 覆盖）。插件运行时 UI 用它渲染自己的文案，不依赖启动器 i18n | |
+| **getLocale** | `call('getLocale') → string`（如 `'zh-CN'`） | 无需权限 |
+| **getIconSvg** | `call('getIconSvg', 'fa-solid fa-server') → { width, height, path } \| null` | 无需权限 |
+| | 内置图标（Font Awesome 类名，与 manifest icon 同一体系）→ SVG path，插件内联 `<svg><path/></svg>` 渲染（currentColor 跟随主题色），不引入图标字体。可用类名 = 启动器 `src/components/BuiltinIcons.tsx` 内置集 | |
+| **（事件）plugin:locale-changed** | `window.addEventListener('plugin:locale-changed', e => …)` | 无需权限（被动事件） |
+| | 启动器切换语言时向所有插件沙箱广播；插件收到后重拉 `getPluginStrings` 重渲染（与主题跟随对齐）。`e.detail.locale` 为新 locale | |
+| **addMenuItem** | `addMenuItem(item: PluginMenuItem)` | `ui:inject_sidebar` |
 | | 运行时动态注册侧边栏菜单项，停用时自动移除 | |
 
 ## error 处理

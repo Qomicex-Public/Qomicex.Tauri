@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
 import { Button } from './ui'
 import { Input } from './ui'
@@ -12,6 +12,9 @@ import type { ResourceVersion } from '../types/index.ts'
 import { useNavigate } from 'react-router-dom'
 import { addTask, updateTask, removeTask } from '../stores/downloadStore.ts'
 import { useI18n } from '../i18n/index.tsx'
+import { collectInstallModes, invokeInstallMode } from '../plugins/install-modes.ts'
+import type { PluginInstallMode } from '../plugins/install-modes.ts'
+import { PluginIcon } from './PluginIcon.tsx'
 
 /**
  * Technic 是「一个包 = 一个直链」，无版本/fileId 概念（issue #151，ADR-105）。
@@ -41,8 +44,40 @@ export default function ModpackInstallDialog({
   const [step, setStep] = useState<'config' | 'starting'>('config')
   const [instanceName, setInstanceName] = useState(modpackName)
   const [error, setError] = useState('')
+  // 插件贡献的安装方式（contributes.installModes）：每次 open 时收集（插件可能
+  // 在对话框挂载后才激活）；选中插件方式时确认按钮把资源上下文交给对应插件。
+  const [pluginModes, setPluginModes] = useState<PluginInstallMode[]>([])
+  const [selectedMode, setSelectedMode] = useState<string>('') // '' = 内置「创建实例」
+  useEffect(() => {
+    if (open) {
+      setPluginModes(collectInstallModes('modpack'))
+      setSelectedMode('')
+    }
+  }, [open])
 
   const handleInstall = async () => {
+    const mode = pluginModes.find(m => `${m.pluginId}:${m.id}` === selectedMode)
+    if (mode) {
+      setStep('starting')
+      setError('')
+      try {
+        await invokeInstallMode(mode, {
+          kind: 'modpack',
+          source,
+          projectId,
+          fileId: selectedVersion?.id,
+          name: instanceName || modpackName,
+          gameVersion: selectedVersion?.gameVersions?.[0],
+          iconUrl,
+        })
+        onClose()
+        navigate('/downloads')
+      } catch (e: any) {
+        setError(e.message || String(e))
+        setStep('config')
+      }
+      return
+    }
     // Technic 无版本选择（包内元数据决定），故不要求 selectedVersion。
     if (!selectedVersion && !isTechnic(source)) return
     setStep('starting')
@@ -183,6 +218,39 @@ export default function ModpackInstallDialog({
               </div>
             )}
             <Separator />
+            {pluginModes.length > 0 && (
+              <div className="space-y-1.5">
+                <Label>{t('dialogs.modpackInstall.installTarget')}</Label>
+                <div className="space-y-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedMode('')}
+                    className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${selectedMode === '' ? 'border-primary bg-primary/5 text-foreground' : 'border-border text-muted-foreground hover:bg-accent'}`}
+                  >
+                    <span className="shrink-0 text-base leading-none">📦</span>
+                    <span className="flex-1">{t('dialogs.modpackInstall.targetInstance')}</span>
+                  </button>
+                  {pluginModes.map(m => {
+                    const key = `${m.pluginId}:${m.id}`
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setSelectedMode(key)}
+                        title={m.description}
+                        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${selectedMode === key ? 'border-primary bg-primary/5 text-foreground' : 'border-border text-muted-foreground hover:bg-accent'}`}
+                      >
+                        <PluginIcon pluginId={m.pluginId} icon={m.icon || 'fa-solid fa-puzzle-piece'} fallback="🧩" className="h-4 w-4 shrink-0" />
+                        <span className="flex-1">
+                          {m.label}
+                          <span className="ml-1.5 text-xs opacity-60">{m.pluginName}</span>
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
             <div>
               <Label htmlFor="inst-name">{t('dialogs.modpackInstall.instanceName')}</Label>
               <Input id="inst-name" value={instanceName} onChange={e => setInstanceName(e.target.value)} />

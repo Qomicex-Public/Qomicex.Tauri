@@ -160,6 +160,103 @@ struct PluginShellResponse {
     stderr: String,
 }
 
+// ---------------------------------------------------------------------
+// 受管进程（issue #295：插件常驻进程管理）
+// ---------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginProcessSpawnRequest {
+    command: String,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cwd: Option<String>,
+    #[serde(default)]
+    env: HashMap<String, String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginProcessSpawnResponse {
+    pid: u32,
+    started_at_ms: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginProcessStdinRequest {
+    data: String,
+    #[serde(default = "default_true")]
+    append_newline: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct PluginProcessLogsQuery {
+    #[serde(default)]
+    after: Option<u64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginProcessLogsResponse {
+    lines: Vec<crate::services::plugin_process::ProcLogLine>,
+    next_seq: u64,
+    oldest_seq: u64,
+    alive: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit_code: Option<i32>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginProcessKillResponse {
+    message: String,
+}
+
+// ---------------------------------------------------------------------
+// 文件解压 / 目录列举（issue #295：导入服务端压缩包需要的能力）
+// ---------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginFileExtractRequest {
+    archive_path: String,
+    dest_path: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginFileExtractResponse {
+    dest_path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginFileListRequest {
+    path: String,
+    #[serde(default)]
+    recursive: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    max_entries: Option<usize>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginFileEntry {
+    name: String,
+    path: String,
+    is_dir: bool,
+    size: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modified_ms: Option<u64>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PluginDownloadStartRequest {
@@ -353,6 +450,14 @@ pub fn router() -> Router<SharedState> {
         .route("/plugins/files/{id}/write", post(file_write))
         .route("/plugins/files/{id}/authorize", post(file_authorize))
         .route("/plugins/files/{id}/delete", post(file_delete))
+        .route("/plugins/files/{id}/extract", post(file_extract))
+        .route("/plugins/files/{id}/list", post(file_list))
+        .route("/plugins/process/{id}/spawn", post(process_spawn))
+        .route("/plugins/process/{id}/list", get(process_list))
+        .route("/plugins/process/{id}/{pid}/stdin", post(process_stdin))
+        .route("/plugins/process/{id}/{pid}/kill", post(process_kill))
+        .route("/plugins/process/{id}/{pid}/alive", get(process_alive))
+        .route("/plugins/process/{id}/{pid}/logs", get(process_logs))
         .route("/plugins/download/start", post(download_start))
         .route("/plugins/download/list", get(download_list))
         .route(
@@ -1258,6 +1363,259 @@ fn read_file_segment(
     }
     buf.truncate(read_total);
     Ok(buf)
+}
+
+// =====================================================================
+// File extract / list (issue #295: 服务端压缩包导入所需)
+// =====================================================================
+
+/// POST /api/plugins/files/{id}/extract — 把本地 zip 解压到目标目录。
+/// 走 FileAuthService：压缩包路径需读授权、目标目录需写授权（均按前缀）。
+async fn file_extract(
+    State(state): State<SharedState>,
+    AxumPath(plugin_id): AxumPath<String>,
+    Json(req): Json<PluginFileExtractRequest>,
+) -> ApiResult<Json<PluginFileExtractResponse>> {
+    let archive = FileAuthService::normalize_path(&req.archive_path)
+        .ok_or_else(|| ApiError::bad_request("FS_INVALID_PATH", "无效的压缩包路径"))?;
+    let dest = FileAuthService::normalize_path(&req.dest_path)
+        .ok_or_else(|| ApiError::bad_request("FS_INVALID_PATH", "无效的目标路径"))?;
+    if state.plugin_auth.find_grant(&plugin_id, &req.archive_path).is_none()
+        || state.plugin_auth.find_grant(&plugin_id, &req.dest_path).is_none()
+    {
+        return Err(ApiError::forbidden(
+            "FS_AUTHORIZATION_REQUIRED",
+            "未授权访问该路径",
+        ));
+    }
+    if !archive.is_file() {
+        return Err(ApiError::not_found("FS_FILE_NOT_FOUND", "压缩包不存在"));
+    }
+    tokio::fs::create_dir_all(&dest).await?;
+    let dest_display = dest.to_string_lossy().into_owned();
+    let (archive, dest) = (archive.clone(), dest.clone());
+    tokio::task::spawn_blocking(move || {
+        crate::services::archive::extract_zip_file(&archive, &dest)
+    })
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?
+    .map_err(|e| ApiError::bad_request("EXTRACT_FAILED", e))?;
+    Ok(Json(PluginFileExtractResponse {
+        dest_path: dest_display,
+    }))
+}
+
+/// POST /api/plugins/files/{id}/list — 列举目录条目（名称/类型/大小/mtime）。
+/// 只做一层或递归（栈式遍历，目录优先），条目数上限默认 1000。
+async fn file_list(
+    State(state): State<SharedState>,
+    AxumPath(plugin_id): AxumPath<String>,
+    Json(req): Json<PluginFileListRequest>,
+) -> ApiResult<Json<Vec<PluginFileEntry>>> {
+    let root = FileAuthService::normalize_path(&req.path)
+        .ok_or_else(|| ApiError::bad_request("FS_INVALID_PATH", "无效路径"))?;
+    if state.plugin_auth.find_grant(&plugin_id, &req.path).is_none() {
+        return Err(ApiError::forbidden(
+            "FS_AUTHORIZATION_REQUIRED",
+            "未授权访问该路径",
+        ));
+    }
+    if !root.is_dir() {
+        return Err(ApiError::not_found("FS_DIR_NOT_FOUND", "目录不存在"));
+    }
+    let cap = req.max_entries.unwrap_or(1000).clamp(1, 10000);
+    let recursive = req.recursive;
+    let entries = tokio::task::spawn_blocking(move || list_dir_entries(&root, recursive, cap))
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .map_err(|e| ApiError::bad_request("FS_LIST_FAILED", e))?;
+    Ok(Json(entries))
+}
+
+fn list_dir_entries(
+    root: &Path,
+    recursive: bool,
+    cap: usize,
+) -> Result<Vec<PluginFileEntry>, String> {
+    let mut out: Vec<PluginFileEntry> = Vec::new();
+    let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let rd = std::fs::read_dir(&dir).map_err(|e| format!("读取目录失败 {}: {e}", dir.display()))?;
+        // 目录先入栈后输出会打乱「目录优先」排序，这里统一收集后在末尾整体排序。
+        for entry in rd {
+            let entry = entry.map_err(|e| format!("读取条目失败: {e}"))?;
+            let path = entry.path();
+            let Ok(meta) = entry.metadata() else { continue };
+            let is_dir = meta.is_dir();
+            out.push(PluginFileEntry {
+                name: entry.file_name().to_string_lossy().into_owned(),
+                path: path.to_string_lossy().into_owned(),
+                is_dir,
+                size: if is_dir { 0 } else { meta.len() },
+                modified_ms: meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as u64),
+            });
+            if recursive && is_dir {
+                if out.len() + stack.len() < cap + root_ancestor_budget(cap) {
+                    stack.push(path);
+                }
+            }
+            if out.len() >= cap {
+                out.truncate(cap);
+                sort_entries(&mut out);
+                return Ok(out);
+            }
+        }
+    }
+    sort_entries(&mut out);
+    Ok(out)
+}
+
+/// 递归模式下允许栈里比上限多保留一部分目录，避免浅层目录把配额吃光后
+/// 子目录全被跳过（栈深与输出量同量级即可）。
+fn root_ancestor_budget(cap: usize) -> usize {
+    (cap / 4).max(64)
+}
+
+fn sort_entries(out: &mut [PluginFileEntry]) {
+    out.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    });
+}
+
+// =====================================================================
+// Managed processes (issue #295: 插件常驻进程管理)
+// =====================================================================
+
+/// POST /api/plugins/process/{id}/spawn — 拉起常驻进程（piped stdio）。
+async fn process_spawn(
+    State(state): State<SharedState>,
+    AxumPath(plugin_id): AxumPath<String>,
+    Json(req): Json<PluginProcessSpawnRequest>,
+) -> ApiResult<Json<PluginProcessSpawnResponse>> {
+    if req.command.trim().is_empty() {
+        return Err(ApiError::bad_request("PROCESS_COMMAND_REQUIRED", "command 不能为空"));
+    }
+    let pid = state
+        .plugin_processes
+        .spawn(
+            &plugin_id,
+            crate::services::plugin_process::SpawnOptions {
+                command: req.command,
+                args: req.args,
+                cwd: req.cwd,
+                env: req.env,
+            },
+        )
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "PROCESS_SPAWN_FAILED", e))?;
+    let snap = state
+        .plugin_processes
+        .snapshot(&plugin_id, pid)
+        .map_err(|e| ApiError::internal(e))?;
+    Ok(Json(PluginProcessSpawnResponse { pid, started_at_ms: snap.started_at_ms }))
+}
+
+/// GET /api/plugins/process/{id}/list — 该插件的全部受管进程快照。
+async fn process_list(
+    State(state): State<SharedState>,
+    AxumPath(plugin_id): AxumPath<String>,
+) -> Json<Vec<crate::services::plugin_process::ProcSnapshot>> {
+    Json(state.plugin_processes.list(&plugin_id))
+}
+
+/// POST /api/plugins/process/{id}/{pid}/stdin — 向进程标准输入写入。
+async fn process_stdin(
+    State(state): State<SharedState>,
+    AxumPath((plugin_id, pid)): AxumPath<(String, u32)>,
+    Json(req): Json<PluginProcessStdinRequest>,
+) -> ApiResult<StatusCode> {
+    state
+        .plugin_processes
+        .write_stdin(&plugin_id, pid, &req.data, req.append_newline)
+        .await
+        .map_err(|e| ApiError::bad_request("PROCESS_STDIN_FAILED", e))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST /api/plugins/process/{id}/{pid}/kill — 终止进程树（复用核心 kill 逻辑）。
+/// 幂等：进程已退出时返回 200。
+async fn process_kill(
+    State(state): State<SharedState>,
+    AxumPath((plugin_id, pid)): AxumPath<(String, u32)>,
+) -> ApiResult<Json<PluginProcessKillResponse>> {
+    let snap = state
+        .plugin_processes
+        .snapshot(&plugin_id, pid)
+        .map_err(|e| ApiError::not_found("PROCESS_NOT_FOUND", e))?;
+    if !snap.alive {
+        return Ok(Json(PluginProcessKillResponse {
+            message: format!("进程 {pid} 已退出"),
+        }));
+    }
+    let killed = state
+        .core
+        .launch()
+        .kill(pid as i32)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    if !killed {
+        // 兜底：core kill 可能因平台细节返回 false（进程已在退出中等），
+        // 直接再来一次进程树终止，而不是把「停止失败」抛回给用户。
+        #[cfg(windows)]
+        {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = std::process::Command::new("kill")
+                .args(["-9", &pid.to_string()])
+                .status();
+        }
+    }
+    Ok(Json(PluginProcessKillResponse {
+        message: format!("进程 {pid} 已终止"),
+    }))
+}
+
+/// GET /api/plugins/process/{id}/{pid}/alive — 进程存活状态。
+async fn process_alive(
+    State(state): State<SharedState>,
+    AxumPath((plugin_id, pid)): AxumPath<(String, u32)>,
+) -> ApiResult<Json<crate::services::plugin_process::ProcSnapshot>> {
+    let snap = state
+        .plugin_processes
+        .snapshot(&plugin_id, pid)
+        .map_err(|e| ApiError::not_found("PROCESS_NOT_FOUND", e))?;
+    Ok(Json(snap))
+}
+
+/// GET /api/plugins/process/{id}/{pid}/logs?after=seq — 游标式增量日志。
+async fn process_logs(
+    State(state): State<SharedState>,
+    AxumPath((plugin_id, pid)): AxumPath<(String, u32)>,
+    Query(query): Query<PluginProcessLogsQuery>,
+) -> ApiResult<Json<PluginProcessLogsResponse>> {
+    let (lines, snap) = state
+        .plugin_processes
+        .logs(&plugin_id, pid, query.after.unwrap_or(0))
+        .map_err(|e| ApiError::not_found("PROCESS_NOT_FOUND", e))?;
+    Ok(Json(PluginProcessLogsResponse {
+        lines,
+        next_seq: snap.next_seq,
+        oldest_seq: snap.oldest_seq,
+        alive: snap.alive,
+        exit_code: snap.exit_code,
+    }))
 }
 
 // =====================================================================
