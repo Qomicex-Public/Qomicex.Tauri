@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { Link, useParams, useSearchParams, useLocation } from 'react-router-dom'
-import { ArrowLeft, BookOpen, ChevronDown, Download, ExternalLink, Folder, Heart, Languages, Layers, Pencil, RotateCw, Save, StickyNote, Tag, User } from 'lucide-react'
+import { ArrowLeft, BookOpen, ChevronDown, Download, ExternalLink, Folder, Heart, Languages, Layers, Pencil, RotateCw, Save, Share2, StickyNote, Tag, User } from 'lucide-react'
 import { RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { CopyActionIcon } from '../components/CopyActionIcon.tsx'
@@ -39,6 +39,8 @@ import { loadSettings } from '../api/settings.ts'
 import ModpackInstallDialog from '../components/ModpackInstallDialog.tsx'
 import ResourceInstallDialog from '../components/ResourceInstallDialog.tsx'
 import { useI18n } from '../i18n/index.tsx'
+import { ShareLinkDialog } from '../components/ShareLinkDialog.tsx'
+import { buildResourceShareUrl, normalizeShareSource, shareProjectId } from '../lib/share.ts'
 
 /**
  * 解析一个资源的 mcmod 词条：优先用标题精确匹配（CurseForge 标题常带括号后缀，
@@ -264,6 +266,35 @@ export default function ResourceDetailPage() {
     .filter((fid) => folderMap.has(fid))
     .map((fid) => folderMap.get(fid)!.name)
   const [editOpen, setEditOpen] = useState(false)
+  /** 分享链接弹窗内容（保留最后一次内容，避免关闭动画期间闪空框）。 */
+  const [share, setShare] = useState<{ url: string; title: string } | null>(null)
+  const [shareOpen, setShareOpen] = useState(false)
+
+  /**
+   * 分享页 `/r/{source}/{projectId}[/{fileId}]` 的链接。
+   * `fileId` 只在「分享此版本」时给，给了分享页就能一键安装该版本。
+   */
+  const buildShareUrl = useCallback(
+    (fileId?: string): string | null => {
+      if (!detail) return null
+      const source = normalizeShareSource(detail.source)
+      if (!source) return null
+      return buildResourceShareUrl({
+        source,
+        projectId: shareProjectId(detail.source, detail.id, detail.slug),
+        fileId,
+        type: detail.category ?? category,
+        name: detail.title,
+        icon: detail.iconUrl || undefined,
+        summary: detail.description || undefined,
+        link: detail.projectUrl || undefined,
+      })
+    },
+    [detail, category],
+  )
+
+  /** 分享页不支持存档（地图）类型：给出链接也只会被当成模组解析。 */
+  const shareable = category !== 'save' && !!detail && normalizeShareSource(detail.source) !== null
 
   useEffect(() => { void loadFavorites() }, [loadFavorites])
   // 收藏夹列表只在「已收藏」时才需要（未收藏时没有编辑入口，不产生额外请求）。
@@ -683,6 +714,26 @@ export default function ResourceDetailPage() {
                   </a>
                 </Button>
               ) : null}
+              {shareable && (
+                <Tooltip content={t('common.share')}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-label={t('common.share')}
+                    disabled={!detail}
+                    onClick={() => {
+                      const url = buildShareUrl()
+                      if (url) {
+                        setShare({ url, title: t('common.shareResource') })
+                        setShareOpen(true)
+                      }
+                    }}
+                  >
+                    <Share2 className="h-3.5 w-3.5" />
+                    {t('common.share')}
+                  </Button>
+                </Tooltip>
+              )}
             </div>
           }
         />
@@ -1050,7 +1101,26 @@ export default function ResourceDetailPage() {
                                 </div>
                               </div>
 
-                              {category === 'modpack' ? (
+                              <div className="flex shrink-0 items-start gap-1.5">
+                                {shareable && (
+                                  <Tooltip content={t('common.shareVersion')}>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      aria-label={t('common.shareVersion')}
+                                      onClick={() => {
+                                        const url = buildShareUrl(version.id)
+                                        if (url) {
+                                          setShare({ url, title: t('common.shareVersion') })
+                                          setShareOpen(true)
+                                        }
+                                      }}
+                                    >
+                                      <Share2 className="h-3 w-3" />
+                                    </Button>
+                                  </Tooltip>
+                                )}
+                                {category === 'modpack' ? (
                                 <div className="flex shrink-0 gap-1.5">
                                   <Button
                                     size="sm"
@@ -1134,6 +1204,7 @@ export default function ResourceDetailPage() {
                                   {t('resourceDetail.noDownload')}
                                 </Button>
                               )}
+                              </div>
                             </div>
                           </div>
                         ))}
@@ -1198,6 +1269,13 @@ export default function ResourceDetailPage() {
           onSaved={() => notify(t('resource.favorites.edit.saved'), 'success')}
         />
       )}
+
+      <ShareLinkDialog
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        title={share?.title ?? ''}
+        url={share?.url ?? ''}
+      />
     </PageShell>
   )
 }
