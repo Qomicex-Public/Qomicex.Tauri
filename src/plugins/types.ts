@@ -94,7 +94,11 @@ export interface PluginMenuItem {
 }
 
 export interface PluginInfo {
+  /** 生效清单（manifest 的 `%key%` 已按当前 locale 解析，供 UI 直接消费）。 */
   manifest: PluginManifest
+  /** 后端返回的**未解析**原始清单。语言切换时以此重新解析——已解析结果里的
+   * 文案不含 `%key%` 模板，无法反推回其它语言。 */
+  rawManifest?: PluginManifest
   dir: string
   state: PluginState
   installedAt: string

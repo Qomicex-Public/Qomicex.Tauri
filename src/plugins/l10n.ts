@@ -113,7 +113,12 @@ export async function retranslateStoreManifests() {
   const updates = await Promise.all(
     plugins
       .filter(p => p.manifest.l10n)
-      .map(async p => ({ id: p.manifest.id, manifest: await resolveManifestL10n(p.manifest) })),
+      // 必须从 rawManifest 重新解析：manifest 里已是旧语言文案（不含 %key%），
+      // 再解析一次不会恢复模板，语言切换会继续显示旧文案。
+      .map(async p => ({
+        id: p.manifest.id,
+        manifest: await resolveManifestL10n(p.rawManifest ?? p.manifest),
+      })),
   )
   if (updates.length === 0) return
   const byId = new Map(updates.map(u => [u.id, u.manifest] as const))

@@ -151,8 +151,52 @@ const FILTER_TABS: Tab[] = [
 type TFunc = ReturnType<typeof useI18n>['t']
 
 /** 用户主动清除过的后端任务（instanceId）：SSE 保留窗口内不再自动补卡。
- * 模块级集合——跨组件重挂载（切页面）仍生效；应用重启自然清空。 */
-const dismissedBackendTaskIds = new Set<string>()
+ * 持久化到 localStorage——刷新/重启后窗口内仍不复活（保留窗口 5 分钟，
+ * 超过的条目在读取时按时间戳淘汰，集合不会无限增长）。 */
+const DISMISSED_KEY = 'qomicex.dismissedBackendTasks'
+const DISMISS_TTL_MS = 15 * 60 * 1000
+
+function loadDismissed(): Map<string, number> {
+  try {
+    const raw = localStorage.getItem(DISMISSED_KEY)
+    if (!raw) return new Map()
+    const obj = JSON.parse(raw) as Record<string, number>
+    const now = Date.now()
+    const out = new Map<string, number>()
+    for (const [id, at] of Object.entries(obj)) {
+      if (typeof at === 'number' && now - at < DISMISS_TTL_MS) out.set(id, at)
+    }
+    return out
+  } catch {
+    return new Map()
+  }
+}
+
+function saveDismissed(map: Map<string, number>) {
+  try {
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify(Object.fromEntries(map)))
+  } catch { /* 配额/隐私模式：退化为仅内存 */ }
+}
+
+function dismissBackendTask(instanceId: string) {
+  const map = loadDismissed()
+  map.set(instanceId, Date.now())
+  saveDismissed(map)
+}
+
+function isBackendTaskDismissed(instanceId: string): boolean {
+  return loadDismissed().has(instanceId)
+}
+
+/** 清掉已离开 SSE 的登记（保留窗口过后该 id 不会再出现）。 */
+function pruneDismissed(liveIds: Set<string>) {
+  const map = loadDismissed()
+  let changed = false
+  for (const id of [...map.keys()]) {
+    if (!liveIds.has(id)) { map.delete(id); changed = true }
+  }
+  if (changed) saveDismissed(map)
+}
 
 /** 步骤显示标签：管线自带 label 优先（插件/新管线的命名通道），其次启动器
  * i18n 词条，都没有 → 原样显示 id（t() 对缺失 key 返回 key 本身）。 */
@@ -335,7 +379,7 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
               <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
                 // 后端发起的任务（process 管线）在 SSE 保留窗口内会被自动补卡——
                 // 用户点删除时登记 instanceId，补卡逻辑据此跳过，否则清除后复活。
-                if (task.instanceId) dismissedBackendTaskIds.add(task.instanceId)
+                if (task.instanceId) dismissBackendTask(task.instanceId)
                 removeTask(task.id)
               }}>
                 <Trash2 className="h-3.5 w-3.5" />
@@ -623,15 +667,13 @@ export default function DownloadCenter() {
     // 只补进行中的任务；SSE 不推 completed，无需担心反复补卡。
     const existingInstanceIds = new Set(getTasks().map(t => t.instanceId).filter(Boolean) as string[])
     // 清理掉已消失的登记项（任务离开 SSE 后，同 id 不会再出现；防集合无限增长）
-    for (const id of [...dismissedBackendTaskIds]) {
-      if (!sseData.installs.some(i => i.instanceId === id)) dismissedBackendTaskIds.delete(id)
-    }
+    pruneDismissed(new Set(sseData.installs.map(i => i.instanceId)))
     for (const inst of sseData.installs) {
-      // 终态任务不补卡：failed/cancelled 在 SSE 保留窗口内仍会推送，补卡会
-      // 与用户清除动作打架（清除后复活）；completed 本就不该出现在补卡路径。
-      if (inst.status === 'completed' || inst.status === 'failed' || inst.status === 'cancelled') continue
       if (existingInstanceIds.has(inst.instanceId)) continue
-      if (dismissedBackendTaskIds.has(inst.instanceId)) continue
+      // 用户主动清除过的任务不复活（SSE 保留窗口内 failed/cancelled 仍会推送）。
+      // 未清除的终态任务**仍要建卡**：首次 SSE 数据里就是 failed 的任务
+      // （如服务端搭建一开始就失败）否则完全没有卡片与错误信息可看。
+      if (isBackendTaskDismissed(inst.instanceId)) continue
       addTask({
         id: inst.instanceId,
         name: inst.title || inst.instanceId,
@@ -867,7 +909,7 @@ if (task.instanceId && task.type !== 'batch') {
           import('../stores/downloadStore.ts').then(m => {
             m.getTasks().filter(t => t.status !== 'downloading' && t.status !== 'paused' && t.status !== 'queued' && t.status !== 'awaiting-files').forEach(t => {
               // 后端发起任务的 instanceId 一并登记：SSE 保留窗口内不自动补卡
-              if (t.instanceId) dismissedBackendTaskIds.add(t.instanceId)
+              if (t.instanceId) dismissBackendTask(t.instanceId)
               m.removeTask(t.id)
             })
             setTimeout(() => setClearing(false), 800)

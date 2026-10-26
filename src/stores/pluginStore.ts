@@ -132,7 +132,7 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
           plugins.map(async p => {
             if (!p.manifest.l10n) return p
             const resolved = await resolveManifestL10n(p.manifest)
-            return { ...p, manifest: resolved }
+            return { ...p, manifest: resolved, rawManifest: p.manifest }
           })
         )
       } catch { /* l10n 解析失败按原文案显示 */ }
