@@ -616,9 +616,10 @@ pub fn install_from_package(
             let mut out = std::fs::File::create(&out_path)?;
             std::io::copy(&mut entry, &mut out)?;
         }
-        snapshot_existing_dir(&target_dir, &plugins_dir)?;
         // 用户数据跨版本保留（issue #295 实测：插件把服务器列表存在自己的
         // settings.json 里，上传升级直接 rename 替换目录会把配置清空）。
+        // 必须在 snapshot_existing_dir 之前拷贝——那一步会把旧目录 rename 成
+        // *.bak-<version>，之后 target_dir 已不存在，保留逻辑永远落空。
         // 老目录里若已有 settings.json / cache.json，先拷进临时目录一起搬过去；
         // 新包自带同名文件时不覆盖（以新包为准）。
         for preserved in ["settings.json", "cache.json"] {
@@ -632,6 +633,7 @@ pub fn install_from_package(
                 }
             }
         }
+        snapshot_existing_dir(&target_dir, &plugins_dir)?;
         std::fs::rename(&temp_dir, &target_dir)?;
         moved = true;
         Ok(())

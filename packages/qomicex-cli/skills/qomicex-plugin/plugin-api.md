@@ -100,9 +100,9 @@ await api.proxyFetchStream(req, { onChunk, onError })   // 流式请求
 | | 游标式增量日志。轮询示例：保存 `nextSeq` 作为下次 `afterSeq`；进程退出后日志保留 10 分钟 | |
 | **process.list** | `call('process.list') → snapshot[]` | `process:manage` |
 | | 本插件的全部受管进程（插件页重载后凭此找回 pid） | |
-| **pickFile** | `call('pickFile', { title?, defaultPath?, filters?: [{ name, extensions }], multiple? }?) → path | null` | `dialog:open` |
+| **pickFile** | `call('pickFile', { title?, defaultPath?, filters?: [{ name, extensions }], multiple? }?) → path \| null` | `dialog:open` |
 | | 系统文件选择对话框（主窗口 Tauri 中转）；取消/浏览器环境返回 null | |
-| **pickDirectory** | `call('pickDirectory', { title?, defaultPath? }?) → path | null` | `dialog:open` |
+| **pickDirectory** | `call('pickDirectory', { title?, defaultPath? }?) → path \| null` | `dialog:open` |
 | **extractArchive** | `call('extractArchive', archivePath, destPath) → { destPath }` | `filesystem:write` |
 | | 本地 zip 解压到目标目录（zip-slip 防护 + 条目/体积上限，复用整合包同款解压器）；压缩包路径需读授权、目标需写授权（一次确认同时授权两个前缀） | |
 | **listDir** | `call('listDir', path, { recursive?, maxEntries? }?) → [{ name, path, isDir, size, modifiedMs }]` | `filesystem:read` |

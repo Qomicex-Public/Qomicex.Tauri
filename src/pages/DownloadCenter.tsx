@@ -555,7 +555,10 @@ export default function DownloadCenter() {
     if (task?.kind === 'server') {
       getInstallProgress(instId)
         .then(p => {
-          if (!p) return
+          // 后端 tracker 无条目（重启后）返回 200 + not-started：这是原始枚举
+          // 而非卡片状态，直接写入会让 STATUS_CONFIG[status] 变 undefined、
+          // TaskCard 崩溃且持久化到 localStorage。跳过未知状态。
+          if (!p || !(p.status in STATUS_CONFIG)) return
           updateTask(taskId, {
             status: p.status as DownloadTask['status'],
             progress: Math.round(p.progress),
@@ -624,6 +627,9 @@ export default function DownloadCenter() {
       if (!sseData.installs.some(i => i.instanceId === id)) dismissedBackendTaskIds.delete(id)
     }
     for (const inst of sseData.installs) {
+      // 终态任务不补卡：failed/cancelled 在 SSE 保留窗口内仍会推送，补卡会
+      // 与用户清除动作打架（清除后复活）；completed 本就不该出现在补卡路径。
+      if (inst.status === 'completed' || inst.status === 'failed' || inst.status === 'cancelled') continue
       if (existingInstanceIds.has(inst.instanceId)) continue
       if (dismissedBackendTaskIds.has(inst.instanceId)) continue
       addTask({
@@ -859,7 +865,11 @@ if (task.instanceId && task.type !== 'batch') {
         <Button variant="outline" size="sm" onClick={() => {
           setClearing(true)
           import('../stores/downloadStore.ts').then(m => {
-            m.getTasks().filter(t => t.status !== 'downloading' && t.status !== 'paused' && t.status !== 'queued' && t.status !== 'awaiting-files').forEach(t => m.removeTask(t.id))
+            m.getTasks().filter(t => t.status !== 'downloading' && t.status !== 'paused' && t.status !== 'queued' && t.status !== 'awaiting-files').forEach(t => {
+              // 后端发起任务的 instanceId 一并登记：SSE 保留窗口内不自动补卡
+              if (t.instanceId) dismissedBackendTaskIds.add(t.instanceId)
+              m.removeTask(t.id)
+            })
             setTimeout(() => setClearing(false), 800)
           })
         }} className="gap-1.5">

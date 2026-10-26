@@ -336,7 +336,7 @@ export default function ModpackQuickInstallDialog({
       {step === 'config' && (
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
-          <Button onClick={handleInstall} disabled={selectedMode === '' && (!isTechnic(source) && !selectedVersion)}>{t('dialogs.modpackInstall.startInstall')}</Button>
+          <Button onClick={handleInstall} disabled={!isTechnic(source) && !selectedVersion}>{t('dialogs.modpackInstall.startInstall')}</Button>
         </DialogFooter>
       )}
     </Dialog>

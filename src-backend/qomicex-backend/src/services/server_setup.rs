@@ -318,8 +318,21 @@ pub async fn run_server_pipeline(
                         let Some(url) = f.download_url.as_deref().filter(|u| !u.is_empty()) else {
                             continue;
                         };
-                        // mrpack 的 path 是完整相对路径（mods/x.jar、config/y.toml…）
-                        let dest = dir_g.join(&f.path);
+                        // 安全校验（与整合包解压同一威胁模型）：mrpack 的 path 是
+                        // 相对路径（mods/x.jar、config/y.toml…），拒绝绝对路径与
+                        // `..`/非 Normal 组件——恶意 .mrpack 不得写出服务端目录。
+                        let rel = Path::new(&f.path);
+                        if rel.is_absolute()
+                            || rel
+                                .components()
+                                .any(|c| !matches!(c, std::path::Component::Normal(_)))
+                        {
+                            return Err(format!(
+                                "整合包含非法相对路径条目: {}",
+                                f.path
+                            ));
+                        }
+                        let dest = dir_g.join(rel);
                         let (u, headers) = crate::endpoints::modpack::mirror_mod_url(
                             url.to_string(),
                             &key_g,
@@ -501,13 +514,18 @@ fn pack_kind_name(kind: &PackKind) -> &'static str {
     }
 }
 
+/// 服务端搭建按**服务端侧别**解析 mrpack：收集 env.server != "unsupported"
+/// 的全部条目（必需 + 可选），client-only 由后续 jar 扫描隔离兜底。
+/// 客户端解析语义（env.client == required）会漏掉 server-required 的 mod。
 fn parse_pack(
     zip_path: &Path,
     kind: &PackKind,
 ) -> Result<crate::endpoints::modpack::ParsedModpack, String> {
     match kind {
-        PackKind::Modrinth => crate::endpoints::modpack::parse_modrinth_index(zip_path)
-            .map_err(|e| format!("解析 modrinth.index.json 失败: {e}")),
+        PackKind::Modrinth => {
+            crate::endpoints::modpack::parse_modrinth_index(zip_path, crate::endpoints::modpack::ModrinthSide::Server)
+                .map_err(|e| format!("解析 modrinth.index.json 失败: {e}"))
+        }
         PackKind::Curseforge => crate::endpoints::modpack::parse_curseforge_manifest(zip_path)
             .map_err(|e| format!("解析 manifest.json 失败: {e}")),
     }
@@ -799,6 +817,10 @@ async fn install_forge_server(
     // 等待退出 + 取消轮询 + 超时兜底
     let mut interval = tokio::time::interval(CANCEL_POLL);
     interval.tick().await; // 首个 tick 立即返回，跳过
+    // 超时计时器必须在循环外创建并 pin：select! 分支里每次循环重建 sleep，
+    // 计时器永远走不完（interval 每 2s 赢出，循环重来），超时形同虚设。
+    let timeout = tokio::time::sleep(INSTALLER_TIMEOUT);
+    tokio::pin!(timeout);
     let status = loop {
         tokio::select! {
             st = child.wait() => break st.map_err(|e| format!("等待安装器退出失败: {e}")),
@@ -810,7 +832,7 @@ async fn install_forge_server(
                     return Err("安装已取消".to_string());
                 }
             }
-            _ = tokio::time::sleep(INSTALLER_TIMEOUT) => {
+            _ = &mut timeout => {
                 let _ = child.kill().await;
                 return Err("服务端安装器执行超时（>20 分钟），请检查网络或手动安装".to_string());
             }
@@ -926,12 +948,24 @@ fn read_to_string_lossy<R: Read>(reader: &mut R, out: &mut String) -> Option<()>
 }
 
 /// fabric.mod.json → 是否 client-only。
-/// `environment` 第一位=客户端要求，第二位=服务端要求。新值域
-/// "*"/"required"/"optional"/"unsupported"，旧值域 "*"（=required）/"client"（=unsupported）/"server"（=required）。
-/// 服务端必需 → 双端；服务端不需要且客户端必需 → client-only；其余 → None（保守保留）。
+///
+/// `environment` 有两种形态（Fabric 文档历史演变）：
+/// - **字符串**（主流）：`"*"` 双端、`"client"` 仅客户端、`"server"` 仅服务端；
+/// - **数组**（旧版两段式）：[客户端要求, 服务端要求]，值 `*`/`required`/`optional`/`unsupported`。
+/// 服务端需要 → 双端；服务端不需要且客户端必需 → client-only；无法解析 → None（保守保留）。
 pub fn is_client_only_fabric_json(text: &str) -> Option<bool> {
     let v: serde_json::Value = serde_json::from_str(text).ok()?;
-    let env = v.get("environment")?.as_array()?;
+    let env_val = v.get("environment")?;
+    // 字符串形态优先（真实 fabric.mod.json 的主流写法）
+    if let Some(s) = env_val.as_str() {
+        return match s.to_ascii_lowercase().as_str() {
+            "client" => Some(true),
+            "*" | "server" => Some(false),
+            _ => None,
+        };
+    }
+    // 数组形态：[客户端, 服务端]
+    let env = env_val.as_array()?;
     let side = |i: usize| -> String {
         env.get(i)
             .and_then(|x| x.as_str())
@@ -1139,6 +1173,11 @@ mod tests {
 
     #[test]
     fn fabric_environment_client_only() {
+        // 字符串形态（主流）
+        assert_eq!(is_client_only_fabric_json(r#"{"environment": "client"}"#), Some(true));
+        assert_eq!(is_client_only_fabric_json(r#"{"environment": "*"}"#), Some(false));
+        assert_eq!(is_client_only_fabric_json(r#"{"environment": "server"}"#), Some(false));
+        // 数组形态（旧版两段式）
         assert_eq!(
             is_client_only_fabric_json(r#"{"environment": ["*", "client"]}"#),
             Some(true)

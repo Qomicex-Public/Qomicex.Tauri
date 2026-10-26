@@ -95,7 +95,9 @@ impl LogRing {
     }
 
     fn after(&self, seq: u64) -> impl Iterator<Item = &ProcLogLine> {
-        self.entries.iter().filter(move |l| l.seq > seq)
+        // 闭区间：`after` 语义 = 「已读到的最后一条 seq」，调用方把返回的
+        // nextSeq（= 下一条未分配 seq）传回来时恰好衔接（含 after=0 首拉）。
+        self.entries.iter().filter(move |l| l.seq >= seq)
     }
 }
 
@@ -106,6 +108,8 @@ struct ProcessHandle {
     args: Vec<String>,
     started_at_ms: u64,
     state: Mutex<ProcState>,
+    /// 进程退出时刻（waiter 写入；运行中为 None）。lazy_gc 据此判定保留期。
+    exited_at_ms: Mutex<Option<u64>>,
     logs: Mutex<LogRing>,
     /// 进程还活着时持有 stdin；退出/关闭后置 None（写返回错误）。
     stdin: AsyncMutex<Option<ChildStdin>>,
@@ -197,6 +201,7 @@ impl PluginProcessService {
             args: opts.args,
             started_at_ms: now_ms(),
             state: Mutex::new(ProcState::Running),
+            exited_at_ms: Mutex::new(None),
             logs: Mutex::new(LogRing::new()),
             stdin: AsyncMutex::new(stdin),
         });
@@ -250,6 +255,7 @@ impl PluginProcessService {
                 let status = child.wait().await;
                 let code = status.ok().and_then(|s| s.code());
                 *h.state.lock().unwrap_or_else(|p| p.into_inner()) = ProcState::Exited(code);
+                *h.exited_at_ms.lock().unwrap_or_else(|p| p.into_inner()) = Some(now_ms());
                 // 退出后关闭 stdin（若仍持有），让后续 write_stdin 立即报错。
                 *h.stdin.lock().await = None;
             });
@@ -272,8 +278,12 @@ impl PluginProcessService {
             .iter()
             .filter(|(_, h)| {
                 let state = h.state.lock().unwrap_or_else(|p| p.into_inner());
-                !state.alive()
-                    && now.saturating_sub(h.started_at_ms) > EXITED_RETENTION.as_millis() as u64 + 60_000
+                let exited_at = *h.exited_at_ms.lock().unwrap_or_else(|p| p.into_inner());
+                // 已退出：按退出时刻计保留期（长跑进程退出后同样有完整收尾窗口）
+                matches!(&*state, ProcState::Exited(_))
+                    && exited_at
+                        .map(|at| now.saturating_sub(at) > EXITED_RETENTION.as_millis() as u64)
+                        .unwrap_or(false)
             })
             .map(|(pid, _)| *pid)
             .collect();

@@ -44,9 +44,11 @@ pub fn effective_root_public_key() -> &'static str {
                     let key = key.trim().to_string();
                     if !key.is_empty() {
                         overridden = true;
+                        // 按字符截前 8 个：非 ASCII 输入上字节切片可能落在 UTF-8
+                        // 字符内部导致 panic（debug 构建日志路径）。
+                        let prefix: String = key.chars().take(8).collect();
                         crate::services::trace::trace_append(format!(
-                            "[plugin-signature] 验签根钥 = 本地开发覆盖（QOMICEX_DEV_ROOT_PUBLIC_KEY = {}…，仅 debug 构建生效）",
-                            &key[..key.len().min(8)]
+                            "[plugin-signature] 验签根钥 = 本地开发覆盖（QOMICEX_DEV_ROOT_PUBLIC_KEY = {prefix}…，仅 debug 构建生效）"
                         ));
                         return key;
                     }

@@ -1636,7 +1636,7 @@ pub(crate) async fn download_batch(
 }
 
 /// 与 download_batch 相同，额外按主 URL 附加镜像（安装器等无法从 URL 推导兜底的场景）。
-async fn download_batch_with_mirrors(
+pub(crate) async fn download_batch_with_mirrors(
     handle: &InstallHandle,
     mgr: &DownloadManager,
     files: Vec<DownloadTarget>,

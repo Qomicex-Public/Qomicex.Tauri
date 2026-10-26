@@ -36,6 +36,7 @@ export const PERMISSION_CATALOG: Record<string, PermissionInfo> = {
   'plugin:install':      { id: 'plugin:install',      risk: 'danger' },
   'plugin:list':         { id: 'plugin:list',         risk: 'normal' },
   'plugin:log':          { id: 'plugin:log',          risk: 'normal' },
+  'hook:register':       { id: 'hook:register',       risk: 'danger' },
   'resource:read':       { id: 'resource:read',       risk: 'normal' },
   'resource:write':      { id: 'resource:write',      risk: 'warning' },
   'java:manage':         { id: 'java:manage',         risk: 'warning' },
