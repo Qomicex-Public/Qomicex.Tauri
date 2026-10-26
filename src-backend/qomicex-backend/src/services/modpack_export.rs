@@ -473,6 +473,11 @@ fn collect_export_tree(root: &Path, version_dir_name: &str) -> Result<Vec<Export
                     children,
                 });
             } else if file_type.is_file() {
+                // 实例独立配置可能位于 `versions/{name}/`（非隔离开实例导出根目录时
+                // 是嵌套的），必须全树排除；Qomicex 格式随后单独写脱敏 override。
+                if name.eq_ignore_ascii_case(instance_config::CONFIG_FILE) {
+                    continue;
+                }
                 // 排除版本 json/jar（仅根目录）与账户缓存
                 if rel_dir.is_empty() {
                     if name == version_json || name == version_jar {
@@ -1251,6 +1256,10 @@ mod tests {
             &root.join("qomicex.json"),
             br#"{"javaPath":"C:/local/javaw.exe"}"#,
         );
+        write(
+            &root.join("versions/Other/qomicex.json"),
+            br#"{"javaPath":"C:/other/javaw.exe"}"#,
+        );
         write(&root.join("mods/jei.jar"), &[0u8; 100]);
         write(&root.join("mods/sub/another.jar"), &[0u8; 50]);
         write(&root.join("resourcepacks/rp.zip"), &[0u8; 10]);
@@ -1269,6 +1278,10 @@ mod tests {
         assert!(
             find(&tree, "qomicex.json").is_none(),
             "实例独立配置不得原样进入 CF/MR/Qomicex overrides"
+        );
+        assert!(
+            find(&tree, "versions/Other/qomicex.json").is_none(),
+            "非隔离开实例导出根目录时，嵌套的其他实例配置也必须排除"
         );
 
         // saves/screenshots 保留（由前端勾选决定）

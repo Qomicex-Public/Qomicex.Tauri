@@ -937,7 +937,7 @@ async fn run_update_pipeline(
     }
     state
         .instance
-        .update(&inst.id, updated)
+        .update(&inst.id, updated)?
         .ok_or_else(|| "更新实例记录失败（实例可能已被删除）".to_string())?;
 
     let origin = modpack_manifest::ManifestOrigin {

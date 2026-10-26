@@ -691,7 +691,7 @@ async fn multimc_import_impl(
         modpack_name: Some(name.clone()),
         ..Default::default()
     };
-    let created = s.instance.create(inst);
+    let created = s.instance.create(inst).map_err(ApiError::internal)?;
     drop(_guard);
     let instance_id = created.id.clone();
 
@@ -1090,7 +1090,7 @@ async fn technic_import_impl(
         modpack_name: Some(base_name.clone()),
         ..Default::default()
     };
-    let created = s.instance.create(inst);
+    let created = s.instance.create(inst).map_err(ApiError::internal)?;
     drop(_guard);
     let instance_id = created.id.clone();
 
@@ -1640,7 +1640,7 @@ pub(crate) async fn solder_import_impl(
         modpack_version: Some(build_id.clone()),
         ..Default::default()
     };
-    let created = s.instance.create(inst);
+    let created = s.instance.create(inst).map_err(ApiError::internal)?;
     drop(_guard);
     let instance_id = created.id.clone();
 
@@ -3195,6 +3195,12 @@ impl ModpackServiceData {
                 _ => (None, false),
             };
 
+        if !instance_config::is_safe_instance_name(&req.name) {
+            return Err(ApiError::bad_request(
+                "INSTANCE_NAME_INVALID",
+                "Instance name must be a single valid directory name",
+            ));
+        }
         let src_norm = req
             .source
             .as_deref()
@@ -3262,7 +3268,7 @@ impl ModpackServiceData {
             .icon_data
             .as_deref()
             .map(crate::util::pcl_icon::normalize_icon_data_uri);
-        let created = self.instance.create(instance);
+        let created = self.instance.create(instance).map_err(ApiError::internal)?;
         let instance_id = created.id.clone();
         let version_dir_name = created.name.clone();
 
@@ -3365,11 +3371,17 @@ impl ModpackServiceData {
                             if let Some(meta) = meta {
                                 inst.loader_version = meta.loader_version.clone();
                             }
-                            if inst_svc.update(&inst_id_inner, inst).is_none() {
-                                tracing::warn!(
+                            match inst_svc.update(&inst_id_inner, inst) {
+                                Ok(Some(_)) => {}
+                                Ok(None) => tracing::warn!(
                                     instance = %inst_id_inner,
                                     "生效版本回写实例失败（实例可能已被删除）"
-                                );
+                                ),
+                                Err(e) => tracing::warn!(
+                                    instance = %inst_id_inner,
+                                    error = %e,
+                                    "生效版本回写实例失败"
+                                ),
                             }
                         }
                     }
@@ -4375,16 +4387,33 @@ fn relative_to_instance(
     }
 }
 
+/// 有界读取 zip 内的配置：先看解压后大小，再用 `take` 限制实际读入量。
+/// 超限视为损坏/恶意包，返回 `None`，绝不把整个条目读进内存。
+fn read_bounded_config<R: Read>(reader: &mut R, size: u64) -> Option<String> {
+    if size > instance_config::MAX_CONFIG_BYTES {
+        return None;
+    }
+    let mut content = String::new();
+    reader
+        .take(instance_config::MAX_CONFIG_BYTES + 1)
+        .read_to_string(&mut content)
+        .ok()?;
+    if content.len() as u64 > instance_config::MAX_CONFIG_BYTES {
+        return None;
+    }
+    Some(content)
+}
+
 /// 读取 Qomicex 包内 `overrides/qomicex.json` 的 `versionIsolation`。
-/// 缺失/损坏/非法类型返回 `None`，由调用方回退到导入请求里的选择。
+/// 缺失/损坏/非法类型/超限返回 `None`，由调用方回退到导入请求里的选择。
 fn read_qml_isolation(zip_path: &Path) -> Option<bool> {
     let file = std::fs::File::open(zip_path).ok()?;
     let mut archive = zip::ZipArchive::new(file).ok()?;
     let mut entry = archive
         .by_name(&format!("overrides/{}", instance_config::CONFIG_FILE))
         .ok()?;
-    let mut content = String::new();
-    entry.read_to_string(&mut content).ok()?;
+    let size = entry.size();
+    let content = read_bounded_config(&mut entry, size)?;
     let value: serde_json::Value = serde_json::from_str(&content).ok()?;
     value.get("versionIsolation").and_then(|v| v.as_bool())
 }
@@ -4396,6 +4425,9 @@ fn release_qml_overrides(
     version_dir_name: &str,
     version_isolation: bool,
 ) -> Result<(), String> {
+    if !instance_config::is_safe_instance_name(version_dir_name) {
+        return Err(format!("非法实例名: {version_dir_name}"));
+    }
     let file = std::fs::File::open(zip_path).map_err(|e| format!("打开整合包失败: {e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
     for i in 0..archive.len() {
@@ -4413,17 +4445,43 @@ fn release_qml_overrides(
         if rel.is_empty() {
             continue;
         }
+        // 只允许根级 `overrides/qomicex.json`（且会走下面的白名单过滤）。
+        // 包内嵌套的同名文件（如 `overrides/versions/Other/qomicex.json`）不得
+        // 借释放流程覆盖其他实例的配置。
+        if rel != instance_config::CONFIG_FILE
+            && Path::new(rel)
+                .file_name()
+                .is_some_and(|n| n.eq_ignore_ascii_case(instance_config::CONFIG_FILE))
+        {
+            continue;
+        }
         // 实例独立配置固定落在版本目录（即使实例未开启版本隔离）：读取/写入
         // 都以 `{gameDir}/versions/{name}/qomicex.json` 为准，不能让它散落到
         // 共享的游戏根目录（会被其他实例误认，也偏离约定路径）。
-        let dest = if rel == instance_config::CONFIG_FILE {
-            Path::new(game_dir)
-                .join("versions")
-                .join(version_dir_name)
-                .join(rel)
-        } else {
-            modpack_target_path(game_dir, version_dir_name, version_isolation, rel)
-        };
+        // 包内配置是**受限导入格式**：只保留导出白名单键，绝不采纳 javaPath。
+        if rel == instance_config::CONFIG_FILE {
+            let size = entry.size();
+            let Some(content) = read_bounded_config(&mut entry, size) else {
+                continue;
+            };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
+                continue;
+            };
+            let map = instance_config::sanitize_import_map(&value);
+            let dest = instance_config::version_dir(game_dir, version_dir_name)
+                .ok_or_else(|| format!("非法实例名: {version_dir_name}"))?
+                .join(instance_config::CONFIG_FILE);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("创建目录失败 {}: {e}", parent.display()))?;
+            }
+            let bytes = serde_json::to_vec(&serde_json::Value::Object(map))
+                .map_err(|e| format!("序列化实例配置失败: {e}"))?;
+            std::fs::write(&dest, bytes)
+                .map_err(|e| format!("写入实例配置失败 {}: {e}", dest.display()))?;
+            continue;
+        }
+        let dest = modpack_target_path(game_dir, version_dir_name, version_isolation, rel);
         if entry.is_dir() {
             std::fs::create_dir_all(&dest)
                 .map_err(|e| format!("创建目录失败 {}: {e}", dest.display()))?;
@@ -5413,9 +5471,15 @@ mod tests {
         std::fs::create_dir_all(src.join("overrides/mods")).unwrap();
         std::fs::write(src.join("overrides/config/opt.toml"), b"a=1").unwrap();
         std::fs::write(src.join("overrides/mods/keep.jar"), b"jar").unwrap();
+        std::fs::create_dir_all(src.join("overrides/versions/Other")).unwrap();
         std::fs::write(
             src.join("overrides/qomicex.json"),
-            br#"{"maxMemory":8192,"versionIsolation":false}"#,
+            br#"{"maxMemory":8192,"versionIsolation":false,"javaPath":"C:/Windows/System32/calc.exe","id":"foreign","accountName":"leak"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            src.join("overrides/versions/Other/qomicex.json"),
+            br#"{"javaPath":"C:/evil.exe"}"#,
         )
         .unwrap();
         std::fs::write(src.join("qmodpack.index.json"), b"{}").unwrap();
@@ -5471,10 +5535,15 @@ mod tests {
         // 非 overrides 条目不释放
         assert!(!game_dir.join("qmodpack.index.json").exists());
         assert!(!game_dir.join("manifest.json").exists());
-        // 实例独立配置固定释放到版本目录，即使当前实例不是版本隔离
-        assert_eq!(
-            std::fs::read_to_string(game_dir.join("versions/v/qomicex.json")).unwrap(),
-            r#"{"maxMemory":8192,"versionIsolation":false}"#
+        // 实例独立配置固定释放到版本目录，即使当前实例不是版本隔离；
+        // 包内 javaPath/账号/身份字段必须被白名单丢弃。
+        let released = std::fs::read_to_string(game_dir.join("versions/v/qomicex.json")).unwrap();
+        assert_eq!(released, r#"{"maxMemory":8192,"versionIsolation":false}"#);
+        assert!(!released.contains("javaPath"));
+        assert!(!released.contains("C:/Windows"));
+        assert!(
+            !game_dir.join("versions/Other/qomicex.json").exists(),
+            "包内嵌套 qomicex.json 不得覆盖其他实例配置"
         );
         assert!(
             !game_dir.join("qomicex.json").exists(),

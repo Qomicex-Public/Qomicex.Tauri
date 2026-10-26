@@ -2970,6 +2970,10 @@ function toInstancePatch(field: string, value: unknown): InstancePatch | null {
     const text = typeof value === 'string' ? value : String(value)
     return { [field]: text.trim() ? text : null } as InstancePatch
   }
+  if (field === 'versionIsolation') {
+    // undefined 也代表“跟随全局”：必须显式发 null 清除，不能当成“未修改”。
+    return { versionIsolation: value === undefined ? null : (value as boolean | null) }
+  }
   if (value === undefined) return null
   return { [field]: value } as InstancePatch
 }
@@ -3081,12 +3085,19 @@ export default function InstanceDetailPage() {
   }, [id, navigate, detailRefreshKey])
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 当前路由实例：异步保存返回后据此丢弃已切走的响应。 */
+  const currentIdRef = useRef(id)
+  /** 已发起的保存序号：只允许最新一次响应更新 UI/回滚。 */
+  const saveSeqRef = useRef(0)
   /** 待提交的字段补丁：防抖期间连续修改多个字段也会合并，但每个字段仍是独立键。 */
   const pendingPatchRef = useRef<InstancePatch>({})
 
   // 切换实例时丢掉上一个实例的待提交补丁，避免防抖窗口内把 A 的改动提交到 B。
   useEffect(() => {
+    currentIdRef.current = id
     pendingPatchRef.current = {}
+    saveSeqRef.current += 1
+    setSaving(false)
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current)
       saveTimerRef.current = null
@@ -3137,24 +3148,35 @@ export default function InstanceDetailPage() {
     const patch = pendingPatchRef.current
     pendingPatchRef.current = {}
     if (!id || Object.keys(patch).length === 0) return
+    const requestId = id
+    const sequence = ++saveSeqRef.current
     setSaving(true)
     try {
-      const updated = await updateInstance(id, patch as Partial<CreateInstanceRequest>)
+      const updated = await updateInstance(requestId, patch as Partial<CreateInstanceRequest>)
+      // 已切走实例，或已有更新的保存请求：旧响应不得覆盖当前页面。
+      if (currentIdRef.current !== requestId || sequence !== saveSeqRef.current) return
       setInstance(updated)
-      cacheSet(`api-instance-${id}`, updated)
+      cacheSet(`api-instance-${requestId}`, updated)
     } catch (e) {
+      if (currentIdRef.current !== requestId || sequence !== saveSeqRef.current) return
       notify(e instanceof ApiError ? e.displayMessage : String(e), 'error')
       // 保存失败：只回滚本次提交的字段到服务端值，其它未保存的编辑保持不动。
       setForm((f) => {
         if (!f || !instance) return f
         const next = { ...f } as unknown as Record<string, unknown>
+        // 只回滚“失败后用户没有再次修改”的字段；若用户已经输入了新值，
+        // 该字段还在待提交补丁里，不能把它覆盖回旧值。
         for (const key of Object.keys(patch)) {
-          next[key] = (instance as unknown as Record<string, unknown>)[key]
+          if (!(key in pendingPatchRef.current)) {
+            next[key] = (instance as unknown as Record<string, unknown>)[key]
+          }
         }
         return next as unknown as GameInstance
       })
     } finally {
-      setSaving(false)
+      if (currentIdRef.current === requestId && sequence === saveSeqRef.current) {
+        setSaving(false)
+      }
     }
   }, [id, instance, notify])
 

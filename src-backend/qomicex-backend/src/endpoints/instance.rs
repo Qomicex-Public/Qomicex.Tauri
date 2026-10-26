@@ -29,6 +29,7 @@ use crate::error::{ApiError, ApiResult};
 use crate::services::install_service::InstallRequestData;
 use crate::services::install_tracker::InstallProgress;
 use crate::services::instance::GameInstance;
+use crate::services::instance_config;
 use crate::services::instance_group::InstanceGroup;
 use crate::services::launch_tracker::LaunchProgress;
 use crate::state::SharedState;
@@ -367,6 +368,12 @@ async fn create_instance(
     State(state): State<SharedState>,
     Json(req): Json<CreateInstanceRequest>,
 ) -> ApiResult<(StatusCode, Json<GameInstance>)> {
+    if !instance_config::is_safe_instance_name(&req.name) {
+        return Err(ApiError::bad_request(
+            "INSTANCE_NAME_INVALID",
+            "Instance name must be a single valid directory name",
+        ));
+    }
     let instance = GameInstance {
         id: short_id(),
         name: req.name,
@@ -378,7 +385,10 @@ async fn create_instance(
         game_dir: req.game_dir.unwrap_or_else(|| ".minecraft".to_string()),
         ..Default::default()
     };
-    let created = state.instance.create(instance);
+    let created = state
+        .instance
+        .create(instance)
+        .map_err(|e| ApiError::bad_request("INSTANCE_CREATE_FAILED", e))?;
     Ok((StatusCode::CREATED, Json(created)))
 }
 
@@ -402,69 +412,101 @@ async fn update_instance(
     State(state): State<SharedState>,
     Json(req): Json<UpdateInstanceRequest>,
 ) -> ApiResult<Json<GameInstance>> {
-    let Some(mut existing) = state.instance.get_by_id(&id) else {
-        return Err(instance_not_found(&id));
-    };
     // name 即 VersionDirName：先同步重命名磁盘版本目录，成功才更新记录；
-    // 目录被占用/目标已存在 → 拒绝改名并返回错误（记录保持原名不变）。
-    if let Some(v) = req.name.as_deref() {
-        let new_name = v.trim();
-        if new_name.is_empty() {
+    // 目录被占用/目标已存在/名称非法 → 拒绝改名并返回错误（记录保持原名不变）。
+    let new_name = req.name.as_deref().map(str::trim);
+    // 改名成功但后续配置/镜像写入失败时，需要把目录名还原，避免记录与磁盘错位。
+    let mut renamed_from: Option<(GameInstance, String)> = None;
+    if let Some(name) = new_name {
+        if name.is_empty() {
             return Err(ApiError::bad_request(
                 "INSTANCE_NAME_EMPTY",
                 "Instance name cannot be empty",
             ));
         }
-        if new_name != existing.name {
+        if !instance_config::is_safe_instance_name(name) {
+            return Err(ApiError::bad_request(
+                "INSTANCE_NAME_INVALID",
+                "Instance name must be a single valid directory name",
+            ));
+        }
+        let Some(existing) = state.instance.get_by_id(&id) else {
+            return Err(instance_not_found(&id));
+        };
+        if name != existing.name {
             state
                 .instance
-                .rename_version_dir(&existing, new_name)
+                .rename_version_dir(&existing, name)
                 .map_err(|e| match e {
-                    crate::services::instance::RenameFailure::TargetExists(msg) => {
+                    crate::services::instance::RenameFailure::TargetExists(msg)
+                    | crate::services::instance::RenameFailure::InvalidName(msg) => {
                         ApiError::bad_request("INSTANCE_NAME_CONFLICT", msg)
                     }
                     crate::services::instance::RenameFailure::Io(msg) => ApiError::internal(msg),
                 })?;
-            existing.name = new_name.to_string();
+            renamed_from = Some((existing, name.to_string()));
         }
     }
-    if let Some(v) = req.game_version {
-        existing.game_version = v;
-    }
-    if let Some(v) = req.loader {
-        existing.loader = Some(v);
-    }
-    if let Some(v) = req.loader_version {
-        existing.loader_version = Some(v);
-    }
-    if let Some(v) = req.java_path {
-        existing.java_path = v.and_then(normalize_optional_text);
-    }
-    if let Some(v) = req.max_memory {
-        existing.max_memory = v;
-    }
-    if let Some(v) = req.jvm_args {
-        existing.jvm_args = v.and_then(normalize_optional_text);
-    }
-    if let Some(v) = req.is_hidden {
-        existing.is_hidden = v;
-    }
-    if let Some(v) = req.version_isolation {
-        existing.version_isolation = v;
-    }
-    if let Some(v) = req.skip_integrity_check {
-        existing.skip_integrity_check = v;
-    }
-    if let Some(v) = req.custom_group_ids {
-        existing.custom_group_ids = v;
-    }
-    if let Some(v) = req.remark {
-        existing.remark = v.and_then(normalize_optional_text);
-    }
-    let updated = state
-        .instance
-        .update(&id, existing)
-        .ok_or_else(|| instance_not_found(&id))?;
+    // 补丁在实例锁内应用到**最新**记录：并发 PUT 不会用各自读到的旧快照
+    // 互相覆盖未修改的字段。
+    let update_result = state.instance.update_with(&id, |existing| {
+        if let Some(name) = new_name {
+            existing.name = name.to_string();
+        }
+        if let Some(v) = req.game_version.clone() {
+            existing.game_version = v;
+        }
+        if let Some(v) = req.loader.clone() {
+            existing.loader = Some(v);
+        }
+        if let Some(v) = req.loader_version.clone() {
+            existing.loader_version = Some(v);
+        }
+        if let Some(v) = req.java_path.clone() {
+            existing.java_path = v.and_then(normalize_optional_text);
+        }
+        if let Some(v) = req.max_memory {
+            existing.max_memory = v;
+        }
+        if let Some(v) = req.jvm_args.clone() {
+            existing.jvm_args = v.and_then(normalize_optional_text);
+        }
+        if let Some(v) = req.is_hidden {
+            existing.is_hidden = v;
+        }
+        if let Some(v) = req.version_isolation {
+            existing.version_isolation = v;
+        }
+        if let Some(v) = req.skip_integrity_check {
+            existing.skip_integrity_check = v;
+        }
+        if let Some(v) = req.custom_group_ids.clone() {
+            existing.custom_group_ids = v;
+        }
+        if let Some(v) = req.remark.clone() {
+            existing.remark = v.and_then(normalize_optional_text);
+        }
+    });
+    let rollback_rename = |renamed_from: Option<(GameInstance, String)>| {
+        if let Some((old, current_name)) = renamed_from {
+            let mut current = old.clone();
+            current.name = current_name;
+            if let Err(rollback) = state.instance.rename_version_dir(&current, &old.name) {
+                tracing::error!(error = ?rollback, "更新失败后回滚实例目录名失败");
+            }
+        }
+    };
+    let updated = match update_result {
+        Ok(Some(updated)) => updated,
+        Ok(None) => {
+            rollback_rename(renamed_from);
+            return Err(instance_not_found(&id));
+        }
+        Err(e) => {
+            rollback_rename(renamed_from);
+            return Err(ApiError::internal(e));
+        }
+    };
     Ok(Json(updated))
 }
 
@@ -546,9 +588,9 @@ async fn delete_group(
     // 清理所有实例对该分组的引用
     for inst in state.instance.get_all() {
         if inst.custom_group_ids.iter().any(|g| g == &id) {
-            let mut updated = inst.clone();
-            updated.custom_group_ids.retain(|g| g != &id);
-            let _ = state.instance.update(&inst.id, updated);
+            let _ = state.instance.update_with(&inst.id, |current| {
+                current.custom_group_ids.retain(|g| g != &id)
+            });
         }
     }
     Ok(Json(MessageResponse {

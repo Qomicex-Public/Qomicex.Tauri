@@ -66,8 +66,53 @@ const EXPORT_KEYS: &[&str] = &[
     "skipIntegrityCheck",
 ];
 
+/// 导入包只采纳导出格式里的这些键。`javaPath` 等本机字段绝不能由包决定，
+/// 否则恶意整合包可以让启动器执行任意可执行文件。
+pub const IMPORT_KEYS: &[&str] = EXPORT_KEYS;
+
+/// 独立配置是启动器元数据，正常只有几 KB。上限用于阻断恶意压缩包/损坏文件
+/// 在导入或读取时把启动器内存打满。
+pub const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
+
 fn is_allowed(key: &str) -> bool {
     ALLOWED_KEYS.contains(&key)
+}
+
+/// 实例名同时是版本目录名（单一路径组件）。拒绝空名、分隔符、`.`/`..`、
+/// Windows 盘符/ADS 冒号、尾随空格/点与保留设备名，避免配置路径逃逸
+/// `versions/` 目录。
+pub fn is_safe_instance_name(name: &str) -> bool {
+    if name.is_empty() || name.trim() != name || name == "." || name == ".." {
+        return false;
+    }
+    if name.chars().any(|c| matches!(c, '/' | '\\' | ':' | '\0'))
+        || name.ends_with(' ')
+        || name.ends_with('.')
+    {
+        return false;
+    }
+    let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+    const RESERVED: &[&str] = &[
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    if RESERVED.contains(&stem.as_str()) {
+        return false;
+    }
+    let mut components = Path::new(name).components();
+    matches!(components.next(), Some(std::path::Component::Normal(_)))
+        && components.next().is_none()
+}
+
+/// `gameDir` 可为相对路径；与 `rename_version_dir` 一致，以 `QOMICEX_HOME`
+/// / 启动器数据目录为基座解析。
+pub fn resolve_game_root(game_dir: &str) -> PathBuf {
+    let root = Path::new(game_dir);
+    if root.is_absolute() {
+        root.to_path_buf()
+    } else {
+        settings::resolve_base_dir().join(root)
+    }
 }
 
 /// 「空」= null / 空白字符串 / 空数组。空值不参与覆盖，按项回退。
@@ -82,18 +127,16 @@ fn is_blank(value: &Value) -> bool {
 }
 
 /// 实例版本目录（`gameDir` 可为相对路径，与 `rename_version_dir` 同口径解析）。
-pub fn version_dir(game_dir: &str, name: &str) -> PathBuf {
-    let root = Path::new(game_dir);
-    let root = if root.is_absolute() {
-        root.to_path_buf()
-    } else {
-        settings::resolve_base_dir().join(root)
-    };
-    root.join("versions").join(name)
+/// 名称非法时返回 `None`，调用方不得退化成未校验的路径拼接。
+pub fn version_dir(game_dir: &str, name: &str) -> Option<PathBuf> {
+    if !is_safe_instance_name(name) {
+        return None;
+    }
+    Some(resolve_game_root(game_dir).join("versions").join(name))
 }
 
-fn config_path(game_dir: &str, name: &str) -> PathBuf {
-    version_dir(game_dir, name).join(CONFIG_FILE)
+fn config_path(game_dir: &str, name: &str) -> Option<PathBuf> {
+    Some(version_dir(game_dir, name)?.join(CONFIG_FILE))
 }
 
 /// 实例当前可落盘的完整快照（过滤不允许键与空值）。
@@ -107,8 +150,49 @@ fn snapshot(inst: &GameInstance) -> Map<String, Value> {
     }
 }
 
+/// 只接受导出格式里的安全键；`javaPath`/账号/身份字段即使出现在包里也丢弃。
+/// 调用方在写导入配置前必须经过这里。
+pub fn sanitize_import_map(value: &Value) -> Map<String, Value> {
+    let mut out = Map::new();
+    let Some(obj) = value.as_object() else {
+        return out;
+    };
+    for key in IMPORT_KEYS {
+        let Some(value) = obj.get(*key) else {
+            continue;
+        };
+        if is_blank(value) {
+            continue;
+        }
+        let valid = match *key {
+            "maxMemory" => value
+                .as_i64()
+                .is_some_and(|n| n > 0 && i32::try_from(n).is_ok()),
+            "jvmArgs" => value.is_string(),
+            "versionIsolation" | "skipIntegrityCheck" => value.is_boolean(),
+            _ => false,
+        };
+        if valid {
+            out.insert((*key).to_string(), value.clone());
+        }
+    }
+    out
+}
+
 fn read_raw(path: &Path) -> Option<Map<String, Value>> {
+    let len = std::fs::metadata(path).ok()?.len();
+    if len > MAX_CONFIG_BYTES {
+        tracing::warn!(
+            path = %path.display(),
+            len,
+            "实例独立配置超过大小上限，按损坏文件处理"
+        );
+        return None;
+    }
     let bytes = std::fs::read(path).ok()?;
+    if bytes.len() as u64 > MAX_CONFIG_BYTES {
+        return None;
+    }
     let value: Value = serde_json::from_slice(&bytes).ok()?;
     value.as_object().cloned()
 }
@@ -169,27 +253,28 @@ fn heal_map(raw: &Map<String, Value>, merged: &GameInstance) -> Map<String, Valu
     out
 }
 
-fn write_map(path: &Path, map: &Map<String, Value>) {
+/// 写入独立配置。`Ok(false)` 表示版本目录不存在（只保留镜像），
+/// `Err` 表示路径存在但写入失败——调用方必须让本次更新失败，不能假装成功。
+fn write_map(path: &Path, map: &Map<String, Value>) -> Result<bool, String> {
     if !path.parent().is_some_and(Path::is_dir) {
-        return;
+        return Ok(false);
     }
-    let Ok(json) = serde_json::to_string_pretty(&Value::Object(map.clone())) else {
-        return;
-    };
+    let json = serde_json::to_string_pretty(&Value::Object(map.clone()))
+        .map_err(|e| format!("序列化实例独立配置失败: {e}"))?;
     if std::fs::read_to_string(path)
         .ok()
         .is_some_and(|existing| existing == json)
     {
-        return;
+        return Ok(true);
     }
     let tmp = path.with_file_name(format!("{CONFIG_FILE}.{}.tmp", std::process::id()));
-    let ok = std::fs::write(&tmp, &json).is_ok() && std::fs::rename(&tmp, path).is_ok();
-    if ok {
-        return;
+    if std::fs::write(&tmp, &json).is_ok() && std::fs::rename(&tmp, path).is_ok() {
+        return Ok(true);
     }
-    if let Err(e) = std::fs::write(path, &json) {
-        tracing::warn!(path = %path.display(), error = %e, "写入实例独立配置失败");
-    }
+    let _ = std::fs::remove_file(&tmp);
+    std::fs::write(path, &json)
+        .map_err(|e| format!("写入实例独立配置失败 {}: {e}", path.display()))?;
+    Ok(true)
 }
 
 /// 读取 + 按项回退 + 把回退到的非默认值写回独立文件。
@@ -197,7 +282,9 @@ fn write_map(path: &Path, map: &Map<String, Value>) {
 /// 读路径调用（列表/启动/详情），因此损坏文件也会在这里被修复。
 pub fn load(inst: &GameInstance) -> GameInstance {
     let _guard = config_guard();
-    let path = config_path(&inst.game_dir, &inst.name);
+    let Some(path) = config_path(&inst.game_dir, &inst.name) else {
+        return inst.clone();
+    };
     let raw = read_raw(&path);
     let (mut merged, valid_raw) = match raw.as_ref() {
         Some(r) => match merge_raw(inst, r) {
@@ -212,9 +299,11 @@ pub fn load(inst: &GameInstance) -> GameInstance {
     merged.id = inst.id.clone();
     merged.name = inst.name.clone();
     merged.game_dir = inst.game_dir.clone();
-    if version_dir(&inst.game_dir, &inst.name).is_dir() {
+    if path.parent().is_some_and(Path::is_dir) {
         let healed = heal_map(valid_raw.unwrap_or(&Map::new()), &merged);
-        write_map(&path, &healed);
+        if let Err(e) = write_map(&path, &healed) {
+            tracing::warn!(error = %e, "回写实例独立配置失败");
+        }
     }
     merged
 }
@@ -222,8 +311,11 @@ pub fn load(inst: &GameInstance) -> GameInstance {
 /// 从独立文件重建实例（`instances.json` 丢失/扫描新建记录时）。
 /// 返回 `None` 表示没有可读配置；文件存在但为空对象也会返回默认实例 + 随机 id。
 pub fn load_for_dir(game_dir: &str, name: &str) -> Option<GameInstance> {
+    if !is_safe_instance_name(name) {
+        return None;
+    }
     let _guard = config_guard();
-    let raw = read_raw(&config_path(game_dir, name))?;
+    let raw = read_raw(&config_path(game_dir, name)?)?;
     let base = GameInstance {
         name: name.to_string(),
         game_dir: game_dir.to_string(),
@@ -238,8 +330,11 @@ pub fn load_for_dir(game_dir: &str, name: &str) -> Option<GameInstance> {
 
 /// 新建实例时采纳已存在的独立配置（配置优先），但保留本次创建的 id/name/gameDir。
 pub fn adopt(inst: &GameInstance) -> Option<GameInstance> {
+    if !is_safe_instance_name(&inst.name) {
+        return None;
+    }
     let _guard = config_guard();
-    let raw = read_raw(&config_path(&inst.game_dir, &inst.name))?;
+    let raw = read_raw(&config_path(&inst.game_dir, &inst.name)?)?;
     let mut merged = merge_raw(inst, &raw)?;
     merged.id = inst.id.clone();
     merged.name = inst.name.clone();
@@ -248,21 +343,27 @@ pub fn adopt(inst: &GameInstance) -> Option<GameInstance> {
 }
 
 /// 写完整快照（新建实例 / 独立文件缺失时的一次性迁移）。
-pub fn write_full(inst: &GameInstance) {
+pub fn write_full(inst: &GameInstance) -> Result<bool, String> {
     let _guard = config_guard();
-    let dir = version_dir(&inst.game_dir, &inst.name);
+    let Some(dir) = version_dir(&inst.game_dir, &inst.name) else {
+        return Ok(false);
+    };
     if !dir.is_dir() {
-        return;
+        return Ok(false);
     }
-    write_map(&dir.join(CONFIG_FILE), &snapshot(inst));
+    write_map(&dir.join(CONFIG_FILE), &snapshot(inst))
 }
 
 /// 仅当独立文件不存在时写完整快照。
 pub fn ensure_full(inst: &GameInstance) {
     let _guard = config_guard();
-    let dir = version_dir(&inst.game_dir, &inst.name);
+    let Some(dir) = version_dir(&inst.game_dir, &inst.name) else {
+        return;
+    };
     if dir.is_dir() && !dir.join(CONFIG_FILE).is_file() {
-        write_map(&dir.join(CONFIG_FILE), &snapshot(inst));
+        if let Err(e) = write_map(&dir.join(CONFIG_FILE), &snapshot(inst)) {
+            tracing::warn!(error = %e, "补写实例独立配置失败");
+        }
     }
 }
 
@@ -270,22 +371,22 @@ pub fn ensure_full(inst: &GameInstance) {
 ///
 /// 这是「重置不穿越」的底层保证：重置内存时 `jvmArgs` 未变化，就完全不会
 /// 被读取/重写，哪怕内存里的值来自回退或并发读取。
-pub fn update_delta(old: &GameInstance, new: &GameInstance) {
+pub fn update_delta(old: &GameInstance, new: &GameInstance) -> Result<bool, String> {
     let _guard = config_guard();
-    let dir = version_dir(&new.game_dir, &new.name);
+    let Some(dir) = version_dir(&new.game_dir, &new.name) else {
+        return Ok(false);
+    };
     if !dir.is_dir() {
-        return;
+        return Ok(false);
     }
     let path = dir.join(CONFIG_FILE);
     let raw = read_raw(&path);
     // 文件不存在/损坏 → 用完整快照重建，避免只有增量键的半份配置。
     let Some(raw) = raw else {
-        write_map(&path, &snapshot(new));
-        return;
+        return write_map(&path, &snapshot(new));
     };
     if merge_raw(new, &raw).is_none() {
-        write_map(&path, &snapshot(new));
-        return;
+        return write_map(&path, &snapshot(new));
     }
     let old_map = snapshot(old);
     let new_map = snapshot(new);
@@ -319,7 +420,7 @@ pub fn update_delta(old: &GameInstance, new: &GameInstance) {
             }
         }
     }
-    write_map(&path, &out);
+    write_map(&path, &out)
 }
 
 /// Qomicex 整合包导出用的脱敏配置（不回写本地文件）。
@@ -456,21 +557,32 @@ mod tests {
         old.java_path = Some("C:/Java/bin/javaw.exe".into());
 
         with_home(&home, || {
-            write_full(&old);
+            write_full(&old).unwrap();
+            // 模拟“磁盘上的值比内存快照新”：整份快照重写会覆盖它，增量写入必须保留。
+            let path = version_dir.join(CONFIG_FILE);
+            let mut persisted = read_raw(&path).unwrap();
+            persisted.insert("jvmArgs".into(), "-Xpersisted".into());
+            write_json(
+                &path,
+                &serde_json::to_string(&Value::Object(persisted)).unwrap(),
+            );
 
             // 只改内存并重置回默认：JVM/Java 键必须原样保留
             let mut new = old.clone();
             new.max_memory = 4096;
-            update_delta(&old, &new);
-            let after = read_raw(&version_dir.join(CONFIG_FILE)).unwrap();
-            assert_eq!(after["jvmArgs"], "-XX:+UseG1GC -Dfile.encoding=UTF-8");
+            update_delta(&old, &new).unwrap();
+            let after = read_raw(&path).unwrap();
+            assert_eq!(
+                after["jvmArgs"], "-Xpersisted",
+                "未变化键不得被整份快照覆盖"
+            );
             assert_eq!(after["javaPath"], "C:/Java/bin/javaw.exe");
 
             // 清空 JVM 只删 jvmArgs，不碰 javaPath/内存
             let mut cleared = new.clone();
             cleared.jvm_args = None;
-            update_delta(&new, &cleared);
-            let after = read_raw(&version_dir.join(CONFIG_FILE)).unwrap();
+            update_delta(&new, &cleared).unwrap();
+            let after = read_raw(&path).unwrap();
             assert!(!after.contains_key("jvmArgs"), "清空 JVM 应只删对应键");
             assert_eq!(after["javaPath"], "C:/Java/bin/javaw.exe");
             assert_eq!(after["maxMemory"], 4096);
@@ -493,11 +605,19 @@ mod tests {
         i.jvm_args = Some("-Xmx8G".into());
 
         with_home(&home, || {
-            write_full(&i);
+            write_full(&i).unwrap();
             let raw = std::fs::read_to_string(version_dir.join(CONFIG_FILE)).unwrap();
-            assert!(!raw.contains("secret-token"));
-            assert!(!raw.contains("accessToken"));
-            assert!(!raw.contains("iconData"));
+            for forbidden in [
+                "secret-token",
+                "accessToken",
+                "iconData",
+                "accountName",
+                "accountUuid",
+                "\"name\": \"name\"",
+                "\"uuid\"",
+            ] {
+                assert!(!raw.contains(forbidden), "快照不得包含 {forbidden}");
+            }
             assert!(raw.contains("jvmArgs"));
         });
         let _ = std::fs::remove_dir_all(&home);
@@ -519,6 +639,65 @@ mod tests {
         );
         assert_eq!(map["jvmArgs"], "-XX:+UseG1GC");
         assert_eq!(map["maxMemory"], 8192);
+    }
+
+    #[test]
+    fn unsafe_instance_names_are_rejected() {
+        for name in [
+            "", ".", "..", "../evil", "a/b", "a\\b", "C:evil", "CON", "name.",
+        ] {
+            assert!(!is_safe_instance_name(name), "应拒绝非法实例名: {name:?}");
+        }
+        for name in ["1.20.1", "GTNH 2.8.4", "整合包", "foo (2)"] {
+            assert!(is_safe_instance_name(name), "应允许正常实例名: {name:?}");
+        }
+    }
+
+    #[test]
+    fn import_sanitizer_only_keeps_exported_safe_keys() {
+        let value: Value = serde_json::from_str(
+            r#"{
+                "maxMemory": 8192,
+                "jvmArgs": "-Xmx8G",
+                "versionIsolation": false,
+                "skipIntegrityCheck": true,
+                "javaPath": "C:/Windows/System32/calc.exe",
+                "id": "foreign",
+                "name": "../escape",
+                "accountName": "leak",
+                "customGroupIds": ["local"]
+            }"#,
+        )
+        .unwrap();
+        let map = sanitize_import_map(&value);
+        assert_eq!(map["maxMemory"], 8192);
+        assert_eq!(map["jvmArgs"], "-Xmx8G");
+        assert_eq!(map["versionIsolation"], false);
+        assert_eq!(map["skipIntegrityCheck"], true);
+        for key in ["javaPath", "id", "name", "accountName", "customGroupIds"] {
+            assert!(!map.contains_key(key), "导入配置不得采纳 {key}");
+        }
+    }
+
+    #[test]
+    fn oversized_config_is_treated_as_corrupt() {
+        let home = temp_home("oversized");
+        let game_dir = home.join("mc");
+        let version_dir = game_dir.join("versions").join("1.20.1");
+        std::fs::create_dir_all(&version_dir).unwrap();
+        let path = version_dir.join(CONFIG_FILE);
+        std::fs::write(&path, vec![b' '; MAX_CONFIG_BYTES as usize + 1]).unwrap();
+
+        let mut unified = inst(game_dir.to_str().unwrap(), "1.20.1");
+        unified.max_memory = 6144;
+        let merged = load(&unified);
+        assert_eq!(merged.max_memory, 6144);
+        let healed_len = std::fs::metadata(&path).unwrap().len();
+        assert!(
+            healed_len <= MAX_CONFIG_BYTES,
+            "超限配置应被小快照替换，实际 {healed_len} 字节"
+        );
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
