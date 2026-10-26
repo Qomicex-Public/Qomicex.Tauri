@@ -33,6 +33,7 @@ AI agent 生成/修改插件时必须逐条遵守。违反任何一条都可能�
 
 17. **CSS 全用 `var(--*)`**：禁止 `#hex` / `rgb()` / `hsl()` 字面量。插件主题文件（`theme.css`）也只覆盖 `var()` token。
 18. **Tailwind 用语义类名**：`bg-primary`、`text-foreground`、`text-muted-foreground`、`bg-muted`、`border-border` 等（`@qomicex/plugin-ui/tailwind-preset` 已映射）。
+18a. **`tailwind.config` 的 `content` 必须包含 `./node_modules/@qomicex/plugin-ui/dist/**/*.{js,ts,tsx}`**：漏了会把组件库自用的工具类 purge 掉，Dialog 会退化成页面底部的普通块（不是浮层）。用 `qomicex create` 生成的模板已包含此项。
 
 ## 安全
 

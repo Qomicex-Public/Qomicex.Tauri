@@ -41,6 +41,15 @@ v1 落点：`.qtheme` 主题直接表达 semantic/component 层（即 `--*` 平�
 - **全部用 `var(--*)`，禁止内联色值**（`#hex` / `rgb()` / `hsl()` 字面量）。plugin-ui 组件已全量 var() 消费，换主题即时生效，无需重建 dist。
 - 颜色值多为 HSL 三元组（如 `142 71% 48%`），组件库经 `hsl(var(--primary))` 解析。插件自定义 CSS 需要时同样写 `hsl(var(--primary) / <alpha>)` 形式。
 - Tailwind 侧直接用语义类名：`bg-primary`、`text-foreground`、`bg-muted`、`text-muted-foreground`、`border-border` 等（`@qomicex/plugin-ui/tailwind-preset` 已映射）。
+- ⚠️ **`tailwind.config` 的 `content` 必须包含 plugin-ui 的产物**，否则组件库自用的工具类（`fixed` / `inset-0` / `z-50` / `max-w-lg` 等）会被 purge 掉——最典型的表现是 **Dialog 不再是浮层、而是变成页面底部的普通块**：
+
+```js
+content: [
+  './index.html',
+  './src/**/*.{ts,tsx}',
+  './node_modules/@qomicex/plugin-ui/dist/**/*.{js,ts,tsx}',  // 必须
+]
+```
 
 ## 主题贡献（entry.theme）
 
