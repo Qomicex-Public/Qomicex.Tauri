@@ -4428,6 +4428,11 @@ fn release_qml_overrides(
     if !instance_config::is_safe_instance_name(version_dir_name) {
         return Err(format!("非法实例名: {version_dir_name}"));
     }
+    // 导入请求里的 gameDir 可能是相对路径；统一按 `resolve_base_dir()` 解析，
+    // 与 `instance_config::version_dir` 及实例读取路径保持一致，不能落到进程 cwd。
+    let game_dir = instance_config::resolve_game_root(game_dir)
+        .to_string_lossy()
+        .into_owned();
     let file = std::fs::File::open(zip_path).map_err(|e| format!("打开整合包失败: {e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
     for i in 0..archive.len() {
@@ -4468,7 +4473,7 @@ fn release_qml_overrides(
                 continue;
             };
             let map = instance_config::sanitize_import_map(&value);
-            let dest = instance_config::version_dir(game_dir, version_dir_name)
+            let dest = instance_config::version_dir(&game_dir, version_dir_name)
                 .ok_or_else(|| format!("非法实例名: {version_dir_name}"))?
                 .join(instance_config::CONFIG_FILE);
             if let Some(parent) = dest.parent() {
@@ -4481,7 +4486,7 @@ fn release_qml_overrides(
                 .map_err(|e| format!("写入实例配置失败 {}: {e}", dest.display()))?;
             continue;
         }
-        let dest = modpack_target_path(game_dir, version_dir_name, version_isolation, rel);
+        let dest = modpack_target_path(&game_dir, version_dir_name, version_isolation, rel);
         if entry.is_dir() {
             std::fs::create_dir_all(&dest)
                 .map_err(|e| format!("创建目录失败 {}: {e}", dest.display()))?;
