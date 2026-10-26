@@ -889,9 +889,13 @@ async fn run_multimc_import(
     // 组件收集的 +jvmArgs（等价 HMCL addnJvmArguments）写入实例 jvm_args，启动时统一生效
     // （任何包声明 Java 9+ 参数都会应用，覆盖所有新版 Java 整合包）。
     if !jvm_args.is_empty() {
-        if let Some(mut inst) = inst_svc.get_by_id(instance_id) {
-            inst.jvm_args = Some(jvm_args.join(" "));
-            let _ = inst_svc.update(instance_id, inst);
+        let jvm_args = jvm_args.join(" ");
+        match inst_svc.update_with(instance_id, |current| {
+            current.jvm_args = Some(jvm_args.clone());
+        }) {
+            Ok(Some(_)) => {}
+            Ok(None) => return Err("写入整合包 JVM 参数失败: 实例记录不存在".to_string()),
+            Err(e) => return Err(format!("写入整合包 JVM 参数失败: {e}")),
         }
     }
     handle.mark_step("install-game", "done");
@@ -1309,14 +1313,22 @@ async fn run_technic_import(
                 .map_err(|e| format!("在线整合包解析失败（{url}）: {e}"))?;
             // 回写实例元数据：请求期只能用 API 的 minecraft 提示，真实值以包内
             // version.json / fmlversion.properties 为准（Technic 该字段实测会不一致）。
-            if let Some(mut inst) = inst_svc.get_by_id(instance_id) {
-                inst.game_version = parsed.game_version.clone();
-                inst.loader = parsed.loader.clone();
-                inst.loader_version = parsed.loader_version.clone();
+            let patched = inst_svc.update_with(instance_id, |current| {
+                current.game_version = parsed.game_version.clone();
+                current.loader = parsed.loader.clone();
+                current.loader_version = parsed.loader_version.clone();
                 // 记录来源（不改 modpack_origin：technic 不支持原地更新，见决策）
-                inst.modpack_source = Some("technic".to_string());
-                inst.modpack_project_id = source_slug.map(str::to_string);
-                let _ = inst_svc.update(instance_id, inst);
+                current.modpack_source = Some("technic".to_string());
+                current.modpack_project_id = source_slug.map(str::to_string);
+            });
+            match patched {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    tracing::warn!(instance = %instance_id, "Technic 导入元数据回写失败: 实例不存在");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, instance = %instance_id, "Technic 导入元数据回写失败");
+                }
             }
             owned_meta = Some(parsed);
             owned_meta.as_ref().expect("刚赋值")
@@ -1948,10 +1960,18 @@ async fn run_solder_import(
     handle.mark_step("jarmod", "done");
 
     // === 收尾：来源标注 ===
-    if let Some(mut inst) = inst_svc.get_by_id(instance_id) {
-        inst.modpack_source = Some("technic".to_string());
-        inst.modpack_project_id = Some(slug.to_string());
-        let _ = inst_svc.update(instance_id, inst);
+    let patched = inst_svc.update_with(instance_id, |current| {
+        current.modpack_source = Some("technic".to_string());
+        current.modpack_project_id = Some(slug.to_string());
+    });
+    match patched {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            tracing::warn!(instance = %instance_id, "Solder 导入来源回写失败: 实例不存在");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, instance = %instance_id, "Solder 导入来源回写失败");
+        }
     }
     handle.set_stage("finishing");
     handle.set_current_file("导入完成");

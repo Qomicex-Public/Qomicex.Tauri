@@ -90,6 +90,9 @@ pub struct GameInstance {
     pub created_at: Option<String>,
 }
 
+/// 新实例的默认最大内存（MiB）。
+const DEFAULT_MAX_MEMORY: i32 = 4096;
+
 impl Default for GameInstance {
     fn default() -> Self {
         Self {
@@ -99,7 +102,7 @@ impl Default for GameInstance {
             loader: None,
             loader_version: None,
             java_path: None,
-            max_memory: 4096,
+            max_memory: DEFAULT_MAX_MEMORY,
             game_dir: ".minecraft".to_string(),
             account_name: None,
             account_uuid: None,
@@ -653,6 +656,12 @@ impl InstanceService {
                 inst.name = dir.clone();
             }
         }
+        // 1b. 游戏目录搬迁接管：用户把 `.minecraft` 移到别的盘/路径后，记录仍挂在
+        // 旧 `game_dir` 下；旧版本目录已被删除时，第 1 步会删除记录，第 4 步再按
+        // `(新目录, name)` 建一条默认记录 —— JVM 参数、内存、Java 路径、备注与统计
+        // 全部丢失（GTNH 实测：从 C: 搬到 E: 后 JVM 参数归零，游戏无法启动）。
+        // 必须在清理残留前把这类孤立记录接管到新目录。
+        Self::adopt_moved_game_dir_instances(&mut json_instances, scanned, global_isolation);
         // 迁移后可能出现同 (game_dir, name) 的重复记录：保留字段更完整的一条。
         Self::dedup_instances(&mut json_instances);
 
@@ -707,11 +716,7 @@ impl InstanceService {
             // `dir_name` 缺失（旧前端）时不能直接回退 `name`：那会在 JSON id 这个键下
             // 新建一条默认记录，同时保留原有的目录名记录，同一版本出现两条（其中一条
             // 设置已被重置）。故先把 `name` 当作 id 反查真实目录名。
-            let dir_name = match scanned.dir_name.clone() {
-                Some(d) => d,
-                None => Self::resolve_dir_name_for_id(&scanned.game_dir, &scanned.name)
-                    .unwrap_or_else(|| scanned.name.clone()),
-            };
+            let dir_name = Self::scanned_dir_name(scanned);
             let key = (scanned.game_dir.clone(), dir_name.clone());
 
             if let Some(&json_idx) = json_index.get(&key) {
@@ -890,6 +895,11 @@ impl InstanceService {
                 Ok(g) => g,
                 Err(p) => p.into_inner(),
             };
+            // 搬迁接管同样要应用到持有锁的最新列表：否则 `result` 里刚补回的
+            // JVM/内存相对 `guard` 是「新增差异」，会被并发合并误判成用户改动
+            // 而用默认记录覆盖掉。应用到 guard 后，两边一致；同步期间用户真正
+            // 改过的字段仍会以 guard 为准被带到 result。
+            Self::adopt_moved_game_dir_instances(&mut guard, scanned, global_isolation);
             Self::merge_concurrent_writeback(
                 &json_instances,
                 &known_ids,
@@ -946,6 +956,219 @@ impl InstanceService {
             }
         }
         None
+    }
+
+    /// 扫描条目的版本目录名。`dir_name` 缺失时按版本 JSON `id` 反查目录名。
+    fn scanned_dir_name(scanned: &ScannedVersionInfo) -> String {
+        match scanned.dir_name.clone() {
+            Some(dir) => dir,
+            None => Self::resolve_dir_name_for_id(&scanned.game_dir, &scanned.name)
+                .unwrap_or_else(|| scanned.name.clone()),
+        }
+    }
+
+    /// 把旧 `game_dir` 下已失效的实例记录接管到新 `game_dir`。
+    ///
+    /// 触发条件（同时满足，避免把两个并存的游戏目录误合并）：
+    /// - 旧记录的版本隔离开启（共享目录无法用版本目录是否存在判断搬迁）；
+    /// - 旧 `versions/{name}` 已不存在（旧目录被删/搬走）；
+    /// - 游戏版本一致（双方都非空时），loader 一致（双方都有时）。
+    ///
+    /// 两种落地方式：
+    /// - 新目录还没有记录：直接接管旧记录（保留原 `id` 与全部设置）。
+    /// - 新目录已经有一条默认记录（用户先切目录、后删旧目录的常见顺序）：
+    ///   把旧记录里**缺失**的设置补进新记录，保留新记录的 `id` 与统计，再让
+    ///   第 1 步清理旧记录。
+    fn adopt_moved_game_dir_instances(
+        instances: &mut Vec<GameInstance>,
+        scanned: &[ScannedVersionInfo],
+        global_isolation: bool,
+    ) {
+        if scanned.is_empty() || instances.is_empty() {
+            return;
+        }
+        let mut claimed_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        for item in scanned {
+            let dir_name = Self::scanned_dir_name(item);
+            let Some(source_idx) = Self::find_moved_game_dir_source(
+                instances,
+                item,
+                &dir_name,
+                global_isolation,
+                &claimed_ids,
+            ) else {
+                continue;
+            };
+            let old = instances[source_idx].clone();
+            let target_idx = instances
+                .iter()
+                .position(|i| i.game_dir == item.game_dir && i.name == dir_name);
+
+            if let Some(target_idx) = target_idx {
+                Self::carry_orphan_settings(&mut instances[target_idx], &old);
+                // 新目录里可能已有一份默认 qomicex.json；不重写的话，下一次
+                // 读取会用它把刚补进来的 JVM/内存再次覆盖掉。
+                if let Err(e) = instance_config::write_full(&instances[target_idx]) {
+                    tracing::warn!(error = %e, "回写搬迁实例设置失败");
+                }
+                claimed_ids.insert(old.id.clone());
+                tracing::info!(
+                    name = %dir_name,
+                    from = %old.game_dir,
+                    to = %item.game_dir,
+                    "scan: merging orphaned instance settings into existing record"
+                );
+                continue;
+            }
+
+            let old_game_dir = old.game_dir.clone();
+            let mut adopted = old;
+            adopted.game_dir = item.game_dir.clone();
+            adopted.name = dir_name.clone();
+            // 整目录搬迁时 qomicex.json 也跟着过来：以新目录里的最新配置为准，
+            // 同时保留记录里的 id/统计等本地字段。
+            adopted = instance_config::load(&adopted);
+            claimed_ids.insert(adopted.id.clone());
+            instances[source_idx] = adopted;
+            tracing::info!(
+                name = %dir_name,
+                from = %old_game_dir,
+                to = %item.game_dir,
+                "scan: adopting instance from moved game dir"
+            );
+        }
+    }
+
+    /// 找一个「旧版本目录已不存在」的搬迁来源记录。目录名或版本 JSON id 任一
+    /// 命中都算同一实例（旧前端曾把 JSON id 当记录名）。
+    fn find_moved_game_dir_source(
+        instances: &[GameInstance],
+        item: &ScannedVersionInfo,
+        dir_name: &str,
+        global_isolation: bool,
+        claimed_ids: &std::collections::HashSet<String>,
+    ) -> Option<usize> {
+        let new_root = instance_config::resolve_game_root(&item.game_dir);
+        instances
+            .iter()
+            .enumerate()
+            .filter(|(_, inst)| {
+                (inst.name == dir_name || inst.name == item.name)
+                    && !claimed_ids.contains(&inst.id)
+                    && !inst.game_dir.trim().is_empty()
+                    && instance_config::is_safe_instance_name(&inst.name)
+                    && instance_config::is_safe_instance_name(dir_name)
+                    && inst.version_isolation.unwrap_or(global_isolation)
+                    && instance_config::resolve_game_root(&inst.game_dir) != new_root
+                    && {
+                        let old_versions =
+                            instance_config::resolve_game_root(&inst.game_dir).join("versions");
+                        !old_versions.join(&inst.name).is_dir()
+                            && !old_versions.join(dir_name).is_dir()
+                    }
+                    && Self::same_instance_meta(inst, item)
+            })
+            .max_by_key(|(_, inst)| {
+                (
+                    inst.jvm_args
+                        .as_deref()
+                        .is_some_and(|v| !v.trim().is_empty()),
+                    inst.java_path.is_some(),
+                    inst.remark.as_deref().is_some_and(|v| !v.trim().is_empty()),
+                    inst.last_played.is_some(),
+                    inst.play_time,
+                )
+            })
+            .map(|(idx, _)| idx)
+    }
+
+    /// 把孤儿记录里新记录缺失的设置补过去。新记录已有的值一律不覆盖，避免
+    /// 用户在新目录里已经手动改过的设置被旧记录「重置穿越」。
+    fn carry_orphan_settings(target: &mut GameInstance, source: &GameInstance) {
+        fn fill_text(target: &mut Option<String>, source: &Option<String>) {
+            if target.as_deref().is_none_or(|v| v.trim().is_empty()) {
+                if let Some(value) = source.as_deref().filter(|v| !v.trim().is_empty()) {
+                    *target = Some(value.to_string());
+                }
+            }
+        }
+
+        // 在补 JVM/Java 之前记录「是否仍是一条默认壳记录」，否则补完 JVM 后
+        // 下面的内存判断会误以为用户已经自定义过启动设置。
+        let shell_like = target
+            .jvm_args
+            .as_deref()
+            .is_none_or(|v| v.trim().is_empty())
+            && target
+                .java_path
+                .as_deref()
+                .is_none_or(|v| v.trim().is_empty())
+            && target.remark.as_deref().is_none_or(|v| v.trim().is_empty());
+        fill_text(&mut target.jvm_args, &source.jvm_args);
+        fill_text(&mut target.java_path, &source.java_path);
+        fill_text(&mut target.remark, &source.remark);
+        // 内存只在新记录仍是默认值、且没有任何自定义启动设置时补回；否则
+        // 可能把用户显式重置过的内存又改回旧值。
+        if target.max_memory == DEFAULT_MAX_MEMORY
+            && source.max_memory != DEFAULT_MAX_MEMORY
+            && shell_like
+        {
+            target.max_memory = source.max_memory;
+        }
+        if target.version_isolation.is_none() {
+            target.version_isolation = source.version_isolation;
+        }
+        if !target.skip_integrity_check && source.skip_integrity_check {
+            target.skip_integrity_check = true;
+        }
+        if target.custom_group_ids.is_empty() {
+            target.custom_group_ids = source.custom_group_ids.clone();
+        }
+        if !target.is_hidden && source.is_hidden {
+            target.is_hidden = true;
+        }
+        for (target_field, source_field) in [
+            (&mut target.modpack_name, &source.modpack_name),
+            (&mut target.modpack_version, &source.modpack_version),
+            (&mut target.modpack_author, &source.modpack_author),
+            (&mut target.modpack_summary, &source.modpack_summary),
+            (&mut target.modpack_source, &source.modpack_source),
+            (&mut target.modpack_project_id, &source.modpack_project_id),
+            (&mut target.modpack_version_id, &source.modpack_version_id),
+            (&mut target.modpack_origin, &source.modpack_origin),
+            (
+                &mut target.modpack_version_published_at,
+                &source.modpack_version_published_at,
+            ),
+            (&mut target.account_name, &source.account_name),
+            (&mut target.account_uuid, &source.account_uuid),
+            (&mut target.access_token, &source.access_token),
+            (&mut target.icon_data, &source.icon_data),
+            (&mut target.icon, &source.icon),
+            (&mut target.last_played, &source.last_played),
+            (&mut target.created_at, &source.created_at),
+        ] {
+            if target_field.is_none() {
+                *target_field = source_field.clone();
+            }
+        }
+        target.play_time = target.play_time.max(source.play_time);
+    }
+
+    /// 搬迁接管只在游戏版本/加载器一致时进行，避免把同名但无关的实例设置
+    /// 带到新目录（例如用户删掉旧 1.20.1 实例后又装了同名 1.7.10 实例）。
+    fn same_instance_meta(inst: &GameInstance, scanned: &ScannedVersionInfo) -> bool {
+        if !inst.game_version.is_empty()
+            && !scanned.game_version.is_empty()
+            && inst.game_version != scanned.game_version
+        {
+            return false;
+        }
+        match (inst.loader.as_deref(), scanned.loader.as_deref()) {
+            (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+            _ => true,
+        }
     }
 
     /// 写回前的并发合并：把同步期间发生的用户改动、并发改名与并发新建搬到 `result` 上，
@@ -1550,6 +1773,298 @@ mod tests {
         assert_eq!(kept.name, "GTNH 2.8.4");
         assert_eq!(kept.jvm_args, created.jvm_args, "JVM 参数不得丢失");
         assert_eq!(kept.max_memory, 8192, "内存设置不得丢失");
+
+        match old_home {
+            Some(v) => std::env::set_var("QOMICEX_HOME", v),
+            None => std::env::remove_var("QOMICEX_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 回归：用户把 `.minecraft` 从 C: 搬到 E:（GTNH 实测路径）后，旧版本目录被
+    /// 删除。`(game_dir, name)` 键不再匹配，旧逻辑会删掉旧记录并新建默认记录，
+    /// JVM 参数/内存/Java 路径/统计全部归零。扫描必须把孤立记录接管到新目录，
+    /// 保留原 id 与设置，并在新目录补写 qomicex.json。
+    #[test]
+    fn sync_from_disk_adopts_settings_when_game_dir_moves() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home =
+            std::env::temp_dir().join(format!("qomicex-gamedir-move-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&home);
+        let old_home = std::env::var_os("QOMICEX_HOME");
+        std::env::set_var("QOMICEX_HOME", &home);
+
+        let old_game_dir = home.join("old-mc");
+        let new_game_dir = home.join("new-mc");
+        std::fs::create_dir_all(new_game_dir.join("versions").join("GTNH 2.8.4")).unwrap();
+
+        let service = InstanceService::new();
+        let mut inst = make_instance("GTNH 2.8.4", old_game_dir.to_str().unwrap(), Some(true));
+        inst.game_version = "1.7.10".to_string();
+        inst.loader = Some("Forge".to_string());
+        inst.loader_version = Some("1.7.10-10.13.4.1614-1.7.10".to_string());
+        inst.max_memory = 8192;
+        inst.jvm_args =
+            Some("-Dfile.encoding=UTF-8 --add-opens java.base/java.lang=ALL-UNNAMED".into());
+        inst.java_path = Some("C:/Java/jdk-21/bin/java.exe".into());
+        inst.remark = Some("GTNH 专用".into());
+        inst.play_time = 42;
+        inst.last_played = Some("2026-10-23T07:48:18Z".into());
+        let created = service.create(inst).unwrap();
+
+        let scanned = vec![ScannedVersionInfo {
+            name: "GTNH 2.8.4".to_string(),
+            dir_name: Some("GTNH 2.8.4".to_string()),
+            game_version: "1.7.10".to_string(),
+            game_dir: new_game_dir.to_str().unwrap().to_string(),
+            loader: Some("Forge".to_string()),
+            loader_version: Some("1.7.10-10.13.4.1614-1.7.10".to_string()),
+            icon_data: None,
+            modpack_name: None,
+            modpack_version: None,
+            modpack_author: None,
+            modpack_summary: None,
+        }];
+        let result = service.sync_from_disk(&scanned);
+
+        let moved = result
+            .iter()
+            .find(|i| i.id == created.id)
+            .unwrap_or_else(|| panic!("搬迁后的实例记录被清掉: {result:?}"));
+        assert_eq!(moved.game_dir, new_game_dir.to_str().unwrap());
+        assert_eq!(moved.name, "GTNH 2.8.4");
+        assert_eq!(moved.jvm_args, created.jvm_args, "JVM 参数不得丢失");
+        assert_eq!(moved.max_memory, 8192, "内存设置不得被重置");
+        assert_eq!(moved.java_path, created.java_path, "Java 路径不得丢失");
+        assert_eq!(moved.remark.as_deref(), Some("GTNH 专用"));
+        assert_eq!(moved.play_time, 42, "游玩统计不得丢失");
+        assert_eq!(
+            result.iter().filter(|i| i.name == "GTNH 2.8.4").count(),
+            1,
+            "搬迁后不得同时留下新旧两条记录: {result:?}"
+        );
+
+        // 模拟重启：镜像与独立配置都必须留得住。
+        let reopened = InstanceService::new();
+        let kept = reopened
+            .get_by_id(&created.id)
+            .unwrap_or_else(|| panic!("重启后实例记录丢失"));
+        assert_eq!(kept.jvm_args, created.jvm_args);
+        assert_eq!(kept.max_memory, 8192);
+        let cfg_path = new_game_dir
+            .join("versions")
+            .join("GTNH 2.8.4")
+            .join("qomicex.json");
+        let cfg: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&cfg_path).unwrap()).unwrap();
+        assert_eq!(cfg["jvmArgs"].as_str(), moved.jvm_args.as_deref());
+        assert_eq!(cfg["maxMemory"], 8192);
+
+        match old_home {
+            Some(v) => std::env::set_var("QOMICEX_HOME", v),
+            None => std::env::remove_var("QOMICEX_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 用户先切到新目录、旧目录稍后才删除：第一次扫描会留下一条默认记录，
+    /// 第二次扫描（旧版本目录已消失）必须把孤儿记录里的 JVM/内存/Java 路径补进
+    /// 这条默认记录，而不是让用户重新配置（GTNH 实测顺序）。
+    #[test]
+    fn sync_from_disk_restores_settings_into_existing_default_record() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home =
+            std::env::temp_dir().join(format!("qomicex-gamedir-late-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&home);
+        let old_home = std::env::var_os("QOMICEX_HOME");
+        std::env::set_var("QOMICEX_HOME", &home);
+
+        let old_game_dir = home.join("old-mc");
+        let new_game_dir = home.join("new-mc");
+        std::fs::create_dir_all(new_game_dir.join("versions").join("GTNH 2.8.4")).unwrap();
+
+        let service = InstanceService::new();
+        let mut old = make_instance("GTNH 2.8.4", old_game_dir.to_str().unwrap(), Some(true));
+        old.game_version = "1.7.10".to_string();
+        old.loader = Some("Forge".to_string());
+        old.max_memory = 8192;
+        old.jvm_args =
+            Some("-Dfile.encoding=UTF-8 --add-opens java.base/java.lang=ALL-UNNAMED".into());
+        old.java_path = Some("C:/Java/jdk-21/bin/java.exe".into());
+        old.play_time = 36;
+        old.last_played = Some("2026-10-11T09:21:33Z".into());
+        let old_created = service.create(old).unwrap();
+        // 复刻存量记录：没有 createdAt，避免安装宽限期把旧记录保下来。
+        {
+            let mut cur = service.get_by_id(&old_created.id).unwrap();
+            cur.created_at = None;
+            service.update(&old_created.id, cur).unwrap();
+        }
+
+        // 第一次切目录后的默认记录：已有目录、已有游玩统计，但没有 JVM/内存设置。
+        let mut fresh = make_instance("GTNH 2.8.4", new_game_dir.to_str().unwrap(), Some(true));
+        fresh.game_version = "1.7.10".to_string();
+        fresh.loader = Some("Forge".to_string());
+        fresh.play_time = 1;
+        fresh.last_played = Some("2026-10-23T07:48:18Z".into());
+        let fresh_created = service.create(fresh).unwrap();
+
+        let scanned = vec![ScannedVersionInfo {
+            name: "GTNH 2.8.4".to_string(),
+            dir_name: Some("GTNH 2.8.4".to_string()),
+            game_version: "1.7.10".to_string(),
+            game_dir: new_game_dir.to_str().unwrap().to_string(),
+            loader: Some("Forge".to_string()),
+            loader_version: Some("1.7.10-10.13.4.1614-1.7.10".to_string()),
+            icon_data: None,
+            modpack_name: None,
+            modpack_version: None,
+            modpack_author: None,
+            modpack_summary: None,
+        }];
+        let result = service.sync_from_disk(&scanned);
+
+        let kept = result
+            .iter()
+            .find(|i| i.id == fresh_created.id)
+            .unwrap_or_else(|| panic!("新目录记录应保留: {result:?}"));
+        assert_eq!(kept.jvm_args, old_created.jvm_args, "JVM 参数应补回");
+        assert_eq!(kept.max_memory, 8192, "内存应补回");
+        assert_eq!(kept.java_path, old_created.java_path, "Java 路径应补回");
+        assert_eq!(kept.play_time, 36, "游玩时长应保留较长的一份");
+        assert_eq!(
+            result.iter().filter(|i| i.name == "GTNH 2.8.4").count(),
+            1,
+            "旧目录记录应被清理，不得重复: {result:?}"
+        );
+        assert!(
+            result.iter().all(|i| i.id != old_created.id),
+            "旧记录不应继续存在"
+        );
+
+        let reopened = InstanceService::new();
+        let kept = reopened.get_by_id(&fresh_created.id).unwrap();
+        assert_eq!(kept.jvm_args, old_created.jvm_args);
+        assert_eq!(kept.max_memory, 8192);
+
+        match old_home {
+            Some(v) => std::env::set_var("QOMICEX_HOME", v),
+            None => std::env::remove_var("QOMICEX_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 旧目录仍存在时不能把它的设置「偷」给另一个目录里的同名实例：两个目录可能
+    /// 是用户有意并存的独立安装目录。此时应保留旧记录，并在新目录新建默认记录。
+    #[test]
+    fn sync_from_disk_does_not_steal_settings_when_old_game_dir_still_exists() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home =
+            std::env::temp_dir().join(format!("qomicex-gamedir-coexist-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&home);
+        let old_home = std::env::var_os("QOMICEX_HOME");
+        std::env::set_var("QOMICEX_HOME", &home);
+
+        let old_game_dir = home.join("old-mc");
+        let new_game_dir = home.join("new-mc");
+        std::fs::create_dir_all(old_game_dir.join("versions").join("GTNH 2.8.4")).unwrap();
+        std::fs::create_dir_all(new_game_dir.join("versions").join("GTNH 2.8.4")).unwrap();
+
+        let service = InstanceService::new();
+        let mut inst = make_instance("GTNH 2.8.4", old_game_dir.to_str().unwrap(), Some(true));
+        inst.game_version = "1.7.10".to_string();
+        inst.loader = Some("Forge".to_string());
+        inst.max_memory = 8192;
+        inst.jvm_args = Some("-XX:+UseG1GC".into());
+        let created = service.create(inst).unwrap();
+
+        let scanned = vec![ScannedVersionInfo {
+            name: "GTNH 2.8.4".to_string(),
+            dir_name: Some("GTNH 2.8.4".to_string()),
+            game_version: "1.7.10".to_string(),
+            game_dir: new_game_dir.to_str().unwrap().to_string(),
+            loader: Some("Forge".to_string()),
+            loader_version: None,
+            icon_data: None,
+            modpack_name: None,
+            modpack_version: None,
+            modpack_author: None,
+            modpack_summary: None,
+        }];
+        let result = service.sync_from_disk(&scanned);
+
+        let old = result
+            .iter()
+            .find(|i| i.id == created.id)
+            .expect("旧目录记录应保留");
+        assert_eq!(old.game_dir, old_game_dir.to_str().unwrap());
+        assert_eq!(old.jvm_args, created.jvm_args);
+        let new = result
+            .iter()
+            .find(|i| i.game_dir == new_game_dir.to_str().unwrap())
+            .expect("新目录应新建记录");
+        assert_ne!(new.id, created.id, "新目录不得复用旧记录 id");
+        assert_eq!(new.jvm_args, None, "不得把旧目录的 JVM 参数带到新目录");
+
+        match old_home {
+            Some(v) => std::env::set_var("QOMICEX_HOME", v),
+            None => std::env::remove_var("QOMICEX_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 同名但游戏版本不同时不得接管：用户可能删掉旧 1.20.1 实例后，又安装了
+    /// 同名的 1.7.10 实例，旧 JVM 参数对后者可能直接导致启动失败。
+    #[test]
+    fn sync_from_disk_does_not_adopt_across_game_versions() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home =
+            std::env::temp_dir().join(format!("qomicex-gamedir-version-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&home);
+        let old_home = std::env::var_os("QOMICEX_HOME");
+        std::env::set_var("QOMICEX_HOME", &home);
+
+        let old_game_dir = home.join("old-mc");
+        let new_game_dir = home.join("new-mc");
+        std::fs::create_dir_all(new_game_dir.join("versions").join("Same Name")).unwrap();
+
+        let service = InstanceService::new();
+        let mut inst = make_instance("Same Name", old_game_dir.to_str().unwrap(), Some(true));
+        inst.game_version = "1.20.1".to_string();
+        inst.max_memory = 8192;
+        inst.jvm_args = Some("-XX:+UseG1GC".into());
+        let created = service.create(inst).unwrap();
+        // 复刻存量记录：没有 createdAt，避免安装宽限期把旧记录保下来。
+        {
+            let mut cur = service.get_by_id(&created.id).unwrap();
+            cur.created_at = None;
+            service.update(&created.id, cur).unwrap();
+        }
+
+        let scanned = vec![ScannedVersionInfo {
+            name: "Same Name".to_string(),
+            dir_name: Some("Same Name".to_string()),
+            game_version: "1.7.10".to_string(),
+            game_dir: new_game_dir.to_str().unwrap().to_string(),
+            loader: Some("Forge".to_string()),
+            loader_version: None,
+            icon_data: None,
+            modpack_name: None,
+            modpack_version: None,
+            modpack_author: None,
+            modpack_summary: None,
+        }];
+        let result = service.sync_from_disk(&scanned);
+
+        assert!(
+            result.iter().all(|i| i.id != created.id),
+            "旧 1.20.1 记录不应被搬到 1.7.10 目录: {result:?}"
+        );
+        let new = result
+            .iter()
+            .find(|i| i.game_dir == new_game_dir.to_str().unwrap())
+            .expect("新目录应新建记录");
+        assert_eq!(new.jvm_args, None);
 
         match old_home {
             Some(v) => std::env::set_var("QOMICEX_HOME", v),
