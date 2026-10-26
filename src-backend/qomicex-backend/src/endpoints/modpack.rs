@@ -56,6 +56,7 @@ use crate::services::install_tracker::InstallStepSpec;
 use crate::services::install_tracker::InstallTracker;
 use crate::services::install_tracker::{InstallHandle, InstallProgress, InstallStatus};
 use crate::services::instance::InstanceService;
+use crate::services::instance_config;
 use crate::services::modpack_export::{list_export_tree, ExportFormat, ExportTreeNode};
 use crate::services::source_policy::SourcePlan;
 use crate::state::SharedState;
@@ -690,7 +691,7 @@ async fn multimc_import_impl(
         modpack_name: Some(name.clone()),
         ..Default::default()
     };
-    let created = s.instance.create(inst);
+    let created = s.instance.create(inst).map_err(ApiError::internal)?;
     drop(_guard);
     let instance_id = created.id.clone();
 
@@ -1089,7 +1090,7 @@ async fn technic_import_impl(
         modpack_name: Some(base_name.clone()),
         ..Default::default()
     };
-    let created = s.instance.create(inst);
+    let created = s.instance.create(inst).map_err(ApiError::internal)?;
     drop(_guard);
     let instance_id = created.id.clone();
 
@@ -1639,7 +1640,7 @@ pub(crate) async fn solder_import_impl(
         modpack_version: Some(build_id.clone()),
         ..Default::default()
     };
-    let created = s.instance.create(inst);
+    let created = s.instance.create(inst).map_err(ApiError::internal)?;
     drop(_guard);
     let instance_id = created.id.clone();
 
@@ -3194,14 +3195,43 @@ impl ModpackServiceData {
                 _ => (None, false),
             };
 
+        if !instance_config::is_safe_instance_name(&req.name) {
+            return Err(ApiError::bad_request(
+                "INSTANCE_NAME_INVALID",
+                "Instance name must be a single valid directory name",
+            ));
+        }
+        // 统一解析一次 gameDir：实例记录、安装管线、overrides 释放必须使用同一路径。
+        // 相对路径按启动器基础目录解析，避免落到进程 cwd。
+        let resolved_game_dir = instance_config::resolve_game_root(&req.game_dir)
+            .to_string_lossy()
+            .into_owned();
+        let src_norm = req
+            .source
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        // Qomicex 包内的 `overrides/qomicex.json` 带版本隔离意图。包内容按请求的
+        // 隔离方式解压，所以必须在建实例/解压前把两者统一：有包内设置时以包为准，
+        // 否则沿用导入对话框的选择。否则「配置说隔离、文件却解压到共享根目录」
+        // 会让新实例启动时找不到整合包内容。
+        let version_isolation = if src_norm == "qml" {
+            local_pack_path
+                .as_deref()
+                .and_then(read_qml_isolation)
+                .unwrap_or(req.version_isolation)
+        } else {
+            req.version_isolation
+        };
+
         let mut instance = crate::services::instance::GameInstance {
             name: req.name.clone(),
             game_version: req.game_version.clone(),
             loader: req.loader.clone(),
             loader_version: req.loader_version.clone(),
-            game_dir: req.game_dir.clone(),
+            game_dir: resolved_game_dir.clone(),
             max_memory: req.max_memory.unwrap_or(4096),
-            version_isolation: Some(req.version_isolation),
+            version_isolation: Some(version_isolation),
             modpack_name: req.modpack_name.clone(),
             modpack_version: req.modpack_version.clone(),
             modpack_author: req.modpack_author.clone(),
@@ -3214,13 +3244,8 @@ impl ModpackServiceData {
             .origin
             .as_deref()
             .is_some_and(|o| o.eq_ignore_ascii_case("resource-center"));
-        let src_norm = req
-            .source
-            .as_deref()
-            .unwrap_or_default()
-            .to_ascii_lowercase();
         let no_local = req.file_id.is_none() && req.local_path.is_none();
-        let isolation_ok = req.version_isolation;
+        let isolation_ok = version_isolation;
 
         let writable_origin = is_updatable_origin(&req);
         if writable_origin {
@@ -3248,7 +3273,7 @@ impl ModpackServiceData {
             .icon_data
             .as_deref()
             .map(crate::util::pcl_icon::normalize_icon_data_uri);
-        let created = self.instance.create(instance);
+        let created = self.instance.create(instance).map_err(ApiError::internal)?;
         let instance_id = created.id.clone();
         let version_dir_name = created.name.clone();
 
@@ -3257,7 +3282,7 @@ impl ModpackServiceData {
         let http_client = self.http_client.clone();
         let cf_api_key = self.curse_api_key.clone();
         let core = self.core.clone();
-        let game_dir = req.game_dir.clone();
+        let game_dir = resolved_game_dir;
         let game_version = req.game_version.clone();
         let loader_in = req.loader.clone();
         let loader_version_in = req.loader_version.clone();
@@ -3266,7 +3291,7 @@ impl ModpackServiceData {
         let file_id = req.version_id.clone();
         let modpack_files = req.modpack_files.clone();
         let optional_file_ids = req.optional_file_ids.clone();
-        let version_isolation = req.version_isolation;
+        // 管道结束后的清理用；version_isolation 已在建实例前按包内设置/请求统一。
         // 管道结束后清理上传的临时文件（install-direct 的绝对路径不属于我们，不删）。
         let cleanup_path = if cleanup_upload {
             local_pack_path.clone()
@@ -3339,7 +3364,7 @@ impl ModpackServiceData {
                         write_manifest_after_install(&meta, version_isolation, &content_rels);
                     }
                     // 实例记录回写生效版本（失败只告警——安装已完成）
-                    if let Some(mut inst) = inst_svc.get_by_id(&inst_id_inner) {
+                    if let Some(inst) = inst_svc.get_by_id(&inst_id_inner) {
                         if inst.game_version != effective_gv {
                             tracing::info!(
                                 instance = %inst_id_inner,
@@ -3347,15 +3372,25 @@ impl ModpackServiceData {
                                 effective = %effective_gv,
                                 "整合包生效游戏版本与请求值不一致，已按 manifest 回写实例"
                             );
-                            inst.game_version = effective_gv.clone();
-                            if let Some(meta) = meta {
-                                inst.loader_version = meta.loader_version.clone();
-                            }
-                            if inst_svc.update(&inst_id_inner, inst).is_none() {
-                                tracing::warn!(
+                            // 安装期间用户可能改过 JVM/内存；只回写版本相关字段。
+                            let loader_version =
+                                meta.as_ref().and_then(|m| m.loader_version.clone());
+                            match inst_svc.update_with(&inst_id_inner, |current| {
+                                current.game_version = effective_gv.clone();
+                                if let Some(lv) = &loader_version {
+                                    current.loader_version = Some(lv.clone());
+                                }
+                            }) {
+                                Ok(Some(_)) => {}
+                                Ok(None) => tracing::warn!(
                                     instance = %inst_id_inner,
                                     "生效版本回写实例失败（实例可能已被删除）"
-                                );
+                                ),
+                                Err(e) => tracing::warn!(
+                                    instance = %inst_id_inner,
+                                    error = %e,
+                                    "生效版本回写实例失败"
+                                ),
                             }
                         }
                     }
@@ -3414,6 +3449,10 @@ impl ModpackServiceData {
                 "gameDir cannot be empty",
             ));
         }
+        // 与 `install` 入口保持一致：相对 gameDir 统一按启动器基础目录解析。
+        let resolved_game_dir = instance_config::resolve_game_root(&req.game_dir)
+            .to_string_lossy()
+            .into_owned();
 
         let resolved = if let Some(path) = req.path.as_deref() {
             if !Path::new(path).is_file() {
@@ -3431,7 +3470,7 @@ impl ModpackServiceData {
                         source_id: None,
                         source_path: Some(path.to_string()),
                         name: req.id,
-                        game_dir: req.game_dir,
+                        game_dir: resolved_game_dir.clone(),
                         version_isolation: req.version_isolation,
                     },
                 )
@@ -3449,7 +3488,7 @@ impl ModpackServiceData {
                         game_version_hint: None,
                         slug: None,
                         name: req.id,
-                        game_dir: req.game_dir,
+                        game_dir: resolved_game_dir.clone(),
                         version_isolation: req.version_isolation,
                     },
                 )
@@ -3552,7 +3591,7 @@ impl ModpackServiceData {
                             SolderImportRequest {
                                 slug: slug.to_string(),
                                 name: req.id,
-                                game_dir: req.game_dir,
+                                game_dir: resolved_game_dir.clone(),
                             },
                         )
                         .await?;
@@ -3572,7 +3611,7 @@ impl ModpackServiceData {
                             game_version_hint: Some(detail.minecraft.clone()),
                             slug: Some(slug.to_string()),
                             name: req.id,
-                            game_dir: req.game_dir,
+                            game_dir: resolved_game_dir.clone(),
                             version_isolation: req.version_isolation,
                         },
                     )
@@ -3600,7 +3639,7 @@ impl ModpackServiceData {
             loader: Some(resolved.loader),
             loader_version: resolved.loader_version,
             max_memory: req.max_memory,
-            game_dir: req.game_dir,
+            game_dir: resolved_game_dir,
             version_isolation: req.version_isolation.unwrap_or(false),
             modpack_files: Some(resolved.files),
             optional_file_ids: None,
@@ -4361,6 +4400,37 @@ fn relative_to_instance(
     }
 }
 
+/// 有界读取 zip 内的配置：先看解压后大小，再用 `take` 限制实际读入量。
+/// 超限视为损坏/恶意包，返回 `None`，绝不把整个条目读进内存。
+fn read_bounded_config<R: Read>(reader: &mut R, size: u64) -> Option<String> {
+    if size > instance_config::MAX_CONFIG_BYTES {
+        return None;
+    }
+    let mut content = String::new();
+    reader
+        .take(instance_config::MAX_CONFIG_BYTES + 1)
+        .read_to_string(&mut content)
+        .ok()?;
+    if content.len() as u64 > instance_config::MAX_CONFIG_BYTES {
+        return None;
+    }
+    Some(content)
+}
+
+/// 读取 Qomicex 包内 `overrides/qomicex.json` 的 `versionIsolation`。
+/// 缺失/损坏/非法类型/超限返回 `None`，由调用方回退到导入请求里的选择。
+fn read_qml_isolation(zip_path: &Path) -> Option<bool> {
+    let file = std::fs::File::open(zip_path).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+    let mut entry = archive
+        .by_name(&format!("overrides/{}", instance_config::CONFIG_FILE))
+        .ok()?;
+    let size = entry.size();
+    let content = read_bounded_config(&mut entry, size)?;
+    let value: serde_json::Value = serde_json::from_str(&content).ok()?;
+    value.get("versionIsolation").and_then(|v| v.as_bool())
+}
+
 /// 释放 QML `.qmodpack` 的 `overrides/**` 到目标目录（结构简单，不走 core 安装器）。
 fn release_qml_overrides(
     zip_path: &str,
@@ -4368,6 +4438,14 @@ fn release_qml_overrides(
     version_dir_name: &str,
     version_isolation: bool,
 ) -> Result<(), String> {
+    if !instance_config::is_safe_instance_name(version_dir_name) {
+        return Err(format!("非法实例名: {version_dir_name}"));
+    }
+    // 导入请求里的 gameDir 可能是相对路径；统一按 `resolve_base_dir()` 解析，
+    // 与 `instance_config::version_dir` 及实例读取路径保持一致，不能落到进程 cwd。
+    let game_dir = instance_config::resolve_game_root(game_dir)
+        .to_string_lossy()
+        .into_owned();
     let file = std::fs::File::open(zip_path).map_err(|e| format!("打开整合包失败: {e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
     for i in 0..archive.len() {
@@ -4385,7 +4463,46 @@ fn release_qml_overrides(
         if rel.is_empty() {
             continue;
         }
-        let dest = modpack_target_path(game_dir, version_dir_name, version_isolation, rel);
+        // 只允许根级 `overrides/qomicex.json`（且会走下面的白名单过滤）。
+        // 包内嵌套的同名文件（如 `overrides/versions/Other/qomicex.json`）不得
+        // 借释放流程覆盖其他实例的配置。
+        if rel != instance_config::CONFIG_FILE
+            && Path::new(rel)
+                .file_name()
+                .is_some_and(|n| n.eq_ignore_ascii_case(instance_config::CONFIG_FILE))
+        {
+            continue;
+        }
+        // 实例独立配置固定落在版本目录（即使实例未开启版本隔离）：读取/写入
+        // 都以 `{gameDir}/versions/{name}/qomicex.json` 为准，不能让它散落到
+        // 共享的游戏根目录（会被其他实例误认，也偏离约定路径）。
+        // 包内配置是**受限导入格式**：只保留导出白名单键，绝不采纳 javaPath。
+        if rel == instance_config::CONFIG_FILE {
+            let size = entry.size();
+            let Some(content) = read_bounded_config(&mut entry, size) else {
+                continue;
+            };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) else {
+                continue;
+            };
+            let map = instance_config::sanitize_import_map(&value);
+            // 包内没有任何可采纳字段时保持现有配置（通常来自 create 的完整快照），
+            // 不能用空对象把它覆盖掉。
+            if map.is_empty() {
+                continue;
+            }
+            let dest = instance_config::version_dir(&game_dir, version_dir_name)
+                .ok_or_else(|| format!("非法实例名: {version_dir_name}"))?
+                .join(instance_config::CONFIG_FILE);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("创建目录失败 {}: {e}", parent.display()))?;
+            }
+            instance_config::merge_imported(&game_dir, version_dir_name, &map)
+                .map_err(|e| format!("写入实例配置失败 {}: {e}", dest.display()))?;
+            continue;
+        }
+        let dest = modpack_target_path(&game_dir, version_dir_name, version_isolation, rel);
         if entry.is_dir() {
             std::fs::create_dir_all(&dest)
                 .map_err(|e| format!("创建目录失败 {}: {e}", dest.display()))?;
@@ -5222,7 +5339,7 @@ mod tests {
 
     use super::{
         apply_optional_selection, cf_placeholder_path, is_multimc_zip, is_updatable_origin,
-        modpack_target_path, parse_curseforge_manifest, parse_local_pack_file,
+        modpack_target_path, parse_curseforge_manifest, parse_local_pack_file, read_qml_isolation,
         release_qml_overrides, resolve_effective_game_version, ModpackInstallRequest,
         ModpackOptionalFile, ParsedModpack,
     };
@@ -5375,6 +5492,17 @@ mod tests {
         std::fs::create_dir_all(src.join("overrides/mods")).unwrap();
         std::fs::write(src.join("overrides/config/opt.toml"), b"a=1").unwrap();
         std::fs::write(src.join("overrides/mods/keep.jar"), b"jar").unwrap();
+        std::fs::create_dir_all(src.join("overrides/versions/Other")).unwrap();
+        std::fs::write(
+            src.join("overrides/qomicex.json"),
+            br#"{"maxMemory":8192,"versionIsolation":false,"javaPath":"C:/Windows/System32/calc.exe","id":"foreign","accountName":"leak"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            src.join("overrides/versions/Other/qomicex.json"),
+            br#"{"javaPath":"C:/evil.exe"}"#,
+        )
+        .unwrap();
         std::fs::write(src.join("qmodpack.index.json"), b"{}").unwrap();
         std::fs::write(src.join("manifest.json"), b"{}").unwrap();
 
@@ -5408,8 +5536,15 @@ mod tests {
         add_tree(&mut zip, &src, "", &opts);
         zip.finish().unwrap();
 
-        // 释放到 game_dir（非隔离）
+        // 释放到 game_dir（非隔离）。先模拟 create 已写入完整快照，
+        // 验证导入只合并白名单字段，不会丢掉 id/本地 JVM 参数。
         let game_dir = root.join("game");
+        std::fs::create_dir_all(game_dir.join("versions/v")).unwrap();
+        std::fs::write(
+            game_dir.join("versions/v/qomicex.json"),
+            br#"{"id":"keep-id","name":"v","jvmArgs":"-Xmx3G","maxMemory":1024}"#,
+        )
+        .unwrap();
         release_qml_overrides(
             zip_path.to_str().unwrap(),
             game_dir.to_str().unwrap(),
@@ -5428,6 +5563,29 @@ mod tests {
         // 非 overrides 条目不释放
         assert!(!game_dir.join("qmodpack.index.json").exists());
         assert!(!game_dir.join("manifest.json").exists());
+        // 实例独立配置固定释放到版本目录，即使当前实例不是版本隔离；
+        // 包内 javaPath/账号/身份字段必须被白名单丢弃。
+        let released: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(game_dir.join("versions/v/qomicex.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(released["maxMemory"], 8192);
+        assert_eq!(released["versionIsolation"], false);
+        // 包内白名单字段覆盖同名键，但 create 写入的身份/本地设置必须保留。
+        assert_eq!(released["id"], "keep-id");
+        assert_eq!(released["jvmArgs"], "-Xmx3G");
+        assert!(released.get("javaPath").is_none());
+        assert!(released.get("accountName").is_none());
+        assert!(
+            !game_dir.join("versions/Other/qomicex.json").exists(),
+            "包内嵌套 qomicex.json 不得覆盖其他实例配置"
+        );
+        assert!(
+            !game_dir.join("qomicex.json").exists(),
+            "独立配置不得散落到共享游戏根目录"
+        );
+        // 导入前可先读包内隔离意图，保证「实例记录」与「overrides 解压位置」一致
+        assert_eq!(read_qml_isolation(&zip_path), Some(false));
     }
 
     /// modpack_target_path：隔离/非隔离目标路径。

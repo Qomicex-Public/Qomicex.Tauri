@@ -12,6 +12,7 @@ pub mod game_log;
 pub mod install_service;
 pub mod install_tracker;
 pub mod instance;
+pub mod instance_config;
 pub mod instance_group;
 pub mod kick;
 pub mod launch_tracker;

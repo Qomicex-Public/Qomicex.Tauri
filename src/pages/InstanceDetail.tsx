@@ -30,7 +30,7 @@ import { openFolder, getSettings } from '../api/settings.ts'
 import { getRuntimes, getValidRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
 import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
-import type { GameInstance, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, LanGameEntry, GameSettingDto, FileEntry } from '../types/index.ts'
+import type { GameInstance, CreateInstanceRequest, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, LanGameEntry, GameSettingDto, FileEntry } from '../types/index.ts'
 import { getServers, addServer, deleteServer, pingServer, getLanGames, getModsMetadata, enrichMods, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata, getModUpdatesCache, checkModUpdates, getSchematics, deleteSchematic, renameSchematic, importSchematic } from '../api/instance-files.ts'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
@@ -2932,6 +2932,52 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
   )
 }
 
+type InstancePatch = Partial<CreateInstanceRequest> & { isHidden?: boolean }
+
+/** 实例更新接口支持的字段：重置某一项时只提交这些字段，绝不整对象覆盖。 */
+const INSTANCE_PATCH_FIELDS = new Set<string>([
+  'name',
+  'gameVersion',
+  'loader',
+  'loaderVersion',
+  'javaPath',
+  'maxMemory',
+  'jvmArgs',
+  'isHidden',
+  'versionIsolation',
+  'customGroupIds',
+  'remark',
+  'skipIntegrityCheck',
+])
+
+/**
+ * 把表单字段转成更新补丁。
+ * 空字符串/undefined 对可空字段显式转 null（后端区分「没传」与「传 null」），
+ * 这样用户清空设置才能真正落盘，而不是被当成“未修改”。
+ */
+function toInstancePatch(field: string, value: unknown): InstancePatch | null {
+  if (!INSTANCE_PATCH_FIELDS.has(field)) return null
+  if (field === 'name') {
+    const text = typeof value === 'string' ? value : ''
+    return text.trim() ? { name: text } : null
+  }
+  if (field === 'loader' || field === 'loaderVersion') {
+    const text = typeof value === 'string' ? value.trim() : ''
+    return text ? ({ [field]: text } as InstancePatch) : null
+  }
+  if (field === 'javaPath' || field === 'jvmArgs' || field === 'remark') {
+    if (value === undefined || value === null) return { [field]: null } as InstancePatch
+    const text = typeof value === 'string' ? value : String(value)
+    return { [field]: text.trim() ? text : null } as InstancePatch
+  }
+  if (field === 'versionIsolation') {
+    // undefined 也代表“跟随全局”：必须显式发 null 清除，不能当成“未修改”。
+    return { versionIsolation: value === undefined ? null : (value as boolean | null) }
+  }
+  if (value === undefined) return null
+  return { [field]: value } as InstancePatch
+}
+
 export default function InstanceDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -3039,6 +3085,25 @@ export default function InstanceDetailPage() {
   }, [id, navigate, detailRefreshKey])
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 当前路由实例：异步保存返回后据此丢弃已切走的响应。 */
+  const currentIdRef = useRef(id)
+  /** 已发起的保存序号：只允许最新一次响应更新 UI/回滚。 */
+  const saveSeqRef = useRef(0)
+  /** 待提交的字段补丁：防抖期间连续修改多个字段也会合并，但每个字段仍是独立键。 */
+  const pendingPatchRef = useRef<InstancePatch>({})
+
+  // 切换实例时丢掉上一个实例的待提交补丁，避免防抖窗口内把 A 的改动提交到 B。
+  useEffect(() => {
+    currentIdRef.current = id
+    pendingPatchRef.current = {}
+    saveSeqRef.current += 1
+    setSaving(false)
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+  }, [id])
+
   const { launchInstance: ctxLaunchInstance, showLaunchError, runningInstances } = useRunning()
   const { confirm, notify } = useMessageBox()
 
@@ -3075,39 +3140,52 @@ export default function InstanceDetailPage() {
     }
   }, [id])
 
-  const doSave = useCallback(async (formToSave: GameInstance) => {
-    if (!id) return
+  /**
+   * 提交待保存补丁。每次只发送真正改动的字段，后端据此按键更新
+   * `qomicex.json`——重置内存只提交 `maxMemory`，不会连带清空 JVM 参数。
+   */
+  const flushPatch = useCallback(async () => {
+    const patch = pendingPatchRef.current
+    pendingPatchRef.current = {}
+    if (!id || Object.keys(patch).length === 0) return
+    const requestId = id
+    const sequence = ++saveSeqRef.current
     setSaving(true)
     try {
-      const updated = await updateInstance(id, {
-        name: formToSave.name,
-        gameVersion: formToSave.gameVersion,
-        loader: formToSave.loader || undefined,
-        loaderVersion: formToSave.loaderVersion || undefined,
-        javaPath: formToSave.javaPath,
-        maxMemory: formToSave.maxMemory,
-        gameDir: formToSave.gameDir,
-        accountName: formToSave.accountName || undefined,
-        accountUuid: formToSave.accountUuid || undefined,
-        accessToken: formToSave.accessToken || undefined,
-        jvmArgs: formToSave.jvmArgs || undefined,
-        versionIsolation: formToSave.versionIsolation,
-        icon: formToSave.icon || undefined,
-        skipIntegrityCheck: formToSave.skipIntegrityCheck,
-      })
+      const updated = await updateInstance(requestId, patch as Partial<CreateInstanceRequest>)
+      // 已切走实例，或已有更新的保存请求：旧响应不得覆盖当前页面。
+      if (currentIdRef.current !== requestId || sequence !== saveSeqRef.current) return
       setInstance(updated)
-      cacheSet(`api-instance-${id}`, updated)
+      cacheSet(`api-instance-${requestId}`, updated)
     } catch (e) {
+      if (currentIdRef.current !== requestId || sequence !== saveSeqRef.current) return
       notify(e instanceof ApiError ? e.displayMessage : String(e), 'error')
-      setForm((f) => (f ? { ...f, name: instance?.name ?? f.name } : f))
+      // 保存失败：只回滚本次提交的字段到服务端值，其它未保存的编辑保持不动。
+      setForm((f) => {
+        if (!f || !instance) return f
+        const next = { ...f } as unknown as Record<string, unknown>
+        // 只回滚“失败后用户没有再次修改”的字段；若用户已经输入了新值，
+        // 该字段还在待提交补丁里，不能把它覆盖回旧值。
+        for (const key of Object.keys(patch)) {
+          if (!(key in pendingPatchRef.current)) {
+            next[key] = (instance as unknown as Record<string, unknown>)[key]
+          }
+        }
+        return next as unknown as GameInstance
+      })
+    } finally {
+      if (currentIdRef.current === requestId && sequence === saveSeqRef.current) {
+        setSaving(false)
+      }
     }
-    setSaving(false)
-  }, [id, notify, instance])
+  }, [id, instance, notify])
 
-  const debouncedSave = useCallback((formToSave: GameInstance) => {
+  const queuePatch = useCallback((patch: InstancePatch) => {
+    if (Object.keys(patch).length === 0) return
+    pendingPatchRef.current = { ...pendingPatchRef.current, ...patch }
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    saveTimerRef.current = setTimeout(() => doSave(formToSave), 800)
-  }, [doSave])
+    saveTimerRef.current = setTimeout(() => { void flushPatch() }, 800)
+  }, [flushPatch])
 
   const handleToggleGroup = useCallback(async (groupId: string) => {
     if (!id || !instance) return
@@ -3148,15 +3226,25 @@ export default function InstanceDetailPage() {
 
   const handleResetSection = useCallback(async (fields: (keyof GameInstance)[]) => {
     const ok = await confirm(t('instanceDetail.settingsTab.resetConfirm'), t('instanceDetail.settingsTab.resetSection'))
-    if (!ok || !initialFormRef.current) return
+    const initial = initialFormRef.current
+    if (!ok || !initial) return
     setForm((f) => {
       if (!f) return f
-      const next = { ...f }
-      for (const k of fields) (next as any)[k] = (initialFormRef.current as any)[k]
-      return next
+      const next = { ...f } as unknown as Record<string, unknown>
+      const source = initial as unknown as Record<string, unknown>
+      for (const k of fields) next[k as string] = source[k as string]
+      return next as unknown as GameInstance
     })
+    // 只把被重置的字段提交给后端；其它设置（例如 JVM 参数）完全不参与本次请求。
+    const patch: InstancePatch = {}
+    const source = initial as unknown as Record<string, unknown>
+    for (const field of fields) {
+      const p = toInstancePatch(field as string, source[field as string])
+      if (p) Object.assign(patch, p)
+    }
+    queuePatch(patch)
     notify(t('instanceDetail.settingsTab.resetDone'), 'success')
-  }, [confirm, notify, t])
+  }, [confirm, notify, t, queuePatch])
 
   const ResetButton = ({ fields }: { fields: (keyof GameInstance)[] }) => (
     <button
@@ -3352,11 +3440,12 @@ export default function InstanceDetailPage() {
   const update = useCallback((field: string, value: unknown) => {
     setForm((f) => {
       if (!f) return f
-      const next = { ...f, [field]: value }
-      debouncedSave(next)
-      return next
+      return { ...f, [field]: value }
     })
-  }, [])
+    // 字段级补丁：只提交本次修改，避免把表单里其它（可能尚未保存的）值一起写回。
+    const patch = toInstancePatch(field, value)
+    if (patch) queuePatch(patch)
+  }, [queuePatch])
 
   if (loading) {
     return (

@@ -265,7 +265,7 @@ export interface CreateInstanceRequest {
   accountName?: string
   accountUuid?: string
   accessToken?: string
-  jvmArgs?: string
+  jvmArgs?: string | null
   versionIsolation?: boolean | null
   icon?: string
   skipIntegrityCheck?: boolean

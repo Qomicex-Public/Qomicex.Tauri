@@ -4,15 +4,16 @@
 //! 游戏实例模型与实例服务（对应源 Models/GameInstance.cs + Services/InstanceService.cs）。
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+use crate::services::instance_config;
 use crate::settings;
 
 /// 游戏实例（对应 C# GameInstance，全部 camelCase）。
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct GameInstance {
@@ -163,6 +164,7 @@ pub struct ScannedVersionInfo {
 #[derive(Debug)]
 pub enum RenameFailure {
     TargetExists(String),
+    InvalidName(String),
     Io(String),
 }
 
@@ -207,35 +209,58 @@ impl InstanceService {
         }
     }
 
-    fn save_to_file(&self) {
+    /// 把给定实例列表写成 `instances.json`。持锁调用方传 `&guard`，
+    /// 避免为了镜像写入再抢一次同一把锁。
+    fn save_instances_json(instances: &[GameInstance], file_path: &Path) -> Result<(), String> {
+        // 紧凑序列化（非 pretty）：`icon_data` 是 base64 data URI，73 个集成包图标
+        // 就能把 instances.json 撑到 10MB+，pretty 的缩进/换行在这个体量下会让每次
+        // 同步的写盘时间和文件体积都翻倍（实测慢 2-3 倍、大 30%+）。
+        let json =
+            serde_json::to_string(instances).map_err(|e| format!("序列化实例列表失败: {e}"))?;
+        // 原子替换：直接 write 会在进程被杀时截断文件，而 load_from_file 解析
+        // 失败一律返回空表 —— 那意味着全部实例记录丢失。先写同目录 tmp 再 rename。
+        let tmp = file_path.with_extension(format!("json.{}.tmp", std::process::id()));
+        if std::fs::write(&tmp, &json).is_ok() && std::fs::rename(&tmp, file_path).is_ok() {
+            return Ok(());
+        }
+        let _ = std::fs::remove_file(&tmp);
+        // tmp 写/换失败（权限、磁盘满、跨设备）：退回直写，至少别丢数据。
+        std::fs::write(file_path, &json)
+            .map_err(|e| format!("写入实例镜像失败 {}: {e}", file_path.display()))
+    }
+
+    fn save_to_file(&self) -> Result<(), String> {
         let guard = match self.instances.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
-        // 紧凑序列化（非 pretty）：`icon_data` 是 base64 data URI，73 个集成包图标
-        // 就能把 instances.json 撑到 10MB+，pretty 的缩进/换行在这个体量下会让每次
-        // 同步的写盘时间和文件体积都翻倍（实测慢 2-3 倍、大 30%+）。
-        if let Ok(json) = serde_json::to_string(&*guard) {
-            // 原子替换：直接 write 会在进程被杀时截断文件，而 load_from_file 解析
-            // 失败一律返回空表 —— 那意味着全部实例记录丢失。先写同目录 tmp 再 rename。
-            let tmp = self
-                .file_path
-                .with_extension(format!("json.{}.tmp", std::process::id()));
-            let ok = std::fs::write(&tmp, &json).is_ok()
-                && std::fs::rename(&tmp, &self.file_path).is_ok();
-            if ok {
-                return;
-            }
-            // tmp 写/换失败（权限、磁盘满、跨设备）：退回直写，至少别丢数据。
-            let _ = std::fs::write(&self.file_path, &json);
-        }
+        Self::save_instances_json(&guard, &self.file_path)
     }
 
     pub fn get_all(&self) -> Vec<GameInstance> {
-        match self.instances.lock() {
-            Ok(g) => g.clone(),
-            Err(p) => p.into_inner().clone(),
+        let (snapshot, changed) = {
+            let mut guard = self.instances.lock().unwrap_or_else(|p| p.into_inner());
+            // 独立配置优先：每次读取都按键合并并回写（只有缺失/空值项才会补）。
+            // 写回内存后，sync 的并发合并基准与读到的值一致，不会把刚读到的
+            // 独立配置当成「并发修改」再拿旧内存值覆盖回去。
+            let mut changed = false;
+            for inst in guard.iter_mut() {
+                let merged = instance_config::load(inst);
+                if merged != *inst {
+                    *inst = merged;
+                    changed = true;
+                }
+            }
+            (guard.clone(), changed)
+        };
+        // 独立文件可能比镜像新（上次镜像写失败/手动替换）。采纳后同步镜像，
+        // 否则重启会回退到旧值。
+        if changed {
+            if let Err(e) = self.save_to_file() {
+                tracing::warn!(error = %e, "同步独立配置到 instances.json 失败");
+            }
         }
+        snapshot
     }
 
     /// 更新指定 game_dir 的扫描结果缓存。
@@ -300,14 +325,39 @@ impl InstanceService {
     }
 
     pub fn get_by_id(&self, id: &str) -> Option<GameInstance> {
-        match self.instances.lock() {
-            Ok(g) => g.iter().find(|i| i.id == id).cloned(),
-            Err(p) => p.into_inner().iter().find(|i| i.id == id).cloned(),
+        let (found, changed) = {
+            let mut guard = self.instances.lock().unwrap_or_else(|p| p.into_inner());
+            let slot = guard.iter_mut().find(|i| i.id == id)?;
+            let merged = instance_config::load(slot);
+            let changed = merged != *slot;
+            if changed {
+                *slot = merged;
+            }
+            (slot.clone(), changed)
+        };
+        // 独立配置与统一文件不一致时把结果镜像回 instances.json，避免重启后
+        // 又读回旧值（例如刚导入的整合包配置被采纳）。
+        if changed {
+            if let Err(e) = self.save_to_file() {
+                tracing::warn!(error = %e, "同步独立配置到 instances.json 失败");
+            }
         }
+        Some(found)
     }
 
-    pub fn create(&self, mut instance: GameInstance) -> GameInstance {
+    pub fn create(&self, mut instance: GameInstance) -> Result<GameInstance, String> {
+        if !instance_config::is_safe_instance_name(&instance.name) {
+            return Err(format!("非法实例名: {}", instance.name));
+        }
         let mut guard = self.instances.lock().unwrap_or_else(|p| p.into_inner());
+        // 一个版本目录只允许一条记录：否则两条记录会共用同一份 qomicex.json，
+        // 互相把身份/设置修复成自己的值。
+        let target_dir = instance_config::resolve_game_root(&instance.game_dir);
+        if guard.iter().any(|i| {
+            i.name == instance.name && instance_config::resolve_game_root(&i.game_dir) == target_dir
+        }) {
+            return Err(format!("实例目录已被占用: {}", instance.name));
+        }
         if instance.id.is_empty() {
             instance.id = new_short_id();
         }
@@ -317,25 +367,78 @@ impl InstanceService {
             instance.created_at =
                 Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
         }
+        // 目录里已有独立配置（重建实例/指向已有版本目录）：按项采纳，但身份
+        // 仍用本次创建的记录，避免复用旧 id 造成重复。
+        if let Some(adopted) = instance_config::adopt(&instance) {
+            instance = adopted;
+        }
+        // 先确认镜像和独立配置都写成功，再改内存；失败时不留下半条记录。
+        let mut candidate = guard.clone();
+        candidate.push(instance.clone());
+        Self::save_instances_json(&candidate, &self.file_path)?;
+        if let Err(e) = instance_config::write_full(&instance) {
+            if let Err(rollback) = Self::save_instances_json(&guard, &self.file_path) {
+                tracing::error!(error = %rollback, "回滚 instances.json 失败");
+            }
+            return Err(e);
+        }
         guard.push(instance.clone());
         drop(guard);
-        self.save_to_file();
         // 使该 game_dir 的扫描缓存失效
         self.invalidate_scan_cache(&instance.game_dir);
-        instance
+        Ok(instance)
     }
 
-    pub fn update(&self, id: &str, mut instance: GameInstance) -> Option<GameInstance> {
+    /// 在实例锁内把补丁应用到**最新**记录，避免两个并发 PUT 各自持有旧快照导致
+    /// 后到的请求把前一个请求改的其它字段回退。
+    pub fn update_with<F>(&self, id: &str, apply: F) -> Result<Option<GameInstance>, String>
+    where
+        F: FnOnce(&mut GameInstance),
+    {
         let mut guard = self.instances.lock().unwrap_or_else(|p| p.into_inner());
         let index = guard.iter().position(|i| i.id == id);
-        let index = index?;
-        instance.id = id.to_string();
-        guard[index] = instance.clone();
+        let Some(index) = index else {
+            return Ok(None);
+        };
+        let old = guard[index].clone();
+        let mut next = old.clone();
+        next.id = id.to_string();
+        apply(&mut next);
+        if next.name != old.name && !instance_config::is_safe_instance_name(&next.name) {
+            return Err(format!("非法实例名: {}", next.name));
+        }
+        // 改名/改目录后不得与已有记录共用版本目录（会共用同一份 qomicex.json）。
+        if next.name != old.name || next.game_dir != old.game_dir {
+            let target_dir = instance_config::resolve_game_root(&next.game_dir);
+            if guard.iter().enumerate().any(|(i, inst)| {
+                i != index
+                    && inst.name == next.name
+                    && instance_config::resolve_game_root(&inst.game_dir) == target_dir
+            }) {
+                return Err(format!("实例目录已被占用: {}", next.name));
+            }
+        }
+        // 镜像先写：清空可空字段时，独立文件删键后仍能回退到刚写的 null/空值。
+        // 全程持有实例锁，读路径不会在两次写之间看到半新半旧的状态。
+        let mut mirror = guard.clone();
+        mirror[index] = next.clone();
+        Self::save_instances_json(&mirror, &self.file_path)?;
+        if let Err(e) = instance_config::update_delta(&old, &next) {
+            // 独立配置写失败 → 回滚镜像，保持失败前的可见状态一致。
+            if let Err(rollback) = Self::save_instances_json(&guard, &self.file_path) {
+                tracing::error!(error = %rollback, "回滚 instances.json 失败");
+            }
+            return Err(e);
+        }
+        guard[index] = next.clone();
         drop(guard);
-        self.save_to_file();
         // 使该 game_dir 的扫描缓存失效
-        self.invalidate_scan_cache(&instance.game_dir);
-        Some(instance)
+        self.invalidate_scan_cache(&next.game_dir);
+        Ok(Some(next))
+    }
+
+    pub fn update(&self, id: &str, instance: GameInstance) -> Result<Option<GameInstance>, String> {
+        self.update_with(id, |current| *current = instance.clone())
     }
 
     /// 改名时同步重命名版本目录 + 目录内 {name}.json/.jar + 修补版本 JSON 内的 id。
@@ -350,6 +453,9 @@ impl InstanceService {
         let old_name = inst.name.as_str();
         if old_name.is_empty() || old_name == new_name {
             return Ok(());
+        }
+        if !instance_config::is_safe_instance_name(new_name) {
+            return Err(RenameFailure::InvalidName(new_name.to_string()));
         }
         let game_root = if std::path::Path::new(&inst.game_dir).is_absolute() {
             PathBuf::from(&inst.game_dir)
@@ -422,7 +528,9 @@ impl InstanceService {
             };
             guard.retain(|i| i.id != id);
             drop(guard);
-            self.save_to_file();
+            if let Err(e) = self.save_to_file() {
+                tracing::warn!(error = %e, "删除实例后写 instances.json 失败");
+            }
             instance
         };
 
@@ -442,7 +550,9 @@ impl InstanceService {
         }
         if !removed {
             // 目录删不掉 → 恢复记录，避免残留目录被扫描反推成幽灵实例
-            self.create(instance.clone());
+            if let Err(e) = self.create(instance.clone()) {
+                tracing::error!(error = %e, "恢复实例记录失败");
+            }
             return Err(format!(
                 "版本目录删除失败（可能被占用）：{}",
                 version_dir.display()
@@ -584,6 +694,10 @@ impl InstanceService {
         // 4. 遍历磁盘扫描结果，合并或创建实例
         let mut result: Vec<GameInstance> = Vec::new();
         let mut seen_keys: HashMap<(String, String), usize> = HashMap::new();
+        // 独立配置里带 id：instances.json 丢失后据此恢复原实例。已被占用的 id
+        // （目录被复制/备份过）必须换新，否则两条记录共享 id，PUT/DELETE 会错位。
+        let mut used_ids: std::collections::HashSet<String> =
+            json_instances.iter().map(|i| i.id.clone()).collect();
 
         for scanned in scanned {
             // 身份键用**目录名**：记录的 name 恒为目录名，而 scanned.name 是版本 JSON
@@ -603,6 +717,7 @@ impl InstanceService {
             if let Some(&json_idx) = json_index.get(&key) {
                 // JSON 中已有记录，合并（磁盘信息 + JSON 元数据）
                 let mut inst = json_instances[json_idx].clone();
+                let before_scan = inst.clone();
 
                 // 修复 game_version（以磁盘为准）
                 if !scanned.game_version.is_empty() && inst.game_version != scanned.game_version {
@@ -640,30 +755,84 @@ impl InstanceService {
                     inst.modpack_summary = scanned.modpack_summary.clone();
                 }
 
+                // 扫描修正的 gameVersion/loader 必须同步落盘：load 优先读独立配置，
+                // 否则下一次读取会把这里刚修正的磁盘事实又覆盖回旧值。
+                if inst != before_scan {
+                    if let Err(e) = instance_config::update_delta(&before_scan, &inst) {
+                        tracing::warn!(error = %e, "同步扫描元数据到实例独立配置失败");
+                    }
+                }
+
                 // 去重：同 key 只保留一个
                 if let std::collections::hash_map::Entry::Vacant(e) = seen_keys.entry(key) {
                     e.insert(result.len());
                     result.push(inst);
                 }
             } else {
-                // JSON 中无记录，从磁盘信息创建新实例
+                // JSON 中无记录：版本目录里有独立配置（instances.json 丢失/重建）时
+                // 用它恢复 id、JVM、内存等设置，否则才从磁盘信息建默认记录。
                 let dir_name_for_row = key.1.clone();
                 if let std::collections::hash_map::Entry::Vacant(e) = seen_keys.entry(key) {
-                    let inst = GameInstance {
-                        // name 是版本隔离目录名（路径基座），必须用目录名而非 JSON id；
-                        // 用 id 会让记录指向不存在的目录（重装/改名后错位，issue #244）。
-                        name: dir_name_for_row,
-                        game_version: scanned.game_version.clone(),
-                        game_dir: scanned.game_dir.clone(),
-                        loader: scanned.loader.clone(),
-                        loader_version: scanned.loader_version.clone(),
-                        icon_data: scanned.icon_data.clone(),
-                        modpack_name: scanned.modpack_name.clone(),
-                        modpack_version: scanned.modpack_version.clone(),
-                        modpack_author: scanned.modpack_author.clone(),
-                        modpack_summary: scanned.modpack_summary.clone(),
-                        ..Default::default()
-                    };
+                    let inst =
+                        match instance_config::load_for_dir(&scanned.game_dir, &dir_name_for_row) {
+                            Some(mut cfg) => {
+                                // 目录被复制/备份时文件里的 id 会重复；冲突时换新 id，
+                                // 否则两条记录共享 id，PUT/DELETE 会错位。
+                                if cfg.id.trim().is_empty() || used_ids.contains(&cfg.id) {
+                                    cfg.id = new_short_id();
+                                }
+                                // 身份键以磁盘目录为准（配置里的 name 可能是改名前的旧值）。
+                                cfg.name = dir_name_for_row;
+                                cfg.game_dir = scanned.game_dir.clone();
+                                // 磁盘事实优先，其余设置保留配置文件里的值。
+                                if !scanned.game_version.is_empty() {
+                                    cfg.game_version = scanned.game_version.clone();
+                                }
+                                if let Some(loader) = scanned.loader.clone() {
+                                    cfg.loader = Some(loader);
+                                }
+                                if let Some(loader_version) = scanned.loader_version.clone() {
+                                    cfg.loader_version = Some(loader_version);
+                                }
+                                if cfg.icon_data.is_none() && scanned.icon_data.is_some() {
+                                    cfg.icon_data = scanned.icon_data.clone();
+                                }
+                                if cfg.modpack_name.is_none() {
+                                    cfg.modpack_name = scanned.modpack_name.clone();
+                                }
+                                if cfg.modpack_version.is_none() {
+                                    cfg.modpack_version = scanned.modpack_version.clone();
+                                }
+                                if cfg.modpack_author.is_none() {
+                                    cfg.modpack_author = scanned.modpack_author.clone();
+                                }
+                                if cfg.modpack_summary.is_none() {
+                                    cfg.modpack_summary = scanned.modpack_summary.clone();
+                                }
+                                // 把恢复后确定的 id / 磁盘事实写回配置文件，避免
+                                // 下一次同步又生成一个不同的随机 id。
+                                if let Err(e) = instance_config::write_full(&cfg) {
+                                    tracing::warn!(error = %e, "恢复实例独立配置失败");
+                                }
+                                cfg
+                            }
+                            None => GameInstance {
+                                // name 是版本隔离目录名（路径基座），必须用目录名而非 JSON id；
+                                // 用 id 会让记录指向不存在的目录（重装/改名后错位，issue #244）。
+                                name: dir_name_for_row,
+                                game_version: scanned.game_version.clone(),
+                                game_dir: scanned.game_dir.clone(),
+                                loader: scanned.loader.clone(),
+                                loader_version: scanned.loader_version.clone(),
+                                icon_data: scanned.icon_data.clone(),
+                                modpack_name: scanned.modpack_name.clone(),
+                                modpack_version: scanned.modpack_version.clone(),
+                                modpack_author: scanned.modpack_author.clone(),
+                                modpack_summary: scanned.modpack_summary.clone(),
+                                ..Default::default()
+                            },
+                        };
+                    used_ids.insert(inst.id.clone());
                     e.insert(result.len());
                     result.push(inst);
                 }
@@ -730,7 +899,15 @@ impl InstanceService {
             );
             *guard = result.clone();
             drop(guard);
-            self.save_to_file();
+            if let Err(e) = self.save_to_file() {
+                tracing::warn!(error = %e, "扫描回写 instances.json 失败");
+            }
+        }
+
+        // 6.1 给缺失独立配置的实例补一份完整快照（升级迁移/新建目录）。已存在的
+        // 文件不动，避免把整合包导入的设置用内存默认值覆盖掉。
+        for inst in &result {
+            instance_config::ensure_full(inst);
         }
 
         result
@@ -985,21 +1162,27 @@ mod tests {
         std::fs::create_dir_all(game_dir.join("versions").join("Existing")).unwrap();
 
         let service = InstanceService::new();
-        service.create(make_instance(
-            "Existing",
-            game_dir.to_str().unwrap(),
-            Some(true),
-        ));
-        service.create(make_instance(
-            "Missing",
-            game_dir.to_str().unwrap(),
-            Some(true),
-        ));
-        service.create(make_instance(
-            "Shared",
-            game_dir.to_str().unwrap(),
-            Some(false),
-        ));
+        service
+            .create(make_instance(
+                "Existing",
+                game_dir.to_str().unwrap(),
+                Some(true),
+            ))
+            .unwrap();
+        service
+            .create(make_instance(
+                "Missing",
+                game_dir.to_str().unwrap(),
+                Some(true),
+            ))
+            .unwrap();
+        service
+            .create(make_instance(
+                "Shared",
+                game_dir.to_str().unwrap(),
+                Some(false),
+            ))
+            .unwrap();
 
         let existing = service.list_existing();
         let names: Vec<&str> = existing.iter().map(|i| i.name.as_str()).collect();
@@ -1038,17 +1221,19 @@ mod tests {
         std::fs::write(old_dir.join("1.20.1-Forge-47.1.0.jar"), b"jar").unwrap();
 
         let service = InstanceService::new();
-        let inst = service.create(make_instance(
-            "1.20.1-Forge-47.1.0",
-            game_dir.to_str().unwrap(),
-            Some(true),
-        ));
+        let inst = service
+            .create(make_instance(
+                "1.20.1-Forge-47.1.0",
+                game_dir.to_str().unwrap(),
+                Some(true),
+            ))
+            .unwrap();
 
         // 模拟 PUT /instance/{id} 改名全流程：重命名目录 → 更新记录
         let mut renamed = service.get_by_id(&inst.id).unwrap();
         service.rename_version_dir(&renamed, "我的服务器").unwrap();
         renamed.name = "我的服务器".to_string();
-        service.update(&inst.id, renamed);
+        service.update(&inst.id, renamed).unwrap();
 
         // 目录/json/jar 已重命名，JSON 内 id 已修补
         let new_dir = game_dir.join("versions").join("我的服务器");
@@ -1128,7 +1313,7 @@ mod tests {
         inst.jvm_args = Some("-XX:+UseG1GC -Dfml.ignoreInvalidMinecraftCertificates=true".into());
         inst.modpack_name = Some("GT New Horizons".into());
         inst.remark = Some("我的整合包".into());
-        let created = service.create(inst);
+        let created = service.create(inst).unwrap();
 
         let scanned = vec![ScannedVersionInfo {
             name: "GT New Horizons".to_string(),      // 版本 JSON id
@@ -1195,12 +1380,12 @@ mod tests {
         inst.max_memory = 8192;
         inst.jvm_args =
             Some("-Dfile.encoding=UTF-8 --add-opens java.base/java.lang=ALL-UNNAMED".into());
-        let created = service.create(inst);
+        let created = service.create(inst).unwrap();
         // 复刻存量记录：没有 createdAt（宽限期豁免不生效）
         {
             let mut cur = service.get_by_id(&created.id).unwrap();
             cur.created_at = None;
-            service.update(&created.id, cur);
+            service.update(&created.id, cur).unwrap();
         }
 
         // 同 game_dir 下另一版本被扫到（scanned_dirs 含该 game_dir），但 GTNH 2.8.4
@@ -1257,11 +1442,11 @@ mod tests {
         inst.game_version = "1.7.10".to_string();
         inst.max_memory = 8192;
         inst.jvm_args = Some("-XX:+UseG1GC".into());
-        let created = service.create(inst);
+        let created = service.create(inst).unwrap();
         {
             let mut cur = service.get_by_id(&created.id).unwrap();
             cur.created_at = None;
-            service.update(&created.id, cur);
+            service.update(&created.id, cur).unwrap();
         }
 
         // 扫描给出映射：id="GT New Horizons" → 目录名 "GTNH 2.8.4"（目录真实存在）
@@ -1331,7 +1516,7 @@ mod tests {
         inst.game_version = "1.7.10".to_string();
         inst.max_memory = 8192;
         inst.jvm_args = Some("-XX:+UseG1GC".into());
-        let created = service.create(inst);
+        let created = service.create(inst).unwrap();
 
         // 旧前端：dir_name 缺失，只给 name（= JSON id）
         let scanned = vec![ScannedVersionInfo {
@@ -1554,11 +1739,13 @@ mod tests {
         let service = InstanceService::new();
 
         // 刚创建（宽限期内）+ 目录不存在 → 必须保留
-        let installing = service.create(make_instance(
-            "GT New Horizons",
-            game_dir.to_str().unwrap(),
-            Some(true),
-        ));
+        let installing = service
+            .create(make_instance(
+                "GT New Horizons",
+                game_dir.to_str().unwrap(),
+                Some(true),
+            ))
+            .unwrap();
         assert!(installing.created_at.is_some(), "create 应写入 created_at");
 
         // 超过宽限期的记录（目录不存在）→ 仍按残留清理
@@ -1567,17 +1754,19 @@ mod tests {
             (chrono::Utc::now() - MODULE_INSTALLING_GRACE - chrono::Duration::minutes(1))
                 .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         );
-        service.create(stale);
+        service.create(stale).unwrap();
 
         // 同 game_dir 下另一个实例已被扫描命中（目录存在）→ 第 5 步的
         // scanned_dirs 排除不得绕过宽限期（CodeRabbit 评审发现）
         let scanned_dir = game_dir.join("versions").join("Existing");
         std::fs::create_dir_all(&scanned_dir).unwrap();
-        service.create(make_instance(
-            "Existing",
-            game_dir.to_str().unwrap(),
-            Some(true),
-        ));
+        service
+            .create(make_instance(
+                "Existing",
+                game_dir.to_str().unwrap(),
+                Some(true),
+            ))
+            .unwrap();
         let scanned = vec![ScannedVersionInfo {
             name: "Existing".to_string(),
             dir_name: Some("Existing".to_string()),
@@ -1640,11 +1829,13 @@ mod tests {
         std::fs::write(version_dir.join("Ghost.json"), "{}").unwrap();
 
         let service = InstanceService::new();
-        let inst = service.create(make_instance(
-            "Ghost",
-            game_dir.to_str().unwrap(),
-            Some(true),
-        ));
+        let inst = service
+            .create(make_instance(
+                "Ghost",
+                game_dir.to_str().unwrap(),
+                Some(true),
+            ))
+            .unwrap();
 
         // 正常删除：目录可删 → Ok(Some)，记录与目录均消失
         let removed = service.try_delete(&inst.id);
@@ -1658,11 +1849,13 @@ mod tests {
         let old_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&version_dir).unwrap();
 
-        let inst2 = service.create(make_instance(
-            "Ghost",
-            game_dir.to_str().unwrap(),
-            Some(true),
-        ));
+        let inst2 = service
+            .create(make_instance(
+                "Ghost",
+                game_dir.to_str().unwrap(),
+                Some(true),
+            ))
+            .unwrap();
         let result = service.try_delete(&inst2.id);
         let record_restored = service.get_by_id(&inst2.id).is_some();
 
@@ -1688,5 +1881,349 @@ mod tests {
             Some(v) => std::env::set_var("QOMICEX_HOME", v),
             None => std::env::remove_var("QOMICEX_HOME"),
         }
+    }
+
+    /// 并发补丁必须在实例锁内应用到最新记录：后一个请求只改 JVM，不能把前一个
+    /// 请求写的内存设置回退成它读到的旧快照。
+    #[test]
+    fn update_with_applies_patches_to_latest_record() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home =
+            std::env::temp_dir().join(format!("qomicex-update-patch-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&home);
+        let old_home = std::env::var_os("QOMICEX_HOME");
+        std::env::set_var("QOMICEX_HOME", &home);
+
+        let game_dir = home.join("games").join("mc");
+        let version_dir = game_dir.join("versions").join("1.20.1");
+        std::fs::create_dir_all(&version_dir).unwrap();
+
+        let service = InstanceService::new();
+        let created = service
+            .create(make_instance(
+                "1.20.1",
+                game_dir.to_str().unwrap(),
+                Some(true),
+            ))
+            .unwrap();
+        service
+            .update_with(&created.id, |cur| cur.max_memory = 8192)
+            .unwrap()
+            .expect("first patch");
+        service
+            .update_with(&created.id, |cur| cur.jvm_args = Some("-Xmx8G".to_string()))
+            .unwrap()
+            .expect("second patch");
+
+        let final_inst = service.get_by_id(&created.id).unwrap();
+        assert_eq!(final_inst.max_memory, 8192, "第二个补丁不得回退内存设置");
+        assert_eq!(final_inst.jvm_args.as_deref(), Some("-Xmx8G"));
+        let raw: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(version_dir.join(instance_config::CONFIG_FILE)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(raw["maxMemory"], 8192);
+        assert_eq!(raw["jvmArgs"], "-Xmx8G");
+
+        // 同一版本目录不得出现第二条记录（否则两条记录共用一份配置）。
+        assert!(service
+            .create(make_instance(
+                "1.20.1",
+                game_dir.to_str().unwrap(),
+                Some(true)
+            ))
+            .is_err());
+        service
+            .create(make_instance(
+                "Other",
+                game_dir.to_str().unwrap(),
+                Some(true),
+            ))
+            .unwrap();
+        let err = service
+            .update_with(&created.id, |cur| cur.name = "Other".to_string())
+            .unwrap_err();
+        assert!(err.contains("已被占用"), "改名也不得共用版本目录: {err}");
+        assert_eq!(
+            service.get_by_id(&created.id).unwrap().name,
+            "1.20.1",
+            "改名失败后记录不得变化"
+        );
+
+        match old_home {
+            Some(v) => std::env::set_var("QOMICEX_HOME", v),
+            None => std::env::remove_var("QOMICEX_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 扫描修正的 gameVersion/loader 必须同步写回独立配置，否则下一次 load
+    /// 会把旧配置盖回内存，用户看到版本信息反复跳变。
+    #[test]
+    fn sync_from_disk_updates_scanned_metadata_in_config() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home = std::env::temp_dir().join(format!("qomicex-scan-meta-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&home);
+        let old_home = std::env::var_os("QOMICEX_HOME");
+        std::env::set_var("QOMICEX_HOME", &home);
+
+        let game_dir = home.join("games").join("mc");
+        let version_dir = game_dir.join("versions").join("GTNH 2.8.4");
+        std::fs::create_dir_all(&version_dir).unwrap();
+
+        let service = InstanceService::new();
+        let mut inst = make_instance("GTNH 2.8.4", game_dir.to_str().unwrap(), Some(true));
+        inst.game_version = "1.12.2".to_string();
+        inst.max_memory = 8192;
+        inst.jvm_args = Some("-XX:+UseG1GC".to_string());
+        let created = service.create(inst).unwrap();
+
+        let scanned = vec![ScannedVersionInfo {
+            name: "GT New Horizons".to_string(),
+            dir_name: Some("GTNH 2.8.4".to_string()),
+            game_version: "1.7.10".to_string(),
+            game_dir: game_dir.to_str().unwrap().to_string(),
+            loader: Some("forge".to_string()),
+            loader_version: Some("14.23.5.2860".to_string()),
+            icon_data: None,
+            modpack_name: None,
+            modpack_version: None,
+            modpack_author: None,
+            modpack_summary: None,
+        }];
+        let result = service.sync_from_disk(&scanned);
+        let kept = result.iter().find(|i| i.id == created.id).unwrap();
+        assert_eq!(kept.game_version, "1.7.10");
+        assert_eq!(kept.loader.as_deref(), Some("forge"));
+        assert_eq!(kept.loader_version.as_deref(), Some("14.23.5.2860"));
+
+        let raw: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(version_dir.join(instance_config::CONFIG_FILE)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(raw["gameVersion"], "1.7.10");
+        assert_eq!(raw["loader"], "forge");
+        assert_eq!(raw["loaderVersion"], "14.23.5.2860");
+        assert_eq!(raw["jvmArgs"], "-XX:+UseG1GC", "无关设置不得丢失");
+
+        match old_home {
+            Some(v) => std::env::set_var("QOMICEX_HOME", v),
+            None => std::env::remove_var("QOMICEX_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 独立配置比镜像新时，`get_all` 采纳后必须回写镜像，否则重启会退回旧值。
+    #[test]
+    fn get_all_mirrors_newer_config_to_instances_json() {
+        let home =
+            std::env::temp_dir().join(format!("qomicex-getall-mirror-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&home);
+
+        // game_dir 用绝对路径，独立配置不需要 QOMICEX_HOME；避免改动进程级环境变量
+        // 和其他不持 ENV_LOCK 的测试（如 plugin）互相干扰。
+        let game_dir = home.join("games").join("mc");
+        let version_dir = game_dir.join("versions").join("1.20.1");
+        std::fs::create_dir_all(&version_dir).unwrap();
+
+        let service = InstanceService::new_for_test(&home);
+        let created = service
+            .create(make_instance(
+                "1.20.1",
+                game_dir.to_str().unwrap(),
+                Some(true),
+            ))
+            .unwrap();
+        let mut newer = created.clone();
+        newer.max_memory = 8192;
+        newer.jvm_args = Some("-Xmx8G".to_string());
+        instance_config::write_full(&newer).unwrap();
+
+        let all = service.get_all();
+        let merged = all.iter().find(|i| i.id == created.id).unwrap();
+        assert_eq!(merged.max_memory, 8192);
+        assert_eq!(merged.jvm_args.as_deref(), Some("-Xmx8G"));
+
+        let mirror: Vec<GameInstance> = serde_json::from_slice(
+            &std::fs::read(home.join("data").join("instances.json")).unwrap(),
+        )
+        .unwrap();
+        let mirrored = mirror.iter().find(|i| i.id == created.id).unwrap();
+        assert_eq!(mirrored.max_memory, 8192, "get_all 应把新配置同步到镜像");
+        assert_eq!(mirrored.jvm_args.as_deref(), Some("-Xmx8G"));
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 重置某一项设置时，独立配置只改对应键：重置内存不得连带清空 JVM/Java。
+    #[test]
+    fn update_resets_only_the_changed_config_key() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home =
+            std::env::temp_dir().join(format!("qomicex-reset-test-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&home);
+        let old_home = std::env::var_os("QOMICEX_HOME");
+        std::env::set_var("QOMICEX_HOME", &home);
+
+        let game_dir = home.join("games").join("mc");
+        let version_dir = game_dir.join("versions").join("1.20.1");
+        std::fs::create_dir_all(&version_dir).unwrap();
+
+        let service = InstanceService::new();
+        let mut inst = make_instance("1.20.1", game_dir.to_str().unwrap(), Some(true));
+        inst.max_memory = 8192;
+        inst.jvm_args = Some("-XX:+UseG1GC".to_string());
+        inst.java_path = Some("C:/Java/bin/javaw.exe".to_string());
+        let created = service.create(inst).unwrap();
+        let config_path = version_dir.join(instance_config::CONFIG_FILE);
+
+        // 只重置内存 → JVM/Java 原样保留
+        let mut reset = created.clone();
+        reset.max_memory = 4096;
+        service
+            .update(&created.id, reset.clone())
+            .unwrap()
+            .expect("update");
+        let raw: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+        assert_eq!(raw["maxMemory"], 4096);
+        assert_eq!(raw["jvmArgs"], "-XX:+UseG1GC");
+        assert_eq!(raw["javaPath"], "C:/Java/bin/javaw.exe");
+
+        // 清空 JVM → 只删 jvmArgs，内存/Java 路径不动
+        let mut cleared = reset.clone();
+        cleared.jvm_args = None;
+        service
+            .update(&created.id, cleared)
+            .unwrap()
+            .expect("update");
+        let raw: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+        assert!(
+            raw.get("jvmArgs").is_none(),
+            "清空 JVM 只应删除对应键: {raw}"
+        );
+        assert_eq!(raw["maxMemory"], 4096);
+        assert_eq!(raw["javaPath"], "C:/Java/bin/javaw.exe");
+
+        match old_home {
+            Some(v) => std::env::set_var("QOMICEX_HOME", v),
+            None => std::env::remove_var("QOMICEX_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// instances.json 丢失后，sync_from_disk 应从独立配置恢复原 id 与全部设置。
+    #[test]
+    fn sync_recovers_settings_from_config_when_instances_json_lost() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home =
+            std::env::temp_dir().join(format!("qomicex-recover-test-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&home);
+        let old_home = std::env::var_os("QOMICEX_HOME");
+        std::env::set_var("QOMICEX_HOME", &home);
+
+        let game_dir = home.join("games").join("mc");
+        let version_dir = game_dir.join("versions").join("GTNH");
+        std::fs::create_dir_all(&version_dir).unwrap();
+
+        let service = InstanceService::new();
+        let mut inst = make_instance("GTNH", game_dir.to_str().unwrap(), Some(true));
+        inst.max_memory = 8192;
+        inst.jvm_args = Some("-Xmx8G".to_string());
+        inst.java_path = Some("C:/Java/bin/javaw.exe".to_string());
+        let created = service.create(inst).unwrap();
+
+        // 模拟统一文件丢失
+        let unified = home.join("data").join("instances.json");
+        std::fs::remove_file(&unified).unwrap();
+
+        let restarted = InstanceService::new();
+        assert!(restarted.get_all().is_empty(), "统一文件丢失后应为空表");
+
+        let scanned = vec![ScannedVersionInfo {
+            name: "GTNH".to_string(),
+            dir_name: Some("GTNH".to_string()),
+            game_version: "1.20.1".to_string(),
+            game_dir: game_dir.to_str().unwrap().to_string(),
+            loader: Some("forge".to_string()),
+            loader_version: Some("47.1.0".to_string()),
+            icon_data: None,
+            modpack_name: None,
+            modpack_version: None,
+            modpack_author: None,
+            modpack_summary: None,
+        }];
+        let result = restarted.sync_from_disk(&scanned);
+        let found = result
+            .iter()
+            .find(|i| i.name == "GTNH")
+            .unwrap_or_else(|| panic!("应从 qomicex.json 恢复实例: {result:?}"));
+
+        assert_eq!(found.id, created.id, "实例 id 应从独立配置恢复");
+        assert_eq!(found.max_memory, 8192, "内存设置不得丢失");
+        assert_eq!(found.jvm_args.as_deref(), Some("-Xmx8G"), "JVM 不得丢失");
+        assert_eq!(
+            found.java_path.as_deref(),
+            Some("C:/Java/bin/javaw.exe"),
+            "Java 路径不得丢失"
+        );
+        assert_eq!(found.version_isolation, Some(true));
+        assert_eq!(found.loader.as_deref(), Some("forge"), "磁盘 loader 应覆盖");
+        assert!(unified.is_file(), "同步后应重建 instances.json");
+        assert!(
+            restarted.get_by_id(&created.id).is_some(),
+            "恢复的记录应写回内存/统一文件"
+        );
+
+        match old_home {
+            Some(v) => std::env::set_var("QOMICEX_HOME", v),
+            None => std::env::remove_var("QOMICEX_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 创建指向已有版本目录时采纳其中的独立配置（整合包导入/重建），但不复用旧 id。
+    #[test]
+    fn create_adopts_existing_config_but_keeps_new_id() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let home =
+            std::env::temp_dir().join(format!("qomicex-adopt-test-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&home);
+        let old_home = std::env::var_os("QOMICEX_HOME");
+        std::env::set_var("QOMICEX_HOME", &home);
+
+        let game_dir = home.join("games").join("mc");
+        let version_dir = game_dir.join("versions").join("Pack");
+        std::fs::create_dir_all(&version_dir).unwrap();
+        std::fs::write(
+            version_dir.join(instance_config::CONFIG_FILE),
+            r#"{"id":"old-id","maxMemory":8192,"jvmArgs":"-Xmx8G","javaPath":"C:/local/javaw.exe"}"#,
+        )
+        .unwrap();
+
+        let service = InstanceService::new();
+        let created = service
+            .create(make_instance(
+                "Pack",
+                game_dir.to_str().unwrap(),
+                Some(true),
+            ))
+            .unwrap();
+        assert_ne!(created.id, "old-id", "不得复用包里的旧 id");
+        assert_eq!(created.max_memory, 8192, "应采纳包内内存设置");
+        assert_eq!(created.jvm_args.as_deref(), Some("-Xmx8G"));
+
+        let raw: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(version_dir.join(instance_config::CONFIG_FILE)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(raw["id"], created.id, "配置文件 id 应更新为新记录 id");
+
+        match old_home {
+            Some(v) => std::env::set_var("QOMICEX_HOME", v),
+            None => std::env::remove_var("QOMICEX_HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

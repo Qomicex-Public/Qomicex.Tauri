@@ -198,7 +198,9 @@ pub fn settle_play_time(instances: &InstanceService, instance_id: &str, started_
     if let Some(mut updated) = instances.get_by_id(instance_id) {
         updated.play_time += elapsed;
         updated.last_played = Some(Utc::now().to_rfc3339());
-        instances.update(instance_id, updated);
+        if let Err(e) = instances.update(instance_id, updated) {
+            tracing::warn!(error = %e, "结算游玩时长后写实例配置失败");
+        }
     }
 }
 
@@ -569,11 +571,13 @@ mod tests {
         let game_log = GameLogService::new();
 
         // 构造一个运行中实例 + running 进度 + 已注册 PID（假 PID，必然不存活）
-        let created = instances.create(crate::services::instance::GameInstance {
-            name: "crash-test-inst".to_string(),
-            game_version: "1.20.1".to_string(),
-            ..Default::default()
-        });
+        let created = instances
+            .create(crate::services::instance::GameInstance {
+                name: format!("crash-test-inst-{}", uuid::Uuid::new_v4()),
+                game_version: "1.20.1".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
 
         tracker.track(&created.id, -1);
         tracker.set_progress(
@@ -612,11 +616,13 @@ mod tests {
         let instances = InstanceService::new();
         let game_log = GameLogService::new();
 
-        let created = instances.create(crate::services::instance::GameInstance {
-            name: "stop-race-inst".to_string(),
-            game_version: "1.20.1".to_string(),
-            ..Default::default()
-        });
+        let created = instances
+            .create(crate::services::instance::GameInstance {
+                name: format!("stop-race-inst-{}", uuid::Uuid::new_v4()),
+                game_version: "1.20.1".to_string(),
+                ..Default::default()
+            })
+            .unwrap();
         tracker.track(&created.id, -1);
         tracker.set_progress(
             &created.id,
