@@ -56,6 +56,7 @@ use crate::services::install_tracker::InstallStepSpec;
 use crate::services::install_tracker::InstallTracker;
 use crate::services::install_tracker::{InstallHandle, InstallProgress, InstallStatus};
 use crate::services::instance::InstanceService;
+use crate::services::instance_config;
 use crate::services::modpack_export::{list_export_tree, ExportFormat, ExportTreeNode};
 use crate::services::source_policy::SourcePlan;
 use crate::state::SharedState;
@@ -3194,6 +3195,24 @@ impl ModpackServiceData {
                 _ => (None, false),
             };
 
+        let src_norm = req
+            .source
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        // Qomicex 包内的 `overrides/qomicex.json` 带版本隔离意图。包内容按请求的
+        // 隔离方式解压，所以必须在建实例/解压前把两者统一：有包内设置时以包为准，
+        // 否则沿用导入对话框的选择。否则「配置说隔离、文件却解压到共享根目录」
+        // 会让新实例启动时找不到整合包内容。
+        let version_isolation = if src_norm == "qml" {
+            local_pack_path
+                .as_deref()
+                .and_then(read_qml_isolation)
+                .unwrap_or(req.version_isolation)
+        } else {
+            req.version_isolation
+        };
+
         let mut instance = crate::services::instance::GameInstance {
             name: req.name.clone(),
             game_version: req.game_version.clone(),
@@ -3201,7 +3220,7 @@ impl ModpackServiceData {
             loader_version: req.loader_version.clone(),
             game_dir: req.game_dir.clone(),
             max_memory: req.max_memory.unwrap_or(4096),
-            version_isolation: Some(req.version_isolation),
+            version_isolation: Some(version_isolation),
             modpack_name: req.modpack_name.clone(),
             modpack_version: req.modpack_version.clone(),
             modpack_author: req.modpack_author.clone(),
@@ -3214,13 +3233,8 @@ impl ModpackServiceData {
             .origin
             .as_deref()
             .is_some_and(|o| o.eq_ignore_ascii_case("resource-center"));
-        let src_norm = req
-            .source
-            .as_deref()
-            .unwrap_or_default()
-            .to_ascii_lowercase();
         let no_local = req.file_id.is_none() && req.local_path.is_none();
-        let isolation_ok = req.version_isolation;
+        let isolation_ok = version_isolation;
 
         let writable_origin = is_updatable_origin(&req);
         if writable_origin {
@@ -3266,7 +3280,7 @@ impl ModpackServiceData {
         let file_id = req.version_id.clone();
         let modpack_files = req.modpack_files.clone();
         let optional_file_ids = req.optional_file_ids.clone();
-        let version_isolation = req.version_isolation;
+        // 管道结束后的清理用；version_isolation 已在建实例前按包内设置/请求统一。
         // 管道结束后清理上传的临时文件（install-direct 的绝对路径不属于我们，不删）。
         let cleanup_path = if cleanup_upload {
             local_pack_path.clone()
@@ -4361,6 +4375,20 @@ fn relative_to_instance(
     }
 }
 
+/// 读取 Qomicex 包内 `overrides/qomicex.json` 的 `versionIsolation`。
+/// 缺失/损坏/非法类型返回 `None`，由调用方回退到导入请求里的选择。
+fn read_qml_isolation(zip_path: &Path) -> Option<bool> {
+    let file = std::fs::File::open(zip_path).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+    let mut entry = archive
+        .by_name(&format!("overrides/{}", instance_config::CONFIG_FILE))
+        .ok()?;
+    let mut content = String::new();
+    entry.read_to_string(&mut content).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&content).ok()?;
+    value.get("versionIsolation").and_then(|v| v.as_bool())
+}
+
 /// 释放 QML `.qmodpack` 的 `overrides/**` 到目标目录（结构简单，不走 core 安装器）。
 fn release_qml_overrides(
     zip_path: &str,
@@ -4385,7 +4413,17 @@ fn release_qml_overrides(
         if rel.is_empty() {
             continue;
         }
-        let dest = modpack_target_path(game_dir, version_dir_name, version_isolation, rel);
+        // 实例独立配置固定落在版本目录（即使实例未开启版本隔离）：读取/写入
+        // 都以 `{gameDir}/versions/{name}/qomicex.json` 为准，不能让它散落到
+        // 共享的游戏根目录（会被其他实例误认，也偏离约定路径）。
+        let dest = if rel == instance_config::CONFIG_FILE {
+            Path::new(game_dir)
+                .join("versions")
+                .join(version_dir_name)
+                .join(rel)
+        } else {
+            modpack_target_path(game_dir, version_dir_name, version_isolation, rel)
+        };
         if entry.is_dir() {
             std::fs::create_dir_all(&dest)
                 .map_err(|e| format!("创建目录失败 {}: {e}", dest.display()))?;
@@ -5222,7 +5260,7 @@ mod tests {
 
     use super::{
         apply_optional_selection, cf_placeholder_path, is_multimc_zip, is_updatable_origin,
-        modpack_target_path, parse_curseforge_manifest, parse_local_pack_file,
+        modpack_target_path, parse_curseforge_manifest, parse_local_pack_file, read_qml_isolation,
         release_qml_overrides, resolve_effective_game_version, ModpackInstallRequest,
         ModpackOptionalFile, ParsedModpack,
     };
@@ -5375,6 +5413,11 @@ mod tests {
         std::fs::create_dir_all(src.join("overrides/mods")).unwrap();
         std::fs::write(src.join("overrides/config/opt.toml"), b"a=1").unwrap();
         std::fs::write(src.join("overrides/mods/keep.jar"), b"jar").unwrap();
+        std::fs::write(
+            src.join("overrides/qomicex.json"),
+            br#"{"maxMemory":8192,"versionIsolation":false}"#,
+        )
+        .unwrap();
         std::fs::write(src.join("qmodpack.index.json"), b"{}").unwrap();
         std::fs::write(src.join("manifest.json"), b"{}").unwrap();
 
@@ -5428,6 +5471,17 @@ mod tests {
         // 非 overrides 条目不释放
         assert!(!game_dir.join("qmodpack.index.json").exists());
         assert!(!game_dir.join("manifest.json").exists());
+        // 实例独立配置固定释放到版本目录，即使当前实例不是版本隔离
+        assert_eq!(
+            std::fs::read_to_string(game_dir.join("versions/v/qomicex.json")).unwrap(),
+            r#"{"maxMemory":8192,"versionIsolation":false}"#
+        );
+        assert!(
+            !game_dir.join("qomicex.json").exists(),
+            "独立配置不得散落到共享游戏根目录"
+        );
+        // 导入前可先读包内隔离意图，保证「实例记录」与「overrides 解压位置」一致
+        assert_eq!(read_qml_isolation(&zip_path), Some(false));
     }
 
     /// modpack_target_path：隔离/非隔离目标路径。

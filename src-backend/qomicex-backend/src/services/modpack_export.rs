@@ -36,6 +36,7 @@ use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
 use crate::services::instance::GameInstance;
+use crate::services::instance_config;
 
 /// 导出格式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,11 +161,16 @@ const EXCLUDED_DIRS: &[&str] = &[
 ];
 
 /// 隐私/账户缓存文件（根目录，大小写不敏感）。
+///
+/// `qomicex.json` 是实例独立设置（含本机的 Java 路径）：CF/MR 格式必须排除；
+/// Qomicex 格式由导出流程单独写入脱敏版本（见 `write_instance_config_override`），
+/// 不能把本地原文件按 overrides 原样带出去。
 const EXCLUDED_ROOT_FILES: &[&str] = &[
     "usercache.json",
     "usernamecache.json",
     "launcher_accounts.json",
     "launcher_profiles.json",
+    "qomicex.json",
 ];
 
 /// 构建导出 zip 字节。
@@ -370,6 +376,9 @@ pub async fn build_export_zip<P: FnMut(ExportProgress)>(
                 cancelled,
                 true,
             )?;
+            // 实例设置随包走，但只写脱敏子集（不含 javaPath/分组/统计）。
+            // 导入时释放到 `versions/{name}`，读取时会被逐键采纳。
+            write_instance_config_override(&mut zip, &opts, instance)?;
         }
     }
     progress(ExportProgress {
@@ -1079,6 +1088,28 @@ fn is_already_compressed(rel: &str) -> bool {
 /// 写入 `overrides/` 内容目录；`skip_rels` 内的相对路径（mods 已入 files[]）跳过。
 /// 逐文件回调进度（阶段 `packing`，35→100）并在每个文件前检查取消标志。
 ///
+/// 写入 Qomicex 包的实例设置（脱敏）：只含可跨机器复用的字段
+/// （内存/JVM/版本隔离/校验开关），不含本机 Java 路径、分组与统计。
+///
+/// 落在 `overrides/qomicex.json`：导入时释放到 `versions/{name}`，读取时被逐键采纳；
+/// 不影响导出方本地设置（只读快照，不回写）。
+fn write_instance_config_override<W: Write + std::io::Seek>(
+    zip: &mut ZipWriter<W>,
+    opts: &SimpleFileOptions,
+    instance: &GameInstance,
+) -> Result<(), String> {
+    let map = instance_config::export_map(instance);
+    if map.is_empty() {
+        return Ok(());
+    }
+    let json = serde_json::to_string_pretty(&serde_json::Value::Object(map))
+        .map_err(|e| format!("序列化实例设置失败: {e}"))?;
+    zip.start_file(format!("overrides/{}", instance_config::CONFIG_FILE), *opts)
+        .map_err(|e| format!("写入实例设置失败: {e}"))?;
+    zip.write_all(json.as_bytes())
+        .map_err(|e| format!("写入实例设置失败: {e}"))
+}
+
 /// `high_compression`（Qomicex 格式）：文本类文件用 Deflated level 9，
 /// 已压缩格式（png/zip 等）用 Stored 避免二次压缩。
 fn write_overrides<W: Write + std::io::Seek, P: FnMut(ExportProgress)>(
@@ -1216,6 +1247,10 @@ mod tests {
         write(&root.join("1.20.1-Forge-47.1.0.json"), b"{}");
         write(&root.join("1.20.1-Forge-47.1.0.jar"), b"jar");
         write(&root.join("usercache.json"), b"[]");
+        write(
+            &root.join("qomicex.json"),
+            br#"{"javaPath":"C:/local/javaw.exe"}"#,
+        );
         write(&root.join("mods/jei.jar"), &[0u8; 100]);
         write(&root.join("mods/sub/another.jar"), &[0u8; 50]);
         write(&root.join("resourcepacks/rp.zip"), &[0u8; 10]);
@@ -1231,6 +1266,10 @@ mod tests {
         assert!(find(&tree, "1.20.1-Forge-47.1.0.json").is_none());
         assert!(find(&tree, "1.20.1-Forge-47.1.0.jar").is_none());
         assert!(find(&tree, "usercache.json").is_none());
+        assert!(
+            find(&tree, "qomicex.json").is_none(),
+            "实例独立配置不得原样进入 CF/MR/Qomicex overrides"
+        );
 
         // saves/screenshots 保留（由前端勾选决定）
         let saves = find(&tree, "saves").expect("saves 应保留");

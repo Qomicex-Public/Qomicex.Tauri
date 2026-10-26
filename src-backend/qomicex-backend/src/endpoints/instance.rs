@@ -66,21 +66,46 @@ struct UpdateInstanceRequest {
     loader: Option<String>,
     #[serde(default)]
     loader_version: Option<String>,
-    #[serde(default)]
-    java_path: Option<String>,
+    /// 缺失=不修改；null=清除；字符串=设置。下同。
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    java_path: Option<Option<String>>,
     #[serde(default)]
     max_memory: Option<i32>,
-    #[serde(default)]
-    jvm_args: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    jvm_args: Option<Option<String>>,
     #[serde(default)]
     is_hidden: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    version_isolation: Option<Option<bool>>,
     #[serde(default)]
-    version_isolation: Option<bool>,
+    skip_integrity_check: Option<bool>,
     #[serde(default)]
     custom_group_ids: Option<Vec<String>>,
     /// 用户自定义备注：缺失=不修改；null=清除；Some(Some(v))=设置。
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_double_option")]
     remark: Option<Option<String>>,
+}
+
+/// 区分「字段缺失」与「显式 null」。
+///
+/// `Option<Option<T>>` 默认反序列化会把 JSON null 当成外层 None，清空请求
+/// 会被静默忽略（重置某一项失败，界面却显示已重置）。
+fn deserialize_double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
+/// 空白字符串按「清除」处理，避免独立配置回退到旧值。
+fn normalize_optional_text(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 #[derive(Serialize)]
@@ -413,25 +438,28 @@ async fn update_instance(
         existing.loader_version = Some(v);
     }
     if let Some(v) = req.java_path {
-        existing.java_path = Some(v);
+        existing.java_path = v.and_then(normalize_optional_text);
     }
     if let Some(v) = req.max_memory {
         existing.max_memory = v;
     }
     if let Some(v) = req.jvm_args {
-        existing.jvm_args = Some(v);
+        existing.jvm_args = v.and_then(normalize_optional_text);
     }
     if let Some(v) = req.is_hidden {
         existing.is_hidden = v;
     }
     if let Some(v) = req.version_isolation {
-        existing.version_isolation = Some(v);
+        existing.version_isolation = v;
+    }
+    if let Some(v) = req.skip_integrity_check {
+        existing.skip_integrity_check = v;
     }
     if let Some(v) = req.custom_group_ids {
         existing.custom_group_ids = v;
     }
     if let Some(v) = req.remark {
-        existing.remark = v;
+        existing.remark = v.and_then(normalize_optional_text);
     }
     let updated = state
         .instance
@@ -2586,5 +2614,52 @@ mod refresh_tests {
         // 否则旧 refresh_token 覆盖新值会导致后续刷新永久失败
         assert_eq!(seen[0], "refresh-token");
         assert_eq!(seen[1], "rotated-1");
+    }
+}
+
+#[cfg(test)]
+mod update_request_tests {
+    use super::*;
+
+    /// `Option<Option<T>>` 的默认反序列化会把 null 当成「没传」，清空设置会被
+    /// 静默忽略。`deserialize_double_option` 必须区分三种状态。
+    #[test]
+    fn double_option_distinguishes_missing_null_and_value() {
+        let missing: UpdateInstanceRequest = serde_json::from_str("{}").unwrap();
+        assert!(missing.java_path.is_none(), "缺失应为 None");
+        assert!(missing.jvm_args.is_none());
+        assert!(missing.version_isolation.is_none());
+        assert!(missing.remark.is_none());
+
+        let nulls: UpdateInstanceRequest = serde_json::from_str(
+            r#"{"javaPath":null,"jvmArgs":null,"versionIsolation":null,"remark":null}"#,
+        )
+        .unwrap();
+        assert_eq!(nulls.java_path, Some(None), "显式 null 应表示清除");
+        assert_eq!(nulls.jvm_args, Some(None));
+        assert_eq!(nulls.version_isolation, Some(None));
+        assert_eq!(nulls.remark, Some(None));
+
+        let values: UpdateInstanceRequest = serde_json::from_str(
+            r#"{"javaPath":"C:/Java/bin/javaw.exe","jvmArgs":"-Xmx8G","versionIsolation":false,"remark":"测试","skipIntegrityCheck":true}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            values.java_path,
+            Some(Some("C:/Java/bin/javaw.exe".to_string()))
+        );
+        assert_eq!(values.jvm_args, Some(Some("-Xmx8G".to_string())));
+        assert_eq!(values.version_isolation, Some(Some(false)));
+        assert_eq!(values.remark, Some(Some("测试".to_string())));
+        assert_eq!(values.skip_integrity_check, Some(true));
+    }
+
+    #[test]
+    fn blank_text_normalizes_to_clear() {
+        assert_eq!(normalize_optional_text("   ".to_string()), None);
+        assert_eq!(
+            normalize_optional_text(" -Xmx8G ".to_string()),
+            Some("-Xmx8G".to_string())
+        );
     }
 }
