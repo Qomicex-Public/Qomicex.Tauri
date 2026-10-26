@@ -5,7 +5,7 @@ import { create } from 'zustand'
 import type { PluginInfo, PluginState } from '../plugins/types.ts'
 import { fetchPlugins, rescanPlugins } from '../api/plugins.ts'
 import type { StoreUpdateEntry } from '../api/pluginStore.ts'
-import { resolveManifestL10n } from '../plugins/l10n.ts'
+import { resolveManifestL10n, invalidatePluginL10n } from '../plugins/l10n.ts'
 
 /** 一条可升级信息：slug 为 store 侧标识（install 用），latestVersion 用于 badge/确认提示 */
 export interface PluginUpdateEntry {
@@ -117,6 +117,9 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
 
   loadPlugins: async () => {
     set({ loading: true, error: null })
+    // 重装/升级/重扫后字符串包可能已变：失效 l10n 缓存（loadPlugins 是这些
+    // 生命周期的公共入口，一处失效覆盖全部路径）。
+    invalidatePluginL10n()
     try {
       const plugins = await fetchPlugins()
       // 插件自持 i18n：先解析声明了 l10n 的清单（%key% 按当前 locale），再入

@@ -644,9 +644,11 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       const { resolveFaIcon } = await import('../components/BuiltinIcons.tsx')
       const def = resolveFaIcon(cls)
       if (!def) return null
-      // FA IconDefinition（solid）：icon = [width, height, path | path[]]
-      const icon = def.icon as unknown as number[] & { 2: string | string[] }
-      const raw = icon[2]
+      // FA IconDefinition.icon = [width, height, ligatures[], unicode, svgPathData]：
+      // 路径在索引 4（可能是字符串或字符串数组，数组需 join）。索引 2 是 ligatures
+      // （如 ["add"]），取错会渲染出 "10133 61543 add" 这类非法 d。
+      const icon = def.icon as unknown as [number, number, string[], string, string | string[]]
+      const raw = icon[4]
       const path = Array.isArray(raw) ? raw.join(' ') : raw
       return { width: icon[0], height: icon[1], path }
     },
