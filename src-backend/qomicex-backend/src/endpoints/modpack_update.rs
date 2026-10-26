@@ -921,23 +921,25 @@ async fn run_update_pipeline(
     });
     handle.mark_step("finalize", "active");
 
-    let mut updated = inst.clone();
-    updated.modpack_version_id = Some(target_info.version_id.clone());
-    updated.modpack_version_published_at = None;
-    updated.game_version = target_info.game_version.clone();
-    if let Some(l) = &target_info.loader {
-        if !l.is_empty() {
-            updated.loader = Some(l.clone());
-        }
-    }
-    if let Some(lv) = &target_info.loader_version {
-        if !lv.is_empty() {
-            updated.loader_version = Some(lv.clone());
-        }
-    }
+    // 更新管线可能跑了很久；只把本次更新涉及的字段补到锁内最新记录，
+    // 不能整体替换，否则会覆盖用户在下载/应用期间改的 JVM/内存设置。
     state
         .instance
-        .update(&inst.id, updated)?
+        .update_with(&inst.id, |current| {
+            current.modpack_version_id = Some(target_info.version_id.clone());
+            current.modpack_version_published_at = None;
+            current.game_version = target_info.game_version.clone();
+            if let Some(l) = &target_info.loader {
+                if !l.is_empty() {
+                    current.loader = Some(l.clone());
+                }
+            }
+            if let Some(lv) = &target_info.loader_version {
+                if !lv.is_empty() {
+                    current.loader_version = Some(lv.clone());
+                }
+            }
+        })?
         .ok_or_else(|| "更新实例记录失败（实例可能已被删除）".to_string())?;
 
     let origin = modpack_manifest::ManifestOrigin {

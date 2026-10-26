@@ -58,6 +58,9 @@
    游戏根目录被其他实例误读；包内嵌套的同名配置直接跳过，不能覆盖其他实例配置；
    同时在建实例与解压前读取包内 `versionIsolation`，让「实例记录的隔离方式」与
    「overrides 的解压位置」保持一致，再按读取合并自动采纳其余设置。
+   包内配置只把白名单键**合并**进现有快照，不能用空对象或仅包内字段覆盖 `create`
+   写入的 `id`/`name`/本地设置；`install`/`install_direct` 入口统一解析相对
+   `gameDir`，实例记录、安装管线与 overrides 释放共用同一绝对路径。
 
 ## 备选方案
 
@@ -99,8 +102,9 @@
 - `src-backend/qomicex-backend/src/services/modpack_export.rs`：全树排除任意层级的
   `qomicex.json`；Qomicex 导出写入脱敏 `overrides/qomicex.json`
 - `src-backend/qomicex-backend/src/endpoints/modpack.rs`：Qomicex 导入时把根级
-  `overrides/qomicex.json` 过滤后固定释放到版本目录，跳过嵌套同名配置，并在解压前
-  有界读取包内 `versionIsolation` 以对齐实例记录与解压位置
+  `overrides/qomicex.json` 过滤后合并进版本目录快照，跳过嵌套同名配置，并在解压前
+  有界读取包内 `versionIsolation` 以对齐实例记录与解压位置；安装入口统一解析相对
+  `gameDir`，长耗时安装/更新收尾只回写版本字段，不覆盖用户同期修改的 JVM/内存
 
 ## 验证
 
@@ -130,3 +134,4 @@
 |---|---|---|---|
 | 2026-10-26 | v1.0 | 初版创建 | AI Agent |
 | 2026-10-26 | v1.1 | 补充评审修复：名称校验、大小上限、导入白名单、镜像回滚、并发补丁、过期响应、全树排除与验证命令 | AI Agent |
+| 2026-10-26 | v1.2 | 补充导入配置合并、相对 gameDir 统一解析、长耗时安装/更新按字段回写 | AI Agent |

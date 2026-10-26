@@ -342,6 +342,31 @@ pub fn adopt(inst: &GameInstance) -> Option<GameInstance> {
     Some(merged)
 }
 
+/// 把整合包导入的白名单字段合并进现有独立配置，而不是整文件替换。
+///
+/// 导入前 `create` 可能已写入含 `id`/`name`/本地设置的完整快照；若这里直接覆盖，
+/// `instances.json` 丢失后就无法从磁盘恢复原实例身份。
+pub fn merge_imported(
+    game_dir: &str,
+    name: &str,
+    imported: &Map<String, Value>,
+) -> Result<bool, String> {
+    if !is_safe_instance_name(name) {
+        return Err(format!("非法实例名: {name}"));
+    }
+    let _guard = config_guard();
+    let Some(path) = config_path(game_dir, name) else {
+        return Ok(false);
+    };
+    let mut merged = read_raw(&path).unwrap_or_default();
+    for (key, value) in imported {
+        if ALLOWED_KEYS.contains(&key.as_str()) {
+            merged.insert(key.clone(), value.clone());
+        }
+    }
+    write_map(&path, &merged)
+}
+
 /// 写完整快照（新建实例 / 独立文件缺失时的一次性迁移）。
 pub fn write_full(inst: &GameInstance) -> Result<bool, String> {
     let _guard = config_guard();
