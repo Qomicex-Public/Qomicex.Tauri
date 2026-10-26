@@ -3006,7 +3006,8 @@ CurseForge 的作者可以关闭 Project Distribution Toggle。开关关闭后�
       "fileName": "mmcr-neoforge-mc1.21.1-0.1.3.jar",
       "sha1": "86674eebcc8a20286dfdaaa1e3c21fd668500847",
       "fileLength": 5102525,
-      "pageUrl": "https://www.curseforge.com/projects/1654570"
+      "pageUrl": "https://www.curseforge.com/projects/1654570",
+      "filePageUrl": "https://www.curseforge.com/minecraft/mc-mods/modular-machinery-community-refoxed/files/9274793"
     }
   ]
 }
@@ -3017,6 +3018,8 @@ CurseForge 的作者可以关闭 Project Distribution Toggle。开关关闭后�
 **错误码：** `INSTANCE_NOT_FOUND`(404)
 
 > `pageUrl` 用 `https://www.curseforge.com/projects/{projectId}`：实测该形式 302 到 slug 页（HTTP 200），而 `projects/{id}/files/{fileId}` 是 404。
+
+> `filePageUrl`（issue #301，可选）：精确到该文件版本的下载页，由项目的 `links.websiteUrl` 拼 `/files/{fileId}` 得到，形如 `https://www.curseforge.com/minecraft/mc-mods/{slug}/files/{fileId}`（实测 HTTP 200 且落到对应 File ID）。它是**尽力而为**的展示字段：需要调用 `POST /v1/mods` 解析项目网站地址（100 条一批、单次超时 10 s、结果进程内缓存），解析失败或未配置 CurseForge API Key 时**整个字段缺失**，前端退回 `pageUrl`。该字段不写回 `.qomicex/blocked-mods.json`，`schemaVersion` 不变，旧 sidecar 照常读取。三个返回 `BlockedModList` 的端点（GET 与两个 submit）都会带上它，`DELETE` 返回空清单。
 
 #### POST `/api/modpack/blocked/{instanceId}/submit`
 

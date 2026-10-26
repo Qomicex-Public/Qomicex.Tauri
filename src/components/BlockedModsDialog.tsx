@@ -188,6 +188,17 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
     }
   }, [])
 
+  /**
+   * 打开条目的 CurseForge 页面：优先精确版本文件页，解析不到退回项目页。
+   *
+   * 项目页只到「项目」粒度，用户得自己在 Files 里翻版本，这正是 issue #301
+   * 里下错版本的来源；精确文件页由后端拼好，缺失说明上游解析失败。
+   */
+  const openItemPage = useCallback(
+    (item: BlockedModFile) => openProjectPage(item.filePageUrl || item.pageUrl),
+    [openProjectPage],
+  )
+
   /** 逐条指定文件：用于文件名缺失、或拖入后匹配不到条目的情况。 */
   const pickFile = useCallback(
     async (item: BlockedModFile) => {
@@ -334,10 +345,12 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
                     variant="ghost"
                     size="sm"
                     className="shrink-0 gap-1"
-                    onClick={() => openProjectPage(item.pageUrl)}
+                    onClick={() => openItemPage(item)}
                   >
                     <ExternalLink className="h-3 w-3" />
-                    {t('dialogs.blockedMods.openPage')}
+                    {item.filePageUrl
+                      ? t('dialogs.blockedMods.openFilePage')
+                      : t('dialogs.blockedMods.openPage')}
                   </Button>
                   <Button
                     variant="outline"

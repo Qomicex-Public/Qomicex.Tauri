@@ -24,8 +24,10 @@
 //! 与 `modpack-manifest.json` 同目录：实例改名走整目录 `rename`，清单一并搬走，
 //! 不需要额外迁移。清单为空时**删除文件**，避免残留空清单让 UI 误报。
 
+use std::collections::HashMap;
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -55,6 +57,13 @@ pub struct BlockedModFile {
     pub file_length: Option<i64>,
     /// CurseForge 项目页直达链接（用户从这里手动下载对应文件）。
     pub page_url: String,
+    /// 精确到该文件版本的文件页链接（issue #301）。
+    ///
+    /// 由项目规范地址加 `/files/{fileId}` 拼成，需要先解析项目的 `links.websiteUrl`，
+    /// 因此**不落盘**：只在响应里按需补全，解析不出来就退回只有项目页。旧 sidecar
+    /// 没有这个字段，`default` 保证照样能读。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_page_url: Option<String>,
 }
 
 /// 阻塞清单落盘结构。
@@ -78,10 +87,187 @@ impl BlockedModList {
 /// CurseForge 项目页直达链接。
 ///
 /// 只给项目页不给文件页：实测 `projects/{id}` 会 302 到 slug 页（HTTP 200），
-/// 而 `projects/{id}/files/{fileId}` 是 404。用户在项目页的 Files 里按版本号找，
-/// 与清单里显示的 `file_id` 对得上。
+/// 而 `projects/{id}/files/{fileId}` 是 404——项目 ID 形式的路径无法定位文件版本，
+/// 精确文件页必须建立在项目的规范网站地址上，见 [`cf_file_page_url`]。
 pub fn cf_project_page_url(project_id: i64) -> String {
     format!("https://www.curseforge.com/projects/{project_id}")
+}
+
+/// 由项目规范地址拼出精确文件页：`{websiteUrl}/files/{fileId}`。
+///
+/// `websiteUrl` 来自 CF `POST /v1/mods` 批量响应的 `data[].links.websiteUrl`
+/// （形如 `https://www.curseforge.com/minecraft/mc-mods/jei`），拼出的地址实测
+/// 打开的就是该 fileId 对应版本的下载页。受限条目本身不带 slug / classId，
+/// 所以只能靠这个字段，不能在本地拼分类路径。
+///
+/// 只接受 curseforge.com 主域下的 https 地址：这个 URL 会被交给系统浏览器打开，
+/// 上游字段一旦被改成任意地址，就等于把启动器变成跳转器。
+pub fn cf_file_page_url(website_url: &str, file_id: i64) -> Option<String> {
+    let base = website_url.trim().trim_end_matches('/');
+    let lower = base.to_ascii_lowercase();
+    if !(lower.starts_with("https://www.curseforge.com/")
+        || lower.starts_with("https://curseforge.com/"))
+    {
+        return None;
+    }
+    if file_id <= 0 {
+        return None;
+    }
+    Some(format!("{base}/files/{file_id}"))
+}
+
+/// 给清单条目补上精确文件页链接，返回是否有条目被补上。
+///
+/// 只填 `None` 的条目：调用方可能已经把解析结果合进来，覆盖会让同一批条目
+/// 在不同出口给出不同链接。`websites` 里没有的项目（解析失败或 API 未返回）
+/// 保持 `None`，前端退回项目页。
+pub fn apply_file_page_urls(items: &mut [BlockedModFile], websites: &HashMap<i64, String>) -> bool {
+    let mut changed = false;
+    for it in items.iter_mut() {
+        if it.file_page_url.is_some() {
+            continue;
+        }
+        let Some(site) = websites.get(&it.project_id) else {
+            continue;
+        };
+        if let Some(url) = cf_file_page_url(site, it.file_id) {
+            it.file_page_url = Some(url);
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// 「项目 ID → 规范网站地址」的进程内缓存。
+///
+/// 精确文件页不落盘，同一批待补全项每开一次对话框都要再解析一遍；网站地址对
+/// 同一项目是稳定的，记住就够了。解析不到的项目缓存空串（同样不再重试），
+/// 否则每次打开对话框都会为注定拿不到的条目再付一次超时。
+fn website_cache() -> &'static std::sync::Mutex<HashMap<i64, String>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<i64, String>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+/// 批量项目接口单次可查上限（与 `get_files_batch` 的 100 条分批口径一致）。
+const CF_MODS_BATCH: usize = 100;
+
+/// 批量解析项目的规范网站地址，返回可直接拼精确文件页的项。
+///
+/// 走 `POST /v1/mods` 而非逐项目单查：一次请求就带回 `links.websiteUrl`，
+/// 与受限清单动辄几十项的量级相称。超时单独压到 10 s，不用共享客户端的 30 s
+/// —— 这只是给按钮补个链接，不值得让对话框等半分钟。任何失败都退化为空结果，
+/// 手动补全流程不依赖 CurseForge 是否可用。
+pub async fn fetch_project_websites(
+    client: &reqwest::Client,
+    api_key: &str,
+    project_ids: &[i64],
+) -> HashMap<i64, String> {
+    let mut out = HashMap::new();
+    let mut pending: Vec<i64> = Vec::new();
+    {
+        let cache = website_cache()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for &id in project_ids {
+            // 旧清单解析失败时 projectId 可能为 0，不能拿去查。
+            if id <= 0 || out.contains_key(&id) || pending.contains(&id) {
+                continue;
+            }
+            match cache.get(&id) {
+                // 空串是「查过了但没有网站地址」的标记，不再进请求。
+                Some(site) => {
+                    if !site.is_empty() {
+                        out.insert(id, site.clone());
+                    }
+                }
+                None => pending.push(id),
+            }
+        }
+    }
+    if pending.is_empty() || api_key.is_empty() {
+        return out;
+    }
+
+    // 只合并成功的批次：整批失败时**不写缓存**，否则一次上游抖动会把这些项目
+    // 永久钉成「无网站地址」，此后连真实网络下也拿不到精确链接。
+    for chunk in pending.chunks(CF_MODS_BATCH) {
+        match cf_post_mod_websites(client, api_key, chunk).await {
+            Ok(found) => {
+                let cache_guard = website_cache();
+                let mut cache = cache_guard
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                for &id in chunk {
+                    let site = found.get(&id).cloned().unwrap_or_default();
+                    if !site.is_empty() {
+                        out.insert(id, site.clone());
+                    }
+                    // 成功响应里没有该项目的（已删除 / 审核中）记为空，不再重试。
+                    cache.insert(id, site);
+                }
+            }
+            Err(e) => tracing::warn!(
+                error = %e,
+                count = chunk.len(),
+                "解析 CurseForge 项目网站地址失败，精确文件页链接暂不可用"
+            ),
+        }
+    }
+    out
+}
+
+/// 一次 `POST /v1/mods` 请求，返回 `项目 ID → websiteUrl`。
+async fn cf_post_mod_websites(
+    client: &reqwest::Client,
+    api_key: &str,
+    project_ids: &[i64],
+) -> Result<HashMap<i64, String>, String> {
+    let resp = client
+        .post("https://api.curseforge.com/v1/mods")
+        .header("x-api-key", api_key)
+        .header("Accept", "application/json")
+        .timeout(Duration::from_secs(10))
+        .json(&serde_json::json!({ "modIds": project_ids }))
+        .send()
+        .await
+        .map_err(|e| format!("请求失败: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("上游返回 {}", resp.status()));
+    }
+    let body = resp
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("响应解析失败: {e}"))?;
+    Ok(parse_mod_websites(&body))
+}
+
+/// 从 `POST /v1/mods` 响应里取 `项目 ID → websiteUrl`。
+///
+/// 抽成纯函数是为了让字段路径有单测守着：真实响应把网站地址放在
+/// `data[].links.websiteUrl`，一旦 CF 改了层级，精确文件页会静默退化成项目页，
+/// 这种退化不会有报错可循。缺 `links` / 空串的条目直接跳过。
+fn parse_mod_websites(body: &serde_json::Value) -> HashMap<i64, String> {
+    let mut out = HashMap::new();
+    let Some(data) = body.get("data").and_then(|d| d.as_array()) else {
+        return out;
+    };
+    for item in data {
+        let Some(id) = item.get("id").and_then(|v| v.as_i64()) else {
+            continue;
+        };
+        let Some(site) = item
+            .get("links")
+            .and_then(|l| l.get("websiteUrl"))
+            .and_then(|v| v.as_str())
+        else {
+            continue;
+        };
+        if !site.trim().is_empty() {
+            out.insert(id, site.to_string());
+        }
+    }
+    out
 }
 
 /// 从 CF 批量接口条目判定处置方式（issue #291 的回归点）。
@@ -112,6 +298,7 @@ pub fn blocked_from_batch(
         sha1: info.sha1.clone().filter(|s| !s.is_empty()),
         file_length: info.file_length,
         page_url: cf_project_page_url(project_id),
+        file_page_url: None,
     })
 }
 
@@ -496,6 +683,7 @@ mod tests {
             sha1: sha1.map(str::to_string),
             file_length: None,
             page_url: cf_project_page_url(1654570),
+            file_page_url: None,
         }
     }
 
@@ -913,5 +1101,153 @@ mod tests {
         let info = batch_info(1, Some("x.jar"), None, Some(""));
         let b = blocked_from_batch(&info, 1).unwrap();
         assert_eq!(b.sha1, None);
+    }
+
+    /// issue #301：精确文件页只认项目的规范网站地址。
+    #[test]
+    fn file_page_url_requires_curseforge_website() {
+        let site = "https://www.curseforge.com/minecraft/mc-mods/jei";
+        assert_eq!(
+            cf_file_page_url(site, 9274793).as_deref(),
+            Some("https://www.curseforge.com/minecraft/mc-mods/jei/files/9274793")
+        );
+        // 尾斜杠与空白不能拼出 `//files/`。
+        assert_eq!(
+            cf_file_page_url("  https://www.curseforge.com/minecraft/mc-mods/jei/  ", 7).as_deref(),
+            Some("https://www.curseforge.com/minecraft/mc-mods/jei/files/7")
+        );
+        // 这个链接会交给系统浏览器打开，非 CF 域名一律拒绝。
+        for bad in [
+            "",
+            "   ",
+            "https://evil.example.com/minecraft/mc-mods/jei",
+            "http://www.curseforge.com/minecraft/mc-mods/jei",
+            "https://www.curseforge.com.evil.com/x",
+            "javascript:alert(1)",
+        ] {
+            assert_eq!(cf_file_page_url(bad, 1), None, "不可信地址必须拒绝: {bad}");
+        }
+        // fileId 无效时不生成链接。
+        assert_eq!(cf_file_page_url(site, 0), None);
+        assert_eq!(cf_file_page_url(site, -1), None);
+    }
+
+    /// 只填缺失项：已有链接不能被另一轮解析覆盖。
+    #[test]
+    fn apply_file_page_urls_fills_only_missing() {
+        let mut items = vec![entry(10, "a.jar", None), entry(20, "b.jar", None)];
+        items[0].file_page_url = Some("https://www.curseforge.com/kept/files/10".to_string());
+        let mut sites = HashMap::new();
+        sites.insert(
+            1654570,
+            "https://www.curseforge.com/minecraft/mc-mods/mmcr".to_string(),
+        );
+
+        // items[0] 已有值、items[1] 需要补 —— 两条同项目同网站地址。
+        assert!(apply_file_page_urls(&mut items, &sites));
+        assert_eq!(
+            items[0].file_page_url.as_deref(),
+            Some("https://www.curseforge.com/kept/files/10"),
+            "已有链接不得被覆盖"
+        );
+        assert_eq!(
+            items[1].file_page_url.as_deref(),
+            Some("https://www.curseforge.com/minecraft/mc-mods/mmcr/files/20")
+        );
+        assert!(
+            !apply_file_page_urls(&mut items, &sites),
+            "全部已有值时不应报告变化"
+        );
+
+        // 映射里没有的项目保持 None：前端据此退回项目页。
+        let mut other = vec![entry(30, "c.jar", None)];
+        other[0].project_id = 999;
+        assert!(!apply_file_page_urls(&mut other, &sites));
+        assert_eq!(other[0].file_page_url, None);
+    }
+
+    /// 旧 sidecar 没有 `filePageUrl` 字段，必须照常读出（否则升级后清单全丢）。
+    #[test]
+    fn legacy_sidecar_without_file_page_url_still_loads() {
+        let root = temp_root("legacy-nopage");
+        let gd = root.to_string_lossy().to_string();
+        let path = blocked_path(&gd, "Nast").unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"schemaVersion":1,"items":[{"projectId":1654570,"fileId":9274793,
+                "fileName":"mmcr.jar","pageUrl":"https://www.curseforge.com/projects/1654570"}]}"#
+                .replace('\n', ""),
+        )
+        .unwrap();
+
+        let items = load_blocked(&gd, "Nast");
+        assert_eq!(items.len(), 1, "旧清单必须照常读出");
+        assert_eq!(items[0].file_id, 9274793);
+        assert_eq!(items[0].file_page_url, None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 新字段落盘后能原样读回（`skip_serializing_if` 不影响反序列化）。
+    #[test]
+    fn file_page_url_roundtrips_through_sidecar() {
+        let root = temp_root("roundtrip-page");
+        let gd = root.to_string_lossy().to_string();
+        let mut items = vec![entry(9274793, "mmcr.jar", None)];
+        items[0].file_page_url =
+            Some("https://www.curseforge.com/minecraft/mc-mods/mmcr/files/9274793".to_string());
+        save_blocked(&gd, "Nast", &items).unwrap();
+        assert_eq!(load_blocked(&gd, "Nast"), items);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `POST /v1/mods` 的 `data[].links.websiteUrl` 路径必须有单测守着。
+    ///
+    /// 这段一旦读错层级，精确文件页会静默退化成项目页——没有报错、没有日志，
+    /// 只有用户又开错页面，正是 issue #301 想消掉的那种体验。
+    #[test]
+    fn batch_mods_response_yields_website_urls() {
+        // 字段裁剪自 2026-10-25 的真实响应（MMCR 1654570 / JEI 238222）。
+        let body = serde_json::json!({
+            "data": [
+                {
+                    "id": 1654570,
+                    "name": "Modular Machinery: Community Refoxed",
+                    "slug": "modular-machinery-community-refoxed",
+                    "links": {
+                        "websiteUrl": "https://www.curseforge.com/minecraft/mc-mods/modular-machinery-community-refoxed",
+                        "wikiUrl": "",
+                        "issuesUrl": ""
+                    },
+                    "allowModDistribution": false
+                },
+                {
+                    "id": 238222,
+                    "links": { "websiteUrl": "https://www.curseforge.com/minecraft/mc-mods/jei" }
+                },
+                // 没有 links：跳过，不生成精确链接。
+                { "id": 42, "name": "no links" },
+                // websiteUrl 为空串：同样跳过。
+                { "id": 43, "links": { "websiteUrl": "   " } },
+                // id 不是整数（防御性）：跳过而不是 panic。
+                { "id": "not-a-number", "links": { "websiteUrl": "https://www.curseforge.com/x" } }
+            ]
+        });
+        let got = parse_mod_websites(&body);
+        assert_eq!(got.len(), 2, "只有带非空 websiteUrl 的条目能产出链接");
+        assert_eq!(
+            got.get(&1654570).map(String::as_str),
+            Some(
+                "https://www.curseforge.com/minecraft/mc-mods/modular-machinery-community-refoxed"
+            )
+        );
+        assert_eq!(
+            got.get(&238222).map(String::as_str),
+            Some("https://www.curseforge.com/minecraft/mc-mods/jei")
+        );
+
+        // data 缺失 / 类型不符：返回空表而不是报错（降级为项目页）。
+        assert!(parse_mod_websites(&serde_json::json!({})).is_empty());
+        assert!(parse_mod_websites(&serde_json::json!({ "data": "oops" })).is_empty());
     }
 }
