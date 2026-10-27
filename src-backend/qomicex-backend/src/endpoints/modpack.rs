@@ -2643,10 +2643,36 @@ async fn blocked_mods(
         .instance
         .get_by_id(&instance_id)
         .ok_or_else(|| ApiError::not_found("INSTANCE_NOT_FOUND", "Instance not found"))?;
-    let items = blocked_remaining(&s, &inst);
+    let mut items = blocked_remaining(&s, &inst);
+    fill_file_page_urls(&s, &mut items).await;
     Ok(Json(crate::services::modpack_blocked::BlockedModList::new(
         items,
     )))
+}
+
+/// 给待补全清单补上「对应版本」的文件页链接（issue #301）。
+///
+/// 受限条目只带 projectId/fileId，精确文件页必须建立在项目的规范网站地址
+/// （CF `links.websiteUrl`）之上，所以这里要查一次上游。只在响应里补、不写回
+/// sidecar：待补全清单是短生命周期状态，为展示字段再加一条锁内写回路径不划算。
+/// 解析失败或没配 API Key 时保持 `None`，前端退回项目页，手动补全不受影响。
+///
+/// 必须在 `lock_blocked_write` 之外调用：持锁期间不允许 await。
+async fn fill_file_page_urls(
+    s: &SharedState,
+    items: &mut [crate::services::modpack_blocked::BlockedModFile],
+) {
+    if items.iter().all(|it| it.file_page_url.is_some()) {
+        return;
+    }
+    let project_ids: Vec<i64> = items.iter().map(|it| it.project_id).collect();
+    let websites = crate::services::modpack_blocked::fetch_project_websites(
+        &s.http_client,
+        &s.curse_forge_api_key,
+        &project_ids,
+    )
+    .await;
+    crate::services::modpack_blocked::apply_file_page_urls(items, &websites);
 }
 
 /// 读取清单并剔除已在 `mods/` 里的条目；清单清空时结束等待态。
@@ -2764,7 +2790,9 @@ async fn submit_blocked_mod(
             )
         })?;
 
-    let remaining = accept_blocked_file(&s, &inst, &PathBuf::from(req.path.trim()), &entry).await?;
+    let mut remaining =
+        accept_blocked_file(&s, &inst, &PathBuf::from(req.path.trim()), &entry).await?;
+    fill_file_page_urls(&s, &mut remaining).await;
     Ok(Json(crate::services::modpack_blocked::BlockedModList::new(
         remaining,
     )))
@@ -2819,7 +2847,8 @@ async fn submit_blocked_mod_by_path(
         )
     })?;
 
-    let remaining = accept_blocked_file(&s, &inst, &src, &entry).await?;
+    let mut remaining = accept_blocked_file(&s, &inst, &src, &entry).await?;
+    fill_file_page_urls(&s, &mut remaining).await;
     Ok(Json(crate::services::modpack_blocked::BlockedModList::new(
         remaining,
     )))

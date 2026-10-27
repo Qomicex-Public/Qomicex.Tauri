@@ -24,8 +24,10 @@
 //! 与 `modpack-manifest.json` 同目录：实例改名走整目录 `rename`，清单一并搬走，
 //! 不需要额外迁移。清单为空时**删除文件**，避免残留空清单让 UI 误报。
 
+use std::collections::HashMap;
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -55,6 +57,13 @@ pub struct BlockedModFile {
     pub file_length: Option<i64>,
     /// CurseForge 项目页直达链接（用户从这里手动下载对应文件）。
     pub page_url: String,
+    /// 精确到该文件版本的文件页链接（issue #301）。
+    ///
+    /// 由项目规范地址加 `/files/{fileId}` 拼成，需要先解析项目的 `links.websiteUrl`，
+    /// 因此**不落盘**：只在响应里按需补全，解析不出来就退回只有项目页。旧 sidecar
+    /// 没有这个字段，`default` 保证照样能读。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_page_url: Option<String>,
 }
 
 /// 阻塞清单落盘结构。
@@ -78,10 +87,263 @@ impl BlockedModList {
 /// CurseForge 项目页直达链接。
 ///
 /// 只给项目页不给文件页：实测 `projects/{id}` 会 302 到 slug 页（HTTP 200），
-/// 而 `projects/{id}/files/{fileId}` 是 404。用户在项目页的 Files 里按版本号找，
-/// 与清单里显示的 `file_id` 对得上。
+/// 而 `projects/{id}/files/{fileId}` 是 404——项目 ID 形式的路径无法定位文件版本，
+/// 精确文件页必须建立在项目的规范网站地址上，见 [`cf_file_page_url`]。
 pub fn cf_project_page_url(project_id: i64) -> String {
     format!("https://www.curseforge.com/projects/{project_id}")
+}
+
+/// 由项目规范地址拼出精确文件页：`{websiteUrl}/files/{fileId}`。
+///
+/// `websiteUrl` 来自 CF `POST /v1/mods` 批量响应的 `data[].links.websiteUrl`
+/// （形如 `https://www.curseforge.com/minecraft/mc-mods/jei`），拼出的地址实测
+/// 打开的就是该 fileId 对应版本的下载页。受限条目本身不带 slug / classId，
+/// 所以只能靠这个字段，不能在本地拼分类路径。
+///
+/// 按 URL 结构校验而不是字符串前缀：这个链接会被交给系统浏览器打开，而前缀匹配
+/// 挡不住带查询串 / 锚点 / 端口 / 反斜杠的写法（`.../jei?x=1` 拼出来是坏链接，
+/// `.../jei#frag` 同理）。只接受 https、主机名精确等于 curseforge.com 主域、
+/// 无端口、无查询串、无锚点的地址，再拿**解析后的路径**重建 URL。
+pub fn cf_file_page_url(website_url: &str, file_id: i64) -> Option<String> {
+    if file_id <= 0 {
+        return None;
+    }
+    let url = reqwest::Url::parse(website_url.trim()).ok()?;
+    if url.scheme() != "https" || url.port().is_some() {
+        return None;
+    }
+    let host = url.host_str()?;
+    if !matches!(host, "www.curseforge.com" | "curseforge.com") {
+        return None;
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return None;
+    }
+    let path = url.path().trim_end_matches('/');
+    if path.is_empty() {
+        return None;
+    }
+    Some(format!("https://{host}{path}/files/{file_id}"))
+}
+
+/// 给清单条目补上精确文件页链接，返回是否有条目被补上。
+///
+/// 只填 `None` 的条目：调用方可能已经把解析结果合进来，覆盖会让同一批条目
+/// 在不同出口给出不同链接。`websites` 里没有的项目（解析失败或 API 未返回）
+/// 保持 `None`，前端退回项目页。
+pub fn apply_file_page_urls(items: &mut [BlockedModFile], websites: &HashMap<i64, String>) -> bool {
+    let mut changed = false;
+    for it in items.iter_mut() {
+        if it.file_page_url.is_some() {
+            continue;
+        }
+        let Some(site) = websites.get(&it.project_id) else {
+            continue;
+        };
+        if let Some(url) = cf_file_page_url(site, it.file_id) {
+            it.file_page_url = Some(url);
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// 「项目 ID → 规范网站地址」的进程内缓存。
+///
+/// 精确文件页不落盘，同一批待补全项每开一次对话框都要再解析一遍；网站地址对
+/// 同一项目是稳定的，记住就够了。
+///
+/// 值为 `None` 表示**负缓存**（查过了但上游没给网站地址）。负缓存必须带过期时间：
+/// 项目的 `websiteUrl` 缺失通常是一时状态（审核中、作者刚提交、项目被临时下架后
+/// 恢复），永久记住会让这些条目在本次启动内再也拿不到精确链接。命中时若已过期
+/// 就当作未缓存，重新解析。
+fn website_cache() -> &'static std::sync::Mutex<HashMap<i64, CachedWebsite>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<i64, CachedWebsite>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+/// 缓存条目：网站地址（`None` = 负缓存）与写入时刻。
+#[derive(Debug, Clone)]
+struct CachedWebsite {
+    site: Option<String>,
+    at: std::time::Instant,
+}
+
+/// 正缓存有效期：网站地址极少变，长一点省请求。
+const WEBSITE_TTL_POSITIVE: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// 负缓存有效期：短得多——上游恢复（审核通过 / 重新公开）后要能尽快补上链接。
+const WEBSITE_TTL_NEGATIVE: Duration = Duration::from_secs(10 * 60);
+
+impl CachedWebsite {
+    fn ttl(&self) -> Duration {
+        if self.site.is_some() {
+            WEBSITE_TTL_POSITIVE
+        } else {
+            WEBSITE_TTL_NEGATIVE
+        }
+    }
+
+    fn is_expired(&self, now: std::time::Instant) -> bool {
+        now.saturating_duration_since(self.at) >= self.ttl()
+    }
+}
+
+/// 批量项目接口单次可查上限（与 `get_files_batch` 的 100 条分批口径一致）。
+const CF_MODS_BATCH: usize = 100;
+
+/// 整次解析的总预算。
+///
+/// 单批上限 10 s 已够正常响应；但清单超过 100 项就要分批，若每批都等满上限，
+/// 累计会超过共享客户端的 30 s 超时——那会让整个 GET 直接失败，用户看到的
+/// 是「读取补全清单失败」而不是少了几个按钮。超预算就带着已拿到的结果返回。
+const CF_WEBSITE_BUDGET: Duration = Duration::from_secs(12);
+
+/// 批量解析项目的规范网站地址，返回可直接拼精确文件页的项。
+///
+/// 走 `POST /v1/mods` 而非逐项目单查：一次请求就带回 `links.websiteUrl`，
+/// 与受限清单动辄几十项的量级相称。超时单独压到 10 s，不用共享客户端的 30 s
+/// —— 这只是给按钮补个链接，不值得让对话框等半分钟。任何失败都退化为空结果，
+/// 手动补全流程不依赖 CurseForge 是否可用。
+pub async fn fetch_project_websites(
+    client: &reqwest::Client,
+    api_key: &str,
+    project_ids: &[i64],
+) -> HashMap<i64, String> {
+    let mut out = HashMap::new();
+    let mut pending: Vec<i64> = Vec::new();
+    let now = std::time::Instant::now();
+    {
+        let mut cache = website_cache()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for &id in project_ids {
+            // 旧清单解析失败时 projectId 可能为 0，不能拿去查。
+            if id <= 0 || out.contains_key(&id) || pending.contains(&id) {
+                continue;
+            }
+            match cache.get(&id) {
+                Some(entry) if !entry.is_expired(now) => {
+                    if let Some(site) = entry.site.as_deref() {
+                        out.insert(id, site.to_string());
+                    }
+                    // 未过期的负缓存：本轮不再请求。
+                }
+                // 未命中或已过期：清掉旧值并重新解析。
+                _ => {
+                    cache.remove(&id);
+                    pending.push(id);
+                }
+            }
+        }
+    }
+    if pending.is_empty() || api_key.is_empty() {
+        return out;
+    }
+
+    let deadline = std::time::Instant::now() + CF_WEBSITE_BUDGET;
+    // 只合并成功的批次：整批失败或响应结构不对时**不写缓存**，否则一次上游抖动
+    // 会把这些项目永久钉成「无网站地址」，此后连真实网络下也拿不到精确链接。
+    for chunk in pending.chunks(CF_MODS_BATCH) {
+        if std::time::Instant::now() >= deadline {
+            tracing::warn!(
+                remaining = pending.len(),
+                budget = CF_WEBSITE_BUDGET.as_secs(),
+                "解析 CurseForge 项目网站地址超出预算，剩余条目本轮不解析"
+            );
+            break;
+        }
+        match cf_post_mod_websites(client, api_key, chunk).await {
+            Ok(found) => {
+                let cache_guard = website_cache();
+                let mut cache = cache_guard
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                for &id in chunk {
+                    let site = found.get(&id).cloned().filter(|s| !s.is_empty());
+                    if let Some(site) = site.clone() {
+                        out.insert(id, site);
+                    }
+                    // 上游明确没给该项目的网站地址（已删除 / 审核中）：记负缓存，
+                    // 避免每次开对话框都为它再付一次请求；但负缓存会过期，上游恢复
+                    // 后能重新解析出来。
+                    cache.insert(
+                        id,
+                        CachedWebsite {
+                            site,
+                            at: std::time::Instant::now(),
+                        },
+                    );
+                }
+            }
+            Err(e) => tracing::warn!(
+                error = %e,
+                count = chunk.len(),
+                "解析 CurseForge 项目网站地址失败，精确文件页链接暂不可用"
+            ),
+        }
+    }
+    out
+}
+
+/// 一次 `POST /v1/mods` 请求，返回 `项目 ID → websiteUrl`。
+async fn cf_post_mod_websites(
+    client: &reqwest::Client,
+    api_key: &str,
+    project_ids: &[i64],
+) -> Result<HashMap<i64, String>, String> {
+    let resp = client
+        .post("https://api.curseforge.com/v1/mods")
+        .header("x-api-key", api_key)
+        .header("Accept", "application/json")
+        .timeout(Duration::from_secs(10))
+        .json(&serde_json::json!({ "modIds": project_ids }))
+        .send()
+        .await
+        .map_err(|e| format!("请求失败: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("上游返回 {}", resp.status()));
+    }
+    let body = resp
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| format!("响应解析失败: {e}"))?;
+    parse_mod_websites(&body)
+}
+
+/// 从 `POST /v1/mods` 响应里取 `项目 ID → websiteUrl`。
+///
+/// 抽成纯函数是为了让字段路径有单测守着：真实响应把网站地址放在
+/// `data[].links.websiteUrl`，一旦 CF 改了层级，精确文件页会静默退化成项目页，
+/// 这种退化不会有报错可循。缺 `links` / 空串的条目直接跳过。
+///
+/// `data` 缺失或不是数组时返回 `Err` 而非空表：调用方会拿「项目不在结果里」
+/// 当作「项目没有网站地址」写进缓存，一旦把结构异常当成这种语义，这些项目就
+/// 永久拿不到精确链接了。合法的空数组仍返回 `Ok`（这些项目确实查不到）。
+fn parse_mod_websites(body: &serde_json::Value) -> Result<HashMap<i64, String>, String> {
+    let mut out = HashMap::new();
+    let data = body
+        .get("data")
+        .ok_or_else(|| "响应缺少 data 字段".to_string())?
+        .as_array()
+        .ok_or_else(|| "响应的 data 不是数组".to_string())?;
+    for item in data {
+        let Some(id) = item.get("id").and_then(|v| v.as_i64()) else {
+            continue;
+        };
+        let Some(site) = item
+            .get("links")
+            .and_then(|l| l.get("websiteUrl"))
+            .and_then(|v| v.as_str())
+        else {
+            continue;
+        };
+        if !site.trim().is_empty() {
+            out.insert(id, site.to_string());
+        }
+    }
+    Ok(out)
 }
 
 /// 从 CF 批量接口条目判定处置方式（issue #291 的回归点）。
@@ -112,6 +374,7 @@ pub fn blocked_from_batch(
         sha1: info.sha1.clone().filter(|s| !s.is_empty()),
         file_length: info.file_length,
         page_url: cf_project_page_url(project_id),
+        file_page_url: None,
     })
 }
 
@@ -496,6 +759,7 @@ mod tests {
             sha1: sha1.map(str::to_string),
             file_length: None,
             page_url: cf_project_page_url(1654570),
+            file_page_url: None,
         }
     }
 
@@ -913,5 +1177,209 @@ mod tests {
         let info = batch_info(1, Some("x.jar"), None, Some(""));
         let b = blocked_from_batch(&info, 1).unwrap();
         assert_eq!(b.sha1, None);
+    }
+
+    /// issue #301：精确文件页只认项目的规范网站地址。
+    #[test]
+    fn file_page_url_requires_curseforge_website() {
+        let site = "https://www.curseforge.com/minecraft/mc-mods/jei";
+        assert_eq!(
+            cf_file_page_url(site, 9274793).as_deref(),
+            Some("https://www.curseforge.com/minecraft/mc-mods/jei/files/9274793")
+        );
+        // 尾斜杠与空白不能拼出 `//files/`。
+        assert_eq!(
+            cf_file_page_url("  https://www.curseforge.com/minecraft/mc-mods/jei/  ", 7).as_deref(),
+            Some("https://www.curseforge.com/minecraft/mc-mods/jei/files/7")
+        );
+        // 这个链接会交给系统浏览器打开，非 CF 域名一律拒绝。
+        for bad in [
+            "",
+            "   ",
+            "https://evil.example.com/minecraft/mc-mods/jei",
+            "http://www.curseforge.com/minecraft/mc-mods/jei",
+            "https://www.curseforge.com.evil.com/x",
+            "javascript:alert(1)",
+        ] {
+            assert_eq!(cf_file_page_url(bad, 1), None, "不可信地址必须拒绝: {bad}");
+        }
+        // 带查询串 / 锚点 / 端口的写法直接拼会得到坏链接，因此按 URL 结构校验
+        // 而不是字符串前缀。空路径没有可拼的文件页。
+        for bad in [
+            "https://www.curseforge.com/minecraft/mc-mods/jei?tab=files",
+            "https://www.curseforge.com/minecraft/mc-mods/jei#files",
+            "https://www.curseforge.com:8443/minecraft/mc-mods/jei",
+            "https://www.curseforge.com",
+            "https://www.curseforge.com/",
+            "https://curseforge.com",
+        ] {
+            assert_eq!(cf_file_page_url(bad, 1), None, "不规范地址必须拒绝: {bad}");
+        }
+        // `..` 会被 URL 解析规范化掉，主域不变——链接指向错页面但不会跳出 CF 域。
+        assert_eq!(
+            cf_file_page_url("https://www.curseforge.com/../evil", 1).as_deref(),
+            Some("https://www.curseforge.com/evil/files/1")
+        );
+        // 不带 www 的规范地址同样放行，且主机名原样保留。
+        assert_eq!(
+            cf_file_page_url("https://curseforge.com/minecraft/mc-mods/jei", 3).as_deref(),
+            Some("https://curseforge.com/minecraft/mc-mods/jei/files/3")
+        );
+        // fileId 无效时不生成链接。
+        assert_eq!(cf_file_page_url(site, 0), None);
+        assert_eq!(cf_file_page_url(site, -1), None);
+    }
+
+    /// 只填缺失项：已有链接不能被另一轮解析覆盖。
+    #[test]
+    fn apply_file_page_urls_fills_only_missing() {
+        let mut items = vec![entry(10, "a.jar", None), entry(20, "b.jar", None)];
+        items[0].file_page_url = Some("https://www.curseforge.com/kept/files/10".to_string());
+        let mut sites = HashMap::new();
+        sites.insert(
+            1654570,
+            "https://www.curseforge.com/minecraft/mc-mods/mmcr".to_string(),
+        );
+
+        // items[0] 已有值、items[1] 需要补 —— 两条同项目同网站地址。
+        assert!(apply_file_page_urls(&mut items, &sites));
+        assert_eq!(
+            items[0].file_page_url.as_deref(),
+            Some("https://www.curseforge.com/kept/files/10"),
+            "已有链接不得被覆盖"
+        );
+        assert_eq!(
+            items[1].file_page_url.as_deref(),
+            Some("https://www.curseforge.com/minecraft/mc-mods/mmcr/files/20")
+        );
+        assert!(
+            !apply_file_page_urls(&mut items, &sites),
+            "全部已有值时不应报告变化"
+        );
+
+        // 映射里没有的项目保持 None：前端据此退回项目页。
+        let mut other = vec![entry(30, "c.jar", None)];
+        other[0].project_id = 999;
+        assert!(!apply_file_page_urls(&mut other, &sites));
+        assert_eq!(other[0].file_page_url, None);
+    }
+
+    /// 旧 sidecar 没有 `filePageUrl` 字段，必须照常读出（否则升级后清单全丢）。
+    #[test]
+    fn legacy_sidecar_without_file_page_url_still_loads() {
+        let root = temp_root("legacy-nopage");
+        let gd = root.to_string_lossy().to_string();
+        let path = blocked_path(&gd, "Nast").unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"schemaVersion":1,"items":[{"projectId":1654570,"fileId":9274793,
+                "fileName":"mmcr.jar","pageUrl":"https://www.curseforge.com/projects/1654570"}]}"#
+                .replace('\n', ""),
+        )
+        .unwrap();
+
+        let items = load_blocked(&gd, "Nast");
+        assert_eq!(items.len(), 1, "旧清单必须照常读出");
+        assert_eq!(items[0].file_id, 9274793);
+        assert_eq!(items[0].file_page_url, None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 新字段落盘后能原样读回（`skip_serializing_if` 不影响反序列化）。
+    #[test]
+    fn file_page_url_roundtrips_through_sidecar() {
+        let root = temp_root("roundtrip-page");
+        let gd = root.to_string_lossy().to_string();
+        let mut items = vec![entry(9274793, "mmcr.jar", None)];
+        items[0].file_page_url =
+            Some("https://www.curseforge.com/minecraft/mc-mods/mmcr/files/9274793".to_string());
+        save_blocked(&gd, "Nast", &items).unwrap();
+        assert_eq!(load_blocked(&gd, "Nast"), items);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `POST /v1/mods` 的 `data[].links.websiteUrl` 路径必须有单测守着。
+    ///
+    /// 这段一旦读错层级，精确文件页会静默退化成项目页——没有报错、没有日志，
+    /// 只有用户又开错页面，正是 issue #301 想消掉的那种体验。
+    #[test]
+    fn batch_mods_response_yields_website_urls() {
+        // 字段裁剪自 2026-10-25 的真实响应（MMCR 1654570 / JEI 238222）。
+        let body = serde_json::json!({
+            "data": [
+                {
+                    "id": 1654570,
+                    "name": "Modular Machinery: Community Refoxed",
+                    "slug": "modular-machinery-community-refoxed",
+                    "links": {
+                        "websiteUrl": "https://www.curseforge.com/minecraft/mc-mods/modular-machinery-community-refoxed",
+                        "wikiUrl": "",
+                        "issuesUrl": ""
+                    },
+                    "allowModDistribution": false
+                },
+                {
+                    "id": 238222,
+                    "links": { "websiteUrl": "https://www.curseforge.com/minecraft/mc-mods/jei" }
+                },
+                // 没有 links：跳过，不生成精确链接。
+                { "id": 42, "name": "no links" },
+                // websiteUrl 为空串：同样跳过。
+                { "id": 43, "links": { "websiteUrl": "   " } },
+                // id 不是整数（防御性）：跳过而不是 panic。
+                { "id": "not-a-number", "links": { "websiteUrl": "https://www.curseforge.com/x" } }
+            ]
+        });
+        let got = parse_mod_websites(&body).expect("合法响应必须解析成功");
+        assert_eq!(got.len(), 2, "只有带非空 websiteUrl 的条目能产出链接");
+        assert_eq!(
+            got.get(&1654570).map(String::as_str),
+            Some(
+                "https://www.curseforge.com/minecraft/mc-mods/modular-machinery-community-refoxed"
+            )
+        );
+        assert_eq!(
+            got.get(&238222).map(String::as_str),
+            Some("https://www.curseforge.com/minecraft/mc-mods/jei")
+        );
+
+        // 结构异常必须报错：调用方会把「项目不在结果里」当成「没有网站地址」写进
+        // 缓存，结构异常若也返回空表，这些项目就永久拿不到精确链接。
+        assert!(
+            parse_mod_websites(&serde_json::json!({})).is_err(),
+            "缺 data"
+        );
+        assert!(
+            parse_mod_websites(&serde_json::json!({ "data": "oops" })).is_err(),
+            "data 不是数组"
+        );
+        // 合法空数组是「这些项目确实查不到」，不是结构异常。
+        assert!(parse_mod_websites(&serde_json::json!({ "data": [] }))
+            .expect("空数组合法")
+            .is_empty());
+    }
+
+    /// 负缓存必须会过期，否则上游恢复后这些项目再也拿不到精确链接。
+    #[test]
+    fn negative_cache_expires_much_sooner_than_positive() {
+        let now = std::time::Instant::now();
+        let positive = CachedWebsite {
+            site: Some("https://www.curseforge.com/minecraft/mc-mods/jei".to_string()),
+            at: now,
+        };
+        let negative = CachedWebsite {
+            site: None,
+            at: now,
+        };
+        // 刚写入都算新鲜。
+        assert!(!positive.is_expired(now));
+        assert!(!negative.is_expired(now));
+        // 10 分钟后负缓存过期、正缓存仍有效：这正是「上游恢复了要能重新解析」。
+        let later = now + Duration::from_secs(10 * 60);
+        assert!(negative.is_expired(later), "负缓存必须过期");
+        assert!(!positive.is_expired(later), "正缓存不应这么早过期");
+        // 正缓存最终也会过期。
+        assert!(positive.is_expired(now + WEBSITE_TTL_POSITIVE));
     }
 }
