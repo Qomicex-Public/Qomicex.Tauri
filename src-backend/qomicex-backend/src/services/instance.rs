@@ -1609,6 +1609,48 @@ impl InstanceService {
     /// 只处理用户能改的字段；`name`/`game_version`/`loader`/整合包元数据由同步与业务
     /// 路径管理，不在此覆盖（否则会撤销身份迁移或磁盘校正）。
     fn carry_user_edits(orig: &GameInstance, cur: &GameInstance, slot: &mut GameInstance) {
+        // 用户显式清空/重置的键以 `cur` 为准，即使 `orig` 本来就是空值。
+        // 否则会出现：guard 接管先把旧 JVM 补进来（orig 为空），随后用户清空
+        // （cur 仍为空，仅多出 cleared 标记），逐字段 diff 看不到变化，slot 里
+        // 被补进来的旧值反而留了下来。
+        let cleared = |key: &str| cur.cleared_settings.iter().any(|k| k == key);
+        if cleared("jvmArgs") {
+            slot.jvm_args = cur.jvm_args.clone();
+        }
+        if cleared("javaPath") {
+            slot.java_path = cur.java_path.clone();
+        }
+        if cleared("remark") {
+            slot.remark = cur.remark.clone();
+        }
+        if cleared("maxMemory") {
+            slot.max_memory = cur.max_memory;
+        }
+        if cleared("versionIsolation") {
+            slot.version_isolation = cur.version_isolation;
+        }
+        if cleared("isHidden") {
+            slot.is_hidden = cur.is_hidden;
+        }
+        if cleared("skipIntegrityCheck") {
+            slot.skip_integrity_check = cur.skip_integrity_check;
+        }
+        if cleared("customGroupIds") {
+            slot.custom_group_ids = cur.custom_group_ids.clone();
+        }
+        if cleared("accountName") {
+            slot.account_name = cur.account_name.clone();
+        }
+        if cleared("accountUuid") {
+            slot.account_uuid = cur.account_uuid.clone();
+        }
+        if cleared("accessToken") {
+            slot.access_token = cur.access_token.clone();
+        }
+        if cleared("icon") {
+            slot.icon = cur.icon.clone();
+        }
+
         // 仅当相对快照有变化时才搬，避免无谓的字段重写。
         if cur.jvm_args != orig.jvm_args {
             slot.jvm_args = cur.jvm_args.clone();
@@ -2882,6 +2924,48 @@ mod tests {
     /// 回归（Issue #244 评审）：同步期间用户把实例**改名**（PUT 先 rename_version_dir
     /// 再更新 name）。若合并时不带上新名，`result` 会保留旧目录名；下次同步时旧目录已
     /// 不存在，记录被当残留删除、新目录被扫成 Default 记录 —— 正是 #244 的故障形态。
+    /// 同步期间用户清空一个「接管前本来就是空」的字段时，逐字段 diff 看不到变化，
+    /// 但 `clearedSettings` 必须让 `result` 回到用户清空后的值，不能被刚补进来的旧值
+    /// 留下（Sourcery 评审）。
+    #[test]
+    fn merge_concurrent_writeback_respects_clear_after_adoption() {
+        let snapshot = vec![make_instance("GTNH 2.8.4", "C:/mc", Some(true))];
+        let known_ids: std::collections::HashSet<String> =
+            snapshot.iter().map(|i| i.id.clone()).collect();
+        let names_before: HashMap<String, String> = snapshot
+            .iter()
+            .map(|i| (i.id.clone(), i.name.clone()))
+            .collect();
+
+        // orig 中 JVM/内存本来就是空/默认；同步接管先把旧值补进 slot。
+        let mut slot = snapshot[0].clone();
+        slot.jvm_args = Some("-Dfile.encoding=UTF-8".into());
+        slot.max_memory = 8192;
+        // 用户在同步期间显式清空：cur 的值仍是空/默认，只多了 cleared 标记。
+        let mut cleared = snapshot[0].clone();
+        cleared.jvm_args = None;
+        cleared.max_memory = DEFAULT_MAX_MEMORY;
+        cleared.cleared_settings = vec!["jvmArgs".into(), "maxMemory".into()];
+        let mut result = vec![slot];
+
+        InstanceService::merge_concurrent_writeback(
+            &snapshot,
+            &known_ids,
+            &names_before,
+            &[cleared],
+            &mut result,
+        );
+
+        let kept = result.iter().find(|i| i.id == snapshot[0].id).unwrap();
+        assert_eq!(kept.jvm_args, None, "用户清空后不得留下接管补进来的 JVM");
+        assert_eq!(
+            kept.max_memory, DEFAULT_MAX_MEMORY,
+            "用户重置后不得留下接管补进来的内存"
+        );
+        assert!(kept.cleared_settings.iter().any(|k| k == "jvmArgs"));
+        assert!(kept.cleared_settings.iter().any(|k| k == "maxMemory"));
+    }
+
     #[test]
     fn merge_concurrent_writeback_keeps_concurrent_rename() {
         let snapshot = vec![make_instance("OldName", "C:/mc", Some(true))];

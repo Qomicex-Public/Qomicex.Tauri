@@ -138,5 +138,7 @@ GTNH 这类包依赖 `lwjgl3ify` 注入的 `--add-opens`、`-Djava.system.class.
   元数据时不接管。
 - `update_with_tracks_user_cleared_settings`：清空/重置会记录标记，重新设置有值
   会取消标记。
-- 现有 10 个 `sync_from_disk_*` 回归用例全部通过；新增 6 个用例后共 16 个相关
-  用例通过（`cargo test --bin qomicex-backend` 574 passed / 0 failed / 2 ignored）。
+- `merge_concurrent_writeback_respects_clear_after_adoption`：同步接管先补值、用户
+  随后清空时，写回合并不留下旧值。
+- 现有 10 个 `sync_from_disk_*` 回归用例全部通过；新增 7 个用例后共 17 个相关
+  用例通过（`cargo test --bin qomicex-backend` 575 passed / 0 failed / 2 ignored）。
