@@ -36,6 +36,7 @@ fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
 
     generate_appsettings(&manifest);
+    emit_easytier_vendor(&manifest);
 
     // ---- Windows：复制 easytier 运行时 DLL 到 exe 同目录 ----
     let target = std::env::var("TARGET").unwrap_or_default();
@@ -66,6 +67,54 @@ fn main() {
         fs::copy(src.join(dll), exe_dir.join(dll))
             .unwrap_or_else(|e| panic!("copy {dll} to {} failed: {e}", exe_dir.display()));
     }
+}
+
+/// 从 `Cargo.lock` 提取内嵌 easytier 的版本与 fork 提交，编译期注入 `ET_VENDOR`。
+///
+/// 联机玩家列表的 vendor 串（见 `endpoints/connector.rs`）要展示「上游版本 + fork 提交」。
+/// 这两个值随 `qomicex-connector-rust/Cargo.toml` 里 easytier 的 git rev 变化，手写常量
+/// 每次升版都会漏改；改为构建期读锁文件，解析不到时注入 `unknown`，让陈旧值在界面上暴露。
+fn emit_easytier_vendor(manifest: &std::path::Path) {
+    let lock_path = manifest.join("Cargo.lock");
+    println!("cargo::rerun-if-changed={}", lock_path.display());
+
+    let Ok(lock) = fs::read_to_string(&lock_path) else {
+        println!("cargo::rustc-env=ET_VENDOR=unknown");
+        return;
+    };
+
+    let mut version = None;
+    let mut rev = None;
+    for block in lock.split("[[package]]") {
+        if lock_field(block, "name") == Some("easytier-core") {
+            version = lock_field(block, "version");
+        }
+        if let Some(source) = lock_field(block, "source") {
+            // source = "git+https://github.com/Qomicex-Public/EasyTier4QML.git?rev=<rev>#<full>"
+            if source.contains("Qomicex-Public/EasyTier4QML") {
+                rev = source
+                    .split("?rev=")
+                    .nth(1)
+                    .map(|rest| rest.split('#').next().unwrap_or(rest));
+            }
+        }
+    }
+
+    let vendor = match (version, rev) {
+        (Some(version), Some(rev)) => format!("v{version}-{rev}"),
+        (Some(version), None) => format!("v{version}"),
+        _ => "unknown".to_string(),
+    };
+    println!("cargo::rustc-env=ET_VENDOR={vendor}");
+}
+
+/// 读取锁文件包块里的 `key = "value"` 字段。
+fn lock_field<'a>(block: &'a str, key: &str) -> Option<&'a str> {
+    let prefix = format!("{key} = \"");
+    block
+        .lines()
+        .map(str::trim)
+        .find_map(|line| line.strip_prefix(prefix.as_str())?.strip_suffix('"'))
 }
 
 /// 由模板 + 环境变量生成 `appsettings.json`（详见模块头注释）。
