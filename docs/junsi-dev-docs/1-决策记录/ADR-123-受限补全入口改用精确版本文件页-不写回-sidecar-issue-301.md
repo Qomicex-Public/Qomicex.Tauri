@@ -25,9 +25,9 @@ issue #301：ADR-118 落地后，分发受限文件进 `blocked-mods.json` 并�
 在 `BlockedModFile` 上新增可选字段 `filePageUrl`，由项目的 `links.websiteUrl` 拼 `/files/{fileId}` 得到，**只在响应里补全，不写回 sidecar**。
 
 1. 字段 `file_page_url: Option<String>`，`#[serde(default, skip_serializing_if = "Option::is_none")]`；**不动 `BLOCKED_SCHEMA_VERSION`**（升版会让 `load_blocked` 丢弃全部待补全项）。旧 sidecar 无该字段时读为 `None`，前端退回项目页，行为与升级前一致。
-2. URL 构造抽成纯函数 `cf_file_page_url(website_url, file_id)`：去掉首尾空白与末尾 `/`，只接受 `https://www.curseforge.com/`（含不带 `www`）开头、且 `file_id > 0`。该地址会被交给系统浏览器打开，上游字段一旦被改成任意地址就等于把启动器变成跳转器，因此必须白名单。
-3. 解析走 `POST /v1/mods` 批量接口（100 条一批，与 `get_files_batch` 同口径），单次请求超时压到 10 s（不用共享客户端的 30 s）——这只是给按钮补链接，不值得让对话框等半分钟。传输 / HTTP / JSON 失败只打 `tracing::warn` 并退化为空结果，手动补全不依赖 CurseForge 可用。
-4. 结果进进程内缓存 `projectId → websiteUrl`；解析到空的项目（已删除 / 审核中 / 无网站地址）缓存空串，避免每次开对话框为注定拿不到的条目再付一次超时。整批失败**不写缓存**：否则一次上游抖动会把这些项目永久钉成「无链接」，此后真实网络下也拿不到。
+2. URL 构造抽成纯函数 `cf_file_page_url(website_url, file_id)`：用 `reqwest::Url` 解析后校验——协议必须 `https`、主机名精确等于 `curseforge.com` 主域（含/不含 `www`）、无端口、无查询串、无锚点、路径非空，再用解析后的路径重建 URL。该地址会被交给系统浏览器打开，且字符串前缀匹配挡不住 `?tab=files` / `#files` / `:8443` 这类写法（拼出来是坏链接），因此按 URL 结构校验而不是前缀。
+3. 解析走 `POST /v1/mods` 批量接口（100 条一批，与 `get_files_batch` 同口径），单次请求超时压到 10 s，另加 `CF_WEBSITE_BUDGET = 12 s` 总预算：清单超过 100 项要分批，若每批都等满上限会超过共享客户端的 30 s 超时，让整个 `GET` 失败（用户看到「读取补全清单失败」而不是少了几个按钮）。超预算停止后续批次并带已得结果返回。传输 / HTTP / JSON 失败只打 `tracing::warn` 并退化为空结果，手动补全不依赖 CurseForge 可用。
+4. 结果进进程内缓存 `projectId → websiteUrl`，**正负缓存分别设 TTL**：命中正缓存 6 h 内不再请求；命中负缓存（上游没给网站地址，通常是审核中 / 临时下架）只保留 10 min，过期后重新解析——项目的 `websiteUrl` 缺失多是一时状态，永久记住会让这些条目在本次启动内再也拿不到精确链接。`data` 缺失或非数组视为结构异常，**不写缓存**（否则一次上游结构变更会把项目永久钉成无链接）；整批请求失败同样不写缓存。
 5. 补全位置放在 `GET /modpack/blocked/{instanceId}` 与两个 submit 出口（共用一个 async helper），且**必须在 `lock_blocked_write` 之外**调用：持锁期间不允许 await。
 6. 前端合并为**单按钮**：有 `filePageUrl` 用精确文件页、标签「打开对应版本」，否则退回 `pageUrl`（项目页）。不新增第三列按钮——对话框 `max-w-lg` 下每行已有「项目页 + 选择文件」两个按钮，再加一个会挤压布局。文件名本就是列表标题行，用户可直接核对版本。
 7. 合规：只改浏览器导航目标，不触碰 `downloadUrl` / CDN / 分发判定，ADR-118 的红线不变。
@@ -60,7 +60,7 @@ issue #301：ADR-118 落地后，分发受限文件进 `blocked-mods.json` 并�
 - 为何不选：不采纳：只缓解不解决
 
 ## 影响
-- src-backend/qomicex-backend/src/services/modpack_blocked.rs（新增 `file_page_url` 字段、`cf_file_page_url` / `apply_file_page_urls` 纯函数、`fetch_project_websites` 批量解析与进程内缓存，新增 4 个单测）
+- src-backend/qomicex-backend/src/services/modpack_blocked.rs（新增 `file_page_url` 字段、`cf_file_page_url` / `apply_file_page_urls` 纯函数、`fetch_project_websites` 批量解析与正负 TTL 缓存，新增 6 个单测）
 - src-backend/qomicex-backend/src/endpoints/modpack.rs（新增 `fill_file_page_urls` helper，接入 `blocked_mods` 与两个 submit 出口）
 - src/types/index.ts（`BlockedModFile.filePageUrl?`）
 - src/components/BlockedModsDialog.tsx（单按钮，标签随链接类型切换）
@@ -72,3 +72,4 @@ issue #301：ADR-118 落地后，分发受限文件进 `blocked-mods.json` 并�
 | 日期 | 版本 | 修改内容 | 修改人 |
 |---|---|---|---|
 | 2026-10-25 | v1.0 | 初版创建 | AI Agent |
+| 2026-10-27 | v1.1 | 评审修复：URL 校验改按结构解析；批量解析加 12s 总预算；响应结构异常不写缓存；负缓存加 10min TTL | AI Agent |

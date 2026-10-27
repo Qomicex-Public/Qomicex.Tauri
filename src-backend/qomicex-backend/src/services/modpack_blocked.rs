@@ -151,12 +151,43 @@ pub fn apply_file_page_urls(items: &mut [BlockedModFile], websites: &HashMap<i64
 /// 「项目 ID → 规范网站地址」的进程内缓存。
 ///
 /// 精确文件页不落盘，同一批待补全项每开一次对话框都要再解析一遍；网站地址对
-/// 同一项目是稳定的，记住就够了。解析不到的项目缓存空串（同样不再重试），
-/// 否则每次打开对话框都会为注定拿不到的条目再付一次超时。
-fn website_cache() -> &'static std::sync::Mutex<HashMap<i64, String>> {
-    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<i64, String>>> =
+/// 同一项目是稳定的，记住就够了。
+///
+/// 值为 `None` 表示**负缓存**（查过了但上游没给网站地址）。负缓存必须带过期时间：
+/// 项目的 `websiteUrl` 缺失通常是一时状态（审核中、作者刚提交、项目被临时下架后
+/// 恢复），永久记住会让这些条目在本次启动内再也拿不到精确链接。命中时若已过期
+/// 就当作未缓存，重新解析。
+fn website_cache() -> &'static std::sync::Mutex<HashMap<i64, CachedWebsite>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<i64, CachedWebsite>>> =
         std::sync::OnceLock::new();
     CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+/// 缓存条目：网站地址（`None` = 负缓存）与写入时刻。
+#[derive(Debug, Clone)]
+struct CachedWebsite {
+    site: Option<String>,
+    at: std::time::Instant,
+}
+
+/// 正缓存有效期：网站地址极少变，长一点省请求。
+const WEBSITE_TTL_POSITIVE: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// 负缓存有效期：短得多——上游恢复（审核通过 / 重新公开）后要能尽快补上链接。
+const WEBSITE_TTL_NEGATIVE: Duration = Duration::from_secs(10 * 60);
+
+impl CachedWebsite {
+    fn ttl(&self) -> Duration {
+        if self.site.is_some() {
+            WEBSITE_TTL_POSITIVE
+        } else {
+            WEBSITE_TTL_NEGATIVE
+        }
+    }
+
+    fn is_expired(&self, now: std::time::Instant) -> bool {
+        now.saturating_duration_since(self.at) >= self.ttl()
+    }
 }
 
 /// 批量项目接口单次可查上限（与 `get_files_batch` 的 100 条分批口径一致）。
@@ -182,8 +213,9 @@ pub async fn fetch_project_websites(
 ) -> HashMap<i64, String> {
     let mut out = HashMap::new();
     let mut pending: Vec<i64> = Vec::new();
+    let now = std::time::Instant::now();
     {
-        let cache = website_cache()
+        let mut cache = website_cache()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         for &id in project_ids {
@@ -192,13 +224,17 @@ pub async fn fetch_project_websites(
                 continue;
             }
             match cache.get(&id) {
-                // 空串是「查过了但没有网站地址」的标记，不再进请求。
-                Some(site) => {
-                    if !site.is_empty() {
-                        out.insert(id, site.clone());
+                Some(entry) if !entry.is_expired(now) => {
+                    if let Some(site) = entry.site.as_deref() {
+                        out.insert(id, site.to_string());
                     }
+                    // 未过期的负缓存：本轮不再请求。
                 }
-                None => pending.push(id),
+                // 未命中或已过期：清掉旧值并重新解析。
+                _ => {
+                    cache.remove(&id);
+                    pending.push(id);
+                }
             }
         }
     }
@@ -225,13 +261,20 @@ pub async fn fetch_project_websites(
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 for &id in chunk {
-                    let site = found.get(&id).cloned().unwrap_or_default();
-                    if !site.is_empty() {
-                        out.insert(id, site.clone());
+                    let site = found.get(&id).cloned().filter(|s| !s.is_empty());
+                    if let Some(site) = site.clone() {
+                        out.insert(id, site);
                     }
-                    // 上游明确没给该项目的网站地址（已删除 / 审核中）：记为空，
-                    // 避免每次开对话框都为拿不到的条目再付一次请求。
-                    cache.insert(id, site);
+                    // 上游明确没给该项目的网站地址（已删除 / 审核中）：记负缓存，
+                    // 避免每次开对话框都为它再付一次请求；但负缓存会过期，上游恢复
+                    // 后能重新解析出来。
+                    cache.insert(
+                        id,
+                        CachedWebsite {
+                            site,
+                            at: std::time::Instant::now(),
+                        },
+                    );
                 }
             }
             Err(e) => tracing::warn!(
@@ -1315,5 +1358,28 @@ mod tests {
         assert!(parse_mod_websites(&serde_json::json!({ "data": [] }))
             .expect("空数组合法")
             .is_empty());
+    }
+
+    /// 负缓存必须会过期，否则上游恢复后这些项目再也拿不到精确链接。
+    #[test]
+    fn negative_cache_expires_much_sooner_than_positive() {
+        let now = std::time::Instant::now();
+        let positive = CachedWebsite {
+            site: Some("https://www.curseforge.com/minecraft/mc-mods/jei".to_string()),
+            at: now,
+        };
+        let negative = CachedWebsite {
+            site: None,
+            at: now,
+        };
+        // 刚写入都算新鲜。
+        assert!(!positive.is_expired(now));
+        assert!(!negative.is_expired(now));
+        // 10 分钟后负缓存过期、正缓存仍有效：这正是「上游恢复了要能重新解析」。
+        let later = now + Duration::from_secs(10 * 60);
+        assert!(negative.is_expired(later), "负缓存必须过期");
+        assert!(!positive.is_expired(later), "正缓存不应这么早过期");
+        // 正缓存最终也会过期。
+        assert!(positive.is_expired(now + WEBSITE_TTL_POSITIVE));
     }
 }
