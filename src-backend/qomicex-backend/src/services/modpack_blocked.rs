@@ -100,20 +100,30 @@ pub fn cf_project_page_url(project_id: i64) -> String {
 /// 打开的就是该 fileId 对应版本的下载页。受限条目本身不带 slug / classId，
 /// 所以只能靠这个字段，不能在本地拼分类路径。
 ///
-/// 只接受 curseforge.com 主域下的 https 地址：这个 URL 会被交给系统浏览器打开，
-/// 上游字段一旦被改成任意地址，就等于把启动器变成跳转器。
+/// 按 URL 结构校验而不是字符串前缀：这个链接会被交给系统浏览器打开，而前缀匹配
+/// 挡不住带查询串 / 锚点 / 端口 / 反斜杠的写法（`.../jei?x=1` 拼出来是坏链接，
+/// `.../jei#frag` 同理）。只接受 https、主机名精确等于 curseforge.com 主域、
+/// 无端口、无查询串、无锚点的地址，再拿**解析后的路径**重建 URL。
 pub fn cf_file_page_url(website_url: &str, file_id: i64) -> Option<String> {
-    let base = website_url.trim().trim_end_matches('/');
-    let lower = base.to_ascii_lowercase();
-    if !(lower.starts_with("https://www.curseforge.com/")
-        || lower.starts_with("https://curseforge.com/"))
-    {
-        return None;
-    }
     if file_id <= 0 {
         return None;
     }
-    Some(format!("{base}/files/{file_id}"))
+    let url = reqwest::Url::parse(website_url.trim()).ok()?;
+    if url.scheme() != "https" || url.port().is_some() {
+        return None;
+    }
+    let host = url.host_str()?;
+    if !matches!(host, "www.curseforge.com" | "curseforge.com") {
+        return None;
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return None;
+    }
+    let path = url.path().trim_end_matches('/');
+    if path.is_empty() {
+        return None;
+    }
+    Some(format!("https://{host}{path}/files/{file_id}"))
 }
 
 /// 给清单条目补上精确文件页链接，返回是否有条目被补上。
@@ -152,6 +162,13 @@ fn website_cache() -> &'static std::sync::Mutex<HashMap<i64, String>> {
 /// 批量项目接口单次可查上限（与 `get_files_batch` 的 100 条分批口径一致）。
 const CF_MODS_BATCH: usize = 100;
 
+/// 整次解析的总预算。
+///
+/// 单批上限 10 s 已够正常响应；但清单超过 100 项就要分批，若每批都等满上限，
+/// 累计会超过共享客户端的 30 s 超时——那会让整个 GET 直接失败，用户看到的
+/// 是「读取补全清单失败」而不是少了几个按钮。超预算就带着已拿到的结果返回。
+const CF_WEBSITE_BUDGET: Duration = Duration::from_secs(12);
+
 /// 批量解析项目的规范网站地址，返回可直接拼精确文件页的项。
 ///
 /// 走 `POST /v1/mods` 而非逐项目单查：一次请求就带回 `links.websiteUrl`，
@@ -189,9 +206,18 @@ pub async fn fetch_project_websites(
         return out;
     }
 
-    // 只合并成功的批次：整批失败时**不写缓存**，否则一次上游抖动会把这些项目
-    // 永久钉成「无网站地址」，此后连真实网络下也拿不到精确链接。
+    let deadline = std::time::Instant::now() + CF_WEBSITE_BUDGET;
+    // 只合并成功的批次：整批失败或响应结构不对时**不写缓存**，否则一次上游抖动
+    // 会把这些项目永久钉成「无网站地址」，此后连真实网络下也拿不到精确链接。
     for chunk in pending.chunks(CF_MODS_BATCH) {
+        if std::time::Instant::now() >= deadline {
+            tracing::warn!(
+                remaining = pending.len(),
+                budget = CF_WEBSITE_BUDGET.as_secs(),
+                "解析 CurseForge 项目网站地址超出预算，剩余条目本轮不解析"
+            );
+            break;
+        }
         match cf_post_mod_websites(client, api_key, chunk).await {
             Ok(found) => {
                 let cache_guard = website_cache();
@@ -203,7 +229,8 @@ pub async fn fetch_project_websites(
                     if !site.is_empty() {
                         out.insert(id, site.clone());
                     }
-                    // 成功响应里没有该项目的（已删除 / 审核中）记为空，不再重试。
+                    // 上游明确没给该项目的网站地址（已删除 / 审核中）：记为空，
+                    // 避免每次开对话框都为拿不到的条目再付一次请求。
                     cache.insert(id, site);
                 }
             }
@@ -239,7 +266,7 @@ async fn cf_post_mod_websites(
         .json::<serde_json::Value>()
         .await
         .map_err(|e| format!("响应解析失败: {e}"))?;
-    Ok(parse_mod_websites(&body))
+    parse_mod_websites(&body)
 }
 
 /// 从 `POST /v1/mods` 响应里取 `项目 ID → websiteUrl`。
@@ -247,11 +274,17 @@ async fn cf_post_mod_websites(
 /// 抽成纯函数是为了让字段路径有单测守着：真实响应把网站地址放在
 /// `data[].links.websiteUrl`，一旦 CF 改了层级，精确文件页会静默退化成项目页，
 /// 这种退化不会有报错可循。缺 `links` / 空串的条目直接跳过。
-fn parse_mod_websites(body: &serde_json::Value) -> HashMap<i64, String> {
+///
+/// `data` 缺失或不是数组时返回 `Err` 而非空表：调用方会拿「项目不在结果里」
+/// 当作「项目没有网站地址」写进缓存，一旦把结构异常当成这种语义，这些项目就
+/// 永久拿不到精确链接了。合法的空数组仍返回 `Ok`（这些项目确实查不到）。
+fn parse_mod_websites(body: &serde_json::Value) -> Result<HashMap<i64, String>, String> {
     let mut out = HashMap::new();
-    let Some(data) = body.get("data").and_then(|d| d.as_array()) else {
-        return out;
-    };
+    let data = body
+        .get("data")
+        .ok_or_else(|| "响应缺少 data 字段".to_string())?
+        .as_array()
+        .ok_or_else(|| "响应的 data 不是数组".to_string())?;
     for item in data {
         let Some(id) = item.get("id").and_then(|v| v.as_i64()) else {
             continue;
@@ -267,7 +300,7 @@ fn parse_mod_websites(body: &serde_json::Value) -> HashMap<i64, String> {
             out.insert(id, site.to_string());
         }
     }
-    out
+    Ok(out)
 }
 
 /// 从 CF 批量接口条目判定处置方式（issue #291 的回归点）。
@@ -1127,6 +1160,28 @@ mod tests {
         ] {
             assert_eq!(cf_file_page_url(bad, 1), None, "不可信地址必须拒绝: {bad}");
         }
+        // 带查询串 / 锚点 / 端口的写法直接拼会得到坏链接，因此按 URL 结构校验
+        // 而不是字符串前缀。空路径没有可拼的文件页。
+        for bad in [
+            "https://www.curseforge.com/minecraft/mc-mods/jei?tab=files",
+            "https://www.curseforge.com/minecraft/mc-mods/jei#files",
+            "https://www.curseforge.com:8443/minecraft/mc-mods/jei",
+            "https://www.curseforge.com",
+            "https://www.curseforge.com/",
+            "https://curseforge.com",
+        ] {
+            assert_eq!(cf_file_page_url(bad, 1), None, "不规范地址必须拒绝: {bad}");
+        }
+        // `..` 会被 URL 解析规范化掉，主域不变——链接指向错页面但不会跳出 CF 域。
+        assert_eq!(
+            cf_file_page_url("https://www.curseforge.com/../evil", 1).as_deref(),
+            Some("https://www.curseforge.com/evil/files/1")
+        );
+        // 不带 www 的规范地址同样放行，且主机名原样保留。
+        assert_eq!(
+            cf_file_page_url("https://curseforge.com/minecraft/mc-mods/jei", 3).as_deref(),
+            Some("https://curseforge.com/minecraft/mc-mods/jei/files/3")
+        );
         // fileId 无效时不生成链接。
         assert_eq!(cf_file_page_url(site, 0), None);
         assert_eq!(cf_file_page_url(site, -1), None);
@@ -1233,7 +1288,7 @@ mod tests {
                 { "id": "not-a-number", "links": { "websiteUrl": "https://www.curseforge.com/x" } }
             ]
         });
-        let got = parse_mod_websites(&body);
+        let got = parse_mod_websites(&body).expect("合法响应必须解析成功");
         assert_eq!(got.len(), 2, "只有带非空 websiteUrl 的条目能产出链接");
         assert_eq!(
             got.get(&1654570).map(String::as_str),
@@ -1246,8 +1301,19 @@ mod tests {
             Some("https://www.curseforge.com/minecraft/mc-mods/jei")
         );
 
-        // data 缺失 / 类型不符：返回空表而不是报错（降级为项目页）。
-        assert!(parse_mod_websites(&serde_json::json!({})).is_empty());
-        assert!(parse_mod_websites(&serde_json::json!({ "data": "oops" })).is_empty());
+        // 结构异常必须报错：调用方会把「项目不在结果里」当成「没有网站地址」写进
+        // 缓存，结构异常若也返回空表，这些项目就永久拿不到精确链接。
+        assert!(
+            parse_mod_websites(&serde_json::json!({})).is_err(),
+            "缺 data"
+        );
+        assert!(
+            parse_mod_websites(&serde_json::json!({ "data": "oops" })).is_err(),
+            "data 不是数组"
+        );
+        // 合法空数组是「这些项目确实查不到」，不是结构异常。
+        assert!(parse_mod_websites(&serde_json::json!({ "data": [] }))
+            .expect("空数组合法")
+            .is_empty());
     }
 }
