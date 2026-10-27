@@ -1265,6 +1265,16 @@ impl InstanceService {
                 .position(|i| i.name == *dir_name && same_game_root(&i.game_dir, &item.game_dir));
 
             if let Some(target_idx) = target_idx {
+                // 正常情况下 find 已排除同根目录，source_idx != target_idx；
+                // 但 canonicalize 在扫描期间失败/路径被并发替换时可能出现相等，
+                // 此时来源即目标，直接跳过，避免删除唯一记录后越界。
+                if source_idx == target_idx {
+                    tracing::warn!(
+                        name = %dir_name,
+                        "scan: 来源与目标为同一记录，跳过搬迁接管"
+                    );
+                    continue;
+                }
                 let mut target = instances[target_idx].clone();
                 Self::carry_orphan_settings(&mut target, &old);
                 // 新目录里可能已有一份 qomicex.json；必须在删除来源/写回镜像前
