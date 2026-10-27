@@ -1279,14 +1279,13 @@ impl InstanceService {
                     );
                     let mut fixed = instances[source_idx].clone();
                     fixed.game_dir = item.game_dir.clone();
-                    // `dir_name` 可能是版本 JSON id 反查的回退值；只有扫描明确
-                    // 给出真实目录名且该目录存在时才改写，避免拼出不存在的路径。
-                    let real_dir = item.dir_name.is_some()
-                        && path_presence(
-                            &normalized_game_root(&item.game_dir)
-                                .join("versions")
-                                .join(dir_name),
-                        ) == PathPresence::Present;
+                    // `dir_name` 可能是版本 JSON id 反查的回退值；只要
+                    // `versions/{dir_name}` 真实存在就是可用的目录名。
+                    let real_dir = path_presence(
+                        &normalized_game_root(&item.game_dir)
+                            .join("versions")
+                            .join(dir_name),
+                    ) == PathPresence::Present;
                     if real_dir {
                         fixed.name = dir_name.clone();
                     }
