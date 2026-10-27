@@ -1280,8 +1280,15 @@ impl InstanceService {
                     Err(e) => return Err(e),
                 }
                 let new_id = target.id.clone();
-                instances[target_idx] = target;
+                // 先删来源再写目标：remove 会让后续下标整体前移，若来源在目标
+                // 之前，写回下标必须同步减一，避免把设置写进相邻实例。
                 instances.remove(source_idx);
+                let target_idx = if source_idx < target_idx {
+                    target_idx - 1
+                } else {
+                    target_idx
+                };
+                instances[target_idx] = target;
                 if old.id != new_id {
                     remaps.push((old.id.clone(), new_id));
                 }
