@@ -119,6 +119,20 @@ impl ProcessHandle {
     fn snapshot(&self, pid: u32) -> ProcSnapshot {
         let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let logs = self.logs.lock().unwrap_or_else(|p| p.into_inner());
+        self.build_snapshot(pid, &state, &logs)
+    }
+
+    /// 日志行与快照取自同一次 state→logs 加锁：否则快照后新写入的日志会进入
+    /// lines 而 next_seq 停在旧值，调用方以下一次轮询的游标衔接时会重复读到该行。
+    fn logs_with_snapshot(&self, pid: u32, after: u64) -> (Vec<ProcLogLine>, ProcSnapshot) {
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let logs = self.logs.lock().unwrap_or_else(|p| p.into_inner());
+        let lines = logs.after(after).cloned().collect();
+        (lines, self.build_snapshot(pid, &state, &logs))
+    }
+
+    /// 仅在已持有 state 与 logs 锁时调用（锁序 state → logs，与服务内其他取锁路径一致）。
+    fn build_snapshot(&self, pid: u32, state: &ProcState, logs: &LogRing) -> ProcSnapshot {
         ProcSnapshot {
             pid,
             command: self.command.clone(),
@@ -177,7 +191,6 @@ impl PluginProcessService {
             .kill_on_drop(false);
         #[cfg(windows)]
         {
-            use std::os::windows::process::CommandExt;
             // CREATE_NO_WINDOW：与游戏进程/插件 shell 一致，避免弹出控制台窗口
             cmd.creation_flags(0x0800_0000);
         }
@@ -325,16 +338,14 @@ impl PluginProcessService {
 
     /// 按游标取增量日志。
     ///
-    /// 锁序注意：必须先调 `snapshot()`（内部短暂拿 state→logs 两把锁）再单独拿
-    /// logs 锁；反过来在持有 logs 锁时调 snapshot 会同线程重入死锁（std Mutex
-    /// 不可重入，实测把 current_thread runtime 整个挂死）。
+    /// 日志行与快照（含游标）在同一次 state→logs 加锁内生成（见
+    /// `logs_with_snapshot`），保证返回的游标恰好衔接本次返回的日志行。
+    /// 勿改为先 `snapshot()` 再单独拿 logs 锁——两段之间新写入的日志会让
+    /// 游标落后于实际返回内容，调用方下次轮询会重复读到同一行。
     pub fn logs(&self, plugin_id: &str, pid: u32, after: u64) -> Result<(Vec<ProcLogLine>, ProcSnapshot), String> {
         self.lazy_gc();
         let h = self.get(plugin_id, pid)?;
-        let snap = h.snapshot(pid);
-        let logs = h.logs.lock().unwrap_or_else(|p| p.into_inner());
-        let lines: Vec<ProcLogLine> = logs.after(after).cloned().collect();
-        Ok((lines, snap))
+        Ok(h.logs_with_snapshot(pid, after))
     }
 
     /// 进程快照（含存活状态）。
