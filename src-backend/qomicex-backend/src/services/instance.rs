@@ -1270,25 +1270,27 @@ impl InstanceService {
                 // 此时来源即目标，直接跳过，避免删除唯一记录后越界。
                 if source_idx == target_idx {
                     // 这条记录已经是新根目录下的目标，只是 canonicalize 在两次
-                    // 调用间不稳定，导致它同时被当成旧根来源。保留记录并把路径/
-                    // 目录名对齐到本次扫描值，避免第 5 步按旧根把它当残留清掉。
+                    // 调用间不稳定，导致它同时被当成旧根来源。这里只修正内存路径/
+                    // 目录名，让第 5 步按新根保留；设置本身没有变化，不能再用内存
+                    // 快照覆盖磁盘上的 qomicex.json，否则会回滚并发写入。
                     tracing::warn!(
                         name = %dir_name,
                         "scan: 来源与目标为同一记录，按目标记录保留"
                     );
                     let mut fixed = instances[source_idx].clone();
                     fixed.game_dir = item.game_dir.clone();
-                    fixed.name = dir_name.clone();
-                    match instance_config::write_full(&fixed) {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            return Err(format!(
-                                "目标实例目录不存在，无法写入 qomicex.json: {}",
-                                fixed.game_dir
-                            ));
-                        }
-                        Err(e) => return Err(e),
+                    // `dir_name` 可能是版本 JSON id 反查的回退值；只有扫描明确
+                    // 给出真实目录名且该目录存在时才改写，避免拼出不存在的路径。
+                    let real_dir = item.dir_name.is_some()
+                        && path_presence(
+                            &normalized_game_root(&item.game_dir)
+                                .join("versions")
+                                .join(dir_name),
+                        ) == PathPresence::Present;
+                    if real_dir {
+                        fixed.name = dir_name.clone();
                     }
+                    claimed_ids.insert(fixed.id.clone());
                     instances[source_idx] = fixed;
                     continue;
                 }
