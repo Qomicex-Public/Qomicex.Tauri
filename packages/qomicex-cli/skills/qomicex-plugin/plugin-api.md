@@ -36,6 +36,7 @@ await api.proxyFetchStream(req, { onChunk, onError })   // 流式请求
 | **getCache** | `call('getCache', key) → any \| null` | `cache:access` |
 | **callBackend** | `call('callBackend', endpoint, data?) → any` | `network:fetch` |
 | | 有 data → POST；无 data → GET。data 可传 `_method` 覆盖 HTTP 方法 | |
+| | **特权路由需额外权限**（见下方「callBackend 特权路由」） | |
 | **proxyFetch** | `call('proxyFetch', { url, method?, headers?, body?, timeoutMs? }) → { status, headers, body?, bodyBase64? }` | `network:cors_proxy` |
 | | SSRF 防护：仅 http/https，禁止内网地址 | |
 | **proxyFetchStream** | `proxyFetchStream(req, { onChunk, onError })` | `network:cors_proxy` |
@@ -124,6 +125,24 @@ await api.proxyFetchStream(req, { onChunk, onError })   // 流式请求
 | | 启动器切换语言时向所有插件沙箱广播；插件收到后重拉 `getPluginStrings` 重渲染（与主题跟随对齐）。`e.detail.locale` 为新 locale | |
 | **addMenuItem** | `addMenuItem(item: PluginMenuItem)` | `ui:inject_sidebar` |
 | | 运行时动态注册侧边栏菜单项，停用时自动移除 | |
+
+## callBackend 特权路由
+
+`callBackend` 只要求 `network:fetch`，但后端有些路由的语义远强于「能发 HTTP 请求」。这些路由按**方法 + 路径**额外校验权限（实现在 `src/plugins/backend-guard.ts`，匹配前会把端点规范成 fetch 实际请求的 pathname，因此 `..` 段、查询串、`_method` 覆盖都绕不过去）：
+
+| 路由 | 方法 | 额外权限 |
+|------|------|----------|
+| `/plugins/process/*` | 任意 | `process:manage` |
+| `/plugins/shell/*` | POST | `shell:execute` |
+| `/plugins/files/{id}/{authorize,read,write,delete,extract,list}` | POST | `filesystem:write` |
+| `/plugins/{install,install-url,upload}` | POST | `plugin:install` |
+| `/plugins/{id}` | DELETE | `plugin:install` |
+| `/plugins/{id}/rollback` | POST | `plugin:install` |
+| `/plugins/{id}/state` | PUT | `plugin:install` |
+
+用对应方法调这些路由时，manifest 必须同时声明 `network:fetch` 与上表的权限，否则抛 `Permission denied: <endpoint> requires <perm>`。**优先使用专用桥方法**（`process.spawn`、`writeText`、`uploadPlugin`）而不是 `callBackend` —— 专用方法的权限语义更清晰，也不受路由表变动影响。
+
+> 新增特权后端路由时必须同步登记到 `backend-guard.ts` 的 `BACKEND_ROUTE_RULES`，否则该路由对任何持有 `network:fetch` 的插件都是敞开的。`pnpm run test:backend-guard` 会校验规则表。
 
 ## error 处理
 

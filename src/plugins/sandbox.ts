@@ -6,6 +6,7 @@ import { usePluginStore } from '../stores/pluginStore.ts'
 import { createPluginBridge } from './plugin-api.ts'
 import { injectCss, registerThemeSync, unregisterThemeSync, getThemeVarsCss, themeBridgeScript } from './plugin-css.ts'
 import { API_BASE } from '../api/client.ts'
+import { backendEndpointPermission, resolveBackendMethod } from './backend-guard.ts'
 import { applyThemeOverride, clearThemeOverride } from '../theme/override.ts'
 import { normalizeHex, THEME_COLOR_MODE_BACKGROUND } from '../lib/themeColor.ts'
 import { getSettings as getAppSettings } from '../api/settings.ts'
@@ -816,31 +817,6 @@ function getCurrentThemeColorHex(): string | null {
   return null
 }
 
-/**
- * `callBackend` 是通用 HTTP 通道，只按 `network:fetch` 放行——但后端部分路由
- * 有比「能发请求」更强的语义（例如 `/plugins/process/{id}/spawn` 直接拉起
- * 任意进程）。插件只要声明 network:fetch 就能绕过 `process.spawn` 的
- * `process:manage` 检查，因此这些前缀在这里按对应权限二次把关。
- *
- * 后端本身不做调用者鉴权（信任前端是唯一的权限执行点），所以这里是唯一的
- * 拦截位置：新增特权路由时必须同步登记。
- */
-const BACKEND_ENDPOINT_PERMISSIONS: ReadonlyArray<readonly [RegExp, string]> = [
-  [/^\/plugins\/process\//, 'process:manage'],
-  [/^\/plugins\/shell\//, 'shell:execute'],
-  [/^\/plugins\/install(-url)?(\/|$)/, 'plugin:install'],
-  [/^\/plugins\/upload(\/|$)/, 'plugin:install'],
-]
-
-/** 校验 callBackend 目标端点所需的额外权限；返回 null 表示仅需 network:fetch。 */
-function backendEndpointPermission(endpoint: string): string | null {
-  const path = endpoint.split('?')[0] ?? ''
-  for (const [pattern, perm] of BACKEND_ENDPOINT_PERMISSIONS) {
-    if (pattern.test(path)) return perm
-  }
-  return null
-}
-
 async function executePluginMethod(pluginId: string, method: string, args: unknown[]): Promise<unknown> {
   const requiredPerm = METHOD_PERMISSIONS[method]
   if (requiredPerm) {
@@ -848,12 +824,19 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     if (!plugin || !plugin.manifest.permissions.includes(requiredPerm))
       throw new Error(`Permission denied: requires ${requiredPerm}`)
   }
-  if (method === 'callBackend' && typeof args[0] === 'string') {
-    const extra = backendEndpointPermission(args[0])
+  if (method === 'callBackend') {
+    // 端点必须是字符串：非字符串（数组等）会被拼成任意后端路径，先拒掉。
+    const endpoint = args[0]
+    if (typeof endpoint !== 'string') {
+      throw new Error('Permission denied: callBackend endpoint must be a string')
+    }
+    // 特权路由二次鉴权（规则表见 backend-guard.ts）：callBackend 只要求
+    // network:fetch，但进程/文件系统/插件安装等路由需要更强权限。
+    const extra = backendEndpointPermission(endpoint, resolveBackendMethod(args[1]), API_BASE)
     if (extra) {
       const plugin = usePluginStore.getState().getPlugin(pluginId)
       if (!plugin || !plugin.manifest.permissions.includes(extra))
-        throw new Error(`Permission denied: ${args[0]} requires ${extra}`)
+        throw new Error(`Permission denied: ${endpoint} requires ${extra}`)
     }
   }
   const bridge = createPluginBridge(pluginId)

@@ -531,12 +531,16 @@ pub fn sniff_pack_kind(zip_path: &Path) -> Result<PackKind, String> {
     let mut has_modrinth = false;
     let mut has_curseforge = false;
     for i in 0..archive.len() {
-        let name = archive
-            .by_index(i)
-            .map_err(|e| format!("读取整合包条目失败: {e}"))?
-            .name()
-            .map(|n| n.into_owned())
-            .unwrap_or_default();
+        // 单个条目读不出来（损坏条目/非常规编码）时跳过，继续扫其余条目：
+        // 整包只在完全找不到清单时才报错，不因一个坏条目误判格式。
+        let Ok(entry) = archive.by_index(i) else {
+            continue;
+        };
+        // 条目名本身也可能读不出来（zip 的 name() 返回 Result），同样跳过。
+        let Ok(name) = entry.name() else {
+            continue;
+        };
+        let name = name.into_owned();
         if name.eq_ignore_ascii_case("modrinth.index.json") {
             has_modrinth = true;
         } else if name.eq_ignore_ascii_case("manifest.json") {
