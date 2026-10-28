@@ -25,7 +25,7 @@ CurseForge 的 `downloadUrl: null` 是作者关闭 Project Distribution Toggle �
 3. `InstallProgress` 新增 `blockedFiles` 字段，与 `failedFiles` 分开——它不是下载失败，而是已知且可操作的阻塞。安装产物落盘后，只要有阻塞条目，任务状态就停在**非终态** `awaiting-files`，而不是 `completed`：下载中心据此显示「待补全」并保留入口，补全全部通过后才转 `completed`。等待期间更新/修复返回 `MISSING_MODS_PENDING`，不覆盖 tracker 槽位。
 4. 新增 `GET /modpack/blocked/{instanceId}`、`POST /modpack/blocked/{instanceId}/submit`（按 SHA-1 匹配，供拖入多文件）、`POST /modpack/blocked/{instanceId}/submit/{fileId}`（逐条指定）与 `DELETE /modpack/blocked/{instanceId}`（放弃补全）。提交传本机绝对路径而非 multipart 上传：文件本就在用户机器上，读进内存再重传一遍纯属浪费（重型 mod 可达数百 MB），与既有 `/modpack/parse-path` 同一思路。
 5. 补全用清单条目的 SHA-1 校验，不匹配则拒绝且不落盘、不清清单；源文件不删除、不移动（是用户自己的下载，可能还有别的实例要用）。`GET` 额外核对 `mods/` 目录：用户直接把 jar 放进目录也算补上（有哈希的必须一致），清单清空时结束等待态。
-6. 项目页链接用 `https://www.curseforge.com/projects/{projectId}`：实测该形式 302 到 slug 页（HTTP 200），而 `projects/{id}/files/{fileId}` 是 404。
+6. 项目页链接用 `https://www.curseforge.com/projects/{projectId}`：实测该形式 302 到 slug 页（HTTP 200），而 `projects/{id}/files/{fileId}` 是 404。补全入口的「对应版本」直达链接见 ADR-123（issue #301）：由 `links.websiteUrl` 拼 `/files/{fileId}`，只在响应里补全、不写回清单。
 7. 原地更新额外做「已有同名文件则不算阻塞」的过滤：更新只差这一版文件时用户手头那个照样能跑，报出来只会让人以为实例坏了。
 8. 补全入口放在下载中心的等待任务上：对话框支持把 jar 拖进来（可多选，后端按哈希匹配），也保留逐条「选择文件」。
 

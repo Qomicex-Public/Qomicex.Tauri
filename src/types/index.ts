@@ -265,7 +265,7 @@ export interface CreateInstanceRequest {
   accountName?: string
   accountUuid?: string
   accessToken?: string
-  jvmArgs?: string
+  jvmArgs?: string | null
   versionIsolation?: boolean | null
   icon?: string
   skipIntegrityCheck?: boolean
@@ -431,6 +431,13 @@ export interface BlockedModFile {
   fileLength?: number
   /** CurseForge 项目页直达链接 */
   pageUrl: string
+  /**
+   * 精确到该文件版本的文件页（issue #301）。
+   *
+   * 后端按项目的 `links.websiteUrl` 拼 `/files/{fileId}` 得到，需要联网解析，
+   * 因此可能缺失——缺失时退回 `pageUrl`（项目页，用户得自己在 Files 里找版本）。
+   */
+  filePageUrl?: string
 }
 
 export interface BlockedModList {

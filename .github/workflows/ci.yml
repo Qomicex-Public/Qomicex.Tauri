@@ -102,16 +102,11 @@ jobs:
           # easytier fork 锁定 hickory 0.25.2（endpoint-discovery 启用 dns-resolver）：
           # 0118 在 0.25 线无补丁版本，0119 需 0.26.1（breaking，需迁移 EasyTier4QML fork）。
           #
-          # 0367/0368/0369（zip 的 extract() symlink / SUID 提权，均 fixed >=9.0.0）：
-          # 本仓与 core、Updater 的 zip 已升 9.0.4。剩余命中来自 easytier-proto 在
-          # 9055aef 里写死的 `zip = "4.0.0"`（第三方 fork，本仓改不了），而它唯一的
-          # extract() 调用在 `build = "build/main.rs"` 的构建脚本中——仅用于开发者本机
-          # 解压 protoc，不进运行时二进制、不处理不可信输入，故不构成本项目的提权面。
-          # 待 EasyTier4QML fork 升级 zip 后移除这三条 ignore。
+          # 0367/0368/0369（zip extract symlink / SUID）与 0391/0398/0403/0410
+          # （zstd 依赖链）已由 EasyTier4QML e8a60e6b 升级修复（zip >= 9.0.0、
+          # zstd 0.14.3 / zstd-safe 8.2.0 / zstd-sys 2.1.2），无需再 ignore。
           cd src-backend/qomicex-backend && cargo audit \
-            --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 \
-            --ignore RUSTSEC-2026-0367 --ignore RUSTSEC-2026-0368 \
-            --ignore RUSTSEC-2026-0369
+            --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119
       - name: Install test dependencies
         run: sudo apt-get update && sudo apt-get install -y jq curl
       - name: Run API filter tests

@@ -29,6 +29,7 @@ use crate::error::{ApiError, ApiResult};
 use crate::services::install_service::InstallRequestData;
 use crate::services::install_tracker::InstallProgress;
 use crate::services::instance::GameInstance;
+use crate::services::instance_config;
 use crate::services::instance_group::InstanceGroup;
 use crate::services::launch_tracker::LaunchProgress;
 use crate::state::SharedState;
@@ -66,21 +67,46 @@ struct UpdateInstanceRequest {
     loader: Option<String>,
     #[serde(default)]
     loader_version: Option<String>,
-    #[serde(default)]
-    java_path: Option<String>,
+    /// 缺失=不修改；null=清除；字符串=设置。下同。
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    java_path: Option<Option<String>>,
     #[serde(default)]
     max_memory: Option<i32>,
-    #[serde(default)]
-    jvm_args: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    jvm_args: Option<Option<String>>,
     #[serde(default)]
     is_hidden: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    version_isolation: Option<Option<bool>>,
     #[serde(default)]
-    version_isolation: Option<bool>,
+    skip_integrity_check: Option<bool>,
     #[serde(default)]
     custom_group_ids: Option<Vec<String>>,
     /// 用户自定义备注：缺失=不修改；null=清除；Some(Some(v))=设置。
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_double_option")]
     remark: Option<Option<String>>,
+}
+
+/// 区分「字段缺失」与「显式 null」。
+///
+/// `Option<Option<T>>` 默认反序列化会把 JSON null 当成外层 None，清空请求
+/// 会被静默忽略（重置某一项失败，界面却显示已重置）。
+fn deserialize_double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
+/// 空白字符串按「清除」处理，避免独立配置回退到旧值。
+fn normalize_optional_text(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 #[derive(Serialize)]
@@ -342,6 +368,12 @@ async fn create_instance(
     State(state): State<SharedState>,
     Json(req): Json<CreateInstanceRequest>,
 ) -> ApiResult<(StatusCode, Json<GameInstance>)> {
+    if !instance_config::is_safe_instance_name(&req.name) {
+        return Err(ApiError::bad_request(
+            "INSTANCE_NAME_INVALID",
+            "Instance name must be a single valid directory name",
+        ));
+    }
     let instance = GameInstance {
         id: short_id(),
         name: req.name,
@@ -353,7 +385,10 @@ async fn create_instance(
         game_dir: req.game_dir.unwrap_or_else(|| ".minecraft".to_string()),
         ..Default::default()
     };
-    let created = state.instance.create(instance);
+    let created = state
+        .instance
+        .create(instance)
+        .map_err(|e| ApiError::bad_request("INSTANCE_CREATE_FAILED", e))?;
     Ok((StatusCode::CREATED, Json(created)))
 }
 
@@ -377,66 +412,101 @@ async fn update_instance(
     State(state): State<SharedState>,
     Json(req): Json<UpdateInstanceRequest>,
 ) -> ApiResult<Json<GameInstance>> {
-    let Some(mut existing) = state.instance.get_by_id(&id) else {
-        return Err(instance_not_found(&id));
-    };
     // name 即 VersionDirName：先同步重命名磁盘版本目录，成功才更新记录；
-    // 目录被占用/目标已存在 → 拒绝改名并返回错误（记录保持原名不变）。
-    if let Some(v) = req.name.as_deref() {
-        let new_name = v.trim();
-        if new_name.is_empty() {
+    // 目录被占用/目标已存在/名称非法 → 拒绝改名并返回错误（记录保持原名不变）。
+    let new_name = req.name.as_deref().map(str::trim);
+    // 改名成功但后续配置/镜像写入失败时，需要把目录名还原，避免记录与磁盘错位。
+    let mut renamed_from: Option<(GameInstance, String)> = None;
+    if let Some(name) = new_name {
+        if name.is_empty() {
             return Err(ApiError::bad_request(
                 "INSTANCE_NAME_EMPTY",
                 "Instance name cannot be empty",
             ));
         }
-        if new_name != existing.name {
+        if !instance_config::is_safe_instance_name(name) {
+            return Err(ApiError::bad_request(
+                "INSTANCE_NAME_INVALID",
+                "Instance name must be a single valid directory name",
+            ));
+        }
+        let Some(existing) = state.instance.get_by_id(&id) else {
+            return Err(instance_not_found(&id));
+        };
+        if name != existing.name {
             state
                 .instance
-                .rename_version_dir(&existing, new_name)
+                .rename_version_dir(&existing, name)
                 .map_err(|e| match e {
-                    crate::services::instance::RenameFailure::TargetExists(msg) => {
+                    crate::services::instance::RenameFailure::TargetExists(msg)
+                    | crate::services::instance::RenameFailure::InvalidName(msg) => {
                         ApiError::bad_request("INSTANCE_NAME_CONFLICT", msg)
                     }
                     crate::services::instance::RenameFailure::Io(msg) => ApiError::internal(msg),
                 })?;
-            existing.name = new_name.to_string();
+            renamed_from = Some((existing, name.to_string()));
         }
     }
-    if let Some(v) = req.game_version {
-        existing.game_version = v;
-    }
-    if let Some(v) = req.loader {
-        existing.loader = Some(v);
-    }
-    if let Some(v) = req.loader_version {
-        existing.loader_version = Some(v);
-    }
-    if let Some(v) = req.java_path {
-        existing.java_path = Some(v);
-    }
-    if let Some(v) = req.max_memory {
-        existing.max_memory = v;
-    }
-    if let Some(v) = req.jvm_args {
-        existing.jvm_args = Some(v);
-    }
-    if let Some(v) = req.is_hidden {
-        existing.is_hidden = v;
-    }
-    if let Some(v) = req.version_isolation {
-        existing.version_isolation = Some(v);
-    }
-    if let Some(v) = req.custom_group_ids {
-        existing.custom_group_ids = v;
-    }
-    if let Some(v) = req.remark {
-        existing.remark = v;
-    }
-    let updated = state
-        .instance
-        .update(&id, existing)
-        .ok_or_else(|| instance_not_found(&id))?;
+    // 补丁在实例锁内应用到**最新**记录：并发 PUT 不会用各自读到的旧快照
+    // 互相覆盖未修改的字段。
+    let update_result = state.instance.update_with(&id, |existing| {
+        if let Some(name) = new_name {
+            existing.name = name.to_string();
+        }
+        if let Some(v) = req.game_version.clone() {
+            existing.game_version = v;
+        }
+        if let Some(v) = req.loader.clone() {
+            existing.loader = Some(v);
+        }
+        if let Some(v) = req.loader_version.clone() {
+            existing.loader_version = Some(v);
+        }
+        if let Some(v) = req.java_path.clone() {
+            existing.java_path = v.and_then(normalize_optional_text);
+        }
+        if let Some(v) = req.max_memory {
+            existing.max_memory = v;
+        }
+        if let Some(v) = req.jvm_args.clone() {
+            existing.jvm_args = v.and_then(normalize_optional_text);
+        }
+        if let Some(v) = req.is_hidden {
+            existing.is_hidden = v;
+        }
+        if let Some(v) = req.version_isolation {
+            existing.version_isolation = v;
+        }
+        if let Some(v) = req.skip_integrity_check {
+            existing.skip_integrity_check = v;
+        }
+        if let Some(v) = req.custom_group_ids.clone() {
+            existing.custom_group_ids = v;
+        }
+        if let Some(v) = req.remark.clone() {
+            existing.remark = v.and_then(normalize_optional_text);
+        }
+    });
+    let rollback_rename = |renamed_from: Option<(GameInstance, String)>| {
+        if let Some((old, current_name)) = renamed_from {
+            let mut current = old.clone();
+            current.name = current_name;
+            if let Err(rollback) = state.instance.rename_version_dir(&current, &old.name) {
+                tracing::error!(error = ?rollback, "更新失败后回滚实例目录名失败");
+            }
+        }
+    };
+    let updated = match update_result {
+        Ok(Some(updated)) => updated,
+        Ok(None) => {
+            rollback_rename(renamed_from);
+            return Err(instance_not_found(&id));
+        }
+        Err(e) => {
+            rollback_rename(renamed_from);
+            return Err(ApiError::internal(e));
+        }
+    };
     Ok(Json(updated))
 }
 
@@ -518,9 +588,9 @@ async fn delete_group(
     // 清理所有实例对该分组的引用
     for inst in state.instance.get_all() {
         if inst.custom_group_ids.iter().any(|g| g == &id) {
-            let mut updated = inst.clone();
-            updated.custom_group_ids.retain(|g| g != &id);
-            let _ = state.instance.update(&inst.id, updated);
+            let _ = state.instance.update_with(&inst.id, |current| {
+                current.custom_group_ids.retain(|g| g != &id)
+            });
         }
     }
     Ok(Json(MessageResponse {
@@ -2586,5 +2656,52 @@ mod refresh_tests {
         // 否则旧 refresh_token 覆盖新值会导致后续刷新永久失败
         assert_eq!(seen[0], "refresh-token");
         assert_eq!(seen[1], "rotated-1");
+    }
+}
+
+#[cfg(test)]
+mod update_request_tests {
+    use super::*;
+
+    /// `Option<Option<T>>` 的默认反序列化会把 null 当成「没传」，清空设置会被
+    /// 静默忽略。`deserialize_double_option` 必须区分三种状态。
+    #[test]
+    fn double_option_distinguishes_missing_null_and_value() {
+        let missing: UpdateInstanceRequest = serde_json::from_str("{}").unwrap();
+        assert!(missing.java_path.is_none(), "缺失应为 None");
+        assert!(missing.jvm_args.is_none());
+        assert!(missing.version_isolation.is_none());
+        assert!(missing.remark.is_none());
+
+        let nulls: UpdateInstanceRequest = serde_json::from_str(
+            r#"{"javaPath":null,"jvmArgs":null,"versionIsolation":null,"remark":null}"#,
+        )
+        .unwrap();
+        assert_eq!(nulls.java_path, Some(None), "显式 null 应表示清除");
+        assert_eq!(nulls.jvm_args, Some(None));
+        assert_eq!(nulls.version_isolation, Some(None));
+        assert_eq!(nulls.remark, Some(None));
+
+        let values: UpdateInstanceRequest = serde_json::from_str(
+            r#"{"javaPath":"C:/Java/bin/javaw.exe","jvmArgs":"-Xmx8G","versionIsolation":false,"remark":"测试","skipIntegrityCheck":true}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            values.java_path,
+            Some(Some("C:/Java/bin/javaw.exe".to_string()))
+        );
+        assert_eq!(values.jvm_args, Some(Some("-Xmx8G".to_string())));
+        assert_eq!(values.version_isolation, Some(Some(false)));
+        assert_eq!(values.remark, Some(Some("测试".to_string())));
+        assert_eq!(values.skip_integrity_check, Some(true));
+    }
+
+    #[test]
+    fn blank_text_normalizes_to_clear() {
+        assert_eq!(normalize_optional_text("   ".to_string()), None);
+        assert_eq!(
+            normalize_optional_text(" -Xmx8G ".to_string()),
+            Some("-Xmx8G".to_string())
+        );
     }
 }

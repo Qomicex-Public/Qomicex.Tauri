@@ -37,11 +37,13 @@ use crate::services::launch_tracker::LaunchProgress;
 use crate::state::SharedState;
 
 /// 玩家列表里展示的 vendor（对齐 C# `Qomicex.Launcher {ver}/Qomicex.Connector | EasyTier{et}`）。
-/// easytier 为库内嵌魔改版（rev 287c667），无独立可执行文件可查版本，etVersion 固定。
+/// easytier 是库内嵌魔改版：版本号与 fork 提交由构建脚本从 `Cargo.lock` 提取并注入
+/// `ET_VENDOR`（见 build.rs `emit_easytier_vendor`），升版时无需手改。
 fn vendor_string() -> String {
     format!(
-        "Qomicex Launcher {}(Qomicex Connector 2.1) / Easytier v2.6.4-d114cdd(QML edit)",
-        crate::state::APP_VERSION
+        "Qomicex Launcher {}(Qomicex Connector 2.1) / Easytier {}(QML edit)",
+        crate::state::APP_VERSION,
+        env!("ET_VENDOR")
     )
 }
 

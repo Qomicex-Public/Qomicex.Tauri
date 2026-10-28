@@ -1042,7 +1042,9 @@ fn fix_instance_game_versions(
             let mut updated = inst.clone();
             updated.game_version = scanned_version.game_version.clone();
             let uid = updated.id.clone();
-            instances.update(&uid, updated);
+            if let Err(e) = instances.update(&uid, updated) {
+                tracing::warn!(error = %e, "同步实例 gameVersion 到独立配置失败");
+            }
         }
     }
 }
@@ -1082,7 +1084,9 @@ fn fix_instance_loaders(
             updated.loader = Some(first.r#type.clone());
             updated.loader_version = Some(first.version.clone());
             let uid = updated.id.clone();
-            instances.update(&uid, updated);
+            if let Err(e) = instances.update(&uid, updated) {
+                tracing::warn!(error = %e, "同步实例 loader 到独立配置失败");
+            }
         }
     }
 }
@@ -1134,7 +1138,8 @@ mod tests {
     fn fix_skips_corrupted_scan_entries() {
         let dir = temp_dir("corrupted");
         let svc = InstanceService::new_for_test(&dir);
-        svc.create(instance("GTNH 2.8.4", "C:/mc", "1.7.10"));
+        svc.create(instance("GTNH 2.8.4", "C:/mc", "1.7.10"))
+            .unwrap();
         let scanned = vec![entry("GTNH 2.8.4", "GTNH 2.8.4", "Corrupted")];
         fix_instance_game_versions(&svc, &scanned, "C:/mc");
         assert_eq!(svc.get_all()[0].game_version, "1.7.10");
@@ -1145,7 +1150,8 @@ mod tests {
     fn fix_updates_on_available_entries() {
         let dir = temp_dir("available");
         let svc = InstanceService::new_for_test(&dir);
-        svc.create(instance("GTNH 2.8.4", "C:/mc", "9.9.9"));
+        svc.create(instance("GTNH 2.8.4", "C:/mc", "9.9.9"))
+            .unwrap();
         let scanned = vec![entry("GTNH 2.8.4", "1.7.10", "Available")];
         fix_instance_game_versions(&svc, &scanned, "C:/mc");
         assert_eq!(svc.get_all()[0].game_version, "1.7.10");

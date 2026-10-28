@@ -3,7 +3,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, DoorOpen, Loader2, LogIn, Minus, Play, Plus, Settings as SettingsIcon, UserX } from 'lucide-react'
+import { ArrowLeft, DoorOpen, Loader2, LogIn, Minus, Play, Plus, Share2, Settings as SettingsIcon, UserX } from 'lucide-react'
 import { Loader2 as Loader2Data, Play as PlayData, Wifi as WifiData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { CopyActionIcon } from '../components/CopyActionIcon.tsx'
@@ -24,6 +24,8 @@ import { getInstances, getLaunchProgress } from '../api/instance.ts'
 import { useRunning } from '../contexts/RunningContext.tsx'
 import { useI18n } from '../i18n/index.tsx'
 import { cropHeadFromSkin } from '../lib/skin-avatar.ts'
+import { buildRoomShareUrl } from '../lib/share.ts'
+import { ShareLinkDialog } from '../components/ShareLinkDialog.tsx'
 import type { ConnectorStatus, ConnectorPlayer, GameInstance, EasyTierStatus, NatTypeResult, LaunchProgress, KickReviewRequest } from '../types/index.ts'
 
 function fmtSpeed(bytesPerSec: number): string {
@@ -274,6 +276,8 @@ export default function Connect() {
   const [hostError, setHostError] = useState<string | null>(null)
   const [kickBusy, setKickBusy] = useState(false)
   const [copiedKey, setCopiedKey] = useState<'roomCode' | 'server' | null>(null)
+  const [share, setShare] = useState<{ url: string; title: string } | null>(null)
+  const [shareOpen, setShareOpen] = useState(false)
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const startInstanceIdRef = useRef<string | null>(null)
   const lpTimer = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -477,6 +481,23 @@ export default function Connect() {
     setCopiedKey(key)
     if (copiedTimer.current) clearTimeout(copiedTimer.current)
     copiedTimer.current = setTimeout(() => setCopiedKey(null), 800)
+  }
+
+  /** 生成房间分享页链接：房主把链接发出去，接收者可在网页里看版本并唤起加入。 */
+  const openRoomShare = () => {
+    if (!status.roomCode) return
+    setShare({
+      url: buildRoomShareUrl({
+        code: status.roomCode,
+        host: status.players.find((p) => p.kind === 'host')?.name,
+        gameVersion: status.gameInfo?.gameVersion,
+        loader: status.gameInfo?.loader ?? undefined,
+        loaderVersion: status.gameInfo?.loaderVersion ?? undefined,
+        instance: instances.find((i) => i.id === startInstanceIdRef.current)?.name,
+      }),
+      title: t('common.shareRoom'),
+    })
+    setShareOpen(true)
   }
 
   const testNatType = async () => {
@@ -709,6 +730,10 @@ export default function Connect() {
               <Button size="sm" variant="ghost" onClick={() => status.roomCode && copy('roomCode', status.roomCode)}>
                 <CopyActionIcon copied={copiedKey === 'roomCode'} />
               </Button>
+              <Button size="sm" variant="outline" onClick={openRoomShare} disabled={!status.roomCode}>
+                <Share2 className="mr-1 h-3.5 w-3.5" />
+                {t('common.shareRoom')}
+              </Button>
             </div>
             <PlayerList players={status.players} onKick={(p) => { if (p.kind !== 'host' && !kickBusy) handleKick(p) }} />
             {status.kickedPlayers.length > 0 && (
@@ -780,6 +805,13 @@ export default function Connect() {
           </>
         )}
       </Dialog>
+
+      <ShareLinkDialog
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        title={share?.title ?? ''}
+        url={share?.url ?? ''}
+      />
     </PageShell>
   )
 }
