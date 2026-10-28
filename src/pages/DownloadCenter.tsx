@@ -309,8 +309,10 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
           {isActive && task.type !== 'file' && task.type !== 'java' && task.status !== 'queued' && (
             <>
               {/* 整合包更新不支持暂停/继续：更新进程一旦进入应用阶段便整体完成或整体回滚，
-                  暴露暂停按钮会误导用户以为可以中断在半途。 */}
-              {task.type !== 'modpack-update' && (
+                  暴露暂停按钮会误导用户以为可以中断在半途。
+                  服务端搭建同理：后端管线只在批量下载阶段检查暂停标志，安装器运行期间
+                  仍会继续，而 SSE 会把卡片显示成「已暂停」——隐藏按钮避免假承诺。 */}
+              {task.type !== 'modpack-update' && task.kind !== 'server' && (
                 <Tooltip content={t(task.status === 'paused' ? 'downloads.resume' : 'downloads.pause')}>
                   <Button variant="ghost" size="icon" className={cn('h-8 w-8 text-muted-foreground', task.status === 'paused' ? 'hover:text-primary' : 'hover:text-amber-400')} onClick={() => task.instanceId && (task.status === 'paused' ? resumeInstall(task.instanceId) : pauseInstall(task.instanceId))}>
                     <MorphIcon icon={task.status === 'paused' ? PLAY_ICON : PAUSE_ICON} strokeLinecap="round" strokeLinejoin="round" spring="snappy" reducedMotion="user" />
@@ -599,9 +601,21 @@ export default function DownloadCenter() {
     if (task?.kind === 'server') {
       getInstallProgress(instId)
         .then(p => {
-          // 后端 tracker 无条目（重启后）返回 200 + not-started：这是原始枚举
-          // 而非卡片状态，直接写入会让 STATUS_CONFIG[status] 变 undefined、
-          // TaskCard 崩溃且持久化到 localStorage。跳过未知状态。
+          // 后端 tracker 无条目（后端重启后内存记录丢失）返回 not-started。
+          // 若卡片还停在「待补全/进行中」，它会永远挂着且没有移除入口——转为
+          // 可清除的失败态并提示重新发起搭建。其余未知状态仍跳过：直接写入
+          // 会让 STATUS_CONFIG[status] 变 undefined、TaskCard 崩溃并持久化。
+          if (p?.status === 'not-started') {
+            const cur = getTasks().find(t => t.id === taskId)
+            if (cur && cur.status !== 'failed' && cur.status !== 'cancelled' && cur.status !== 'completed') {
+              updateTask(taskId, {
+                status: 'failed',
+                blockedFiles: undefined,
+                error: t('downloads.errors.serverTaskLost'),
+              })
+            }
+            return
+          }
           if (!p || !(p.status in STATUS_CONFIG)) return
           updateTask(taskId, {
             status: p.status as DownloadTask['status'],

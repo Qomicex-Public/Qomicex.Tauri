@@ -173,6 +173,10 @@ impl PluginProcessService {
             return Err("command 不能为空".to_string());
         }
 
+        // 先回收已过保留期的句柄：否则 32 个进程全部退出且保留期届满后，
+        // 计数仍按旧句柄算，插件会一直撞「已达上限」而无法重新拉起。
+        self.lazy_gc();
+
         {
             let procs = self.procs.lock().unwrap_or_else(|p| p.into_inner());
             let mine = procs.values().filter(|h| h.plugin_id == plugin_id).count();

@@ -235,6 +235,9 @@ pub async fn run_server_pipeline(
                 f.set_status(InstallStatus::Downloading);
                 f.current_file = format!("整合包包体: {url}");
             });
+            // 包体下载归到 parse-pack 步骤：download_batch 只在拿到步骤 ID 时
+            // 推进百分比，否则下载期间该步骤一直是 pending、卡片停在 0%。
+            handle.mark_step("parse-pack", "active");
             download_batch(
                 &handle,
                 &mgr,
@@ -243,7 +246,7 @@ pub async fn run_server_pipeline(
                     path.clone(),
                     crate::endpoints::modpack::modpack_headers(&url, &cf_api_key),
                 )],
-                None,
+                Some("parse-pack"),
             )
             .await?;
 
@@ -421,47 +424,32 @@ pub async fn run_server_pipeline(
             result
         };
 
-        // overrides 与文件下载并行（与客户端整合包管线一致：接受小概率写竞争）
-        let h_o = handle.clone();
-        let dir_o = dir.clone();
-        let kind_o = source_kind.clone();
-        let zip_o = zip_path.clone();
-        let branch_overrides = async move {
-            h_o.mark_step("overrides", "active");
-            h_o.set_stage("server-overrides");
-            let factory = DefaultInstallerFactory;
-            let zip_str = zip_o
-                .as_ref()
-                .and_then(|p| p.to_str())
-                .ok_or("整合包文件缺失")?;
-            let dir_str = dir_o.to_string_lossy().into_owned();
-            // 服务端目录无版本隔离：overrides 直落到根
-            let inst = if kind_o == "modrinth" {
-                factory.create_modrinth_modpack(&dir_str, false, zip_str)
-            } else {
-                factory.create_curseforge_modpack(&dir_str, false, zip_str)
-            };
-            inst.install("", "", None, None, None, None)
-                .await
-                .map_err(|e| format!("释放整合包覆盖文件失败: {e}"))?;
-            h_o.mark_step("overrides", "done");
-            Ok(())
-        };
-
-        let (res_g, res_o) = tokio::join!(branch_files, branch_overrides);
-        // 快速失败：首个非取消类错误胜出
-        let first_err = [res_g.as_ref().err(), res_o.as_ref().err()]
-            .into_iter()
-            .flatten()
-            .find(|e| e.as_str() != "安装已取消")
-            .cloned();
-        if let Some(e) = first_err {
-            handle.request_cancel();
-            return Err(e);
-        }
+        // 先下载清单文件，再释放 overrides：两条分支都写服务端目录，并行时
+        // 若包内同时含 mods/foo.jar 与 overrides/mods/foo.jar，最终内容取决于
+        // 调度顺序。串行 + 明确顺序让 overrides 稳定覆盖清单文件（用户可编辑的
+        // 配置/脚本类覆盖优先）。
+        branch_files.await?;
         ensure_not_cancelled(&handle)?;
-        res_g?;
-        res_o?;
+
+        handle.mark_step("overrides", "active");
+        handle.set_stage("server-overrides");
+        let factory = DefaultInstallerFactory;
+        let zip_str = zip_path
+            .as_ref()
+            .and_then(|p| p.to_str())
+            .ok_or("整合包文件缺失")?;
+        let dir_str = dir.to_string_lossy().into_owned();
+        // 服务端目录无版本隔离：overrides 直落到根
+        let inst = if source_kind == "modrinth" {
+            factory.create_modrinth_modpack(&dir_str, false, zip_str)
+        } else {
+            factory.create_curseforge_modpack(&dir_str, false, zip_str)
+        };
+        inst.install("", "", None, None, None, None)
+            .await
+            .map_err(|e| format!("释放整合包覆盖文件失败: {e}"))?;
+        handle.mark_step("overrides", "done");
+        ensure_not_cancelled(&handle)?;
     }
 
     // ---- 4. client-only mod 过滤 ----
@@ -502,7 +490,8 @@ pub async fn run_server_pipeline(
 // 包体解析
 // ---------------------------------------------------------------------------
 
-enum PackKind {
+/// 整合包清单类型（`sniff_pack_kind` 的返回类型，故与函数同可见性）。
+pub enum PackKind {
     Modrinth,
     Curseforge,
 }
@@ -533,9 +522,14 @@ fn parse_pack(
 
 /// 按包内条目判断 .zip/.mrpack 的清单类型：有 modrinth.index.json → Modrinth；
 /// 否则尝试 manifest.json → CurseForge。
+///
+/// 先扫完全部条目再判定：少数包里两个清单并存，按条目顺序抢先返回会把
+/// Modrinth 包误判成 CurseForge（后者 manifest 排前面）。
 pub fn sniff_pack_kind(zip_path: &Path) -> Result<PackKind, String> {
     let file = std::fs::File::open(zip_path).map_err(|e| format!("打开整合包失败: {e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败: {e}"))?;
+    let mut has_modrinth = false;
+    let mut has_curseforge = false;
     for i in 0..archive.len() {
         let name = archive
             .by_index(i)
@@ -544,11 +538,16 @@ pub fn sniff_pack_kind(zip_path: &Path) -> Result<PackKind, String> {
             .map(|n| n.into_owned())
             .unwrap_or_default();
         if name.eq_ignore_ascii_case("modrinth.index.json") {
-            return Ok(PackKind::Modrinth);
+            has_modrinth = true;
+        } else if name.eq_ignore_ascii_case("manifest.json") {
+            has_curseforge = true;
         }
-        if name.eq_ignore_ascii_case("manifest.json") {
-            return Ok(PackKind::Curseforge);
-        }
+    }
+    if has_modrinth {
+        return Ok(PackKind::Modrinth);
+    }
+    if has_curseforge {
+        return Ok(PackKind::Curseforge);
     }
     Err("无法识别整合包格式（既无 modrinth.index.json 也无 manifest.json）".to_string())
 }
@@ -1218,6 +1217,42 @@ mod tests {
             None,
             "无 clientSideOnly → 保守 None（保留）"
         );
+    }
+
+    #[test]
+    fn sniff_pack_kind_prefers_modrinth_over_entry_order() {
+        // 少数包同时含两个清单；manifest.json 排在前面时不能按条目顺序抢先判定。
+        let dir = std::env::temp_dir().join(format!("qml-sniff-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let both = dir.join("both.zip");
+        {
+            let f = std::fs::File::create(&both).unwrap();
+            let mut zw = zip::ZipWriter::new(f);
+            let opts = zip::write::SimpleFileOptions::default();
+            // 先写 manifest.json，再写 modrinth.index.json
+            zw.start_file("manifest.json", opts).unwrap();
+            std::io::Write::write_all(&mut zw, b"{}").unwrap();
+            zw.start_file("modrinth.index.json", opts).unwrap();
+            std::io::Write::write_all(&mut zw, b"{}").unwrap();
+            zw.finish().unwrap();
+        }
+        assert!(
+            matches!(sniff_pack_kind(&both), Ok(PackKind::Modrinth)),
+            "双清单包必须优先识别为 Modrinth"
+        );
+
+        let cf_only = dir.join("cf.zip");
+        {
+            let f = std::fs::File::create(&cf_only).unwrap();
+            let mut zw = zip::ZipWriter::new(f);
+            let opts = zip::write::SimpleFileOptions::default();
+            zw.start_file("manifest.json", opts).unwrap();
+            std::io::Write::write_all(&mut zw, b"{}").unwrap();
+            zw.finish().unwrap();
+        }
+        assert!(matches!(sniff_pack_kind(&cf_only), Ok(PackKind::Curseforge)));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
