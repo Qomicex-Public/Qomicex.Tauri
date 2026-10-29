@@ -30,7 +30,8 @@ const CURSEFORGE_CDN_HOSTS: &[&str] = &["mediafilez.forgecdn.net", "edge.forgecd
 /// 已撤下的自有镜像节点（仅用于把历史形态 URL 归一回官方，不再生成候选）。
 const RETIRED_QML_MODRINTH_HOSTS: &[&str] =
     &["modrinth.qomicex.dpdns.org", "modrinth1.qomicex.dpdns.org"];
-const RETIRED_QML_GENERIC_HOSTS: &[&str] = &["mirror.qomicex.dpdns.org", "mirror1.qomicex.dpdns.org"];
+const RETIRED_QML_GENERIC_HOSTS: &[&str] =
+    &["mirror.qomicex.dpdns.org", "mirror1.qomicex.dpdns.org"];
 
 /// 加载器 meta / maven 官方域名 → QML-Mirror 路径前缀。
 ///
@@ -207,7 +208,9 @@ pub fn loader_fallback_urls(url: &str) -> Vec<String> {
     if let Some(m) = loader_mirror_url(url) {
         return vec![m];
     }
-    loader_official_url(url).map(|o| vec![o]).unwrap_or_default()
+    loader_official_url(url)
+        .map(|o| vec![o])
+        .unwrap_or_default()
 }
 
 // ===================== 原版：官方 ↔ BMCLAPI =====================
@@ -449,9 +452,15 @@ mod tests {
     fn loader_meta_and_installer_swap_to_qml_mirror() {
         let forge_installer = "https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1-47.2.0/forge-1.20.1-47.2.0-installer.jar";
         let mirrored = "https://mirror.shenv.top/mc-forge/net/minecraftforge/forge/1.20.1-47.2.0/forge-1.20.1-47.2.0-installer.jar";
-        assert_eq!(loader_mirror_url(forge_installer).as_deref(), Some(mirrored));
+        assert_eq!(
+            loader_mirror_url(forge_installer).as_deref(),
+            Some(mirrored)
+        );
         // 对称：镜像形态能还原官方（兜底方向）
-        assert_eq!(loader_official_url(mirrored).as_deref(), Some(forge_installer));
+        assert_eq!(
+            loader_official_url(mirrored).as_deref(),
+            Some(forge_installer)
+        );
         assert_eq!(
             loader_fallback_urls(forge_installer),
             vec![mirrored.to_string()]

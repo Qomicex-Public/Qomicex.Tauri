@@ -1445,8 +1445,14 @@ async fn file_extract(
         .ok_or_else(|| ApiError::bad_request("FS_INVALID_PATH", "无效的压缩包路径"))?;
     let dest = FileAuthService::normalize_path(&req.dest_path)
         .ok_or_else(|| ApiError::bad_request("FS_INVALID_PATH", "无效的目标路径"))?;
-    if state.plugin_auth.find_grant(&plugin_id, &req.archive_path).is_none()
-        || state.plugin_auth.find_grant(&plugin_id, &req.dest_path).is_none()
+    if state
+        .plugin_auth
+        .find_grant(&plugin_id, &req.archive_path)
+        .is_none()
+        || state
+            .plugin_auth
+            .find_grant(&plugin_id, &req.dest_path)
+            .is_none()
     {
         return Err(ApiError::forbidden(
             "FS_AUTHORIZATION_REQUIRED",
@@ -1486,7 +1492,11 @@ async fn file_list(
 ) -> ApiResult<Json<Vec<PluginFileEntry>>> {
     let root = FileAuthService::normalize_path(&req.path)
         .ok_or_else(|| ApiError::bad_request("FS_INVALID_PATH", "无效路径"))?;
-    if state.plugin_auth.find_grant(&plugin_id, &req.path).is_none() {
+    if state
+        .plugin_auth
+        .find_grant(&plugin_id, &req.path)
+        .is_none()
+    {
         return Err(ApiError::forbidden(
             "FS_AUTHORIZATION_REQUIRED",
             "未授权访问该路径",
@@ -1512,7 +1522,8 @@ fn list_dir_entries(
     let mut out: Vec<PluginFileEntry> = Vec::new();
     let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let rd = std::fs::read_dir(&dir).map_err(|e| format!("读取目录失败 {}: {e}", dir.display()))?;
+        let rd =
+            std::fs::read_dir(&dir).map_err(|e| format!("读取目录失败 {}: {e}", dir.display()))?;
         // 目录先入栈后输出会打乱「目录优先」排序，这里统一收集后在末尾整体排序。
         for entry in rd {
             let entry = entry.map_err(|e| format!("读取条目失败: {e}"))?;
@@ -1571,7 +1582,10 @@ async fn process_spawn(
     Json(req): Json<PluginProcessSpawnRequest>,
 ) -> ApiResult<Json<PluginProcessSpawnResponse>> {
     if req.command.trim().is_empty() {
-        return Err(ApiError::bad_request("PROCESS_COMMAND_REQUIRED", "command 不能为空"));
+        return Err(ApiError::bad_request(
+            "PROCESS_COMMAND_REQUIRED",
+            "command 不能为空",
+        ));
     }
     let pid = state
         .plugin_processes
@@ -1590,7 +1604,10 @@ async fn process_spawn(
         .plugin_processes
         .snapshot(&plugin_id, pid)
         .map_err(|e| ApiError::internal(e))?;
-    Ok(Json(PluginProcessSpawnResponse { pid, started_at_ms: snap.started_at_ms }))
+    Ok(Json(PluginProcessSpawnResponse {
+        pid,
+        started_at_ms: snap.started_at_ms,
+    }))
 }
 
 /// GET /api/plugins/process/{id}/list — 该插件的全部受管进程快照。
@@ -1881,7 +1898,10 @@ async fn download_batch_start(
     Json(req): Json<PluginBatchDownloadRequest>,
 ) -> ApiResult<Json<PluginBatchDownloadResponse>> {
     if req.files.is_empty() {
-        return Err(ApiError::bad_request("DOWNLOAD_FILES_REQUIRED", "files 不能为空"));
+        return Err(ApiError::bad_request(
+            "DOWNLOAD_FILES_REQUIRED",
+            "files 不能为空",
+        ));
     }
 
     let tracker = state.install_tracker.clone();
@@ -1894,7 +1914,10 @@ async fn download_batch_start(
         }
         None => {
             let tid = format!("plugin-batch-{}", uuid::Uuid::new_v4());
-            let step = req.step_id.clone().unwrap_or_else(|| "download".to_string());
+            let step = req
+                .step_id
+                .clone()
+                .unwrap_or_else(|| "download".to_string());
             let handle = tracker
                 .register_external(
                     tid.clone(),
@@ -2026,7 +2049,10 @@ async fn task_register(
     Json(req): Json<PluginTaskRegisterRequest>,
 ) -> ApiResult<Json<PluginTaskRegisterResponse>> {
     if req.steps.is_empty() {
-        return Err(ApiError::bad_request("TASK_STEPS_REQUIRED", "steps 不能为空"));
+        return Err(ApiError::bad_request(
+            "TASK_STEPS_REQUIRED",
+            "steps 不能为空",
+        ));
     }
     let task_id = req
         .task_id
@@ -2037,12 +2063,7 @@ async fn task_register(
     let specs: Vec<(String, f64)> = req
         .steps
         .iter()
-        .map(|s| {
-            (
-                s.id.clone(),
-                if s.weight > 0.0 { s.weight } else { 1.0 },
-            )
-        })
+        .map(|s| (s.id.clone(), if s.weight > 0.0 { s.weight } else { 1.0 }))
         .collect();
 
     state
@@ -2218,7 +2239,9 @@ async fn cf_files_lookup(
         return Ok(Json(Vec::new()));
     }
     let file_ids: Vec<i64> = req.files.iter().map(|f| f.file_id).collect();
-    let cf = state.core.create_curseforge_source(&state.curse_forge_api_key);
+    let cf = state
+        .core
+        .create_curseforge_source(&state.curse_forge_api_key);
     let infos = cf
         .get_files_batch(&file_ids)
         .await

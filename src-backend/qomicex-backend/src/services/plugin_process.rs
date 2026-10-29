@@ -82,13 +82,20 @@ struct LogRing {
 
 impl LogRing {
     fn new() -> Self {
-        Self { next_seq: 0, entries: VecDeque::new() }
+        Self {
+            next_seq: 0,
+            entries: VecDeque::new(),
+        }
     }
 
     fn push(&mut self, stream: &str, text: String) {
         let seq = self.next_seq;
         self.next_seq += 1;
-        self.entries.push_back(ProcLogLine { seq, stream: stream.to_string(), text });
+        self.entries.push_back(ProcLogLine {
+            seq,
+            stream: stream.to_string(),
+            text,
+        });
         while self.entries.len() > LOG_RING_CAPACITY {
             self.entries.pop_front();
         }
@@ -164,11 +171,7 @@ impl PluginProcessService {
     }
 
     /// 拉起常驻进程并注册。返回 PID。
-    pub async fn spawn(
-        &self,
-        plugin_id: &str,
-        opts: SpawnOptions,
-    ) -> Result<u32, String> {
+    pub async fn spawn(&self, plugin_id: &str, opts: SpawnOptions) -> Result<u32, String> {
         if opts.command.trim().is_empty() {
             return Err("command 不能为空".to_string());
         }
@@ -237,7 +240,10 @@ impl PluginProcessService {
                             while line.ends_with('\n') || line.ends_with('\r') {
                                 line.pop();
                             }
-                            h.logs.lock().unwrap_or_else(|p| p.into_inner()).push("out", line);
+                            h.logs
+                                .lock()
+                                .unwrap_or_else(|p| p.into_inner())
+                                .push("out", line);
                         }
                     }
                 }
@@ -256,7 +262,10 @@ impl PluginProcessService {
                             while line.ends_with('\n') || line.ends_with('\r') {
                                 line.pop();
                             }
-                            h.logs.lock().unwrap_or_else(|p| p.into_inner()).push("err", line);
+                            h.logs
+                                .lock()
+                                .unwrap_or_else(|p| p.into_inner())
+                                .push("err", line);
                         }
                     }
                 }
@@ -311,7 +320,9 @@ impl PluginProcessService {
 
     fn get(&self, plugin_id: &str, pid: u32) -> Result<std::sync::Arc<ProcessHandle>, String> {
         let procs = self.procs.lock().unwrap_or_else(|p| p.into_inner());
-        let h = procs.get(&pid).ok_or_else(|| format!("进程 {pid} 不存在或已回收"))?;
+        let h = procs
+            .get(&pid)
+            .ok_or_else(|| format!("进程 {pid} 不存在或已回收"))?;
         if h.plugin_id != plugin_id {
             // 不泄露他人进程的存在性
             return Err(format!("进程 {pid} 不存在或已回收"));
@@ -333,7 +344,10 @@ impl PluginProcessService {
         let Some(stdin) = guard.as_mut() else {
             return Err(format!("进程 {pid} 的标准输入已关闭（进程可能已退出）"));
         };
-        stdin.write_all(data.as_bytes()).await.map_err(|e| e.to_string())?;
+        stdin
+            .write_all(data.as_bytes())
+            .await
+            .map_err(|e| e.to_string())?;
         if append_newline {
             stdin.write_all(b"\n").await.map_err(|e| e.to_string())?;
         }
@@ -346,7 +360,12 @@ impl PluginProcessService {
     /// `logs_with_snapshot`），保证返回的游标恰好衔接本次返回的日志行。
     /// 勿改为先 `snapshot()` 再单独拿 logs 锁——两段之间新写入的日志会让
     /// 游标落后于实际返回内容，调用方下次轮询会重复读到同一行。
-    pub fn logs(&self, plugin_id: &str, pid: u32, after: u64) -> Result<(Vec<ProcLogLine>, ProcSnapshot), String> {
+    pub fn logs(
+        &self,
+        plugin_id: &str,
+        pid: u32,
+        after: u64,
+    ) -> Result<(Vec<ProcLogLine>, ProcSnapshot), String> {
         self.lazy_gc();
         let h = self.get(plugin_id, pid)?;
         Ok(h.logs_with_snapshot(pid, after))
