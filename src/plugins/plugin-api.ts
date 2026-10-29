@@ -63,6 +63,77 @@ export interface PluginDownloadStartResult {
   targetPath: string
 }
 
+/** 批量下载的单个目标（一次调用只占下载中心一张卡）。 */
+export interface PluginBatchDownloadFile {
+  url: string
+  destPath: string
+  headers?: Record<string, string>
+}
+
+export interface PluginBatchDownloadOptions {
+  files: PluginBatchDownloadFile[]
+  /** 归属的外部任务 id（task.register 返回值）；省略则自建只含单步的任务。 */
+  taskId?: string
+  /** 推进哪个步骤的百分比；省略则只推任务总进度。 */
+  stepId?: string
+  /** 自建任务时的卡片标题。 */
+  title?: string
+}
+
+export interface PluginBatchDownloadResult {
+  taskId: string
+  /** 批次 id：用 `download.batchStatus` 轮询完成状态。 */
+  batchId: string
+  totalFiles: number
+}
+
+export interface PluginBatchStatus {
+  status: 'running' | 'completed' | 'failed'
+  totalFiles: number
+  error?: string
+}
+
+/** 插件自报的多步骤任务（复用下载中心同款卡片渲染）。 */
+export interface PluginTaskStepSpec {
+  id: string
+  weight?: number
+  label?: string
+}
+
+export interface PluginTaskUpdate {
+  status?: string
+  stage?: string
+  stepId?: string
+  stepStatus?: 'pending' | 'active' | 'done' | 'failed'
+  stepPercent?: number
+  stepLabel?: string
+  currentFile?: string
+  error?: string
+  blockedFiles?: number
+}
+
+export interface PluginTaskProgress {
+  instanceId: string
+  status: string
+  progress: number
+  stage: string
+  title?: string
+  steps: Array<{ id: string; status: string; percent: number; weight: number; label?: string }>
+  currentFile: string
+  blockedFiles?: number
+  error?: string | null
+}
+
+/** CurseForge 文件元数据（不暴露 API key）。 */
+export interface PluginCfFileInfo {
+  projectId: number
+  fileId: number
+  fileName: string
+  downloadUrl: string | null
+  fileLength: number
+  blockedReason?: string
+}
+
 export interface PluginDownloadSnapshot {
   sessionId: string
   type: string
@@ -179,11 +250,29 @@ export interface PluginBridge {
   setOverlayPosition: (id: string, x: number, y: number) => void
   download: {
     addTask: (opts: PluginDownloadOptions) => Promise<PluginDownloadStartResult>
+    /** 批量下载：一次调用下多个文件、只占一张卡片（几百个 mod 不会刷屏）。
+     * 返回后下载在后台进行，用 `batchStatus(batchId)` 轮询完成。 */
+    addBatch: (opts: PluginBatchDownloadOptions) => Promise<PluginBatchDownloadResult>
+    batchStatus: (batchId: string) => Promise<PluginBatchStatus | null>
     progress: (taskId: string) => Promise<PluginDownloadSnapshot | null>
     cancel: (taskId: string) => Promise<void>
     list: () => Promise<PluginDownloadSnapshot[]>
     registerInstall: (opts: { instanceId: string; name: string; gameVersion: string; loader?: string; loaderVersion?: string }) => void
   }
+  /** 插件自报的分步任务：注册后出现在下载中心，进度由插件自己推进。 */
+  task: {
+    register: (opts: { taskId?: string; title: string; steps: PluginTaskStepSpec[] }) => Promise<{ taskId: string }>
+    update: (taskId: string, patch: PluginTaskUpdate) => Promise<void>
+    complete: (taskId: string, error?: string) => Promise<void>
+    progress: (taskId: string) => Promise<PluginTaskProgress | null>
+  }
+  curseforge: {
+    /** 批量查 CF 文件 → 下载直链。key 留在启动器，插件只拿结果。 */
+    files: (files: Array<{ projectId?: number; fileId: number }>) => Promise<PluginCfFileInfo[]>
+  }
+  /** 不解压整包，直接读 zip 内单个条目的文本（模组元数据/整合包清单）。
+   * 条目不存在返回 null（用于「有这个文件吗」的探测）。 */
+  readArchiveEntry: (archivePath: string, entryPath: string, opts?: { maxBytes?: number }) => Promise<{ content: string; size: number } | null>
   modpack: {
     install: (opts: PluginModpackInstallOptions) => Promise<{ instanceId: string }>
   }
@@ -200,8 +289,12 @@ export interface PluginBridge {
   /** 系统/原生文件选择对话框（主窗口 Tauri pick_dialog 中转）。取消返回 null。 */
   pickFile: (opts?: PluginDialogOptions & { multiple?: boolean }) => Promise<string | null>
   pickDirectory: (opts?: PluginDialogOptions) => Promise<string | null>
-  /** 本地 zip 解压到目标目录（zip-slip 防护 + 体积上限）。需两个路径的 FS 授权。 */
-  extractArchive: (archivePath: string, destPath: string) => Promise<{ destPath: string }>
+  /** 本地 zip 解压到目标目录（zip-slip 防护 + 体积上限）。需两个路径的 FS 授权。
+   * `prefix` 只解压该子目录；`stripPrefix` 解压时剥掉它（`overrides/mods/a.jar`
+   * → `mods/a.jar`）。整合包 overrides 提到根目录就靠这两个选项。 */
+  extractArchive: (archivePath: string, destPath: string, opts?: { prefix?: string; stripPrefix?: boolean }) => Promise<{ destPath: string }>
+  /** 移动/重命名文件或目录（跨目录 move 也走这里）。需源与目标都有 FS 授权。 */
+  renamePath: (from: string, to: string) => Promise<{ path: string }>
   /** 列举目录条目（名称/类型/大小/mtime）。 */
   listDir: (path: string, opts?: { recursive?: boolean; maxEntries?: number }) => Promise<PluginFileEntry[]>
   /** 系统级通知（WebView Notification API）；不可用/被拒返回 false（可降级 showToast）。 */
@@ -506,6 +599,108 @@ export function createPluginBridge(pluginId: string): PluginBridge {
           instanceId: opts.instanceId,
         })
       },
+      addBatch: async (opts) => {
+        const res = await fetch(`${API_BASE}/plugins/download/batch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(opts),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(() => null)
+          throw new Error(err?.message ?? `Batch download failed: ${res.status}`)
+        }
+        const result = await res.json() as PluginBatchDownloadResult
+        // 自建任务（非插件指定 taskId）才会在这里补卡片；外部任务已有卡片。
+        if (!opts.taskId) {
+          addTask({
+            id: result.taskId,
+            name: opts.title ?? `批量下载 (${result.totalFiles})`,
+            type: 'modpack',
+            gameVersion: '',
+            status: 'downloading',
+            progress: 0,
+            createdAt: new Date().toISOString(),
+            instanceId: result.taskId,
+            kind: 'plugin',
+          })
+        }
+        return result
+      },
+      batchStatus: async (batchId) => {
+        const res = await fetch(`${API_BASE}/plugins/download/batch/${encodeURIComponent(batchId)}`)
+        if (res.status === 404) return null
+        if (!res.ok) throw new Error(`Batch status failed: ${res.status}`)
+        return res.json() as Promise<PluginBatchStatus>
+      },
+    },
+    task: {
+      register: async (opts) => {
+        const res = await fetch(`${API_BASE}/plugins/tasks/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(opts),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(() => null)
+          throw new Error(err?.message ?? `Task register failed: ${res.status}`)
+        }
+        return res.json() as Promise<{ taskId: string }>
+      },
+      update: async (taskId, patch) => {
+        const res = await fetch(`${API_BASE}/plugins/tasks/${encodeURIComponent(taskId)}/update`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(() => null)
+          throw new Error(err?.message ?? `Task update failed: ${res.status}`)
+        }
+      },
+      complete: async (taskId, error) => {
+        const res = await fetch(`${API_BASE}/plugins/tasks/${encodeURIComponent(taskId)}/complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(error ? { error } : {}),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(() => null)
+          throw new Error(err?.message ?? `Task complete failed: ${res.status}`)
+        }
+      },
+      progress: async (taskId) => {
+        const res = await fetch(`${API_BASE}/plugins/tasks/${encodeURIComponent(taskId)}`)
+        if (res.status === 404) return null
+        if (!res.ok) throw new Error(`Task progress failed: ${res.status}`)
+        return res.json() as Promise<PluginTaskProgress>
+      },
+    },
+    curseforge: {
+      files: async (files) => {
+        const res = await fetch(`${API_BASE}/plugins/cf/files`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files }),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(() => null)
+          throw new Error(err?.message ?? `CurseForge lookup failed: ${res.status}`)
+        }
+        return res.json() as Promise<PluginCfFileInfo[]>
+      },
+    },
+    readArchiveEntry: async (archivePath, entryPath, opts) => {
+      const res = await fetch(`${API_BASE}/plugins/archive/entry`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archivePath, entryPath, maxBytes: opts?.maxBytes }),
+      })
+      if (res.status === 404) return null
+      if (!res.ok) {
+        const err = await res.json().catch(() => null)
+        throw new Error(err?.message ?? `Archive entry read failed: ${res.status}`)
+      }
+      return res.json()
     },
     modpack: {
       install: async (opts) => {
@@ -603,9 +798,17 @@ export function createPluginBridge(pluginId: string): PluginBridge {
         return null
       }
     },
-    extractArchive: async (archivePath, destPath) => {
-      const res = await extractWithAuth(pluginId, archivePath, destPath)
+    extractArchive: async (archivePath, destPath, opts) => {
+      const res = await extractWithAuth(pluginId, archivePath, destPath, opts)
       return res as { destPath: string }
+    },
+    renamePath: async (from, to) => {
+      const res = await fileOpWithAuth(pluginId, from, () => fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/rename`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from, to })
+      }))
+      return res as { path: string }
     },
     listDir: async (path, opts) => {
       const res = await fileOpWithAuth(pluginId, path, () => fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/list`, {
@@ -657,11 +860,16 @@ export function createPluginBridge(pluginId: string): PluginBridge {
 
 /** extractArchive 的授权流：涉及读压缩包 + 写目标目录两条路径，
  * 403 时合并为一次确认、两个前缀都授权后重试（比逐路径弹两次窗更贴近用户意图）。 */
-async function extractWithAuth(pluginId: string, archivePath: string, destPath: string): Promise<unknown> {
+async function extractWithAuth(
+  pluginId: string,
+  archivePath: string,
+  destPath: string,
+  opts?: { prefix?: string; stripPrefix?: boolean },
+): Promise<unknown> {
   const op = () => fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/extract`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ archivePath, destPath })
+    body: JSON.stringify({ archivePath, destPath, prefix: opts?.prefix, stripPrefix: opts?.stripPrefix })
   })
   let res = await op()
   if (res.status === 403) {

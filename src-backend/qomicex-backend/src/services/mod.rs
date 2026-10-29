@@ -34,7 +34,6 @@ pub mod region;
 pub mod resource_favorite;
 pub mod resource_favorite_folder;
 pub mod scan_cache;
-pub mod server_setup;
 pub mod schematic_assets;
 pub mod source_policy;
 pub mod technic;

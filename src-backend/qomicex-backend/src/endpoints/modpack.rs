@@ -4577,12 +4577,17 @@ fn release_qml_overrides(
     Ok(())
 }
 
-/// 解析目标侧别：客户端实例收集 `env.client == required`；服务端搭建收集
+/// 解析目标侧别：客户端实例收集 `env.client == required`；服务端收集
 /// `env.server != "unsupported"`（服务端必需与可选都要装，client-only 由
-/// server_setup 的 jar 扫描隔离兜底）。缺失的 env 位按 required 处理。
+/// 调用方的 jar 元数据扫描隔离兜底）。缺失的 env 位按 required 处理。
+///
+/// `Server` 目前没有启动器内调用方（服务端搭建已迁到插件侧，由插件自行按
+/// `env.server` 过滤），但两侧语义必须成对维护：只留 Client 会让后来者误以为
+/// 服务端侧别不需要区分。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ModrinthSide {
     Client,
+    #[allow(dead_code)]
     Server,
 }
 
@@ -4626,7 +4631,7 @@ pub(crate) fn parse_modrinth_index(
         for f in arr {
             // env 按目标侧别过滤（缺失位按 required 处理）：
             // 客户端：env.client == "required"（源语义）；服务端：env.server != "unsupported"
-            //（服务端必需与可选都要装，client-only 由 server_setup 的 jar 扫描兜底）。
+            //（服务端必需与可选都要装，client-only 由调用方的 jar 扫描兜底）。
             let env_side = f
                 .get("env")
                 .and_then(|e| {

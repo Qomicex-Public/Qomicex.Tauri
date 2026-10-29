@@ -207,6 +207,19 @@ impl InstallHandle {
         });
     }
 
+    /// 同 [`Self::define_steps`]，但步骤 id 是运行时字符串（插件自报步骤用）。
+    ///
+    /// `InstallStepSpec.id` 是 `&'static str`（内置管线用常量，零分配）；插件传入
+    /// 的步骤 id 来自 JSON，生命周期到不了 'static，故单独提供 owned 版本。
+    pub fn define_steps_owned(&self, specs: &[(String, f64)], budget: f64) {
+        let factor = budget / 100.0;
+        self.update(|f| {
+            for (id, weight) in specs {
+                f.steps.push(InstallStep::pending(id, weight * factor));
+            }
+        });
+    }
+
     /// 显式设置某步骤状态（active/done/failed），不影响其他步骤。
     ///
     /// 并行语义下取代旧线性 begin_step（其"前序全 done"会误杀同时活跃的兄弟分支）；
@@ -414,6 +427,13 @@ impl ProgressField {
             step.percent = percent.clamp(0.0, 100.0);
         }
         self.recompute_progress();
+    }
+
+    /// 设置步骤的显示标签（插件自带文案，免改启动器 i18n）。
+    pub fn set_step_label(&mut self, id: &str, label: &str) {
+        if let Some(step) = self.steps.iter_mut().find(|s| s.id == id) {
+            step.label = Some(label.to_string());
+        }
     }
 
     /// 合成总进度：Σ(done?w : active?w×pct/100 : 0) / Σw × 100。
@@ -723,6 +743,97 @@ impl InstallTracker {
         Fut: std::future::Future<Output = InstallOutcome> + Send + 'static,
     {
         self.start(instance_id, "resource", runner);
+    }
+
+    /// 注册一个**由调用方外部驱动**的任务（插件管线等），不跑 runner 闭包。
+    ///
+    /// 与 `start`/`try_start` 的区别：那两个方法会 `tokio::spawn` 一个 runner 并在
+    /// 其结束时自动落终态；本方法只建句柄、发首帧广播，进度与终态完全由调用方通过
+    /// 返回的 [`InstallHandle`] 推进（配合 `update_progress` / `finish_external`）。
+    ///
+    /// 用途：插件在自己的 JS 侧编排管线（下载、解压、跑安装器），只需要「下载中心
+    /// 有张卡片 + 分步进度」这一展示能力，不需要把逻辑搬进后端。
+    ///
+    /// 同 `task_id` 已有非终态任务时返回 `Err(现有 kind)`，避免两个插件管线共用
+    /// 同一个 id 互相覆盖进度。
+    pub fn register_external(
+        &self,
+        task_id: String,
+        kind: &str,
+        title: Option<String>,
+        steps: &[(String, f64)],
+        budget: f64,
+    ) -> Result<InstallHandle, String> {
+        let handle = InstallHandle(Arc::new(InstallState::new(
+            task_id.clone(),
+            kind.to_string(),
+            InstallStatus::Queued,
+            "queued",
+            self.tx.clone(),
+        )));
+        {
+            let mut guard = self.states.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(existing) = guard.get(&task_id) {
+                if !existing.snapshot_terminal() {
+                    return Err(existing.kind());
+                }
+            }
+            guard.insert(task_id.clone(), handle.clone());
+        }
+        if let Some(t) = title {
+            handle.set_title(&t);
+        }
+        handle.define_steps_owned(steps, budget);
+        handle.broadcast();
+        Ok(handle)
+    }
+
+    /// 外部驱动任务的终态收尾（对应 `spawn_runner` 里 runner 结束后的那段逻辑）。
+    ///
+    /// `error` 为 `None` → completed；`Some(msg)` → failed。取消状态优先：调用方
+    /// 已 `request_cancel` 且传 `None` 时落 cancelled。
+    ///
+    /// 与 runner 路径同样处理 `blocked_files > 0`：有受限文件时不落 completed，
+    /// 改 `awaiting-files` 等调用方补全后自行收尾。
+    pub fn finish_external(&self, task_id: &str, error: Option<String>) -> bool {
+        let Some(handle) = self.get_handle(task_id) else {
+            return false;
+        };
+        let cancelled = handle.is_cancelled();
+        match error {
+            None if cancelled => {
+                handle.update(|f| {
+                    f.set_status(InstallStatus::Cancelled);
+                    f.error = Some("安装已取消".to_string());
+                });
+            }
+            None if handle.blocked_files() > 0 => {
+                handle.update(|f| {
+                    f.set_status(InstallStatus::AwaitingFiles);
+                    f.stage = InstallStatus::AwaitingFiles.as_str().to_string();
+                    f.progress = 100.0;
+                    f.current_file.clear();
+                    f.finish_steps(true);
+                });
+            }
+            None => {
+                handle.update(|f| {
+                    f.set_status(InstallStatus::Completed);
+                    f.stage = InstallStatus::Completed.as_str().to_string();
+                    f.progress = 100.0;
+                    f.current_file.clear();
+                    f.finish_steps(true);
+                });
+            }
+            Some(msg) => {
+                handle.update(|f| {
+                    f.set_status(InstallStatus::Failed);
+                    f.error = Some(msg);
+                    f.finish_steps(false);
+                });
+            }
+        }
+        true
     }
 
     /// 新订阅者（接收所有任务进度广播）。

@@ -33,6 +33,21 @@ pub const ERR_ALREADY_EXISTS: &str = "TARGET_ALREADY_EXISTS";
 pub fn extract_archive<R: Read + Seek>(
     archive: &mut zip::ZipArchive<R>,
     dest: &Path,
+    progress: Option<&mut dyn FnMut(usize, usize)>,
+) -> Result<(), String> {
+    extract_archive_filtered(archive, dest, None, false, progress)
+}
+
+/// 解压时的条目筛选：只取 `prefix` 下的条目，可把它们**剥掉前缀**落到 `dest` 根。
+///
+/// 用途：整合包的 `overrides/`（CurseForge）与 `overrides/` / `client-overrides/`
+/// （Modrinth）要提到服务器根目录，而不是在根下多出一层 `overrides/`。这是通用的
+/// 「解包子目录」需求，与任何具体业务无关。
+pub fn extract_archive_filtered<R: Read + Seek>(
+    archive: &mut zip::ZipArchive<R>,
+    dest: &Path,
+    prefix: Option<&str>,
+    strip_prefix: bool,
     mut progress: Option<&mut dyn FnMut(usize, usize)>,
 ) -> Result<(), String> {
     let total_entries = archive.len();
@@ -41,6 +56,11 @@ pub fn extract_archive<R: Read + Seek>(
             "压缩包条目数过多（{total_entries} > {MAX_ZIP_ENTRIES}），疑似异常压缩包"
         ));
     }
+    // 前缀归一：统一正斜杠并补尾斜杠，避免 `override` 误匹配 `overrides-x`。
+    let prefix_norm = prefix
+        .map(|p| p.trim().trim_start_matches('/').replace('\\', "/"))
+        .filter(|p| !p.is_empty())
+        .map(|p| if p.ends_with('/') { p } else { format!("{p}/") });
     let mut total_written: u64 = 0;
     let mut done: usize = 0;
     for i in 0..total_entries {
@@ -51,7 +71,34 @@ pub fn extract_archive<R: Read + Seek>(
             return Err("压缩包内含非法路径（zip-slip）".to_string());
         };
         let rel: &Path = enclosed.as_ref();
-        let target = dest.join(rel);
+        // 前缀筛选在**落盘路径**之前完成：不在前缀下的条目直接跳过。
+        let rel_str = rel.to_string_lossy().replace('\\', "/");
+        let effective: PathBuf = match &prefix_norm {
+            Some(p) => {
+                if !rel_str.starts_with(p.as_str()) {
+                    done += 1;
+                    if let Some(pr) = progress.as_deref_mut() {
+                        pr(done, total_entries);
+                    }
+                    continue;
+                }
+                if strip_prefix {
+                    let rest = rel_str[p.len()..].to_string();
+                    if rest.is_empty() {
+                        done += 1;
+                        if let Some(pr) = progress.as_deref_mut() {
+                            pr(done, total_entries);
+                        }
+                        continue;
+                    }
+                    PathBuf::from(rest)
+                } else {
+                    rel.to_path_buf()
+                }
+            }
+            None => rel.to_path_buf(),
+        };
+        let target = dest.join(&effective);
         if entry.is_dir() {
             std::fs::create_dir_all(&target)
                 .map_err(|e| format!("创建目录失败 {}: {e}", target.display()))?;
@@ -122,6 +169,20 @@ pub fn extract_zip_file(zip_path: &Path, dest: &Path) -> Result<(), String> {
     let file = std::fs::File::open(zip_path).map_err(|e| format!("打开压缩包失败: {e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取压缩包失败: {e}"))?;
     extract_archive(&mut archive, dest, None)
+}
+
+/// 从磁盘 zip 解压**指定子目录**到 `dest`（可选剥离前缀）。
+///
+/// 与 [`extract_zip_file`] 的区别只在前缀筛选；防护（zip-slip、体积上限）完全共用。
+pub fn extract_zip_file_filtered(
+    zip_path: &Path,
+    dest: &Path,
+    prefix: Option<&str>,
+    strip_prefix: bool,
+) -> Result<(), String> {
+    let file = std::fs::File::open(zip_path).map_err(|e| format!("打开压缩包失败: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取压缩包失败: {e}"))?;
+    extract_archive_filtered(&mut archive, dest, prefix, strip_prefix, None)
 }
 
 /// 从磁盘 zip 文件解压到目标目录并逐条目上报进度 `(已完成条目, 总条目)`。

@@ -774,11 +774,14 @@ const METHOD_PERMISSIONS: Record<string, string> = {
   getThemeColor: 'config:read', applyThemeOverride: 'config:write', clearThemeOverride: 'config:write',
   'overlay.create': 'ui:sub_window', 'overlay.show': 'ui:sub_window', 'overlay.hide': 'ui:sub_window',
   'overlay.destroy': 'ui:sub_window', 'overlay.setHtml': 'ui:sub_window', 'overlay.setPosition': 'ui:sub_window',
-  'download.addTask': 'download:manage', 'download.progress': 'download:manage', 'download.cancel': 'download:manage', 'download.list': 'download:manage', 'download.registerInstall': 'instance:write',
+  'download.addTask': 'download:manage', 'download.addBatch': 'download:manage', 'download.batchStatus': 'download:manage', 'download.progress': 'download:manage', 'download.cancel': 'download:manage', 'download.list': 'download:manage', 'download.registerInstall': 'instance:write',
+  'task.register': 'download:manage', 'task.update': 'download:manage', 'task.complete': 'download:manage', 'task.progress': 'download:manage',
+  'curseforge.files': 'network:fetch',
+  readArchiveEntry: 'filesystem:read',
   'modpack.install': 'instance:write',
   'process.spawn': 'process:manage', 'process.stdin': 'process:manage', 'process.kill': 'process:manage', 'process.alive': 'process:manage', 'process.logs': 'process:manage', 'process.list': 'process:manage',
   pickFile: 'dialog:open', pickDirectory: 'dialog:open',
-  extractArchive: 'filesystem:write', listDir: 'filesystem:read',
+  extractArchive: 'filesystem:write', renamePath: 'filesystem:write', listDir: 'filesystem:read',
   sendNotification: 'system:notification',
   // 插件读取自己的 l10n 包/当前 locale/内置图标 SVG：自持有或公共只读数据，
   // 无需权限（空权限串 = 免检）
@@ -877,10 +880,18 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     case 'overlay.setHtml': bridge.setOverlayHtml(args[0] as string, args[1] as string); return
     case 'overlay.setPosition': bridge.setOverlayPosition(args[0] as string, args[1] as number, args[2] as number); return
     case 'download.addTask': return bridge.download.addTask(args[0] as any)
+    case 'download.addBatch': return bridge.download.addBatch(args[0] as any)
+    case 'download.batchStatus': return bridge.download.batchStatus(args[0] as string)
     case 'download.progress': return bridge.download.progress(args[0] as string)
     case 'download.cancel': bridge.download.cancel(args[0] as string); return
     case 'download.list': return bridge.download.list()
     case 'download.registerInstall': bridge.download.registerInstall(args[0] as any); return
+    case 'task.register': return bridge.task.register(args[0] as any)
+    case 'task.update': return bridge.task.update(args[0] as string, args[1] as any)
+    case 'task.complete': return bridge.task.complete(args[0] as string, args[1] as string | undefined)
+    case 'task.progress': return bridge.task.progress(args[0] as string)
+    case 'curseforge.files': return bridge.curseforge.files(args[0] as any)
+    case 'readArchiveEntry': return bridge.readArchiveEntry(args[0] as string, args[1] as string, args[2] as any)
     case 'modpack.install': return bridge.modpack.install(args[0] as any)
     case 'process.spawn': return bridge.process.spawn(args[0] as any)
     case 'process.stdin': return bridge.process.stdin(args[0] as number, args[1] as string, args[2] as { appendNewline?: boolean } | undefined)
@@ -890,7 +901,8 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     case 'process.list': return bridge.process.list()
     case 'pickFile': return bridge.pickFile(args[0] as any)
     case 'pickDirectory': return bridge.pickDirectory(args[0] as any)
-    case 'extractArchive': return bridge.extractArchive(args[0] as string, args[1] as string)
+    case 'extractArchive': return bridge.extractArchive(args[0] as string, args[1] as string, args[2] as any)
+    case 'renamePath': return bridge.renamePath(args[0] as string, args[1] as string)
     case 'listDir': return bridge.listDir(args[0] as string, args[1] as { recursive?: boolean; maxEntries?: number } | undefined)
     case 'sendNotification': return bridge.sendNotification(args[0] as { title: string; body?: string })
     case 'getPluginStrings': return bridge.getPluginStrings()

@@ -84,12 +84,23 @@ await api.proxyFetchStream(req, { onChunk, onError })   // 流式请求
 | **download.list** | `call('download.list') → snapshot[]` | `download:manage` |
 | **download.registerInstall** | `call('download.registerInstall', { instanceId, name, gameVersion, loader, loaderVersion })` | `instance:write` |
 | | 仅登记安装任务到下载中心，不创建真实下载 | |
+| **download.addBatch** | `call('download.addBatch', { files: [{ url, destPath, headers? }], taskId?, stepId?, title? }) → { taskId, totalFiles }` | `download:manage` |
+| | 批量下载：一次调用下多个文件、**只占一张卡片**。省略 `taskId` 时自建单步任务（返回 `taskId`）；传 `taskId`+`stepId` 则进度写进已有任务的该步骤。底层与安装管线同一套下载器（并发、去重、镜像回退、`.part` 原子改名） | |
+| **task.register** | `call('task.register', { taskId?, title, steps: [{ id, weight?, label? }] }) → { taskId }` | `download:manage` |
+| | 注册**由插件自己推进**的分步任务，自动出现在下载中心（与安装任务同款卡片）。`weight` 只影响合成总进度 | |
+| **task.update** | `call('task.update', taskId, { stepId?, stepStatus?, stepPercent?, stepLabel?, currentFile?, status?, error?, blockedFiles? })` | `download:manage` |
+| | 推进步骤/状态。`stepStatus`: pending \| active \| done \| failed | |
+| **task.complete** | `call('task.complete', taskId, error?)` | `download:manage` |
+| | 收尾：省略 `error` → completed；传字符串 → failed。`blockedFiles > 0` 时自动转 `awaiting-files` | |
+| **task.progress** | `call('task.progress', taskId) → InstallProgress \| null` | `download:manage` |
+| **curseforge.files** | `call('curseforge.files', [{ projectId?, fileId }]) → [{ projectId, fileId, fileName, downloadUrl \| null, fileLength, blockedReason? }]` | `network:fetch` |
+| | 批量把 CurseForge `projectID:fileID` 换成下载直链。API key 始终留在启动器进程内，插件拿不到。`downloadUrl === null` 表示作者关闭第三方分发（受限文件） | |
+| **readArchiveEntry** | `call('readArchiveEntry', archivePath, entryPath, { maxBytes? }) → { content, size } \| null` | `filesystem:read` |
+| | 不解压整包，直接读 zip 内单个条目的文本。条目不存在返回 `null`。用于读 `fabric.mod.json` / `META-INF/mods.toml` / `modrinth.index.json` 等元数据 | |
 | **modpack.install** | `call('modpack.install', { id, gameDir, path | (type, projectId, fileId), ... }) → { instanceId }` | `instance:write` |
 | | 一键安装整合包（本地 zip / mrpack 或在线 Modrinth/CurseForge/FTB） | |
-| **（callBackend）/server/setup** | `call('callBackend', '/server/setup', { name, dir, source?, projectId?, fileId?, packPath?, vanilla?, mcVersion?, javaPath?, xmxMb? }) → { taskId, dir }` | `network:fetch` |
-| | 整合包一键开服。安装来源三选一（扁平字段，缺项返回 400 `SERVER_SOURCE_INVALID`）：`packPath`（本地 zip/mrpack）\| `source:'modrinth'\|'cf'` + `projectId` + `fileId`（在线）\| `vanilla:true` + `mcVersion`（纯净服）。后端装服务端运行时（forge/neo 走 `--installServer`）、下载 mods 并隔离 client-only（移入 `mods-client-only/`）、释放 overrides、写 eula/server.properties/`user_jvm_args.txt`。进度复用 InstallTracker（kind='server'），自动进下载中心 SSE | |
-| **（callBackend）/server/setup/progress/{taskId}** | GET → InstallProgress；`_method:'DELETE'` 取消 | `network:fetch` |
-| | 完成后读 `{dir}/.qml-server/launch.json`（`{ mode:'argfile'\|'jar', windowsArgfile?, unixArgfile?, jar?, gameVersion, loader }`）组装启动命令：argfile → `java @<windowsArgfile或unixArgfile>`，jar → `java -jar <jar>`；受限文件清单在 `{dir}/.qml-server/blocked-mods.json` | |
+| **（参考实现）整合包一键开服** | 无专用端点——由插件用 `download.addBatch` + `task.*` + `curseforge.files` + `readArchiveEntry` + `extractArchive(prefix)` + `renamePath` + `process.spawn` 自行编排 | 见各方法 |
+| | 官方 `top.qomicex.server-manager` 插件是完整范例：解析 mrpack/manifest → 装 vanilla/fabric/forge/neoforge 运行时 → 批量下载 mods（CF 走 `curseforge.files` 换直链，取不到直链的记入受限清单）→ `extractArchive(packPath, dir, { prefix:'overrides', stripPrefix:true })` 释放覆盖 → 扫 jar 元数据把 client-only 移入 `mods-client-only/` → 写 eula/server.properties 与 `{dir}/.qml-server/launch.json`（`{ mode:'argfile'\|'jar', windowsArgfile?, unixArgfile?, jar?, gameVersion, loader }`） | |
 | **process.spawn** | `call('process.spawn', { command, args?, cwd?, env? }) → { pid, startedAtMs }` | `process:manage` |
 | | 拉起常驻进程（piped stdio、CREATE_NO_WINDOW）。插件只能管理自己 spawn 的进程；stdout/stderr 逐行进环形缓冲（2000 行），按 seq 游标增量拉取 | |
 | **process.stdin** | `call('process.stdin', pid, text, { appendNewline? }?)` | `process:manage` |

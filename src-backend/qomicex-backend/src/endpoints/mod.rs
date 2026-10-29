@@ -23,7 +23,6 @@ pub mod plugin;
 pub mod plugin_store;
 pub mod progress_sse;
 pub mod resource;
-pub mod server_setup;
 pub mod resource_center;
 pub mod resource_download;
 pub mod skin;
