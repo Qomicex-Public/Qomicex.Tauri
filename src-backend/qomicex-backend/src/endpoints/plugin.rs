@@ -1949,8 +1949,10 @@ async fn download_batch_start(
         }
     };
 
-    let mut targets: Vec<crate::services::install_service::DownloadTarget> =
-        Vec::with_capacity(req.files.len());
+    // 不用 with_capacity(req.files.len())：容量来自请求体（不受信），CodeQL 会
+    // 判为「按用户值预分配」并可能真的在超长请求上先吃掉一大块内存。上限校验
+    // 已在入口处做过，这里让 Vec 按实际 push 增长即可。
+    let mut targets: Vec<crate::services::install_service::DownloadTarget> = Vec::new();
     for f in &req.files {
         if f.url.trim().is_empty() || f.dest_path.trim().is_empty() {
             return Err(ApiError::bad_request(
@@ -2281,7 +2283,8 @@ async fn cf_files_lookup(
         .await
         .map_err(|e| ApiError::upstream(format!("批量查询 CurseForge 文件失败: {e}")))?;
 
-    let mut out = Vec::with_capacity(req.files.len());
+    // 同上：容量不取自请求体长度，避免按用户值预分配。
+    let mut out = Vec::new();
     for f in &req.files {
         let project_id = f.project_id.unwrap_or(0);
         match infos.get(&f.file_id) {

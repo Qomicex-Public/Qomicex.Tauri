@@ -10,10 +10,26 @@
 # `schematic_assets::is_plain_file_name` 拒绝 `/`、`\`、`:`、`.`、`..`，但
 # CodeQL 的污点追踪在路径穿过结构体字段与模块边界后会丢失这段净化证据。
 #
-# 排除后仍保留 CodeQL 的其它 Rust 安全规则（命令注入、SQL 注入、硬编码凭据、
-# 弱加密等）。若将来后端改为对外监听，应重新启用本规则。
+# 排除后仍保留 CodeQL 的其它 Rust 安全规则（SQL 注入、硬编码凭据、弱加密等）。
+# 若将来后端改为对外监听，应重新启用本规则。
+#
+# 另排除 rust/command-line-injection（"Command line depends on user-provided value"）。
+#
+# 理由：`process.spawn` 与 `shell` 两个端点的**功能本身就是「让插件执行命令」**，
+# 等价于插件生态里的 `shell:execute` 能力。它由 manifest 权限显式声明、由前端
+# bridge 的 METHOD_PERMISSIONS 校验，与「命令注入」的威胁模型不同——后者指
+# 应用把用户输入拼进自己本不愿执行的命令。这里的命令就是调用方要执行的东西。
+#
+# 入口处已做合法性校验（非空、长度上限、拒绝控制字符/NUL，见
+# `plugin_process::validate_spawn_command`），防的是畸形值造成的拉起失败与参数
+# 错乱。真正决定插件能否执行命令的是权限声明，静态分析无法表达这一层。
+#
+# 若将来引入「插件声明的权限不再可信」的场景（如插件包免签名安装、或后端对外
+# 监听），应重新评估本规则。
 name: "Qomicex CodeQL config"
 
 query-filters:
   - exclude:
       id: rust/path-injection
+  - exclude:
+      id: rust/command-line-injection
