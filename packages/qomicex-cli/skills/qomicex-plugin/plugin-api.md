@@ -86,6 +86,8 @@ await api.proxyFetchStream(req, { onChunk, onError })   // 流式请求
 | | 仅登记安装任务到下载中心，不创建真实下载 | |
 | **download.addBatch** | `call('download.addBatch', { files: [{ url, destPath, headers? }], taskId?, stepId?, title? }) → { taskId, totalFiles }` | `download:manage` |
 | | 批量下载：一次调用下多个文件、**只占一张卡片**。省略 `taskId` 时自建单步任务（返回 `taskId`）；传 `taskId`+`stepId` 则进度写进已有任务的该步骤。底层与安装管线同一套下载器（并发、去重、镜像回退、`.part` 原子改名） | |
+| **download.batchStatus** | `call('download.batchStatus', batchId) → { status: 'running' \| 'completed' \| 'failed', totalFiles, error? } \| null` | `download:manage` |
+| | 批量下载是后台任务，`addBatch` 返回的 `batchId` 用来轮询完成。批次不存在（后端重启）返回 `null` | |
 | **task.register** | `call('task.register', { taskId?, title, steps: [{ id, weight?, label? }] }) → { taskId }` | `download:manage` |
 | | 注册**由插件自己推进**的分步任务，自动出现在下载中心（与安装任务同款卡片）。`weight` 只影响合成总进度 | |
 | **task.update** | `call('task.update', taskId, { stepId?, stepStatus?, stepPercent?, stepLabel?, currentFile?, status?, error?, blockedFiles? })` | `download:manage` |

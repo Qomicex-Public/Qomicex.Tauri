@@ -2145,11 +2145,22 @@ async fn task_update(
     AxumPath(task_id): AxumPath<String>,
     Json(req): Json<PluginTaskUpdateRequest>,
 ) -> ApiResult<Json<StatusResponse>> {
-    let ok = state.install_tracker.update_progress(&task_id, |f| {
-        if let Some(s) = &req.status {
-            f.status = s.clone();
-            f.stage = s.clone();
+    // 终态必须走 /complete：那里会记 terminal_at 并收尾步骤，直接写 status 会让
+    // 任务永远留在活动列表（前端卡片一直「下载中」）。提前拒绝，错误信息直接
+    // 指向正确用法。
+    if let Some(s) = &req.status {
+        if crate::services::install_tracker::InstallStatus::from_str(s).is_terminal() {
+            return Err(ApiError::bad_request(
+                "TASK_STATUS_TERMINAL",
+                "终态请用 POST /plugins/tasks/{taskId}/complete 提交",
+            ));
         }
+        // 非终态也走 set_status：它统一处理 stage 与 terminal_at 的重置。
+        state.install_tracker.update_progress(&task_id, |f| {
+            f.set_status(crate::services::install_tracker::InstallStatus::from_str(s));
+        });
+    }
+    let ok = state.install_tracker.update_progress(&task_id, |f| {
         if let Some(s) = &req.stage {
             f.stage = s.clone();
         }
