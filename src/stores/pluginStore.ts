@@ -5,6 +5,7 @@ import { create } from 'zustand'
 import type { PluginInfo, PluginState } from '../plugins/types.ts'
 import { fetchPlugins, rescanPlugins } from '../api/plugins.ts'
 import type { StoreUpdateEntry } from '../api/pluginStore.ts'
+import { resolveManifestL10n, invalidatePluginL10n } from '../plugins/l10n.ts'
 
 /** 一条可升级信息：slug 为 store 侧标识（install 用），latestVersion 用于 badge/确认提示 */
 export interface PluginUpdateEntry {
@@ -116,9 +117,26 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
 
   loadPlugins: async () => {
     set({ loading: true, error: null })
+    // 重装/升级/重扫后字符串包可能已变：失效 l10n 缓存（loadPlugins 是这些
+    // 生命周期的公共入口，一处失效覆盖全部路径）。
+    invalidatePluginL10n()
     try {
       const plugins = await fetchPlugins()
-      set({ plugins, loading: false })
+      // 插件自持 i18n：先解析声明了 l10n 的清单（%key% 按当前 locale），再入
+      // store——激活/侧栏/安装对话框都会在首次消费时就拿到最终文案。若放在
+      // set 之后的异步补丁里，侧栏槽位已在激活时捕获了原始 %key% 字符串，
+      // 补丁永远追不上（实测 bug）。
+      let resolvedPlugins = plugins
+      try {
+        resolvedPlugins = await Promise.all(
+          plugins.map(async p => {
+            if (!p.manifest.l10n) return p
+            const resolved = await resolveManifestL10n(p.manifest)
+            return { ...p, manifest: resolved, rawManifest: p.manifest }
+          })
+        )
+      } catch { /* l10n 解析失败按原文案显示 */ }
+      set({ plugins: resolvedPlugins, loading: false })
     } catch (e) {
       set({ error: e instanceof Error ? e.message : 'Unknown error', loading: false })
     }

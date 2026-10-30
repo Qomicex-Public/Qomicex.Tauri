@@ -39,6 +39,8 @@ pub struct SystemInfoResponse {
     pub git_commit: String,
     pub memory: i64,
     pub available_memory: i64,
+    /// 启动器数据目录（插件默认工作区定位用；等价 GET /settings/data-dir）。
+    pub data_dir: String,
 }
 
 #[derive(Serialize)]

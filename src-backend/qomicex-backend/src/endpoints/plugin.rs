@@ -160,6 +160,109 @@ struct PluginShellResponse {
     stderr: String,
 }
 
+// ---------------------------------------------------------------------
+// 受管进程（issue #295：插件常驻进程管理）
+// ---------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginProcessSpawnRequest {
+    command: String,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cwd: Option<String>,
+    #[serde(default)]
+    env: HashMap<String, String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginProcessSpawnResponse {
+    pid: u32,
+    started_at_ms: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginProcessStdinRequest {
+    data: String,
+    #[serde(default = "default_true")]
+    append_newline: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct PluginProcessLogsQuery {
+    #[serde(default)]
+    after: Option<u64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginProcessLogsResponse {
+    lines: Vec<crate::services::plugin_process::ProcLogLine>,
+    next_seq: u64,
+    oldest_seq: u64,
+    alive: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit_code: Option<i32>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginProcessKillResponse {
+    message: String,
+}
+
+// ---------------------------------------------------------------------
+// 文件解压 / 目录列举（issue #295：导入服务端压缩包需要的能力）
+// ---------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginFileExtractRequest {
+    archive_path: String,
+    dest_path: String,
+    /// 只解压该前置目录下的条目（如整合包的 `overrides/`）；省略则解整包。
+    #[serde(default)]
+    prefix: Option<String>,
+    /// 与 `prefix` 搭配：解压时剥掉前缀，让 `overrides/mods/a.jar` 落到 `mods/a.jar`。
+    #[serde(default)]
+    strip_prefix: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginFileExtractResponse {
+    dest_path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginFileListRequest {
+    path: String,
+    #[serde(default)]
+    recursive: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    max_entries: Option<usize>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginFileEntry {
+    name: String,
+    path: String,
+    is_dir: bool,
+    size: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modified_ms: Option<u64>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PluginDownloadStartRequest {
@@ -353,13 +456,36 @@ pub fn router() -> Router<SharedState> {
         .route("/plugins/files/{id}/write", post(file_write))
         .route("/plugins/files/{id}/authorize", post(file_authorize))
         .route("/plugins/files/{id}/delete", post(file_delete))
+        .route("/plugins/files/{id}/rename", post(file_rename))
+        .route("/plugins/files/{id}/extract", post(file_extract))
+        .route("/plugins/files/{id}/list", post(file_list))
+        .route("/plugins/process/{id}/spawn", post(process_spawn))
+        .route("/plugins/process/{id}/list", get(process_list))
+        .route("/plugins/process/{id}/{pid}/stdin", post(process_stdin))
+        .route("/plugins/process/{id}/{pid}/kill", post(process_kill))
+        .route("/plugins/process/{id}/{pid}/alive", get(process_alive))
+        .route("/plugins/process/{id}/{pid}/logs", get(process_logs))
         .route("/plugins/download/start", post(download_start))
+        .route("/plugins/download/batch", post(download_batch_start))
+        .route(
+            "/plugins/download/batch/{batchId}",
+            get(download_batch_status),
+        )
         .route("/plugins/download/list", get(download_list))
         .route(
             "/plugins/download/{taskId}/progress",
             get(download_progress),
         )
         .route("/plugins/download/{taskId}/cancel", post(download_cancel))
+        .route("/plugins/tasks/register", post(task_register))
+        .route("/plugins/tasks/{taskId}/update", post(task_update))
+        .route("/plugins/tasks/{taskId}/complete", post(task_complete))
+        .route("/plugins/tasks/{taskId}", get(task_progress))
+        .route("/plugins/cf/files", post(cf_files_lookup))
+        .route(
+            "/plugins/files/{id}/archive-entry",
+            post(archive_read_entry),
+        )
         .route("/plugins/shell/{id}", post(shell))
 }
 
@@ -448,6 +574,14 @@ struct UploadQuery {
 /// 深链快捷安装的下载体积上限（64 MiB）。插件包是 zip，正常量级在个位数 MiB；
 /// 设上限是为了让「外部 URL 触发的下载」不能靠超大响应打爆内存。
 const INSTALL_URL_MAX_BYTES: u64 = 64 * 1024 * 1024;
+
+/// 插件单次批量调用的条目上限。
+///
+/// 存在的理由不是业务限制，而是分配安全：`Vec::with_capacity(req.files.len())`
+/// 等按请求长度预分配的地方，长度完全由插件（= 不受信输入）决定。没有上限时
+/// 一个超大数组就能让后端先分配一大块内存再逐个校验。上限远高于真实用量
+/// （整合包最多几千个文件）。
+const MAX_PLUGIN_BATCH_ITEMS: usize = 20_000;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1232,6 +1366,53 @@ async fn file_delete(
     }))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginFileRenameRequest {
+    from: String,
+    to: String,
+}
+
+/// POST /plugins/files/{id}/rename — 移动/重命名文件或目录。
+///
+/// 为什么需要：插件已有读/写/删，唯独没有「移动」。而很多操作天然是移动而不是
+/// 复制（把 jar 隔离到另一个目录、把解压出的子目录提到根目录）。没有它，插件只能
+/// readBytes + writeBytes + deleteFile 三倍搬运大文件。
+///
+/// 两端都要有读+写授权（源可读、目标可写），避免借 rename 把文件推进未授权目录。
+async fn file_rename(
+    State(state): State<SharedState>,
+    AxumPath(plugin_id): AxumPath<String>,
+    Json(req): Json<PluginFileRenameRequest>,
+) -> ApiResult<Json<PluginFileResponse>> {
+    let from = FileAuthService::normalize_path(&req.from)
+        .ok_or_else(|| ApiError::bad_request("FS_INVALID_PATH", "无效源路径"))?;
+    let to = FileAuthService::normalize_path(&req.to)
+        .ok_or_else(|| ApiError::bad_request("FS_INVALID_PATH", "无效目标路径"))?;
+    if !from.exists() {
+        return Err(ApiError::not_found("FS_FILE_NOT_FOUND", "源文件不存在"));
+    }
+    for p in [&req.from, &req.to] {
+        if state.plugin_auth.find_grant(&plugin_id, p).is_none() {
+            return Err(ApiError::forbidden(
+                "FS_AUTHORIZATION_REQUIRED",
+                "未授权访问该路径",
+            ));
+        }
+    }
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::rename(&from, &to)?;
+    Ok(Json(PluginFileResponse {
+        path: to.to_string_lossy().into_owned(),
+        mode: None,
+        content: None,
+        content_base64: None,
+        is_binary: false,
+    }))
+}
+
 fn read_file_segment(
     path: &std::path::Path,
     start: Option<i64>,
@@ -1258,6 +1439,283 @@ fn read_file_segment(
     }
     buf.truncate(read_total);
     Ok(buf)
+}
+
+// =====================================================================
+// File extract / list (issue #295: 服务端压缩包导入所需)
+// =====================================================================
+
+/// POST /api/plugins/files/{id}/extract — 把本地 zip 解压到目标目录。
+/// 走 FileAuthService：压缩包路径需读授权、目标目录需写授权（均按前缀）。
+async fn file_extract(
+    State(state): State<SharedState>,
+    AxumPath(plugin_id): AxumPath<String>,
+    Json(req): Json<PluginFileExtractRequest>,
+) -> ApiResult<Json<PluginFileExtractResponse>> {
+    let archive = FileAuthService::normalize_path(&req.archive_path)
+        .ok_or_else(|| ApiError::bad_request("FS_INVALID_PATH", "无效的压缩包路径"))?;
+    let dest = FileAuthService::normalize_path(&req.dest_path)
+        .ok_or_else(|| ApiError::bad_request("FS_INVALID_PATH", "无效的目标路径"))?;
+    if state
+        .plugin_auth
+        .find_grant(&plugin_id, &req.archive_path)
+        .is_none()
+        || state
+            .plugin_auth
+            .find_grant(&plugin_id, &req.dest_path)
+            .is_none()
+    {
+        return Err(ApiError::forbidden(
+            "FS_AUTHORIZATION_REQUIRED",
+            "未授权访问该路径",
+        ));
+    }
+    if !archive.is_file() {
+        return Err(ApiError::not_found("FS_FILE_NOT_FOUND", "压缩包不存在"));
+    }
+    tokio::fs::create_dir_all(&dest).await?;
+    let dest_display = dest.to_string_lossy().into_owned();
+    let (archive, dest) = (archive.clone(), dest.clone());
+    let prefix = req.prefix.clone();
+    let strip_prefix = req.strip_prefix;
+    tokio::task::spawn_blocking(move || {
+        crate::services::archive::extract_zip_file_filtered(
+            &archive,
+            &dest,
+            prefix.as_deref(),
+            strip_prefix,
+        )
+    })
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?
+    .map_err(|e| ApiError::bad_request("EXTRACT_FAILED", e))?;
+    Ok(Json(PluginFileExtractResponse {
+        dest_path: dest_display,
+    }))
+}
+
+/// POST /api/plugins/files/{id}/list — 列举目录条目（名称/类型/大小/mtime）。
+/// 只做一层或递归（栈式遍历，目录优先），条目数上限默认 1000。
+async fn file_list(
+    State(state): State<SharedState>,
+    AxumPath(plugin_id): AxumPath<String>,
+    Json(req): Json<PluginFileListRequest>,
+) -> ApiResult<Json<Vec<PluginFileEntry>>> {
+    let root = FileAuthService::normalize_path(&req.path)
+        .ok_or_else(|| ApiError::bad_request("FS_INVALID_PATH", "无效路径"))?;
+    if state
+        .plugin_auth
+        .find_grant(&plugin_id, &req.path)
+        .is_none()
+    {
+        return Err(ApiError::forbidden(
+            "FS_AUTHORIZATION_REQUIRED",
+            "未授权访问该路径",
+        ));
+    }
+    if !root.is_dir() {
+        return Err(ApiError::not_found("FS_DIR_NOT_FOUND", "目录不存在"));
+    }
+    let cap = req.max_entries.unwrap_or(1000).clamp(1, 10000);
+    let recursive = req.recursive;
+    let entries = tokio::task::spawn_blocking(move || list_dir_entries(&root, recursive, cap))
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .map_err(|e| ApiError::bad_request("FS_LIST_FAILED", e))?;
+    Ok(Json(entries))
+}
+
+fn list_dir_entries(
+    root: &Path,
+    recursive: bool,
+    cap: usize,
+) -> Result<Vec<PluginFileEntry>, String> {
+    let mut out: Vec<PluginFileEntry> = Vec::new();
+    let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let rd =
+            std::fs::read_dir(&dir).map_err(|e| format!("读取目录失败 {}: {e}", dir.display()))?;
+        // 目录先入栈后输出会打乱「目录优先」排序，这里统一收集后在末尾整体排序。
+        for entry in rd {
+            let entry = entry.map_err(|e| format!("读取条目失败: {e}"))?;
+            let path = entry.path();
+            let Ok(meta) = entry.metadata() else { continue };
+            let is_dir = meta.is_dir();
+            out.push(PluginFileEntry {
+                name: entry.file_name().to_string_lossy().into_owned(),
+                path: path.to_string_lossy().into_owned(),
+                is_dir,
+                size: if is_dir { 0 } else { meta.len() },
+                modified_ms: meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as u64),
+            });
+            if recursive && is_dir {
+                if out.len() + stack.len() < cap + root_ancestor_budget(cap) {
+                    stack.push(path);
+                }
+            }
+            if out.len() >= cap {
+                out.truncate(cap);
+                sort_entries(&mut out);
+                return Ok(out);
+            }
+        }
+    }
+    sort_entries(&mut out);
+    Ok(out)
+}
+
+/// 递归模式下允许栈里比上限多保留一部分目录，避免浅层目录把配额吃光后
+/// 子目录全被跳过（栈深与输出量同量级即可）。
+fn root_ancestor_budget(cap: usize) -> usize {
+    (cap / 4).max(64)
+}
+
+fn sort_entries(out: &mut [PluginFileEntry]) {
+    out.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    });
+}
+
+// =====================================================================
+// Managed processes (issue #295: 插件常驻进程管理)
+// =====================================================================
+
+/// POST /api/plugins/process/{id}/spawn — 拉起常驻进程（piped stdio）。
+async fn process_spawn(
+    State(state): State<SharedState>,
+    AxumPath(plugin_id): AxumPath<String>,
+    Json(req): Json<PluginProcessSpawnRequest>,
+) -> ApiResult<Json<PluginProcessSpawnResponse>> {
+    if req.command.trim().is_empty() {
+        return Err(ApiError::bad_request(
+            "PROCESS_COMMAND_REQUIRED",
+            "command 不能为空",
+        ));
+    }
+    let pid = state
+        .plugin_processes
+        .spawn(
+            &plugin_id,
+            crate::services::plugin_process::SpawnOptions {
+                command: req.command,
+                args: req.args,
+                cwd: req.cwd,
+                env: req.env,
+            },
+        )
+        .await
+        .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "PROCESS_SPAWN_FAILED", e))?;
+    let snap = state
+        .plugin_processes
+        .snapshot(&plugin_id, pid)
+        .map_err(|e| ApiError::internal(e))?;
+    Ok(Json(PluginProcessSpawnResponse {
+        pid,
+        started_at_ms: snap.started_at_ms,
+    }))
+}
+
+/// GET /api/plugins/process/{id}/list — 该插件的全部受管进程快照。
+async fn process_list(
+    State(state): State<SharedState>,
+    AxumPath(plugin_id): AxumPath<String>,
+) -> Json<Vec<crate::services::plugin_process::ProcSnapshot>> {
+    Json(state.plugin_processes.list(&plugin_id))
+}
+
+/// POST /api/plugins/process/{id}/{pid}/stdin — 向进程标准输入写入。
+async fn process_stdin(
+    State(state): State<SharedState>,
+    AxumPath((plugin_id, pid)): AxumPath<(String, u32)>,
+    Json(req): Json<PluginProcessStdinRequest>,
+) -> ApiResult<StatusCode> {
+    state
+        .plugin_processes
+        .write_stdin(&plugin_id, pid, &req.data, req.append_newline)
+        .await
+        .map_err(|e| ApiError::bad_request("PROCESS_STDIN_FAILED", e))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST /api/plugins/process/{id}/{pid}/kill — 终止进程树（复用核心 kill 逻辑）。
+/// 幂等：进程已退出时返回 200。
+async fn process_kill(
+    State(state): State<SharedState>,
+    AxumPath((plugin_id, pid)): AxumPath<(String, u32)>,
+) -> ApiResult<Json<PluginProcessKillResponse>> {
+    let snap = state
+        .plugin_processes
+        .snapshot(&plugin_id, pid)
+        .map_err(|e| ApiError::not_found("PROCESS_NOT_FOUND", e))?;
+    if !snap.alive {
+        return Ok(Json(PluginProcessKillResponse {
+            message: format!("进程 {pid} 已退出"),
+        }));
+    }
+    let killed = state
+        .core
+        .launch()
+        .kill(pid as i32)
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    if !killed {
+        // 兜底：core kill 可能因平台细节返回 false（进程已在退出中等），
+        // 直接再来一次进程树终止，而不是把「停止失败」抛回给用户。
+        #[cfg(windows)]
+        {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = std::process::Command::new("kill")
+                .args(["-9", &pid.to_string()])
+                .status();
+        }
+    }
+    Ok(Json(PluginProcessKillResponse {
+        message: format!("进程 {pid} 已终止"),
+    }))
+}
+
+/// GET /api/plugins/process/{id}/{pid}/alive — 进程存活状态。
+async fn process_alive(
+    State(state): State<SharedState>,
+    AxumPath((plugin_id, pid)): AxumPath<(String, u32)>,
+) -> ApiResult<Json<crate::services::plugin_process::ProcSnapshot>> {
+    let snap = state
+        .plugin_processes
+        .snapshot(&plugin_id, pid)
+        .map_err(|e| ApiError::not_found("PROCESS_NOT_FOUND", e))?;
+    Ok(Json(snap))
+}
+
+/// GET /api/plugins/process/{id}/{pid}/logs?after=seq — 游标式增量日志。
+async fn process_logs(
+    State(state): State<SharedState>,
+    AxumPath((plugin_id, pid)): AxumPath<(String, u32)>,
+    Query(query): Query<PluginProcessLogsQuery>,
+) -> ApiResult<Json<PluginProcessLogsResponse>> {
+    let (lines, snap) = state
+        .plugin_processes
+        .logs(&plugin_id, pid, query.after.unwrap_or(0))
+        .map_err(|e| ApiError::not_found("PROCESS_NOT_FOUND", e))?;
+    Ok(Json(PluginProcessLogsResponse {
+        lines,
+        next_seq: snap.next_seq,
+        oldest_seq: snap.oldest_seq,
+        alive: snap.alive,
+        exit_code: snap.exit_code,
+    }))
 }
 
 // =====================================================================
@@ -1377,6 +1835,576 @@ async fn download_cancel(
     Json(StatusResponse {
         status: "cancelled".to_string(),
     })
+}
+
+// =====================================================================
+// 插件通用任务 / 批量下载 / 元数据代理
+//
+// 这些接口的存在意义：让「一键开服」这类功能完整地由插件实现，而不是在启动器
+// 里为单个功能开专用管线。插件缺少的从来不是某个功能端点，而是四件通用能力：
+//   1. 一次下载几百个文件、只占一张卡片（/plugins/download/batch）
+//   2. 自己编排分步任务并上报进度（/plugins/tasks/*）
+//   3. 查询 CurseForge 文件信息而不持有 API key（/plugins/cf/files）
+//   4. 不解压整包就读 zip 内单个条目（/plugins/archive/entry）
+// 权限校验同样不在后端（见模块头注释），由前端 bridge 统一执行。
+// =====================================================================
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginBatchDownloadRequest {
+    /// 目标文件列表：每项一个 URL + 落盘路径。
+    files: Vec<PluginBatchFile>,
+    /// 归属的外部驱动任务 id（`/plugins/tasks/register` 的返回值）。
+    /// 提供时进度写进该任务的步骤；省略则自建一个只含单步的任务。
+    #[serde(default)]
+    task_id: Option<String>,
+    /// 推进哪个步骤的百分比（省略则不推步骤，只推任务总进度）。
+    #[serde(default)]
+    step_id: Option<String>,
+    /// 卡片标题（自建任务时使用）。
+    #[serde(default)]
+    title: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginBatchFile {
+    url: String,
+    dest_path: String,
+    #[serde(default)]
+    headers: Option<HashMap<String, String>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginBatchDownloadResponse {
+    task_id: String,
+    /// 批次 id：`/plugins/download/batch/{batchId}` 查询完成状态。
+    batch_id: String,
+    total_files: usize,
+}
+
+/// 批量下载批次状态（异步下载，插件按 batchId 轮询）。
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginBatchState {
+    status: String,
+    total_files: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+fn batches() -> &'static Mutex<HashMap<String, PluginBatchState>> {
+    static BATCHES: OnceLock<Mutex<HashMap<String, PluginBatchState>>> = OnceLock::new();
+    BATCHES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// POST /plugins/download/batch — 批量下载到多目标路径，进度挂到任务步骤上。
+///
+/// 与 `/plugins/download/start`（单文件、单会话、一张卡）的区别：这里是「一个任务
+/// 一张卡」，几百个 mod 不会把下载中心刷成几百条。底层复用安装管线同一套
+/// `download_batch`（并发、去重、镜像回退、`.part` 原子改名）。
+async fn download_batch_start(
+    State(state): State<SharedState>,
+    Json(req): Json<PluginBatchDownloadRequest>,
+) -> ApiResult<Json<PluginBatchDownloadResponse>> {
+    if req.files.is_empty() {
+        return Err(ApiError::bad_request(
+            "DOWNLOAD_FILES_REQUIRED",
+            "files 不能为空",
+        ));
+    }
+    if req.files.len() > MAX_PLUGIN_BATCH_ITEMS {
+        return Err(ApiError::bad_request(
+            "DOWNLOAD_TOO_MANY_FILES",
+            format!(
+                "单次批量下载最多 {} 个文件（收到 {}）",
+                MAX_PLUGIN_BATCH_ITEMS,
+                req.files.len()
+            ),
+        ));
+    }
+
+    let tracker = state.install_tracker.clone();
+    let (task_id, step_id, handle) = match req.task_id.as_deref() {
+        Some(tid) => {
+            let handle = tracker
+                .get_handle(tid)
+                .ok_or_else(|| ApiError::not_found("TASK_NOT_FOUND", "任务不存在"))?;
+            (tid.to_string(), req.step_id.clone(), handle)
+        }
+        None => {
+            let tid = format!("plugin-batch-{}", uuid::Uuid::new_v4());
+            let step = req
+                .step_id
+                .clone()
+                .unwrap_or_else(|| "download".to_string());
+            let handle = tracker
+                .register_external(
+                    tid.clone(),
+                    "plugin",
+                    req.title.clone(),
+                    &[(step.clone(), 100.0)],
+                    100.0,
+                )
+                .map_err(|e| ApiError::conflict("TASK_BUSY", format!("已有进行中的任务: {e}")))?;
+            (tid, Some(step), handle)
+        }
+    };
+
+    // 不用 with_capacity(req.files.len())：容量来自请求体（不受信），CodeQL 会
+    // 判为「按用户值预分配」并可能真的在超长请求上先吃掉一大块内存。上限校验
+    // 已在入口处做过，这里让 Vec 按实际 push 增长即可。
+    let mut targets: Vec<crate::services::install_service::DownloadTarget> = Vec::new();
+    for f in &req.files {
+        if f.url.trim().is_empty() || f.dest_path.trim().is_empty() {
+            return Err(ApiError::bad_request(
+                "DOWNLOAD_TARGET_INVALID",
+                "url / destPath 不能为空",
+            ));
+        }
+        let dest = PathBuf::from(f.dest_path.trim());
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let headers = f
+            .headers
+            .as_ref()
+            .map(|h| h.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+        targets.push((f.url.clone(), dest, headers));
+    }
+
+    let total = targets.len();
+    let batch_id = uuid::Uuid::new_v4().to_string();
+    {
+        let mut g = batches().lock().unwrap_or_else(|p| p.into_inner());
+        g.insert(
+            batch_id.clone(),
+            PluginBatchState {
+                status: "running".to_string(),
+                total_files: total,
+                error: None,
+            },
+        );
+    }
+    let mgr = state.download_manager.load_full();
+    let tracker2 = tracker.clone();
+    let task_for_worker = task_id.clone();
+    let step_for_worker = step_id.clone();
+    let batch_for_worker = batch_id.clone();
+    let owns_task = req.task_id.is_none();
+    tokio::spawn(async move {
+        let result = crate::services::install_service::download_batch(
+            &handle,
+            &mgr,
+            targets,
+            step_for_worker.as_deref(),
+        )
+        .await;
+        // 自建任务才由这里收尾；调用方传入的 taskId 由其自己 complete
+        if owns_task {
+            tracker2.finish_external(&task_for_worker, result.clone().err());
+        } else if let Err(e) = &result {
+            let msg = e.clone();
+            let _ = tracker2.update_progress(&task_for_worker, |f| {
+                f.set_status(crate::services::install_tracker::InstallStatus::Failed);
+                f.error = Some(msg);
+                f.finish_steps(false);
+            });
+        }
+        let mut g = batches().lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(b) = g.get_mut(&batch_for_worker) {
+            match result {
+                Ok(()) => b.status = "completed".to_string(),
+                Err(e) => {
+                    b.status = "failed".to_string();
+                    b.error = Some(e);
+                }
+            }
+        }
+    });
+
+    Ok(Json(PluginBatchDownloadResponse {
+        task_id,
+        batch_id,
+        total_files: total,
+    }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginTaskRegisterRequest {
+    /// 插件自定义任务 id（建议带插件前缀避免冲突）；省略则生成。
+    #[serde(default)]
+    task_id: Option<String>,
+    title: String,
+    /// 步骤列表：id + 权重。权重只影响合成总进度，任意正数。
+    steps: Vec<PluginTaskStepSpec>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginTaskStepSpec {
+    id: String,
+    #[serde(default = "default_step_weight")]
+    weight: f64,
+    #[serde(default)]
+    label: Option<String>,
+}
+
+fn default_step_weight() -> f64 {
+    1.0
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginTaskRegisterResponse {
+    task_id: String,
+}
+
+/// POST /plugins/tasks/register — 注册一个由插件自己推进的分步任务。
+///
+/// 任务进 `InstallTracker`，因此**自动出现在下载中心**（SSE 与轮询两路都覆盖），
+/// 与内置安装任务同一套卡片渲染。插件随后用 `/update` 推步骤、`/complete` 收尾。
+async fn task_register(
+    State(state): State<SharedState>,
+    Json(req): Json<PluginTaskRegisterRequest>,
+) -> ApiResult<Json<PluginTaskRegisterResponse>> {
+    if req.steps.is_empty() {
+        return Err(ApiError::bad_request(
+            "TASK_STEPS_REQUIRED",
+            "steps 不能为空",
+        ));
+    }
+    if req.steps.len() > 256 {
+        return Err(ApiError::bad_request(
+            "TASK_TOO_MANY_STEPS",
+            format!("单个任务最多 256 个步骤（收到 {}）", req.steps.len()),
+        ));
+    }
+    let task_id = req
+        .task_id
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| format!("plugin-task-{}", uuid::Uuid::new_v4()));
+
+    let specs: Vec<(String, f64)> = req
+        .steps
+        .iter()
+        .map(|s| (s.id.clone(), if s.weight > 0.0 { s.weight } else { 1.0 }))
+        .collect();
+
+    state
+        .install_tracker
+        .register_external(task_id.clone(), "plugin", Some(req.title), &specs, 100.0)
+        .map_err(|e| ApiError::conflict("TASK_BUSY", format!("已有进行中的任务: {e}")))?;
+
+    // 步骤自定义标签（可选）：后端不硬编码任何文案，由插件自带。
+    for s in &req.steps {
+        if let Some(label) = &s.label {
+            state
+                .install_tracker
+                .update_progress(&task_id, |f| f.set_step_label(&s.id, label));
+        }
+    }
+
+    Ok(Json(PluginTaskRegisterResponse { task_id }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginTaskUpdateRequest {
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    stage: Option<String>,
+    #[serde(default)]
+    step_id: Option<String>,
+    /// pending | active | done | failed
+    #[serde(default)]
+    step_status: Option<String>,
+    #[serde(default)]
+    step_percent: Option<f64>,
+    #[serde(default)]
+    step_label: Option<String>,
+    #[serde(default)]
+    current_file: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+    /// 受限文件数（不落 completed，转 awaiting-files）
+    #[serde(default)]
+    blocked_files: Option<i32>,
+}
+
+/// POST /plugins/tasks/{taskId}/update — 推进外部任务的状态/步骤。
+///
+/// 所有字段可选，只更新提供的部分；插件按自己的编排节奏调用。
+async fn task_update(
+    State(state): State<SharedState>,
+    AxumPath(task_id): AxumPath<String>,
+    Json(req): Json<PluginTaskUpdateRequest>,
+) -> ApiResult<Json<StatusResponse>> {
+    // 终态必须走 /complete：那里会记 terminal_at 并收尾步骤，直接写 status 会让
+    // 任务永远留在活动列表（前端卡片一直「下载中」）。提前拒绝，错误信息直接
+    // 指向正确用法。
+    if let Some(s) = &req.status {
+        if crate::services::install_tracker::InstallStatus::from_str(s).is_terminal() {
+            return Err(ApiError::bad_request(
+                "TASK_STATUS_TERMINAL",
+                "终态请用 POST /plugins/tasks/{taskId}/complete 提交",
+            ));
+        }
+        // 非终态也走 set_status：它负责 terminal_at 的重置。stage 需一并更新
+        // ——set_status 只写 status/terminal_at，不会同步 stage（否则卡片会显示
+        // 状态「下载中」而阶段仍是「queued」）。
+        state.install_tracker.update_progress(&task_id, |f| {
+            f.set_status(crate::services::install_tracker::InstallStatus::from_str(s));
+            f.stage = s.clone();
+        });
+    }
+    let ok = state.install_tracker.update_progress(&task_id, |f| {
+        if let Some(s) = &req.stage {
+            f.stage = s.clone();
+        }
+        if let Some(sid) = &req.step_id {
+            if let Some(status) = &req.step_status {
+                f.mark_step(sid, status);
+            } else if let Some(pct) = req.step_percent {
+                f.set_step_percent(sid, pct);
+            }
+            if let Some(label) = &req.step_label {
+                f.set_step_label(sid, label);
+            }
+        }
+        if let Some(cf) = &req.current_file {
+            f.current_file = cf.clone();
+        }
+        if let Some(e) = &req.error {
+            f.error = Some(e.clone());
+        }
+        if let Some(b) = req.blocked_files {
+            f.blocked_files = b;
+        }
+        f.recompute_progress();
+    });
+    if !ok {
+        return Err(ApiError::not_found("TASK_NOT_FOUND", "任务不存在"));
+    }
+    Ok(Json(StatusResponse {
+        status: "ok".to_string(),
+    }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginTaskCompleteRequest {
+    #[serde(default)]
+    error: Option<String>,
+}
+
+/// POST /plugins/tasks/{taskId}/complete — 外部任务收尾（成功/失败/取消）。
+async fn task_complete(
+    State(state): State<SharedState>,
+    AxumPath(task_id): AxumPath<String>,
+    Json(req): Json<PluginTaskCompleteRequest>,
+) -> ApiResult<Json<StatusResponse>> {
+    if !state.install_tracker.finish_external(&task_id, req.error) {
+        return Err(ApiError::not_found("TASK_NOT_FOUND", "任务不存在"));
+    }
+    Ok(Json(StatusResponse {
+        status: "ok".to_string(),
+    }))
+}
+
+/// GET /plugins/download/batch/{batchId} — 批量下载批次状态。
+async fn download_batch_status(
+    AxumPath(batch_id): AxumPath<String>,
+) -> ApiResult<Json<PluginBatchState>> {
+    let g = batches().lock().unwrap_or_else(|p| p.into_inner());
+    g.get(&batch_id)
+        .cloned()
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found("BATCH_NOT_FOUND", "批次不存在或已回收"))
+}
+
+/// GET /plugins/tasks/{taskId} — 任务进度（与安装管线同一 DTO）。
+async fn task_progress(
+    State(state): State<SharedState>,
+    AxumPath(task_id): AxumPath<String>,
+) -> ApiResult<Json<crate::services::install_tracker::InstallProgress>> {
+    state
+        .install_tracker
+        .get_state(&task_id)
+        .map(Json)
+        .ok_or_else(|| ApiError::not_found("TASK_NOT_FOUND", "任务不存在"))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginCfFilesRequest {
+    /// `[projectId, fileId]` 对；projectId 仅用于回填，查询按 fileId。
+    files: Vec<PluginCfFileRef>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginCfFileRef {
+    #[serde(default)]
+    project_id: Option<i64>,
+    file_id: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginCfFileInfo {
+    project_id: i64,
+    file_id: i64,
+    file_name: String,
+    /// 为空表示作者关闭第三方分发（受限文件），调用方应转「待补全」流程。
+    download_url: Option<String>,
+    file_length: i64,
+    /// 阻塞原因（受限/未找到）；成功时省略。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    blocked_reason: Option<String>,
+}
+
+/// POST /plugins/cf/files — 批量查询 CurseForge 文件信息（元数据代理）。
+///
+/// CurseForge 的 files 端点要 `x-api-key`，插件不可能持有；但「整合包清单里只有
+/// projectID:fileID，需要换下载直链」是任何整合包相关插件都要做的事。这里只暴露
+/// 「查询 → 直链」这一个语义，key 始终留在启动器进程内。
+async fn cf_files_lookup(
+    State(state): State<SharedState>,
+    Json(req): Json<PluginCfFilesRequest>,
+) -> ApiResult<Json<Vec<PluginCfFileInfo>>> {
+    if req.files.is_empty() {
+        return Ok(Json(Vec::new()));
+    }
+    if req.files.len() > MAX_PLUGIN_BATCH_ITEMS {
+        return Err(ApiError::bad_request(
+            "CF_TOO_MANY_FILES",
+            format!(
+                "单次最多查询 {} 个文件（收到 {}）",
+                MAX_PLUGIN_BATCH_ITEMS,
+                req.files.len()
+            ),
+        ));
+    }
+    let file_ids: Vec<i64> = req.files.iter().map(|f| f.file_id).collect();
+    let cf = state
+        .core
+        .create_curseforge_source(&state.curse_forge_api_key);
+    let infos = cf
+        .get_files_batch(&file_ids)
+        .await
+        .map_err(|e| ApiError::upstream(format!("批量查询 CurseForge 文件失败: {e}")))?;
+
+    // 同上：容量不取自请求体长度，避免按用户值预分配。
+    let mut out = Vec::new();
+    for f in &req.files {
+        let project_id = f.project_id.unwrap_or(0);
+        match infos.get(&f.file_id) {
+            Some(info) => {
+                let url = info
+                    .download_url
+                    .as_deref()
+                    .filter(|s| !s.trim().is_empty())
+                    .map(|s| s.to_string());
+                out.push(PluginCfFileInfo {
+                    project_id,
+                    file_id: f.file_id,
+                    file_name: info.file_name.clone().unwrap_or_default(),
+                    blocked_reason: if url.is_none() {
+                        Some("作者关闭了第三方分发".to_string())
+                    } else {
+                        None
+                    },
+                    download_url: url,
+                    file_length: info.file_length.unwrap_or(0),
+                });
+            }
+            None => out.push(PluginCfFileInfo {
+                project_id,
+                file_id: f.file_id,
+                file_name: String::new(),
+                download_url: None,
+                file_length: 0,
+                blocked_reason: Some("上游未返回该文件".to_string()),
+            }),
+        }
+    }
+    Ok(Json(out))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginArchiveEntryRequest {
+    archive_path: String,
+    /// zip 内条目路径（正斜杠）。
+    entry_path: String,
+    /// 读取上限（字节）；超限报错而非截断，避免静默拿到半个 JSON。
+    #[serde(default = "default_entry_limit")]
+    max_bytes: u64,
+}
+
+fn default_entry_limit() -> u64 {
+    4 * 1024 * 1024
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginArchiveEntryResponse {
+    content: String,
+    size: u64,
+}
+
+/// POST /plugins/archive/entry — 不经解压直接读 zip 内单个条目的文本内容。
+///
+/// 为什么需要：整合包/模组 jar 的元数据都在包里（`fabric.mod.json`、
+/// `META-INF/mods.toml`、`modrinth.index.json`）。让插件先 `extractArchive`
+/// 解压几百个 jar 只为读一个 JSON 不现实；而「读包内某个条目」本身与业务无关，
+/// 是通用能力。
+async fn archive_read_entry(
+    State(state): State<SharedState>,
+    AxumPath(plugin_id): AxumPath<String>,
+    Json(req): Json<PluginArchiveEntryRequest>,
+) -> ApiResult<Json<PluginArchiveEntryResponse>> {
+    let archive_path = PathBuf::from(req.archive_path.trim());
+    if !archive_path.is_file() {
+        return Err(ApiError::not_found("ARCHIVE_NOT_FOUND", "压缩包不存在"));
+    }
+    // 与 file_read/file_list 同一道逐路径授权：只读单个条目不等于可以读任意
+    // 压缩包——否则 filesystem:read 就绕过了 FS 授权流程（读别人插件的
+    // .qplugin、系统压缩包里的敏感配置等）。
+    if state
+        .plugin_auth
+        .find_grant(&plugin_id, &req.archive_path)
+        .is_none()
+    {
+        return Err(ApiError::forbidden(
+            "FS_AUTHORIZATION_REQUIRED",
+            "未授权访问该路径",
+        ));
+    }
+    let max = req.max_bytes.clamp(1, 32 * 1024 * 1024);
+    let file = std::fs::File::open(&archive_path)?;
+    let mut zip = zip::ZipArchive::new(file)
+        .map_err(|e| ApiError::bad_request("ARCHIVE_INVALID", format!("不是有效的 zip: {e}")))?;
+    let mut entry = zip
+        .by_name(&req.entry_path)
+        .map_err(|_| ApiError::not_found("ARCHIVE_ENTRY_NOT_FOUND", "包内条目不存在"))?;
+    if entry.size() > max {
+        return Err(ApiError::bad_request(
+            "ARCHIVE_ENTRY_TOO_LARGE",
+            format!("条目大小 {} 超过上限 {max}", entry.size()),
+        ));
+    }
+    let mut buf = Vec::with_capacity(entry.size() as usize);
+    std::io::Read::read_to_end(&mut entry, &mut buf)?;
+    let size = buf.len() as u64;
+    let content = String::from_utf8_lossy(&buf).into_owned();
+    Ok(Json(PluginArchiveEntryResponse { content, size }))
 }
 
 async fn download_worker(

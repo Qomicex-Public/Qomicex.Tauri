@@ -7,7 +7,11 @@ import { MorphIcon } from 'morphicons/react'
 import { useSafeClose } from '../hooks/closeGuardContext.ts'
 import { SlotHost } from './SlotHost.tsx'
 
-const win = getCurrentWindow()
+// 浏览器调试模式（pnpm dev 直开、无 Tauri runtime）：顶层 getCurrentWindow 会
+// 抛错导致整树白屏，这里降级为 null——窗口控制按钮不渲染（TitleBar 仅剩槽位），
+// 其余功能不受影响。
+const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+const win = isTauri ? getCurrentWindow() : null
 
 const MAXIMIZE_ICON = 'M4.5 4.5h15v15h-15z'
 const RESTORE_ICON = 'M9.5 9.5h10v10h-10zM4.5 4.5h10v10h-10z'
@@ -33,6 +37,7 @@ export function TitleBar() {
   const safeClose = useSafeClose()
 
   useEffect(() => {
+    if (!win) return
     win.onResized(() => { win.isMaximized().then(setMaximized) })
     win.isMaximized().then(setMaximized)
   }, [])
@@ -45,7 +50,8 @@ export function TitleBar() {
         <SlotHost slotId="header:right" className="flex h-full items-center" trailingSeparator />
       </div>
       {/* 窗口控制按钮：显式禁用拖动（§A① interactive），
-          避免"按在按钮上滑动"误触发窗口拖动 */}
+          避免"按在按钮上滑动"误触发窗口拖动。浏览器调试模式下不渲染。 */}
+      {win && (
       <div className="flex">
         <button
           onClick={() => win.minimize()}
@@ -77,6 +83,7 @@ export function TitleBar() {
           <CloseIcon />
         </button>
       </div>
+      )}
     </div>
   )
 }

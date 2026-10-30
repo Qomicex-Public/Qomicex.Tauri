@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path'
 import { validateManifest, type ManifestIssue } from '../lib/manifest.ts'
 import { checkPermissions, checkLongLoops, type ScanFinding } from '../lib/scan.ts'
 import { zipRead } from '../lib/zip.ts'
-import { verifyPackageSignature } from '../lib/signature.ts'
+import { verifyPackageSignature, STORE_ROOT_PUBLIC_KEY_B64 } from '../lib/signature.ts'
 import { fail, info, warn } from '../lib/io.ts'
 
 export interface VerifyOptions {
@@ -72,9 +72,14 @@ async function verifyPackage(pkg: string): Promise<void> {
     else warn(`[manifest.${i.path}] ${i.message}`)
   }
 
-  const sig = await verifyPackageSignature(entries)
+  // 本地开发签名（QOMICEX_DEV_ROOT_PUBLIC_KEY 与 launcher debug 构建的覆盖一致）
+  const devRoot = process.env.QOMICEX_DEV_ROOT_PUBLIC_KEY?.trim()
+  const sig = await verifyPackageSignature(
+    entries,
+    devRoot || STORE_ROOT_PUBLIC_KEY_B64,
+  )
   if (sig.ok) {
-    info(`✔ 签名有效（开发者: ${sig.cert.developerName}, keyId: ${sig.cert.keyId}）`)
+    info(`✔ 签名有效（开发者: ${sig.cert.developerName}, keyId: ${sig.cert.keyId}${devRoot ? '，本地开发根钥' : ''}）`)
   } else if (sig.code === 'signature_required') {
     warn(sig.reason)
   } else {

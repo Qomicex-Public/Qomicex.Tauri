@@ -46,6 +46,9 @@ pub struct PluginManifest {
     pub render: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// 插件自持 i18n 目录（包内相对路径）。后端只透传给前端解析 %key%。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub l10n: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +93,11 @@ pub struct PluginContributes {
     pub icon_theme: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_links: Option<Vec<String>>,
+    /// 资源中心安装对话框的插件贡献安装方式（如「安装为服务端」）。
+    /// 后端只透传（前端消费），所以这里用宽松的 JSON 值承载，避免 Rust 侧
+    /// 每加一个扩展点字段就要同步一轮模型。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_modes: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -522,7 +530,7 @@ pub fn install_from_package(
         crate::services::plugin_signature::verify_package_signature(
             package_bytes,
             require_signature,
-            crate::services::plugin_signature::ROOT_PUBLIC_KEY_B64,
+            crate::services::plugin_signature::effective_root_public_key(),
         )?;
     }
 
@@ -607,6 +615,23 @@ pub fn install_from_package(
             }
             let mut out = std::fs::File::create(&out_path)?;
             std::io::copy(&mut entry, &mut out)?;
+        }
+        // 用户数据跨版本保留（issue #295 实测：插件把服务器列表存在自己的
+        // settings.json 里，上传升级直接 rename 替换目录会把配置清空）。
+        // 必须在 snapshot_existing_dir 之前拷贝——那一步会把旧目录 rename 成
+        // *.bak-<version>，之后 target_dir 已不存在，保留逻辑永远落空。
+        // 老目录里若已有 settings.json / cache.json，先拷进临时目录一起搬过去；
+        // 新包自带同名文件时不覆盖（以新包为准）。
+        for preserved in ["settings.json", "cache.json"] {
+            let from = target_dir.join(preserved);
+            if from.is_file() {
+                let to = temp_dir.join(preserved);
+                if !to.exists() {
+                    if let Err(e) = std::fs::copy(&from, &to) {
+                        tracing::warn!(plugin = %manifest.id, file = preserved, "保留插件用户数据失败: {e}");
+                    }
+                }
+            }
         }
         snapshot_existing_dir(&target_dir, &plugins_dir)?;
         std::fs::rename(&temp_dir, &target_dir)?;

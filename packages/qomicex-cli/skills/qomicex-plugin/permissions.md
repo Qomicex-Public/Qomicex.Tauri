@@ -12,7 +12,7 @@
 
 **最小权限原则**：只声明真正用到的权限。`qomicex verify` 会扫描源码实际调用的桥方法（按 `METHOD_PERMISSIONS` 表），**声明了未用到的 → 报错；用了没声明的 → 报错**。因此 AI 生成插件时务必按"最终调用了哪些 API"反推权限集合，宁可少而准。
 
-## 完整权限目录（39 项）
+## 完整权限目录（43 项）
 
 | 权限 ID | 风险 | 用途 |
 |---------|------|------|
@@ -53,9 +53,10 @@
 | `connector:host` | warning | 启停联机 |
 | `connector:scan` | normal | 扫描局域网联机 |
 | `shell:execute` | danger | 执行系统命令 |
-| `filesystem:read` | warning | 读取文件系统 |
-| `filesystem:write` | danger | 写入/删除文件系统 |
-| （例外）`addMenuItem` | — | 动态注册侧边栏菜单，**无需声明权限** |
+| `filesystem:read` | warning | 读取文件系统 / 目录列举（listDir） |
+| `filesystem:write` | danger | 写入/删除文件系统 / 本地 zip 解压（extractArchive） |
+| `process:manage` | danger | 管理常驻进程（spawn/stdin/kill/alive/logs/list） |
+| `dialog:open` | normal | 打开系统文件/目录选择对话框（pickFile/pickDirectory） |
 
 ## 方法 → 权限映射（生成权限列表时照此反推）
 
@@ -81,7 +82,15 @@
 | `download.addTask` / `.progress` / `.cancel` / `.list` | `download:manage` |
 | `download.registerInstall` | `instance:write` |
 | `modpack.install` | `instance:write` |
-| `addMenuItem` | 无需权限 |
+| `process.spawn` / `.stdin` / `.kill` / `.alive` / `.logs` / `.list` | `process:manage` |
+| `pickFile` / `pickDirectory` | `dialog:open` |
+| `extractArchive` | `filesystem:write` |
+| `listDir` | `filesystem:read` |
+| `sendNotification` | `system:notification` |
+| `openPluginSettings` | `config:read` |
+| `registerHook` | `hook:register` |
+| `onLauncherExit` | 无需权限（被动事件） |
+| `addMenuItem` | `ui:inject_sidebar` |
 
 ## 常见权限组合
 

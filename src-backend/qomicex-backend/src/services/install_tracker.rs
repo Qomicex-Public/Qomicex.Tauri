@@ -98,9 +98,10 @@ pub struct InstallStepSpec {
 /// 安装管线分步状态（下载中心卡片渲染步骤列表的数据源）。
 ///
 /// `id` 是稳定标识（如 "fetch-json"/"installer"），文案由前端 i18n 映射；
-/// `percent` 仅在 active 步骤有字节级进度时由 download_batch 推进（0-100），
-/// 扫描/安装等无字节进度的阶段保持 0，前端不渲染百分比。
-/// 并行管线中多个步骤可同时处于 active 状态。
+/// `label` 是管线自带的显示标签（可选）——插件/新管线无需改启动器 i18n 就能
+/// 命名自己的步骤，渲染时优先于 i18n 词条。`percent` 仅在 active 步骤有字节级
+/// 进度时由 download_batch 推进（0-100），扫描/安装等无字节进度的阶段保持 0，
+/// 前端不渲染百分比。并行管线中多个步骤可同时处于 active 状态。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallStep {
@@ -110,6 +111,9 @@ pub struct InstallStep {
     pub percent: f64,
     /// 合成总进度权重
     pub weight: f64,
+    /// 管线自带显示标签（可选，优先于前端 i18n 词条）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 impl InstallStep {
@@ -119,6 +123,7 @@ impl InstallStep {
             status: "pending".to_string(),
             percent: 0.0,
             weight,
+            label: None,
         }
     }
 }
@@ -152,6 +157,10 @@ pub struct InstallProgress {
     /// 前端据此区分「安装整合包」与「更新整合包」的卡片文案与操作按钮。
     #[serde(default)]
     pub kind: String,
+    /// 任务标题（如「服务端搭建 · xxx」）。前端对 SSE 里未知任务自动补卡时用它
+    /// 做显示名；后端安装的任务（插件发起）没有本地卡片，没有它就只能显示 id。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     /// 分步状态；未定义计划的旧任务/其他 kind 为空数组（序列化时省略）。
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub steps: Vec<InstallStep>,
@@ -178,6 +187,11 @@ impl InstallHandle {
         self.update(|f| f.stage = stage.to_string());
     }
 
+    /// 设置任务显示标题（前端自动补卡用；仅后端发起的任务需要）。
+    pub fn set_title(&self, title: &str) {
+        self.update(|f| f.title = Some(title.to_string()));
+    }
+
     /// 追加分步计划（可多次调用：嵌套管线把子步骤追加进同一张表）。
     ///
     /// `budget` 为本组步骤的权重预算（顶层传 [`INSTALL_STEP_BUDGET_TOP`] = 100，
@@ -189,6 +203,19 @@ impl InstallHandle {
             for spec in specs {
                 f.steps
                     .push(InstallStep::pending(spec.id, spec.weight * factor));
+            }
+        });
+    }
+
+    /// 同 [`Self::define_steps`]，但步骤 id 是运行时字符串（插件自报步骤用）。
+    ///
+    /// `InstallStepSpec.id` 是 `&'static str`（内置管线用常量，零分配）；插件传入
+    /// 的步骤 id 来自 JSON，生命周期到不了 'static，故单独提供 owned 版本。
+    pub fn define_steps_owned(&self, specs: &[(String, f64)], budget: f64) {
+        let factor = budget / 100.0;
+        self.update(|f| {
+            for (id, weight) in specs {
+                f.steps.push(InstallStep::pending(id, weight * factor));
             }
         });
     }
@@ -211,6 +238,15 @@ impl InstallHandle {
                 step.percent = percent.clamp(0.0, 100.0);
             }
             f.recompute_progress();
+        });
+    }
+
+    /// 设置某步骤的显示标签（管线自带命名，渲染优先于前端 i18n 词条）。
+    pub fn set_step_label(&self, id: &str, label: &str) {
+        self.update(|f| {
+            if let Some(step) = f.steps.iter_mut().find(|s| s.id == id) {
+                step.label = Some(label.to_string());
+            }
         });
     }
 
@@ -318,6 +354,8 @@ pub struct ProgressField {
     pub current_file_progress: f64,
     pub speed: f64,
     pub steps: Vec<InstallStep>,
+    /// 任务显示标题（见 InstallProgress.title）。
+    pub title: Option<String>,
     /// 进入终态（completed/failed/cancelled）的时刻，用于 SSE 时效过滤。
     /// 非终态为 `None`；状态被重置回非终态时清空。
     pub terminal_at: Option<std::time::Instant>,
@@ -355,6 +393,7 @@ impl ProgressField {
             is_paused,
             stage: self.stage.clone(),
             kind: kind.to_string(),
+            title: self.title.clone(),
             steps: self.steps.clone(),
         }
     }
@@ -388,6 +427,13 @@ impl ProgressField {
             step.percent = percent.clamp(0.0, 100.0);
         }
         self.recompute_progress();
+    }
+
+    /// 设置步骤的显示标签（插件自带文案，免改启动器 i18n）。
+    pub fn set_step_label(&mut self, id: &str, label: &str) {
+        if let Some(step) = self.steps.iter_mut().find(|s| s.id == id) {
+            step.label = Some(label.to_string());
+        }
     }
 
     /// 合成总进度：Σ(done?w : active?w×pct/100 : 0) / Σw × 100。
@@ -460,6 +506,7 @@ impl InstallState {
                 current_file_progress: 0.0,
                 speed: 0.0,
                 steps: Vec::new(),
+                title: None,
                 terminal_at: None,
             }),
             cancelled: AtomicBool::new(false),
@@ -698,6 +745,97 @@ impl InstallTracker {
         self.start(instance_id, "resource", runner);
     }
 
+    /// 注册一个**由调用方外部驱动**的任务（插件管线等），不跑 runner 闭包。
+    ///
+    /// 与 `start`/`try_start` 的区别：那两个方法会 `tokio::spawn` 一个 runner 并在
+    /// 其结束时自动落终态；本方法只建句柄、发首帧广播，进度与终态完全由调用方通过
+    /// 返回的 [`InstallHandle`] 推进（配合 `update_progress` / `finish_external`）。
+    ///
+    /// 用途：插件在自己的 JS 侧编排管线（下载、解压、跑安装器），只需要「下载中心
+    /// 有张卡片 + 分步进度」这一展示能力，不需要把逻辑搬进后端。
+    ///
+    /// 同 `task_id` 已有非终态任务时返回 `Err(现有 kind)`，避免两个插件管线共用
+    /// 同一个 id 互相覆盖进度。
+    pub fn register_external(
+        &self,
+        task_id: String,
+        kind: &str,
+        title: Option<String>,
+        steps: &[(String, f64)],
+        budget: f64,
+    ) -> Result<InstallHandle, String> {
+        let handle = InstallHandle(Arc::new(InstallState::new(
+            task_id.clone(),
+            kind.to_string(),
+            InstallStatus::Queued,
+            "queued",
+            self.tx.clone(),
+        )));
+        {
+            let mut guard = self.states.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(existing) = guard.get(&task_id) {
+                if !existing.snapshot_terminal() {
+                    return Err(existing.kind());
+                }
+            }
+            guard.insert(task_id.clone(), handle.clone());
+        }
+        if let Some(t) = title {
+            handle.set_title(&t);
+        }
+        handle.define_steps_owned(steps, budget);
+        handle.broadcast();
+        Ok(handle)
+    }
+
+    /// 外部驱动任务的终态收尾（对应 `spawn_runner` 里 runner 结束后的那段逻辑）。
+    ///
+    /// `error` 为 `None` → completed；`Some(msg)` → failed。取消状态优先：调用方
+    /// 已 `request_cancel` 且传 `None` 时落 cancelled。
+    ///
+    /// 与 runner 路径同样处理 `blocked_files > 0`：有受限文件时不落 completed，
+    /// 改 `awaiting-files` 等调用方补全后自行收尾。
+    pub fn finish_external(&self, task_id: &str, error: Option<String>) -> bool {
+        let Some(handle) = self.get_handle(task_id) else {
+            return false;
+        };
+        let cancelled = handle.is_cancelled();
+        match error {
+            None if cancelled => {
+                handle.update(|f| {
+                    f.set_status(InstallStatus::Cancelled);
+                    f.error = Some("安装已取消".to_string());
+                });
+            }
+            None if handle.blocked_files() > 0 => {
+                handle.update(|f| {
+                    f.set_status(InstallStatus::AwaitingFiles);
+                    f.stage = InstallStatus::AwaitingFiles.as_str().to_string();
+                    f.progress = 100.0;
+                    f.current_file.clear();
+                    f.finish_steps(true);
+                });
+            }
+            None => {
+                handle.update(|f| {
+                    f.set_status(InstallStatus::Completed);
+                    f.stage = InstallStatus::Completed.as_str().to_string();
+                    f.progress = 100.0;
+                    f.current_file.clear();
+                    f.finish_steps(true);
+                });
+            }
+            Some(msg) => {
+                handle.update(|f| {
+                    f.set_status(InstallStatus::Failed);
+                    f.error = Some(msg);
+                    f.finish_steps(false);
+                });
+            }
+        }
+        true
+    }
+
     /// 新订阅者（接收所有任务进度广播）。
     pub fn subscribe(&self) -> broadcast::Receiver<InstallProgress> {
         self.tx.subscribe()
@@ -866,6 +1004,7 @@ mod tests {
             current_file_progress: 0.0,
             speed: 0.0,
             steps: Vec::new(),
+            title: None,
             terminal_at: None,
         }
     }
@@ -1003,6 +1142,7 @@ mod tests {
         let p = InstallProgress {
             instance_id: "x".to_string(),
             status: "downloading".to_string(),
+            title: None,
             progress: 10.0,
             error: None,
             total_files: 0,
@@ -1028,6 +1168,7 @@ mod tests {
             status: "active".to_string(),
             percent: 30.0,
             weight: 5.0,
+            label: None,
         }];
         let json2 = serde_json::to_value(&p2).unwrap();
         assert_eq!(json2["steps"][0]["id"], "fetch-json");

@@ -1,0 +1,489 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! 插件常驻进程管理服务（issue #295 服务端管理插件催生的插件生态能力）。
+//!
+//! 与 `execCommand`（一次性 shell，≤120s、无句柄、无流式）互补：本服务面向
+//! "插件拉起并长期管理一个外部进程" 的场景（如 Minecraft 服务端）——
+//!
+//! - [`PluginProcessService::spawn`] 拉起进程（piped stdin/stdout/stderr），
+//!   后台任务逐行转发输出进环形日志缓冲（带单调递增 seq，供游标增量拉取）；
+//! - [`PluginProcessService::write_stdin`] 向进程标准输入写字符串（服务端控制台命令）；
+//! - [`PluginProcessService::logs`] 按 `after` 游标取增量行 —— 轮询式而非 SSE，
+//!   在 dev（HTTP）与 release（qomicex:// QIPC）两种传输下行为一致；
+//! - 退出状态由 waiter 任务写入 [`ProcState`]，进程退出后句柄保留 10 分钟供
+//!   插件收尾日志，之后自动回收。
+//!
+//! 安全边界：所有操作都按 `plugin_id` 归属校验 —— 插件只能管理自己拉起的进程；
+//! kill 复用 `/launch/{pid}/kill` 的进程树终止逻辑，由端点层调用。
+
+use std::collections::{HashMap, VecDeque};
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStdin};
+use tokio::sync::Mutex as AsyncMutex;
+
+/// 每个插件同时管理的进程数上限（防滥用；服务端管理场景远用不到）。
+const MAX_PROCESSES_PER_PLUGIN: usize = 32;
+/// 环形日志缓冲行数。
+const LOG_RING_CAPACITY: usize = 2000;
+/// 进程退出后句柄保留时长（插件拉取收尾日志），超时自动从注册表移除。
+const EXITED_RETENTION: Duration = Duration::from_secs(600);
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProcState {
+    Running,
+    /// 进程已退出（code 为 None 时表示被信号终止/无法获取）。
+    Exited(Option<i32>),
+}
+
+impl ProcState {
+    pub fn alive(&self) -> bool {
+        matches!(self, ProcState::Running)
+    }
+
+    pub fn exit_code(&self) -> Option<i32> {
+        match self {
+            ProcState::Exited(code) => *code,
+            ProcState::Running => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcLogLine {
+    pub seq: u64,
+    /// "out" | "err"
+    pub stream: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcSnapshot {
+    pub pid: u32,
+    pub command: String,
+    pub args: Vec<String>,
+    pub started_at_ms: u64,
+    pub alive: bool,
+    pub exit_code: Option<i32>,
+    /// 日志缓冲里最旧的 seq（被环形淘汰前的游标下界）。
+    pub oldest_seq: u64,
+    pub next_seq: u64,
+}
+
+struct LogRing {
+    next_seq: u64,
+    entries: VecDeque<ProcLogLine>,
+}
+
+impl LogRing {
+    fn new() -> Self {
+        Self {
+            next_seq: 0,
+            entries: VecDeque::new(),
+        }
+    }
+
+    fn push(&mut self, stream: &str, text: String) {
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        self.entries.push_back(ProcLogLine {
+            seq,
+            stream: stream.to_string(),
+            text,
+        });
+        while self.entries.len() > LOG_RING_CAPACITY {
+            self.entries.pop_front();
+        }
+    }
+
+    fn after(&self, seq: u64) -> impl Iterator<Item = &ProcLogLine> {
+        // 闭区间：`after` 语义 = 「已读到的最后一条 seq」，调用方把返回的
+        // nextSeq（= 下一条未分配 seq）传回来时恰好衔接（含 after=0 首拉）。
+        self.entries.iter().filter(move |l| l.seq >= seq)
+    }
+}
+
+/// 校验插件传入的可执行文件路径/命令名。
+///
+/// 只做**合法性**校验（空值、超长、控制字符），不做白名单——白名单会把「插件
+/// 运行自己包内的可执行文件」这个正当用法一并禁掉，而真正的权限边界在
+/// `process:manage`。控制字符必须拦：内嵌换行/回车能让参数在部分 shell 与日志
+/// 中产生与插件意图不符的效果，且这类值不可能来自正当用法。
+fn validate_spawn_command(command: &str) -> Result<(), String> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return Err("command 不能为空".to_string());
+    }
+    if trimmed.len() > 4096 {
+        return Err("command 过长（上限 4096 字节）".to_string());
+    }
+    // 命令名比参数更严：可执行文件路径里不会有制表符，出现即异常。
+    if trimmed.chars().any(char::is_control) {
+        return Err("command 含控制字符".to_string());
+    }
+    Ok(())
+}
+
+/// 校验单个命令行参数：拦控制字符与 NUL（后者会被 `Command` 直接拒绝并报
+/// 难懂的错误）。制表符放行——它在参数内是合法内容。
+fn validate_spawn_arg(arg: &str) -> Result<(), String> {
+    if arg.len() > 64 * 1024 {
+        return Err("单个参数过长（上限 64 KiB）".to_string());
+    }
+    if has_control_chars(arg) {
+        return Err(format!("参数含控制字符: {arg:?}"));
+    }
+    Ok(())
+}
+
+/// 是否含 NUL 或除 `\t` 之外的控制字符。
+fn has_control_chars(s: &str) -> bool {
+    s.chars()
+        .any(|c| c == '\u{0}' || (c.is_control() && c != '\t'))
+}
+
+/// 单个受管进程的共享状态。
+struct ProcessHandle {
+    plugin_id: String,
+    command: String,
+    args: Vec<String>,
+    started_at_ms: u64,
+    state: Mutex<ProcState>,
+    /// 进程退出时刻（waiter 写入；运行中为 None）。lazy_gc 据此判定保留期。
+    exited_at_ms: Mutex<Option<u64>>,
+    logs: Mutex<LogRing>,
+    /// 进程还活着时持有 stdin；退出/关闭后置 None（写返回错误）。
+    stdin: AsyncMutex<Option<ChildStdin>>,
+}
+
+impl ProcessHandle {
+    fn snapshot(&self, pid: u32) -> ProcSnapshot {
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let logs = self.logs.lock().unwrap_or_else(|p| p.into_inner());
+        self.build_snapshot(pid, &state, &logs)
+    }
+
+    /// 日志行与快照取自同一次 state→logs 加锁：否则快照后新写入的日志会进入
+    /// lines 而 next_seq 停在旧值，调用方以下一次轮询的游标衔接时会重复读到该行。
+    fn logs_with_snapshot(&self, pid: u32, after: u64) -> (Vec<ProcLogLine>, ProcSnapshot) {
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let logs = self.logs.lock().unwrap_or_else(|p| p.into_inner());
+        let lines = logs.after(after).cloned().collect();
+        (lines, self.build_snapshot(pid, &state, &logs))
+    }
+
+    /// 仅在已持有 state 与 logs 锁时调用（锁序 state → logs，与服务内其他取锁路径一致）。
+    fn build_snapshot(&self, pid: u32, state: &ProcState, logs: &LogRing) -> ProcSnapshot {
+        ProcSnapshot {
+            pid,
+            command: self.command.clone(),
+            args: self.args.clone(),
+            started_at_ms: self.started_at_ms,
+            alive: state.alive(),
+            exit_code: state.exit_code(),
+            oldest_seq: logs.entries.front().map(|l| l.seq).unwrap_or(logs.next_seq),
+            next_seq: logs.next_seq,
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct PluginProcessService {
+    procs: Mutex<HashMap<u32, std::sync::Arc<ProcessHandle>>>,
+}
+
+pub struct SpawnOptions {
+    pub command: String,
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+    pub env: HashMap<String, String>,
+}
+
+impl PluginProcessService {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 拉起常驻进程并注册。返回 PID。
+    ///
+    /// **这是刻意的「插件可执行任意命令」入口**，与 `shell` 端点同级：它存在的
+    /// 全部意义就是让插件管理自己的子进程（服务端、安装器等）。安全边界不在这里，
+    /// 而在前端 bridge 的 `process:manage` 权限校验（sandbox.ts 的
+    /// METHOD_PERMISSIONS）。静态分析会把 `Command::new(插件输入)` 报成命令注入
+    /// ——那是设计意图而非缺陷；本函数只做**输入合法性**校验，防的是畸形值导致的
+    /// 拉起失败与参数错乱，不是防插件作恶（它本就有这个权力）。
+    pub async fn spawn(&self, plugin_id: &str, opts: SpawnOptions) -> Result<u32, String> {
+        validate_spawn_command(&opts.command)?;
+        for arg in &opts.args {
+            validate_spawn_arg(arg)?;
+        }
+
+        // 先回收已过保留期的句柄：否则 32 个进程全部退出且保留期届满后，
+        // 计数仍按旧句柄算，插件会一直撞「已达上限」而无法重新拉起。
+        self.lazy_gc();
+
+        {
+            let procs = self.procs.lock().unwrap_or_else(|p| p.into_inner());
+            let mine = procs.values().filter(|h| h.plugin_id == plugin_id).count();
+            if mine >= MAX_PROCESSES_PER_PLUGIN {
+                return Err(format!(
+                    "该插件管理的进程数已达上限（{MAX_PROCESSES_PER_PLUGIN}）"
+                ));
+            }
+        }
+
+        let mut cmd = tokio::process::Command::new(&opts.command);
+        cmd.args(&opts.args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(false);
+        #[cfg(windows)]
+        {
+            // CREATE_NO_WINDOW：与游戏进程/插件 shell 一致，避免弹出控制台窗口
+            cmd.creation_flags(0x0800_0000);
+        }
+        if let Some(cwd) = opts.cwd.as_deref().filter(|s| !s.trim().is_empty()) {
+            cmd.current_dir(cwd);
+        }
+        cmd.envs(&opts.env);
+
+        let mut child: Child = cmd
+            .spawn()
+            .map_err(|e| format!("无法启动进程 {}: {e}", opts.command))?;
+        let pid = child.id().ok_or_else(|| "进程启动后没有 PID".to_string())?;
+
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        let stdin = child.stdin.take();
+
+        let handle = std::sync::Arc::new(ProcessHandle {
+            plugin_id: plugin_id.to_string(),
+            command: opts.command,
+            args: opts.args,
+            started_at_ms: now_ms(),
+            state: Mutex::new(ProcState::Running),
+            exited_at_ms: Mutex::new(None),
+            logs: Mutex::new(LogRing::new()),
+            stdin: AsyncMutex::new(stdin),
+        });
+
+        // stdout/stderr 转发：逐行（容忍非 UTF-8）写入环形缓冲。
+        if let Some(stdout) = stdout {
+            let h = handle.clone();
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stdout);
+                loop {
+                    let mut buf = Vec::with_capacity(256);
+                    match reader.read_until(b'\n', &mut buf).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {
+                            let mut line = String::from_utf8_lossy(&buf).into_owned();
+                            while line.ends_with('\n') || line.ends_with('\r') {
+                                line.pop();
+                            }
+                            h.logs
+                                .lock()
+                                .unwrap_or_else(|p| p.into_inner())
+                                .push("out", line);
+                        }
+                    }
+                }
+            });
+        }
+        if let Some(stderr) = stderr {
+            let h = handle.clone();
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stderr);
+                loop {
+                    let mut buf = Vec::with_capacity(256);
+                    match reader.read_until(b'\n', &mut buf).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {
+                            let mut line = String::from_utf8_lossy(&buf).into_owned();
+                            while line.ends_with('\n') || line.ends_with('\r') {
+                                line.pop();
+                            }
+                            h.logs
+                                .lock()
+                                .unwrap_or_else(|p| p.into_inner())
+                                .push("err", line);
+                        }
+                    }
+                }
+            });
+        }
+
+        // waiter：独占 Child，记录退出状态并关闭 stdin。
+        // 退出后句柄仍留在注册表里（保留期由 `lazy_gc` 惰性回收），
+        // 插件可在收尾窗口内继续拉取日志。
+        {
+            let h = handle.clone();
+            tokio::spawn(async move {
+                let status = child.wait().await;
+                let code = status.ok().and_then(|s| s.code());
+                *h.state.lock().unwrap_or_else(|p| p.into_inner()) = ProcState::Exited(code);
+                *h.exited_at_ms.lock().unwrap_or_else(|p| p.into_inner()) = Some(now_ms());
+                // 退出后关闭 stdin（若仍持有），让后续 write_stdin 立即报错。
+                *h.stdin.lock().await = None;
+            });
+        }
+
+        self.procs
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(pid, handle);
+
+        Ok(pid)
+    }
+
+    /// 惰性清理：已退出且超过保留期的句柄从注册表移除。
+    /// 挂在每次公开操作前调用，避免为回收单独维护定时器与服务引用。
+    fn lazy_gc(&self) {
+        let mut procs = self.procs.lock().unwrap_or_else(|p| p.into_inner());
+        let now = now_ms();
+        let stale: Vec<u32> = procs
+            .iter()
+            .filter(|(_, h)| {
+                let state = h.state.lock().unwrap_or_else(|p| p.into_inner());
+                let exited_at = *h.exited_at_ms.lock().unwrap_or_else(|p| p.into_inner());
+                // 已退出：按退出时刻计保留期（长跑进程退出后同样有完整收尾窗口）
+                matches!(&*state, ProcState::Exited(_))
+                    && exited_at
+                        .map(|at| now.saturating_sub(at) > EXITED_RETENTION.as_millis() as u64)
+                        .unwrap_or(false)
+            })
+            .map(|(pid, _)| *pid)
+            .collect();
+        for pid in stale {
+            procs.remove(&pid);
+        }
+    }
+
+    fn get(&self, plugin_id: &str, pid: u32) -> Result<std::sync::Arc<ProcessHandle>, String> {
+        let procs = self.procs.lock().unwrap_or_else(|p| p.into_inner());
+        let h = procs
+            .get(&pid)
+            .ok_or_else(|| format!("进程 {pid} 不存在或已回收"))?;
+        if h.plugin_id != plugin_id {
+            // 不泄露他人进程的存在性
+            return Err(format!("进程 {pid} 不存在或已回收"));
+        }
+        Ok(h.clone())
+    }
+
+    /// 向进程 stdin 写入。`append_newline` 为 true 时补一个 `\n`（交互式命令行需要）。
+    pub async fn write_stdin(
+        &self,
+        plugin_id: &str,
+        pid: u32,
+        data: &str,
+        append_newline: bool,
+    ) -> Result<(), String> {
+        self.lazy_gc();
+        let h = self.get(plugin_id, pid)?;
+        let mut guard = h.stdin.lock().await;
+        let Some(stdin) = guard.as_mut() else {
+            return Err(format!("进程 {pid} 的标准输入已关闭（进程可能已退出）"));
+        };
+        stdin
+            .write_all(data.as_bytes())
+            .await
+            .map_err(|e| e.to_string())?;
+        if append_newline {
+            stdin.write_all(b"\n").await.map_err(|e| e.to_string())?;
+        }
+        stdin.flush().await.map_err(|e| e.to_string())
+    }
+
+    /// 按游标取增量日志。
+    ///
+    /// 日志行与快照（含游标）在同一次 state→logs 加锁内生成（见
+    /// `logs_with_snapshot`），保证返回的游标恰好衔接本次返回的日志行。
+    /// 勿改为先 `snapshot()` 再单独拿 logs 锁——两段之间新写入的日志会让
+    /// 游标落后于实际返回内容，调用方下次轮询会重复读到同一行。
+    pub fn logs(
+        &self,
+        plugin_id: &str,
+        pid: u32,
+        after: u64,
+    ) -> Result<(Vec<ProcLogLine>, ProcSnapshot), String> {
+        self.lazy_gc();
+        let h = self.get(plugin_id, pid)?;
+        Ok(h.logs_with_snapshot(pid, after))
+    }
+
+    /// 进程快照（含存活状态）。
+    pub fn snapshot(&self, plugin_id: &str, pid: u32) -> Result<ProcSnapshot, String> {
+        self.lazy_gc();
+        let h = self.get(plugin_id, pid)?;
+        Ok(h.snapshot(pid))
+    }
+
+    /// 某插件的全部受管进程。
+    pub fn list(&self, plugin_id: &str) -> Vec<ProcSnapshot> {
+        self.lazy_gc();
+        let procs = self.procs.lock().unwrap_or_else(|p| p.into_inner());
+        let mut out: Vec<ProcSnapshot> = procs
+            .iter()
+            .filter(|(_, h)| h.plugin_id == plugin_id)
+            .map(|(pid, h)| h.snapshot(*pid))
+            .collect();
+        out.sort_by_key(|s| s.started_at_ms);
+        out
+    }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spawn_command_validation() {
+        assert!(validate_spawn_command("java").is_ok());
+        assert!(validate_spawn_command("C:\\Program Files\\Java\\bin\\java.exe").is_ok());
+        assert!(validate_spawn_command("  ").is_err(), "空/纯空白应拒绝");
+        assert!(validate_spawn_command("").is_err());
+        assert!(
+            validate_spawn_command(&"a".repeat(4097)).is_err(),
+            "超长应拒绝"
+        );
+        assert!(
+            validate_spawn_command("java\nwhoami").is_err(),
+            "换行是控制字符，必须拒绝"
+        );
+        assert!(validate_spawn_command("java\u{0}").is_err(), "NUL 必须拒绝");
+        assert!(
+            validate_spawn_command("java\tdir").is_err(),
+            "命令名内的制表符同样属于控制字符"
+        );
+    }
+
+    #[test]
+    fn spawn_arg_validation() {
+        assert!(validate_spawn_arg("-jar").is_ok());
+        assert!(validate_spawn_arg("a b c").is_ok(), "空格是合法参数内容");
+        assert!(
+            validate_spawn_arg("col1\tcol2").is_ok(),
+            "制表符在参数内放行"
+        );
+        assert!(validate_spawn_arg("x\nstop").is_err(), "换行必须拒绝");
+        assert!(validate_spawn_arg("x\u{0}y").is_err(), "NUL 必须拒绝");
+        assert!(
+            validate_spawn_arg(&"a".repeat(64 * 1024 + 1)).is_err(),
+            "超长参数应拒绝"
+        );
+    }
+}

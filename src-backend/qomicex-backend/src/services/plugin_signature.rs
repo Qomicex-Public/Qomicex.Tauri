@@ -25,6 +25,45 @@ use crate::error::ApiError;
 /// 与 store 的 `PLUGIN_ROOT_PRIVATE_KEY` 对应。更换根钥需同步本常量。
 pub const ROOT_PUBLIC_KEY_B64: &str = "YkYb+Oh8CNHyGwKAEy/1p6Vz8FYp7UafymXoHCZhfmQ=";
 
+/// 实际生效的根公钥：**仅 debug 构建**允许用环境变量
+/// `QOMICEX_DEV_ROOT_PUBLIC_KEY`（raw base64 Ed25519 公钥）覆盖，供本地开发
+/// 签名流程（`makeSelfSignedCert` 式离线证书）在不接触商店根私钥的前提下走完
+/// ADR-050 三级信任链。release 构建恒用内置商店根钥，此覆盖不编译进二进制。
+///
+/// 结果按进程缓存（OnceLock）：后端启动后修改环境变量需**重启后端进程**才生效。
+/// 首次解析时向 trace 写一行生效根钥，便于排查「根钥验证失败」类安装问题
+/// （dev 模式后端是独立进程，环境变量必须设在该进程上）。
+pub fn effective_root_public_key() -> &'static str {
+    static CACHE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            let mut overridden = false;
+            #[cfg(debug_assertions)]
+            {
+                if let Ok(key) = std::env::var("QOMICEX_DEV_ROOT_PUBLIC_KEY") {
+                    let key = key.trim().to_string();
+                    if !key.is_empty() {
+                        overridden = true;
+                        // 按字符截前 8 个：非 ASCII 输入上字节切片可能落在 UTF-8
+                        // 字符内部导致 panic（debug 构建日志路径）。
+                        let prefix: String = key.chars().take(8).collect();
+                        crate::services::trace::trace_append(format!(
+                            "[plugin-signature] 验签根钥 = 本地开发覆盖（QOMICEX_DEV_ROOT_PUBLIC_KEY = {prefix}…，仅 debug 构建生效）"
+                        ));
+                        return key;
+                    }
+                }
+            }
+            crate::services::trace::trace_append(format!(
+                "[plugin-signature] 验签根钥 = 内置商店根钥（{}…{}）",
+                &ROOT_PUBLIC_KEY_B64[..8],
+                if overridden { "（debug）" } else { "" }
+            ));
+            ROOT_PUBLIC_KEY_B64.to_string()
+        })
+        .as_str()
+}
+
 const SIGNATURE_FILE: &str = "signature.json";
 const CERT_FILE: &str = "signature.cert.json";
 const ALG: &str = "Ed25519";

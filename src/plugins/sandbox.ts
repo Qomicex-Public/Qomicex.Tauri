@@ -6,6 +6,7 @@ import { usePluginStore } from '../stores/pluginStore.ts'
 import { createPluginBridge } from './plugin-api.ts'
 import { injectCss, registerThemeSync, unregisterThemeSync, getThemeVarsCss, themeBridgeScript } from './plugin-css.ts'
 import { API_BASE } from '../api/client.ts'
+import { backendEndpointPermission, resolveBackendMethod } from './backend-guard.ts'
 import { applyThemeOverride, clearThemeOverride } from '../theme/override.ts'
 import { normalizeHex, THEME_COLOR_MODE_BACKGROUND } from '../lib/themeColor.ts'
 import { getSettings as getAppSettings } from '../api/settings.ts'
@@ -142,6 +143,21 @@ window.__PLUGIN_API_BASE__ = '__API_BASE_TOKEN__'
       }
     }
   }
+  // iframe 侧生命周期回调注册表（launcher-exit 等事件由主窗口广播进来）
+  var __lifecycleHandlers = []
+  window.__pluginLifecycle = {
+    register: function (fn) { if (typeof fn === 'function') __lifecycleHandlers.push(fn) }
+  }
+  window.addEventListener('message', function (e) {
+    if (e.data && e.data.type === '__plugin_lifecycle') {
+      for (var i = 0; i < __lifecycleHandlers.length; i++) {
+        try { __lifecycleHandlers[i](e.data.event) } catch (err) { }
+      }
+    } else if (e.data && e.data.type === '__plugin_locale_changed') {
+      // 语言切换：派发 CustomEvent 供插件 i18n 重拉字符串包（getPluginStrings）
+      window.dispatchEvent(new CustomEvent('plugin:locale-changed', { detail: { locale: e.data.locale } }))
+    }
+  })
   window.addEventListener('message', function (e) {
     var msg = e.data
     if (!msg) return
@@ -292,6 +308,10 @@ window.__PLUGIN_API__ = {
   },
   listWasmPlugins: () => {
     return window.__PLUGIN_API__.call('listWasmPlugins')
+  },
+  // 启动器退出前广播（尽力而为、同步）：回调里不能做耗时异步操作
+  onLauncherExit: (cb) => {
+    if (window.__pluginLifecycle) window.__pluginLifecycle.register(cb)
   }
 }
 document.addEventListener('DOMContentLoaded', () => {
@@ -402,6 +422,45 @@ export function destroySlotSandboxes(pluginId: string) {
   if (!list) return
   for (const sb of [...list]) sb.destroy()
   slotSandboxes.delete(pluginId)
+}
+
+/** 向所有插件沙箱广播生命周期事件（当前仅 `launcher-exit`，关窗流程收口处调用）。
+ * 插件侧经 `__PLUGIN_API__.onLauncherExit(cb)` 订阅；回调应为同步、尽力而为——
+ * 关窗不会等待插件完成清理。overlay iframe 不在此列（随主窗口一同销毁）。 */
+export function broadcastPluginLifecycle(event: string) {
+  const targets: Window[] = []
+  for (const sb of sandboxes.values()) {
+    if (sb.iframe.contentWindow) targets.push(sb.iframe.contentWindow)
+  }
+  for (const list of slotSandboxes.values()) {
+    for (const sb of list) {
+      if (sb.iframe.contentWindow) targets.push(sb.iframe.contentWindow)
+    }
+  }
+  for (const w of targets) {
+    try { w.postMessage({ type: '__plugin_lifecycle', event }, '*') } catch { /* 沙箱已销毁 */ }
+  }
+  // inline 插件与主窗口同 window：用 CustomEvent 通道
+  window.dispatchEvent(new CustomEvent('plugin:lifecycle', { detail: { event } }))
+}
+
+/** 向所有插件沙箱广播语言切换（与 broadcastPluginLifecycle 同通道）。
+ * iframe 桥脚本收到后派发 `plugin:locale-changed` CustomEvent，插件的重拉
+ * 自己的 l10n 包重渲染——与主题跟随对齐（换语言插件即跟随）。 */
+export function broadcastPluginLocale(locale: string) {
+  const targets: Window[] = []
+  for (const sb of sandboxes.values()) {
+    if (sb.iframe.contentWindow) targets.push(sb.iframe.contentWindow)
+  }
+  for (const list of slotSandboxes.values()) {
+    for (const sb of list) {
+      if (sb.iframe.contentWindow) targets.push(sb.iframe.contentWindow)
+    }
+  }
+  for (const w of targets) {
+    try { w.postMessage({ type: '__plugin_locale_changed', locale }, '*') } catch { /* 沙箱已销毁 */ }
+  }
+  window.dispatchEvent(new CustomEvent('plugin:locale-changed', { detail: { locale } }))
 }
 
 async function loadSandboxContent(plugin: PluginInfo, iframe: HTMLIFrameElement, file?: string) {
@@ -715,8 +774,18 @@ const METHOD_PERMISSIONS: Record<string, string> = {
   getThemeColor: 'config:read', applyThemeOverride: 'config:write', clearThemeOverride: 'config:write',
   'overlay.create': 'ui:sub_window', 'overlay.show': 'ui:sub_window', 'overlay.hide': 'ui:sub_window',
   'overlay.destroy': 'ui:sub_window', 'overlay.setHtml': 'ui:sub_window', 'overlay.setPosition': 'ui:sub_window',
-  'download.addTask': 'download:manage', 'download.progress': 'download:manage', 'download.cancel': 'download:manage', 'download.list': 'download:manage', 'download.registerInstall': 'instance:write',
+  'download.addTask': 'download:manage', 'download.addBatch': 'download:manage', 'download.batchStatus': 'download:manage', 'download.progress': 'download:manage', 'download.cancel': 'download:manage', 'download.list': 'download:manage', 'download.registerInstall': 'instance:write',
+  'task.register': 'download:manage', 'task.update': 'download:manage', 'task.complete': 'download:manage', 'task.progress': 'download:manage',
+  'curseforge.files': 'network:fetch',
+  readArchiveEntry: 'filesystem:read',
   'modpack.install': 'instance:write',
+  'process.spawn': 'process:manage', 'process.stdin': 'process:manage', 'process.kill': 'process:manage', 'process.alive': 'process:manage', 'process.logs': 'process:manage', 'process.list': 'process:manage',
+  pickFile: 'dialog:open', pickDirectory: 'dialog:open',
+  extractArchive: 'filesystem:write', renamePath: 'filesystem:write', listDir: 'filesystem:read',
+  sendNotification: 'system:notification',
+  // 插件读取自己的 l10n 包/当前 locale/内置图标 SVG：自持有或公共只读数据，
+  // 无需权限（空权限串 = 免检）
+  getPluginStrings: '', getLocale: '', getIconSvg: '',
 }
 
 /** "H S% L%" → #rrggbb。非法返回 null。 */
@@ -758,6 +827,21 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     if (!plugin || !plugin.manifest.permissions.includes(requiredPerm))
       throw new Error(`Permission denied: requires ${requiredPerm}`)
   }
+  if (method === 'callBackend') {
+    // 端点必须是字符串：非字符串（数组等）会被拼成任意后端路径，先拒掉。
+    const endpoint = args[0]
+    if (typeof endpoint !== 'string') {
+      throw new Error('Permission denied: callBackend endpoint must be a string')
+    }
+    // 特权路由二次鉴权（规则表见 backend-guard.ts）：callBackend 只要求
+    // network:fetch，但进程/文件系统/插件安装等路由需要更强权限。
+    const extra = backendEndpointPermission(endpoint, resolveBackendMethod(args[1]), API_BASE)
+    if (extra) {
+      const plugin = usePluginStore.getState().getPlugin(pluginId)
+      if (!plugin || !plugin.manifest.permissions.includes(extra))
+        throw new Error(`Permission denied: ${endpoint} requires ${extra}`)
+    }
+  }
   const bridge = createPluginBridge(pluginId)
   switch (method) {
     case 'getSettings': return bridge.getSettings()
@@ -796,11 +880,34 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     case 'overlay.setHtml': bridge.setOverlayHtml(args[0] as string, args[1] as string); return
     case 'overlay.setPosition': bridge.setOverlayPosition(args[0] as string, args[1] as number, args[2] as number); return
     case 'download.addTask': return bridge.download.addTask(args[0] as any)
+    case 'download.addBatch': return bridge.download.addBatch(args[0] as any)
+    case 'download.batchStatus': return bridge.download.batchStatus(args[0] as string)
     case 'download.progress': return bridge.download.progress(args[0] as string)
     case 'download.cancel': bridge.download.cancel(args[0] as string); return
     case 'download.list': return bridge.download.list()
     case 'download.registerInstall': bridge.download.registerInstall(args[0] as any); return
+    case 'task.register': return bridge.task.register(args[0] as any)
+    case 'task.update': return bridge.task.update(args[0] as string, args[1] as any)
+    case 'task.complete': return bridge.task.complete(args[0] as string, args[1] as string | undefined)
+    case 'task.progress': return bridge.task.progress(args[0] as string)
+    case 'curseforge.files': return bridge.curseforge.files(args[0] as any)
+    case 'readArchiveEntry': return bridge.readArchiveEntry(args[0] as string, args[1] as string, args[2] as any)
     case 'modpack.install': return bridge.modpack.install(args[0] as any)
+    case 'process.spawn': return bridge.process.spawn(args[0] as any)
+    case 'process.stdin': return bridge.process.stdin(args[0] as number, args[1] as string, args[2] as { appendNewline?: boolean } | undefined)
+    case 'process.kill': return bridge.process.kill(args[0] as number)
+    case 'process.alive': return bridge.process.alive(args[0] as number)
+    case 'process.logs': return bridge.process.logs(args[0] as number, args[1] as number | undefined)
+    case 'process.list': return bridge.process.list()
+    case 'pickFile': return bridge.pickFile(args[0] as any)
+    case 'pickDirectory': return bridge.pickDirectory(args[0] as any)
+    case 'extractArchive': return bridge.extractArchive(args[0] as string, args[1] as string, args[2] as any)
+    case 'renamePath': return bridge.renamePath(args[0] as string, args[1] as string)
+    case 'listDir': return bridge.listDir(args[0] as string, args[1] as { recursive?: boolean; maxEntries?: number } | undefined)
+    case 'sendNotification': return bridge.sendNotification(args[0] as { title: string; body?: string })
+    case 'getPluginStrings': return bridge.getPluginStrings()
+    case 'getLocale': return bridge.getLocale()
+    case 'getIconSvg': return bridge.getIconSvg(args[0] as string)
     default: throw new Error(`Unknown method: ${method}`)
   }
 }

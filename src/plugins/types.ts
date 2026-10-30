@@ -13,6 +13,10 @@ export interface PluginManifest {
   render?: 'inline' | 'iframe' | 'webview'
   contributes?: PluginContributes
   icon?: string
+  /** 插件自持 i18n 目录（包内相对路径，如 `"l10n"`）：内含 bundle.json（默认
+   * 语言）+ bundle.<locale>.json；manifest 显示字符串用 `%key%` 引用词条，
+   * 宿主按启动器 locale 解析；运行时经 `call('getPluginStrings')` 取包。 */
+  l10n?: string
 }
 
 export interface PluginDependency {
@@ -43,6 +47,23 @@ export interface PluginContributes {
   hooks?: PluginHookDecl[]
   /** UI 槽位注入：激活时把 slot 对应的 HTML 文件以独立 iframe 沙箱挂载到主界面槽位。 */
   slots?: PluginSlotContribution[]
+  /** 安装方式贡献：出现在资源中心安装对话框的安装方式选项里（如「安装为服务端」）。
+   * 用户选中并确认后，启动器经插件注册表调用 `installMode:{id}` 方法，附资源上下文。 */
+  installModes?: PluginInstallModeDecl[]
+}
+
+/** 插件贡献的安装方式（资源中心安装对话框）。 */
+export interface PluginInstallModeDecl {
+  /** 稳定 id（插件内唯一）；启动器调用方法名 = `installMode:{id}` */
+  id: string
+  /** 选项显示名（如「安装为服务端」） */
+  label: string
+  /** 选项说明（对话框内 hover / 副标题） */
+  description?: string
+  /** emoji 或图标文本 */
+  icon?: string
+  /** 匹配的资源类型；缺省 = 所有类型。modpack 资源传 `['modpack']` */
+  resourceKinds?: string[]
 }
 
 /** 一个可 hook 的方法声明：`method` 为启动器 hookable 方法名，如 `"launchInstance"`。 */
@@ -73,7 +94,11 @@ export interface PluginMenuItem {
 }
 
 export interface PluginInfo {
+  /** 生效清单（manifest 的 `%key%` 已按当前 locale 解析，供 UI 直接消费）。 */
   manifest: PluginManifest
+  /** 后端返回的**未解析**原始清单。语言切换时以此重新解析——已解析结果里的
+   * 文案不含 `%key%` 模板，无法反推回其它语言。 */
+  rawManifest?: PluginManifest
   dir: string
   state: PluginState
   installedAt: string

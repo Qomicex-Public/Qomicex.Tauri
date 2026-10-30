@@ -15,8 +15,8 @@ AI agent 生成/修改插件时必须逐条遵守。违反任何一条都可能�
 ## 权限
 
 8. **最小权限原则**：只声明真正用到的权限。`qomicex verify` 会扫描源码，声明未用 / 用了未声明**都会报错**。按"最终调用了哪些 API 方法"反推权限集合，从 `permissions.md` 的 `METHOD_PERMISSIONS` 表查对应的权限 id。
-9. **danger 权限**：`shell:execute`、`filesystem:write`、`plugin:install` 安装时红色提示，非必要不声明。
-10. **addMenuItem 无需权限**：`addMenuItem` 不要求 manifest 声明任何权限。
+9. **danger 权限**：`shell:execute`、`filesystem:write`、`process:manage`、`plugin:install`、`hook:register` 安装时红色提示，非必要不声明。
+10. **addMenuItem 需 `ui:inject_sidebar`**：与运行时权限检查一致（旧文档称无需权限，以本条为准）。
 
 ## 代码
 
@@ -26,11 +26,14 @@ AI agent 生成/修改插件时必须逐条遵守。违反任何一条都可能�
 14. **沙箱内不用 `window.open`**：L2 iframe 的 `sandbox` 属性不含 `allow-popups`，`window.open` 被拦截。用 `openUrl` 方法或 `callBackend('/system/open-url', { url })`。
 15. **不用 `fetch` 请求外部 URL**：用 `proxyFetch`（非流式）或 `proxyFetchStream`（流式，SSE），两者自带 SSRF 防护（禁止内网）和 CORS 代理。
 16. **不虚构 API**：权限目录里有但桥 API 没有对应方法的能力（如 `clipboard:read`/`clipboard:write`、`network:websocket` 等当前无对应 `__PLUGIN_API__` 方法）不要臆造调用方式。以 `plugin-api.md` 列出的方法为准，不确定就标注「以代码为准」。
+16a. **常驻进程用 `process.*`，不要用 `execCommand` 拉长驻进程**：`execCommand` 一次性、≤120s、超时杀树；跑服务端/守护进程用 `process.spawn` + `process.logs` 游标轮询 + `process.stdin` + `process.kill`。
+16b. **本地文件/目录选择用 `pickFile`/`pickDirectory`**：沙箱内 `<input type=file>` 拿不到绝对路径，`window.showOpenFilePicker` 不可用。
 
 ## 主题
 
 17. **CSS 全用 `var(--*)`**：禁止 `#hex` / `rgb()` / `hsl()` 字面量。插件主题文件（`theme.css`）也只覆盖 `var()` token。
 18. **Tailwind 用语义类名**：`bg-primary`、`text-foreground`、`text-muted-foreground`、`bg-muted`、`border-border` 等（`@qomicex/plugin-ui/tailwind-preset` 已映射）。
+18a. **`tailwind.config` 的 `content` 必须包含 `./node_modules/@qomicex/plugin-ui/dist/**/*.{js,ts,tsx}`**：漏了会把组件库自用的工具类 purge 掉，Dialog 会退化成页面底部的普通块（不是浮层）。用 `qomicex create` 生成的模板已包含此项。
 
 ## 安全
 

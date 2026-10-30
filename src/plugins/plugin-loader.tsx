@@ -84,6 +84,17 @@ function hasPageEntry(plugin: PluginInfo): boolean {
 }
 
 /**
+ * 是否声明了 installModes（资源中心「安装方式」贡献）。这类插件提供的是**无头
+ * 功能入口**：启动器在用户确认安装时经注册表调用 `installMode:{id}` 方法 ——
+ * 方法注册发生在插件 iframe 执行时，而带页面入口的 iframe 默认懒挂载（用户没
+ * 打开过插件页就永远不注册）。因此声明了 installModes 的插件必须与库插件同样
+ * 在激活时隐藏挂载（常驻），否则安装对话框里选了也只会报「插件未就绪」。
+ */
+function hasHeadlessEntries(plugin: PluginInfo): boolean {
+  return (plugin.manifest.contributes?.installModes?.length ?? 0) > 0
+}
+
+/**
  * l4 创建去重：label → in-flight Promise<void>。`activatePlugin` 并发调用同一插件时
  * 返回同一个 promise，避免窗口未注册前重复执行生命周期/菜单注入（非原子竞态）。
  */
@@ -106,7 +117,7 @@ export async function createRemoteWebview(plugin: PluginInfo): Promise<void> {
   const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
   if (!isTauri) {
     // 纯浏览器降级：无页面入口的库插件同样需要隐藏挂载，否则降级路径上方法不注册
-    createSandbox(plugin, !hasPageEntry(plugin))
+    createSandbox(plugin, !hasPageEntry(plugin) || hasHeadlessEntries(plugin))
     return
   }
 
@@ -177,7 +188,7 @@ export async function createRemoteWebview(plugin: PluginInfo): Promise<void> {
         resolve()
         return
       }
-      if (!getInstance(plugin.manifest.id)) createSandbox(plugin, !hasPageEntry(plugin))
+      if (!getInstance(plugin.manifest.id)) createSandbox(plugin, !hasPageEntry(plugin) || hasHeadlessEntries(plugin))
       resolve()
     })
   })
@@ -202,7 +213,8 @@ export async function activatePlugin(plugin: PluginInfo) {
   const renderInWebview = isWebviewRender(plugin)
   // 库插件（无页面入口）用户永远导航不到，必须激活即隐藏挂载；有页面的插件保持
   // 懒加载，避免启动就执行所有 UI 前端（#260）。
-  const hiddenMount = !hasPageEntry(plugin)
+  // 无页面入口（库插件）或声明了 installModes（无头功能入口）的插件：激活即隐藏挂载
+  const hiddenMount = !hasPageEntry(plugin) || hasHeadlessEntries(plugin)
 
   if (plugin.manifest.entry.frontend) {
     try {

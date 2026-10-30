@@ -52,6 +52,7 @@
 | `render` | 'inline' \| 'iframe' | 可选 | **默认 `iframe`**（沙箱）。仅显式 `"inline"` 走内联渲染（与主界面同 window） |
 | `contributes` | object | 可选 | 扩展点 |
 | `icon` | string | 可选 | 顶层图标（插件管理/列表显示；库插件建议用顶层 icon 而非 menuItems） |
+| `l10n` | string | 可选 | 插件自持 i18n 目录（包内相对路径，如 `"l10n"`）。目录内存 `bundle.json`（默认语言）+ `bundle.<locale>.json`（如 `bundle.zh-CN.json`），值为扁平 `key → string`。manifest 显示字符串用 `%key%` 引用词条，宿主加载时按启动器 locale 解析（回退默认包→原文）；运行时经 `call('getPluginStrings')` 取合并包、`call('getLocale')` 取当前 locale（均免权限）。插件文案**不要**依赖启动器 i18n |
 
 ## entry 对象
 
@@ -103,6 +104,7 @@
 | `menuItems` | PluginMenuItem[] | 侧边栏入口列表 |
 | `overlay` | object | 悬浮窗配置 |
 | `slots` | PluginSlotContribution[] | UI 槽位注入（标题栏/主页卡片等） |
+| `installModes` | PluginInstallModeDecl[] | 资源中心安装对话框的插件贡献安装方式（如「安装为服务端」） |
 
 ### menuItems 数组元素
 
@@ -111,7 +113,10 @@
 ```
 
 - `path`：入口目标路由（如 `/plugins/p/:id`）。
-- `icon`：emoji / 文本 / 绝对 URL / 包内相对路径（`dist/icon.svg`，启动器自动解析为 `http://localhost:5000/api/plugins/{id}/files/dist/icon.svg`）。
+- `icon`：**图标规范（按优先级）**——
+  1. **Font Awesome 类名（推荐）**：`"fa-solid fa-server"`。零资产、跟随主题色（currentColor）、启动器内置解析（侧栏/对话框统一渲染）；可用类名 = 启动器 `src/components/BuiltinIcons.tsx` 内置集（约 280 个）。插件运行时 UI 经 `call('getIconSvg', cls)` 取 SVG path 内联渲染，同一套类名。
+  2. 包内相对路径：`dist/icon.svg`（自动解析为 `http://localhost:5000/api/plugins/{id}/files/dist/icon.svg`）。
+  3. 绝对 URL / emoji（仅过渡兼容；emoji 不跟随主题色，`qomicex verify` 会提示建议替换）。
 - `action`：`"page"`（跳转页面，默认）或 `"overlay"`（打开悬浮窗，需配合 `contributes.overlay`）。
 
 ### overlay 对象
@@ -135,6 +140,23 @@
 - `width` / `height`：iframe 固定尺寸（px，可选；缺省 100% 填充父容器）。
 - 主题自动跟随（CSS 变量注入）；插件停用时自动注销并销毁。
 - `qomicex pack` 会自动把根目录的 slot 文件拷入 dist（同 theme/overlay 逻辑）。
+
+### installModes 数组元素
+
+```ts
+{ id: string; label: string; description?: string; icon?: string; resourceKinds?: string[] }
+```
+
+- 资源中心安装整合包等资源时，安装对话框的「安装方式」选项组里出现插件贡献的条目
+  （默认项是启动器内置的「创建实例」）。用户选中并确认后，启动器经插件注册表调用
+  `installMode:{id}` 方法（需 `registerMethod` 注册），附资源上下文对象：
+  `{ kind, source, projectId?, fileId?, name, gameVersion?, iconUrl?, path? }`
+  （`path` 仅本地导入时有；`kind` 目前为 `modpack`）。
+- `resourceKinds`：匹配的资源类型（如 `['modpack']`）；缺省 = 所有类型。
+- 方法应**快速返回**（发起后端任务即返回），耗时操作自行后台执行并把进度登记进
+  下载中心；未注册方法时启动器会提示插件未就绪。
+- 无需新权限：入口由 manifest 声明，方法调用走既有 `callPlugin`/`registerMethod`
+  的权限模型（`registerMethod` 需 `config:write`）。
 
 ## CLI 校验行为（`qomicex verify` 目录模式）
 

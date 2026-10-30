@@ -972,7 +972,7 @@ fn parse_search_mode(mode: Option<&str>) -> ApiResult<JavaSearchMode> {
     }
 }
 
-fn minecraft_to_java_version(mc_version: &str) -> i32 {
+pub(crate) fn minecraft_to_java_version(mc_version: &str) -> i32 {
     let part = match mc_version.split('-').next() {
         Some(s) => s,
         None => return 17,

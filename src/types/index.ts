@@ -388,6 +388,9 @@ export interface InstallStepInfo {
   percent?: number
   /** 合成总进度权重（并行管线中多步可同时 active） */
   weight?: number
+  /** 管线自带显示标签（可选）：插件/新管线的步骤命名通道，渲染优先于
+   * `downloads.steps.{id}` 词条——不依赖启动器 i18n 更新。 */
+  label?: string
 }
 
 export interface InstallProgressResponse {
@@ -518,6 +521,9 @@ export interface DownloadTask {
   instanceId?: string
   /** 后端安装管线分步状态（game/modpack 任务；SSE 下发） */
   steps?: InstallStepInfo[]
+  /** 后端安装管线类型（install/modpack/server/...，SSE 下发）。
+   * 自动补卡的后端发起任务（如服务端搭建）据此分流专属交互。 */
+  kind?: string
   /** for file downloads */
   taskId?: string
   /** for batch tasks - all child taskIds */

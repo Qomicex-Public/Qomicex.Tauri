@@ -31,20 +31,31 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   const setLanguage = useCallback((l: LangChoice) => {
     localStorage.setItem(STORAGE_KEY, l)
-    setLang(resolveLang(l))
+    const next = resolveLang(l)
+    setLang(next)
+    // 通知插件沙箱语言切换（插件重拉自己的 l10n 包）+ 重解析插件 manifest 文案；
+    // 动态 import 防循环依赖
+    void import('../plugins/sandbox.ts').then(m => m.broadcastPluginLocale(next))
+    void import('../plugins/l10n.ts').then(m => m.retranslateStoreManifests()).catch(() => {})
   }, [])
 
-  // 后端持久化的 settings.language 变化时同步（含启动 loadSettings 完成后的广播）
+  // 后端持久化的 settings.language 变化时同步（含启动 loadSettings 完成后的广播）。
+  // 副作用（写 localStorage / 广播）在 setState 更新函数之外执行——更新函数必须
+  // 是纯函数（React 19 StrictMode 会双调用，副作用会重复触发插件重拉）。
   useEffect(() => {
     return onSettingsChange((s) => {
       setLang((cur) => {
         const next = resolveLang(s.language)
-        if (cur === next) return cur
-        localStorage.setItem(STORAGE_KEY, s.language)
-        return next
+        return cur === next ? cur : next
       })
+      const next = resolveLang(s.language)
+      if (next !== lang) {
+        localStorage.setItem(STORAGE_KEY, s.language)
+        void import('../plugins/sandbox.ts').then(m => m.broadcastPluginLocale(next))
+        void import('../plugins/l10n.ts').then(m => m.retranslateStoreManifests()).catch(() => {})
+      }
     })
-  }, [])
+  }, [lang])
 
   // 语言变化时刷新 ApiError 翻译器（后端错误消息前端映射）
   useEffect(() => {

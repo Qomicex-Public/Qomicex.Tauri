@@ -27,6 +27,7 @@ pub mod multimc;
 pub mod options;
 pub mod parent_watch;
 pub mod plugin;
+pub mod plugin_process;
 pub mod plugin_signature;
 pub mod plugin_store;
 pub mod region;

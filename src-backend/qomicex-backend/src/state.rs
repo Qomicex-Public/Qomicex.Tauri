@@ -27,6 +27,7 @@ use crate::services::instance::InstanceService;
 use crate::services::instance_group::InstanceGroupService;
 use crate::services::launch_tracker::LaunchTracker;
 use crate::services::plugin::{FileAuthService, PluginGatewayClient, PluginStore};
+use crate::services::plugin_process::PluginProcessService;
 use crate::services::resource_favorite::ResourceFavoriteService;
 use crate::services::resource_favorite_folder::ResourceFavoriteFolderService;
 use crate::services::scan_cache::VersionScanCache;
@@ -103,6 +104,8 @@ pub struct AppState {
     pub plugin_store: Arc<PluginStore>,
     /// 插件文件授权（对应 FileAuthService）。
     pub plugin_auth: Arc<FileAuthService>,
+    /// 插件常驻进程管理（spawn/stdin/kill/alive/logs，见 services/plugin_process.rs）。
+    pub plugin_processes: Arc<PluginProcessService>,
     /// WASM 网关桥接客户端（对应 PluginGatewayClient）。
     pub plugin_gateway: Arc<PluginGatewayClient>,
     /// 插件 proxy 专用 HTTP 客户端（对应命名 HttpClient "PluginProxy"）。
@@ -273,6 +276,7 @@ impl AppState {
 
         let plugin_store = Arc::new(PluginStore::new());
         let plugin_auth = Arc::new(FileAuthService::new());
+        let plugin_processes = Arc::new(PluginProcessService::new());
         let plugin_gateway = Arc::new(PluginGatewayClient::new(http_client.clone()));
         let settings = Arc::new(RwLock::new(settings_now.clone()));
         let curseforge_fetch = CurseForgeVersionFetchService::new_with_config(
@@ -305,6 +309,7 @@ impl AppState {
             export_tasks,
             plugin_store,
             plugin_auth,
+            plugin_processes,
             plugin_gateway,
             proxy_client,
             plugin_download_client,

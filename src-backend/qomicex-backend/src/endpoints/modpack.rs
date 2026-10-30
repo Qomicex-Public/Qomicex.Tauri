@@ -3802,7 +3802,7 @@ fn name_has_prefix_ci(name: &str, prefix: &str) -> bool {
 }
 
 /// Modrinth 下载需 UA（API 强制）；CurseForge CDN 需 x-api-key（同 install_service 判定）。
-fn modpack_headers(url: &str, cf_api_key: &str) -> Vec<(String, String)> {
+pub(crate) fn modpack_headers(url: &str, cf_api_key: &str) -> Vec<(String, String)> {
     if is_cf_host(url) {
         vec![
             ("x-api-key".to_string(), cf_api_key.to_string()),
@@ -3855,7 +3855,7 @@ fn is_cf_host(url: &str) -> bool {
 ///
 /// headers 按**重写前的原始 host** 决定（CF 文件透传 x-api-key 到镜像）；URL 再按
 /// `file_download_source` 重写 CDN 域名（官方=不变，QML Mirror=换成镜像域名）。
-fn mirror_mod_url(
+pub(crate) fn mirror_mod_url(
     url: String,
     cf_api_key: &str,
     plan: &SourcePlan,
@@ -3974,7 +3974,7 @@ pub(crate) async fn run_modpack_pipeline(
             handle.mark_step("parse-modpack", "active");
             let path = PathBuf::from(local);
             parsed = Some(if src == "modrinth" {
-                parse_modrinth_index(&path).map_err(|e| {
+                parse_modrinth_index(&path, ModrinthSide::Client).map_err(|e| {
                     format!(
                         "解析 modrinth.index.json 失败: {e}（包体 {}）",
                         path.display()
@@ -4006,11 +4006,19 @@ pub(crate) async fn run_modpack_pipeline(
         });
         // 包包体也是 Modrinth/CF CDN 文件，同样按资源下载源重写；headers 按原始 host 判断。
         let mirror_url = crate::services::source_policy::mod_primary(url, &plan);
-        download_batch(
+        // 镜像主选时保留原始 URL 作为兜底：mod_fallbacks 是按主选（镜像形态）
+        // 推导的，edge.forgecdn → MCIM 归一回 mediafilez 后镜像链为空，批内
+        // 没有官方候选——MCIM 失败即整批失败，显式挂原始 URL 补上这一侧。
+        let mut extra = std::collections::HashMap::new();
+        if mirror_url != url {
+            extra.insert(mirror_url.clone(), vec![url.to_string()]);
+        }
+        crate::services::install_service::download_batch_with_mirrors(
             handle,
             mgr,
             vec![(mirror_url, path.clone(), modpack_headers(url, cf_api_key))],
             Some("download-modpack"),
+            extra,
         )
         .await?;
         handle.mark_step("download-modpack", "done");
@@ -4019,7 +4027,7 @@ pub(crate) async fn run_modpack_pipeline(
         handle.set_stage("parsing-modpack");
         handle.mark_step("parse-modpack", "active");
         parsed = Some(if src == "modrinth" {
-            parse_modrinth_index(&path)
+            parse_modrinth_index(&path, ModrinthSide::Client)
                 .map_err(|e| format!("解析 modrinth.index.json 失败: {e}（包体来源 {url}）"))?
         } else {
             parse_curseforge_manifest(&path).map_err(|e| format!("解析 manifest.json 失败: {e}"))?
@@ -4569,8 +4577,25 @@ fn release_qml_overrides(
     Ok(())
 }
 
+/// 解析目标侧别：客户端实例收集 `env.client == required`；服务端收集
+/// `env.server != "unsupported"`（服务端必需与可选都要装，client-only 由
+/// 调用方的 jar 元数据扫描隔离兜底）。缺失的 env 位按 required 处理。
+///
+/// `Server` 目前没有启动器内调用方（服务端搭建已迁到插件侧，由插件自行按
+/// `env.server` 过滤），但两侧语义必须成对维护：只留 Client 会让后来者误以为
+/// 服务端侧别不需要区分。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ModrinthSide {
+    Client,
+    #[allow(dead_code)]
+    Server,
+}
+
 /// 解析 Modrinth `.mrpack` 的 `modrinth.index.json`。
-pub(crate) fn parse_modrinth_index(zip_path: &Path) -> Result<ParsedModpack, String> {
+pub(crate) fn parse_modrinth_index(
+    zip_path: &Path,
+    side: ModrinthSide,
+) -> Result<ParsedModpack, String> {
     let root = read_zip_json(zip_path, "modrinth.index.json")?;
     let deps = root
         .get("dependencies")
@@ -4604,13 +4629,24 @@ pub(crate) fn parse_modrinth_index(zip_path: &Path) -> Result<ParsedModpack, Str
     let mut files = Vec::new();
     if let Some(arr) = root.get("files").and_then(|f| f.as_array()) {
         for f in arr {
-            // 源语义：env.client == "required" 才收集；缺失按 required 处理
-            let env_client = f
+            // env 按目标侧别过滤（缺失位按 required 处理）：
+            // 客户端：env.client == "required"（源语义）；服务端：env.server != "unsupported"
+            //（服务端必需与可选都要装，client-only 由调用方的 jar 扫描兜底）。
+            let env_side = f
                 .get("env")
-                .and_then(|e| e.get("client"))
+                .and_then(|e| {
+                    e.get(match side {
+                        ModrinthSide::Client => "client",
+                        ModrinthSide::Server => "server",
+                    })
+                })
                 .and_then(|c| c.as_str())
                 .unwrap_or("required");
-            if env_client != "required" {
+            let keep = match side {
+                ModrinthSide::Client => env_side == "required",
+                ModrinthSide::Server => env_side != "unsupported",
+            };
+            if !keep {
                 continue;
             }
             let path = f
@@ -4991,7 +5027,7 @@ fn parse_local_pack_file(path: &Path) -> Result<LocalPackParse, String> {
             .get("summary")
             .and_then(|v| v.as_str())
             .map(String::from);
-        let pack = parse_modrinth_index(path)?;
+        let pack = parse_modrinth_index(path, ModrinthSide::Client)?;
         let file_count = pack.files.len() as i32;
         return Ok(LocalPackParse {
             source: "modrinth".to_string(),
