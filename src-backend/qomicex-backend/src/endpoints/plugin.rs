@@ -2155,9 +2155,12 @@ async fn task_update(
                 "终态请用 POST /plugins/tasks/{taskId}/complete 提交",
             ));
         }
-        // 非终态也走 set_status：它统一处理 stage 与 terminal_at 的重置。
+        // 非终态也走 set_status：它负责 terminal_at 的重置。stage 需一并更新
+        // ——set_status 只写 status/terminal_at，不会同步 stage（否则卡片会显示
+        // 状态「下载中」而阶段仍是「queued」）。
         state.install_tracker.update_progress(&task_id, |f| {
             f.set_status(crate::services::install_tracker::InstallStatus::from_str(s));
+            f.stage = s.clone();
         });
     }
     let ok = state.install_tracker.update_progress(&task_id, |f| {
