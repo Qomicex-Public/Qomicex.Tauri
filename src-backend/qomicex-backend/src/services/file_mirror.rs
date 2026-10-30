@@ -53,6 +53,13 @@ const BMCLAPI_HOST: &str = "bmclapi2.bangbang93.com";
 const FORGE_MAVEN_HOST: &str = "maven.minecraftforge.net";
 /// NeoForge 官方 maven（制品位于 releases/ 下）。
 const NEOFORGE_MAVEN_HOST: &str = "maven.neoforged.net";
+/// NeoForge maven 的 ForgeCDN 镜像（路径与官方 maven 完全同构：`releases/...`）。
+///
+/// 为什么需要它：`maven.neoforged.net` 在部分网络下完全不可达（实测 DNS 可解析
+/// 但 TLS 连接超时），而 `neoforged.forgecdn.net` 是 NeoForge 官方 CDN、可用且
+/// 更快。QML-Mirror 的 `mc-neoforge` 前缀在 mirror.mdx 里标注「暂不可用」，
+/// BMCLAPI 的 `/maven` 也代理了 NeoForge，但两者都不如官方 CDN 稳定。
+const NEOFORGE_FORGECDN_HOST: &str = "neoforged.forgecdn.net";
 
 /// 镜像健康探针的 canary 文件（公开、稳定、几十 KB 的 CF 文件）。
 ///
@@ -232,7 +239,32 @@ pub fn vanilla_fallback(
         VanillaSource::Official => official_to_bmclapi(url),
         VanillaSource::Bmclapi => bmclapi_to_official(url),
     };
-    alt.into_iter().collect()
+    let mut out: Vec<String> = alt.into_iter().collect();
+    // NeoForge 的 maven 额外挂 ForgeCDN（官方 CDN，路径同构）。官方 maven 在部分
+    // 网络下直接不可达，BMCLAPI 是二手代理、时效性与完整度都不如官方 CDN。
+    if let Some(cdn) = neoforge_maven_to_forgecdn(url) {
+        if !out.iter().any(|u| u == &cdn) {
+            out.push(cdn);
+        }
+    }
+    out
+}
+
+/// `maven.neoforged.net/releases/...` ↔ `neoforged.forgecdn.net/releases/...`。
+///
+/// 两个 host 的路径完全一致（实测 installer 与全部依赖库都 200），所以是纯
+/// host 替换；BMCLAPI 形态（`/maven/net/neoforged/...`）先还原成官方 maven 再转。
+fn neoforge_maven_to_forgecdn(url: &str) -> Option<String> {
+    let official = match url_host(url)? {
+        NEOFORGE_MAVEN_HOST => url.to_string(),
+        BMCLAPI_HOST => bmclapi_to_official(url)?,
+        _ => return None,
+    };
+    let rest = official.strip_prefix(&format!("https://{NEOFORGE_MAVEN_HOST}/"))?;
+    if rest.is_empty() {
+        return None;
+    }
+    Some(format!("https://{NEOFORGE_FORGECDN_HOST}/{rest}"))
 }
 
 fn official_to_bmclapi(url: &str) -> Option<String> {
@@ -521,17 +553,39 @@ mod tests {
             vec![forge.to_string()]
         );
 
+        // NeoForge 现在有 ForgeCDN 候选（官方 CDN，官方 maven 不可达时的主力兜底），
+        // 精确断言见 neoforge_maven_also_offers_forgecdn；这里只验证 BMCLAPI 兜底仍在。
         let neo = "https://maven.neoforged.net/releases/net/neoforged/neoforge/21.1.172/neoforge-21.1.172-installer.jar";
         let neo_bmcl =
             "https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/21.1.172/neoforge-21.1.172-installer.jar";
-        assert_eq!(
-            vanilla_fallback(neo, VanillaSource::Official),
-            vec![neo_bmcl.to_string()]
+        assert!(vanilla_fallback(neo, VanillaSource::Official).contains(&neo_bmcl.to_string()));
+        assert!(vanilla_fallback(neo_bmcl, VanillaSource::Bmclapi).contains(&neo.to_string()));
+    }
+
+    #[test]
+    fn neoforge_maven_also_offers_forgecdn() {
+        let neo = "https://maven.neoforged.net/releases/net/neoforged/neoforge/21.1.233/neoforge-21.1.233-installer.jar";
+        let cdn = "https://neoforged.forgecdn.net/releases/net/neoforged/neoforge/21.1.233/neoforge-21.1.233-installer.jar";
+        let bmcl = "https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/21.1.233/neoforge-21.1.233-installer.jar";
+        let got = vanilla_fallback(neo, VanillaSource::Official);
+        assert!(got.contains(&bmcl.to_string()), "BMCLAPI 兜底仍在: {got:?}");
+        assert!(got.contains(&cdn.to_string()), "ForgeCDN 候选缺失: {got:?}");
+
+        // BMCLAPI 形态也要能转到 ForgeCDN（老任务/缓存里的 URL）
+        let got = vanilla_fallback(bmcl, VanillaSource::Bmclapi);
+        assert!(
+            got.contains(&cdn.to_string()),
+            "BMCLAPI→ForgeCDN 失败: {got:?}"
         );
-        assert_eq!(
-            vanilla_fallback(neo_bmcl, VanillaSource::Bmclapi),
-            vec![neo.to_string()]
-        );
+
+        // 非 NeoForge 的 maven 不得被误转
+        let forge = "https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1-47.4.0/forge-1.20.1-47.4.0-installer.jar";
+        for u in vanilla_fallback(forge, VanillaSource::Official) {
+            assert!(
+                !u.contains("neoforged.forgecdn.net"),
+                "Forge 不应挂 NeoForge CDN: {u}"
+            );
+        }
     }
 
     #[test]
