@@ -96,6 +96,7 @@ await api.proxyFetchStream(req, { onChunk, onError })   // 流式请求
 | **curseforge.files** | `call('curseforge.files', [{ projectId?, fileId }]) → [{ projectId, fileId, fileName, downloadUrl \| null, fileLength, blockedReason? }]` | `network:fetch` |
 | | 批量把 CurseForge `projectID:fileID` 换成下载直链。API key 始终留在启动器进程内，插件拿不到。`downloadUrl === null` 表示作者关闭第三方分发（受限文件） | |
 | **readArchiveEntry** | `call('readArchiveEntry', archivePath, entryPath, { maxBytes? }) → { content, size } \| null` | `filesystem:read` |
+| | 需对 `archivePath` 有逐路径授权（与 readText 同一套 FS 授权流程，首次会弹确认）。条目不存在返回 `null` | |
 | | 不解压整包，直接读 zip 内单个条目的文本。条目不存在返回 `null`。用于读 `fabric.mod.json` / `META-INF/mods.toml` / `modrinth.index.json` 等元数据 | |
 | **modpack.install** | `call('modpack.install', { id, gameDir, path | (type, projectId, fileId), ... }) → { instanceId }` | `instance:write` |
 | | 一键安装整合包（本地 zip / mrpack 或在线 Modrinth/CurseForge/FTB） | |

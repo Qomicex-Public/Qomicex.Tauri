@@ -690,17 +690,18 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       },
     },
     readArchiveEntry: async (archivePath, entryPath, opts) => {
-      const res = await fetch(`${API_BASE}/plugins/archive/entry`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ archivePath, entryPath, maxBytes: opts?.maxBytes }),
-      })
-      if (res.status === 404) return null
-      if (!res.ok) {
-        const err = await res.json().catch(() => null)
-        throw new Error(err?.message ?? `Archive entry read failed: ${res.status}`)
+      try {
+        const res = await fileOpWithAuth(pluginId, archivePath, () => fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/archive-entry`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ archivePath, entryPath, maxBytes: opts?.maxBytes })
+        }))
+        return res as { content: string; size: number }
+      } catch (e) {
+        // 条目不存在 → null（用于「有这个文件吗」的探测）；其余错误照常抛。
+        if (e instanceof Error && /404|不存在/.test(e.message)) return null
+        throw e
       }
-      return res.json()
     },
     modpack: {
       install: async (opts) => {
@@ -803,7 +804,8 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       return res as { destPath: string }
     },
     renamePath: async (from, to) => {
-      const res = await fileOpWithAuth(pluginId, from, () => fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/rename`, {
+      // 源与目标两端都要授权：后端两端都查 grant，只授一侧会在重试后再次 403。
+      const res = await fileOpWithAuth(pluginId, [from, to], () => fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/rename`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ from, to })
@@ -895,19 +897,27 @@ async function extractWithAuth(
   return res.json()
 }
 
-async function fileOpWithAuth(pluginId: string, path: string, op: () => Promise<Response>): Promise<unknown> {
+async function fileOpWithAuth(
+  pluginId: string,
+  path: string | string[],
+  op: () => Promise<Response>,
+): Promise<unknown> {
+  const paths = Array.isArray(path) ? path : [path]
   let res = await op()
   if (res.status === 403) {
     const err = await res.json().catch(() => null)
     if (err?.code === 'FS_AUTHORIZATION_REQUIRED') {
-      const ok = window.confirm(i18nKey('plugins.fileAuthRequest', { pluginId, path }))
+      const label = paths.join(' → ')
+      const ok = window.confirm(i18nKey('plugins.fileAuthRequest', { pluginId, path: label }))
       if (!ok) throw new Error(i18nKey('plugins.fileAuthDenied'))
-      const authRes = await fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/authorize`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path, allow: true })
-      })
-      if (!authRes.ok) throw new Error(i18nKey('plugins.fileAuthFailed'))
+      for (const p of paths) {
+        const authRes = await fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/authorize`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: p, allow: true })
+        })
+        if (!authRes.ok) throw new Error(i18nKey('plugins.fileAuthFailed'))
+      }
       res = await op()
     }
   }

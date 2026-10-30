@@ -15,7 +15,6 @@ import type { Tab } from '../components/ui'
 import { useNavigate } from 'react-router-dom'
 import { getTasks, subscribe, removeTask, updateTask, addTask } from '../stores/downloadStore.ts'
 import { pauseInstall, resumeInstall, cancelInstall, getInstallProgress } from '../api/instance.ts'
-import { API_BASE } from '../api/client.ts'
 import { cancelResourceDownload, getResourceDownloadProgress } from '../api/resource-download.ts'
 import { cancelJavaDownload, pauseJavaDownload, resumeJavaDownload, getJavaDownloadProgress } from '../api/java.ts'
 import { refreshCustomRuntimes } from '../stores/javaStore.ts'
@@ -221,6 +220,8 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
   const isActive = task.status === 'downloading' || task.status === 'paused' || task.status === 'queued'
   /** 待补全：安装管线已结束但缺文件，等用户手动补齐（issue #291）。不算 active——没有可暂停的进程。 */
   const isAwaiting = task.status === 'awaiting-files'
+  /** 受限文件由插件自己补全的任务（服务端搭建等）：launcher 不开实例对话框。 */
+  const pluginOwned = task.kind === 'plugin' || task.kind === 'server'
   const safeIcon = getSafeIconSrc(task.icon)
   const steps = task.steps && task.steps.length > 0 ? task.steps : undefined
   const stepsLive = task.status === 'downloading' || task.status === 'paused'
@@ -339,7 +340,7 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
               </Tooltip>
             </>
           )}
-          {isAwaiting && onFix && (
+          {isAwaiting && onFix && !pluginOwned && (
             <Button
               variant="outline"
               size="sm"
@@ -469,7 +470,7 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
         </div>
         {isAwaiting && (
           <p className="mt-1.5 text-[11px] leading-relaxed text-amber-400/80">
-            {t('downloads.missingMods.hint')}
+            {pluginOwned ? t('downloads.missingMods.pluginHint') : t('downloads.missingMods.hint')}
           </p>
         )}
         {task.status === 'failed' && task.error && (
@@ -536,23 +537,11 @@ export default function DownloadCenter() {
 
   const handleFix = useCallback((task: DownloadTask) => {
     if (!task.instanceId) return
-    // 服务端搭建任务不是实例：补全方式是把缺失文件手动拷入服务端目录，
-    // 然后标记完成——不能打开实例语义的 BlockedModsDialog（会报 Instance not
-    // found，且其 Skip 会把等待态误标成取消）。
-    if (task.kind === 'server') {
-      fetch(`${API_BASE}/server/setup/progress/${encodeURIComponent(task.instanceId)}/complete`, { method: 'POST' })
-        .then(res => {
-          if (!res.ok) throw new Error(String(res.status))
-          updateTask(task.id, {
-            status: 'completed',
-            progress: 100,
-            blockedFiles: undefined,
-            completedAt: new Date().toISOString(),
-          })
-        })
-        .catch(() => { /* 后端 400 = 不在等待态，SSE 会把卡片刷回真实状态 */ })
-      return
-    }
+    // 插件自报任务（kind='plugin'，如服务端搭建）不是实例：受限文件由插件自己
+    // 的界面补全（写 .qml-server/blocked-mods.json）。这里不能打开实例语义的
+    // BlockedModsDialog（会报 Instance not found），也不能替插件改状态
+    // ——卡片直接隐藏该动作（见 TaskCard 的 canFix）。
+    if (task.kind === 'plugin' || task.kind === 'server') return
     setFixInstanceId(task.instanceId)
   }, [])
 

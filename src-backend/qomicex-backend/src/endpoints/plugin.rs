@@ -482,7 +482,10 @@ pub fn router() -> Router<SharedState> {
         .route("/plugins/tasks/{taskId}/complete", post(task_complete))
         .route("/plugins/tasks/{taskId}", get(task_progress))
         .route("/plugins/cf/files", post(cf_files_lookup))
-        .route("/plugins/archive/entry", post(archive_read_entry))
+        .route(
+            "/plugins/files/{id}/archive-entry",
+            post(archive_read_entry),
+        )
         .route("/plugins/shell/{id}", post(shell))
 }
 
@@ -2349,11 +2352,26 @@ struct PluginArchiveEntryResponse {
 /// 解压几百个 jar 只为读一个 JSON 不现实；而「读包内某个条目」本身与业务无关，
 /// 是通用能力。
 async fn archive_read_entry(
+    State(state): State<SharedState>,
+    AxumPath(plugin_id): AxumPath<String>,
     Json(req): Json<PluginArchiveEntryRequest>,
 ) -> ApiResult<Json<PluginArchiveEntryResponse>> {
     let archive_path = PathBuf::from(req.archive_path.trim());
     if !archive_path.is_file() {
         return Err(ApiError::not_found("ARCHIVE_NOT_FOUND", "压缩包不存在"));
+    }
+    // 与 file_read/file_list 同一道逐路径授权：只读单个条目不等于可以读任意
+    // 压缩包——否则 filesystem:read 就绕过了 FS 授权流程（读别人插件的
+    // .qplugin、系统压缩包里的敏感配置等）。
+    if state
+        .plugin_auth
+        .find_grant(&plugin_id, &req.archive_path)
+        .is_none()
+    {
+        return Err(ApiError::forbidden(
+            "FS_AUTHORIZATION_REQUIRED",
+            "未授权访问该路径",
+        ));
     }
     let max = req.max_bytes.clamp(1, 32 * 1024 * 1024);
     let file = std::fs::File::open(&archive_path)?;

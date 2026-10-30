@@ -21,7 +21,7 @@ export interface InstallState {
   speed: number
   isPaused: boolean
   /** 任务类型："install" / "modpack" / "modpack-update" / "resource"（issue #118）。
-   * "server" = 服务端搭建（整合包一键开服，插件经 /server/setup 发起）。 */
+   * "plugin" = 插件自报任务（task.register），如服务端搭建；"server" 为历史值。 */
   kind?: string
   /** 任务显示标题（后端发起、前端没有本地卡片的任务用它做名称）。 */
   title?: string
