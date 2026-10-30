@@ -572,6 +572,14 @@ struct UploadQuery {
 /// 设上限是为了让「外部 URL 触发的下载」不能靠超大响应打爆内存。
 const INSTALL_URL_MAX_BYTES: u64 = 64 * 1024 * 1024;
 
+/// 插件单次批量调用的条目上限。
+///
+/// 存在的理由不是业务限制，而是分配安全：`Vec::with_capacity(req.files.len())`
+/// 等按请求长度预分配的地方，长度完全由插件（= 不受信输入）决定。没有上限时
+/// 一个超大数组就能让后端先分配一大块内存再逐个校验。上限远高于真实用量
+/// （整合包最多几千个文件）。
+const MAX_PLUGIN_BATCH_ITEMS: usize = 20_000;
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct InstallUrlRequest {
@@ -1903,6 +1911,16 @@ async fn download_batch_start(
             "files 不能为空",
         ));
     }
+    if req.files.len() > MAX_PLUGIN_BATCH_ITEMS {
+        return Err(ApiError::bad_request(
+            "DOWNLOAD_TOO_MANY_FILES",
+            format!(
+                "单次批量下载最多 {} 个文件（收到 {}）",
+                MAX_PLUGIN_BATCH_ITEMS,
+                req.files.len()
+            ),
+        ));
+    }
 
     let tracker = state.install_tracker.clone();
     let (task_id, step_id, handle) = match req.task_id.as_deref() {
@@ -2052,6 +2070,12 @@ async fn task_register(
         return Err(ApiError::bad_request(
             "TASK_STEPS_REQUIRED",
             "steps 不能为空",
+        ));
+    }
+    if req.steps.len() > 256 {
+        return Err(ApiError::bad_request(
+            "TASK_TOO_MANY_STEPS",
+            format!("单个任务最多 256 个步骤（收到 {}）", req.steps.len()),
         ));
     }
     let task_id = req
@@ -2237,6 +2261,16 @@ async fn cf_files_lookup(
 ) -> ApiResult<Json<Vec<PluginCfFileInfo>>> {
     if req.files.is_empty() {
         return Ok(Json(Vec::new()));
+    }
+    if req.files.len() > MAX_PLUGIN_BATCH_ITEMS {
+        return Err(ApiError::bad_request(
+            "CF_TOO_MANY_FILES",
+            format!(
+                "单次最多查询 {} 个文件（收到 {}）",
+                MAX_PLUGIN_BATCH_ITEMS,
+                req.files.len()
+            ),
+        ));
     }
     let file_ids: Vec<i64> = req.files.iter().map(|f| f.file_id).collect();
     let cf = state

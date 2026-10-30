@@ -108,6 +108,45 @@ impl LogRing {
     }
 }
 
+/// 校验插件传入的可执行文件路径/命令名。
+///
+/// 只做**合法性**校验（空值、超长、控制字符），不做白名单——白名单会把「插件
+/// 运行自己包内的可执行文件」这个正当用法一并禁掉，而真正的权限边界在
+/// `process:manage`。控制字符必须拦：内嵌换行/回车能让参数在部分 shell 与日志
+/// 中产生与插件意图不符的效果，且这类值不可能来自正当用法。
+fn validate_spawn_command(command: &str) -> Result<(), String> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return Err("command 不能为空".to_string());
+    }
+    if trimmed.len() > 4096 {
+        return Err("command 过长（上限 4096 字节）".to_string());
+    }
+    // 命令名比参数更严：可执行文件路径里不会有制表符，出现即异常。
+    if trimmed.chars().any(char::is_control) {
+        return Err("command 含控制字符".to_string());
+    }
+    Ok(())
+}
+
+/// 校验单个命令行参数：拦控制字符与 NUL（后者会被 `Command` 直接拒绝并报
+/// 难懂的错误）。制表符放行——它在参数内是合法内容。
+fn validate_spawn_arg(arg: &str) -> Result<(), String> {
+    if arg.len() > 64 * 1024 {
+        return Err("单个参数过长（上限 64 KiB）".to_string());
+    }
+    if has_control_chars(arg) {
+        return Err(format!("参数含控制字符: {arg:?}"));
+    }
+    Ok(())
+}
+
+/// 是否含 NUL 或除 `\t` 之外的控制字符。
+fn has_control_chars(s: &str) -> bool {
+    s.chars()
+        .any(|c| c == '\u{0}' || (c.is_control() && c != '\t'))
+}
+
 /// 单个受管进程的共享状态。
 struct ProcessHandle {
     plugin_id: String,
@@ -171,9 +210,17 @@ impl PluginProcessService {
     }
 
     /// 拉起常驻进程并注册。返回 PID。
+    ///
+    /// **这是刻意的「插件可执行任意命令」入口**，与 `shell` 端点同级：它存在的
+    /// 全部意义就是让插件管理自己的子进程（服务端、安装器等）。安全边界不在这里，
+    /// 而在前端 bridge 的 `process:manage` 权限校验（sandbox.ts 的
+    /// METHOD_PERMISSIONS）。静态分析会把 `Command::new(插件输入)` 报成命令注入
+    /// ——那是设计意图而非缺陷；本函数只做**输入合法性**校验，防的是畸形值导致的
+    /// 拉起失败与参数错乱，不是防插件作恶（它本就有这个权力）。
     pub async fn spawn(&self, plugin_id: &str, opts: SpawnOptions) -> Result<u32, String> {
-        if opts.command.trim().is_empty() {
-            return Err("command 不能为空".to_string());
+        validate_spawn_command(&opts.command)?;
+        for arg in &opts.args {
+            validate_spawn_arg(arg)?;
         }
 
         // 先回收已过保留期的句柄：否则 32 个进程全部退出且保留期届满后，
@@ -397,4 +444,46 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spawn_command_validation() {
+        assert!(validate_spawn_command("java").is_ok());
+        assert!(validate_spawn_command("C:\\Program Files\\Java\\bin\\java.exe").is_ok());
+        assert!(validate_spawn_command("  ").is_err(), "空/纯空白应拒绝");
+        assert!(validate_spawn_command("").is_err());
+        assert!(
+            validate_spawn_command(&"a".repeat(4097)).is_err(),
+            "超长应拒绝"
+        );
+        assert!(
+            validate_spawn_command("java\nwhoami").is_err(),
+            "换行是控制字符，必须拒绝"
+        );
+        assert!(validate_spawn_command("java\u{0}").is_err(), "NUL 必须拒绝");
+        assert!(
+            validate_spawn_command("java\tdir").is_err(),
+            "命令名内的制表符同样属于控制字符"
+        );
+    }
+
+    #[test]
+    fn spawn_arg_validation() {
+        assert!(validate_spawn_arg("-jar").is_ok());
+        assert!(validate_spawn_arg("a b c").is_ok(), "空格是合法参数内容");
+        assert!(
+            validate_spawn_arg("col1\tcol2").is_ok(),
+            "制表符在参数内放行"
+        );
+        assert!(validate_spawn_arg("x\nstop").is_err(), "换行必须拒绝");
+        assert!(validate_spawn_arg("x\u{0}y").is_err(), "NUL 必须拒绝");
+        assert!(
+            validate_spawn_arg(&"a".repeat(64 * 1024 + 1)).is_err(),
+            "超长参数应拒绝"
+        );
+    }
 }
