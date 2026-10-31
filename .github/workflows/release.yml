@@ -846,10 +846,14 @@ jobs:
     if: |
       github.event_name == 'release' ||
       (github.event_name == 'workflow_dispatch' &&
-        (github.event.inputs.buildPlatform == 'loongarch64'))
+        (github.event.inputs.buildPlatform == 'loongarch64' ||
+         github.event.inputs.buildPlatform == 'all'))
     # 与 quality-gate 并行：release 汇总时仍要求 gate 通过，坏产物不会发布
     needs: [setup]
     runs-on: ubuntu-latest
+    # QEMU 用户态模拟下整条 Rust + Tauri 构建极慢（实测单作业 40 分钟仍在编译），
+    # 不设上限时挂死会一直占着 runner，把依赖它的 release 作业一起拖到超时。
+    timeout-minutes: 300
     env:
       IMAGE: ghcr.io/qomicex-public/qomicex-loong64-builder:latest
     steps:
@@ -1286,8 +1290,30 @@ jobs:
       - linux-arm64
       - macos-arm64
       - macos-x64
+      - loongarch64
+    # 显式写状态函数（而非依赖默认的隐式 success() 门禁）：
+    # - 默认语义下 needs 里任一作业 skipped/failure 都会连带本作业 skipped，
+    #   于是单独 dispatch 一个平台（其余平台 skipped）时永远不会发版；
+    # - 逐平台判 success||skipped，使「只构建部分平台」也能正常发布，
+    #   而 buildPlatform=all 时任一平台 failure 仍然挡住发版。
+    # loongarch64 刻意不在门禁内：它走 QEMU 用户态模拟，失败率高于原生 runner，
+    # 失败只应让本次发布缺少 loong64 产物，不能阻塞其余八个平台。
+    if: |
+      !cancelled() &&
+      needs.setup.result == 'success' &&
+      needs.quality-gate.result == 'success' &&
+      (needs.windows-x64.result == 'success' || needs.windows-x64.result == 'skipped') &&
+      (needs.windows-arm64.result == 'success' || needs.windows-arm64.result == 'skipped') &&
+      (needs.linux-x64.result == 'success' || needs.linux-x64.result == 'skipped') &&
+      (needs.linux-arm64.result == 'success' || needs.linux-arm64.result == 'skipped') &&
+      (needs.macos-arm64.result == 'success' || needs.macos-arm64.result == 'skipped') &&
+      (needs.macos-x64.result == 'success' || needs.macos-x64.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
+      - name: Warn when loongarch64 did not ship
+        if: needs.loongarch64.result != 'success'
+        run: |
+          echo "::warning::loongarch64 本次未产出（${{ needs.loongarch64.result }}），发布不含 loong64 产物"
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
