@@ -19,7 +19,7 @@ import { cancelResourceDownload, getResourceDownloadProgress } from '../api/reso
 import { cancelJavaDownload, pauseJavaDownload, resumeJavaDownload, getJavaDownloadProgress } from '../api/java.ts'
 import { refreshCustomRuntimes } from '../stores/javaStore.ts'
 import { useI18n } from '../i18n/index.tsx'
-import { formatBytes } from '../lib/download-format.ts'
+import { formatBytes, normalizeSpeed } from '../lib/download-format.ts'
 import { groupTasks, readCollapsedGroups, writeCollapsedGroups } from '../lib/downloadGroups.ts'
 import type { DownloadGroup, DownloadGroupKey } from '../lib/downloadGroups.ts'
 import InstallStepsList from '../components/InstallStepsList.tsx'
@@ -223,6 +223,10 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
   /** 受限文件由插件自己补全的任务（服务端搭建等）：launcher 不开实例对话框。 */
   const pluginOwned = task.kind === 'plugin' || task.kind === 'server'
   const safeIcon = getSafeIconSrc(task.icon)
+  // 图片挂掉时降级到带状态底色的回退图标，避免透明容器里留一块破图。
+  const [iconFailed, setIconFailed] = useState(false)
+  useEffect(() => { setIconFailed(false) }, [task.icon])
+  const showImage = safeIcon !== null && !iconFailed
   const steps = task.steps && task.steps.length > 0 ? task.steps : undefined
   const stepsLive = task.status === 'downloading' || task.status === 'paused'
   const stepsDoneCount = steps?.filter((s) => s.status === 'done').length ?? 0
@@ -235,12 +239,28 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
     <div className="group glass-surface rounded-xl border bg-card p-4 transition-all hover:border-primary/20">
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
-          <div className={cn(
-            'flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg',
-            task.status === 'completed' ? 'bg-emerald-500/10' : task.status === 'failed' ? 'bg-red-500/10' : isAwaiting ? 'bg-amber-500/10' : 'bg-primary/10'
-          )}>
-            {safeIcon ? (
-              <img src={safeIcon} alt="" className="h-full w-full object-cover" />
+          <div
+            className={cn(
+              'flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg',
+              // 状态底色只给回退图标：透明模组 PNG 会把底色透出来（issue #199）。
+              showImage
+                ? ''
+                : task.status === 'completed'
+                  ? 'bg-emerald-500/10'
+                  : task.status === 'failed'
+                    ? 'bg-red-500/10'
+                    : isAwaiting
+                      ? 'bg-amber-500/10'
+                      : 'bg-primary/10',
+            )}
+          >
+            {showImage ? (
+              <img
+                src={safeIcon!}
+                alt=""
+                className="h-full w-full object-cover"
+                onError={() => setIconFailed(true)}
+              />
             ) : (
               <TypeIcon
                 taskType={task.type}
@@ -424,7 +444,7 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
             ))}
             {showSpeedGraph && (
               <DownloadSpeedGraph
-                speed={task.speed ?? 0}
+                speed={normalizeSpeed(task.speed)}
                 className={cn('w-44 shrink-0', task.status === 'paused' ? 'text-amber-400' : 'text-primary')}
               />
             )}

@@ -67,6 +67,10 @@ struct DownloadProgressResponse {
     progress: f64,
     downloaded_bytes: u64,
     total_bytes: u64,
+    /// 字节/秒，与 SSE 资源速度同单位。`serde(default)` 给插件回退路径：
+    /// `session_progress_json` 的载荷没有该字段，缺了也必须能反序列化。
+    #[serde(default)]
+    speed: u64,
     status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
@@ -470,6 +474,7 @@ fn build_progress(task_id: TaskId) -> DownloadProgressResponse {
                 progress,
                 downloaded_bytes: s.downloaded,
                 total_bytes: s.total,
+                speed: s.speed,
                 status: s.status,
                 error: s.error,
                 file_name: s.file_name,
@@ -484,6 +489,7 @@ fn build_progress(task_id: TaskId) -> DownloadProgressResponse {
             progress: 0.0,
             downloaded_bytes: 0,
             total_bytes: 0,
+            speed: 0,
             status: "not_found".to_string(),
             error: None,
             file_name: None,
@@ -759,6 +765,7 @@ async fn progress(
         progress: 0.0,
         downloaded_bytes: 0,
         total_bytes: 0,
+        speed: 0,
         status: "not_found".to_string(),
         error: None,
         file_name: None,
