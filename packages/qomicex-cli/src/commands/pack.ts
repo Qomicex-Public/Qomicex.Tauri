@@ -67,6 +67,15 @@ export function buildPackageEntries(root: string, manifest: Record<string, unkno
     }
   }
 
+  // 插件自持 i18n 包（manifest.l10n 声明的目录，缺省 l10n/）：manifest 的 %key%
+  // 模板与插件运行时文案都靠它解析。缺了它，商店列表会显示模板原文、装到启动器
+  // 里侧边栏也是原文（实测 server-manager 发布翻车根因）。
+  const l10nDirName = typeof manifest.l10n === 'string' && manifest.l10n.trim() ? manifest.l10n.trim().replace(/^\/+|\/+$/g, '') : 'l10n'
+  const l10nDir = join(root, l10nDirName)
+  if (existsSync(l10nDir)) {
+    for (const f of collectDir(l10nDir, `${l10nDirName}/`)) entries[f.name] = f.data
+  }
+
   // entry.theme / contributes.overlay.file / contributes.slots[].file 引用 dist/ 下文件但源码在根目录时，自动拷入
   const entry = manifest.entry as { theme?: string; frontend?: string } | undefined
   const contributes = manifest.contributes as { overlay?: { file?: string }; slots?: Array<{ file?: string }> } | undefined
