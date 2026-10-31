@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Unix shebang 要求 LF：Windows 检出（autocrlf）会让 tsc 产物带 CRLF，
 // shebang 变成 "#!/usr/bin/env node\r" → npm publish 判 bin 无效并移除。
 // 以 CLI 包目录为基准归一 dist/*.js；npm script 的 cwd 即包目录。
