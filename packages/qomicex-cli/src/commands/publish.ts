@@ -123,7 +123,25 @@ export async function publishCommand(opts: PublishOptions = {}): Promise<void> {
   entries = { ...entries, ...sig }
   const signedBytes = zipWrite(Object.entries(entries).map(([name, data]) => ({ name, data })))
 
-  // 6) 查找/创建插件记录
+  /** manifest.name 的 %key% 模板用项目 l10n 默认包解析（无包/未命中保留原文）。 */
+function resolveDisplay(
+  manifest: { name?: string; l10n?: string },
+  root: string,
+): string {
+  const raw = String(manifest.name ?? slug)
+  if (!raw.includes('%')) return raw
+  try {
+    const dirName = typeof manifest.l10n === 'string' && manifest.l10n.trim() ? manifest.l10n.trim() : 'l10n'
+    const bundle = JSON.parse(readFileSync(join(root, dirName, 'bundle.json'), 'utf8')) as Record<string, unknown>
+    const dict: Record<string, string> = {}
+    for (const [k, v] of Object.entries(bundle)) if (typeof v === 'string') dict[k] = v
+    return raw.replace(/%([A-Za-z0-9_.-]+)%/g, (w, key: string) => dict[key] ?? w)
+  } catch {
+    return raw
+  }
+}
+
+// 6) 查找/创建插件记录
   info('==> 确认插件记录')
   const mine = await fetchMinePlugins(api, token)
   const existing = mine.find((p) => p.slug === slug)
@@ -135,7 +153,7 @@ export async function publishCommand(opts: PublishOptions = {}): Promise<void> {
     try {
       const created = await createPlugin(api, token, {
         slug,
-        name: String(manifest.name ?? slug),
+        name: resolveDisplay(manifest, root),
         description: String(manifest.description ?? ''),
         orgId: opts.orgId,
       })
