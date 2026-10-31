@@ -15,7 +15,7 @@
     "skills"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node ../../scripts/normalize-eol.mjs",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
