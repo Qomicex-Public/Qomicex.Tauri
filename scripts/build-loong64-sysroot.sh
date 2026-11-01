@@ -107,7 +107,19 @@ CROSS_GCC="$TOOLS_DIR/$TRIPLE/bin/$TRIPLE-gcc"
 TOOLCHAIN_SYSROOT="$("$CROSS_GCC" --print-sysroot)"
 [ -d "$TOOLCHAIN_SYSROOT" ] || die "工具链 sysroot 不存在: $TOOLCHAIN_SYSROOT"
 
+# 复用 $SYSROOT 时必须先清空：cp -a 与 tar -x 只覆盖同名成员，换 LOONG64_SUITE
+# 或 TOOLS_DIR 后旧版本的 .pc / 头文件 / 库会残留，而末尾校验只查 .pc 存在，
+# 过期的 .pc 照样通过，构建就会用上过期头文件。
+# 不能直接 rm -rf：$SYSROOT 由调用方指定，可能指向共享目录甚至 /。
+# 故用标记文件确认「这个目录是本脚本建的」；非空且无标记直接报错。
+MARKER="$SYSROOT/.qomicex-loong64-sysroot"
+if [ -d "$SYSROOT" ] && [ -n "$(ls -A "$SYSROOT" 2>/dev/null)" ]; then
+  [ -f "$MARKER" ] || die "$SYSROOT 非空且不是本脚本生成（缺少 $MARKER），拒绝清空；请换一个空目录或手工删除"
+  log "清理上次生成的 sysroot: $SYSROOT"
+  find "$SYSROOT" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+fi
 mkdir -p "$SYSROOT"
+: > "$MARKER"
 # 用 cp -a 而非就地解包：工具链 sysroot 属于 /opt/x-tools，污染后本作业后续步骤不可复用。
 cp -a "$TOOLCHAIN_SYSROOT/." "$SYSROOT/"
 log "sysroot 基底来自工具链自带的 glibc: $TOOLCHAIN_SYSROOT"
@@ -120,8 +132,15 @@ install_pkg() { # install_pkg <包名>
   local pkg="$1"
   [ -n "${INSTALLED[$pkg]:-}" ] && return 0
   local fn
+  # 包名按字面比较，不拼进正则：libstdc++6 这类名字里的 `+` 在正则中是量词，
+  # 会匹配到 libstdcc6 之类的错误记录，或让该包被静默跳过。
   fn=$(awk -v RS='' -v pkg="$pkg" '
-    $0 ~ "(^|\n)Package: " pkg "\n" { for (i = 1; i <= NF; i++) if ($i == "Filename:") { print $(i+1); exit } }
+    {
+      for (i = 1; i <= NF; i++) {
+        if ($i == "Package:") { if ($(i+1) != pkg) next; found = 1 }
+        if (found && $i == "Filename:") { print $(i+1); exit }
+      }
+    }
   ' "$WORK/Packages.txt")
   # 闭包里允许出现索引中不存在的包：loong64 移植源的 Depends 常引用只在
   # 原生 Debian 存在的 -dev 包（如 gir1.2-*-dev 只提供 GIR 描述，不提供
@@ -166,22 +185,27 @@ install_pkg() { # install_pkg <包名>
   ps=("${PIPESTATUS[@]}")
   grep -E '^\./(usr/include|usr/lib|lib|usr/share/pkgconfig)/' \
     "$WORK/list.txt" > "$WORK/members.txt"
+  grep_rc=$?
   set -e
-  # 只对前两段硬性检查：grep 无匹配返回 1 属正常（很多纯数据包不含这些路径），
-  # 但 dpkg-deb / tar 失败同样表现为 MEMBERS 为空，若不区分就会把「归档损坏 /
-  # 下载截断」当成「无匹配成员」而跳过，并把它标记成已装。
-  if [ "${ps[0]}" -ne 0 ] || [ "${ps[1]}" -ne 0 ]; then
+  # 三段都要查：grep 无匹配返回 1 属正常（很多纯数据包不含这些路径），
+  # 但 grep 的 2（读失败/写失败）会让 members.txt 为空或被截断，若不区分
+  # 就会被当成「无匹配成员」跳过并标记已装。
+  # dpkg-deb / tar 失败同样表现为 members.txt 为空，一并硬性检查。
+  if [ "${ps[0]}" -ne 0 ] || [ "${ps[1]}" -ne 0 ] || [ "$grep_rc" -ge 2 ]; then
     printf 'dpkg-deb: %s\n' "$(cat "$WORK/dpkg.err")" >&2
     printf 'tar: %s\n' "$(cat "$WORK/tar.err")" >&2
-    die "读取归档失败 $pkg（dpkg-deb=${ps[0]} tar=${ps[1]}）"
+    die "读取归档失败 $pkg（dpkg-deb=${ps[0]} tar=${ps[1]} grep=$grep_rc）"
   fi
   if [ -s "$WORK/members.txt" ]; then
     set +e
     dpkg-deb --fsys-tarfile "$WORK/pkg.deb" \
       | tar -x -C "$SYSROOT" --no-recursion -T "$WORK/members.txt"
-    rc=${PIPESTATUS[1]}
+    ps=("${PIPESTATUS[@]}")
     set -e
-    [ "$rc" -eq 0 ] || die "解包 $pkg 失败（tar 退出码 $rc）"
+    # dpkg-deb 也要查：它在第二次读取时中途停止且恰好停在成员边界时，
+    # tar 仍可能返回 0，会把不完整的包标记成已装。
+    [ "${ps[0]}" -eq 0 ] && [ "${ps[1]}" -eq 0 ] \
+      || die "解包 $pkg 失败（dpkg-deb=${ps[0]} tar=${ps[1]}）"
   else
     log "    （$pkg 不含 include/lib/pkgconfig，跳过）"
   fi
@@ -198,10 +222,15 @@ expand_deps() { # expand_deps <已排队的包...>
     [ -n "${INSTALLED[$cur]:-}" ] && continue
     install_pkg "$cur"
     local deps
+    # Depends 字段在 Packages 索引里常折行：续行以单个空格开头，且可能有多行。
+    # 原实现用 match(/\nDepends: [^\n]*/) 只取含 Depends: 的那一物理行，
+    # 续行里的依赖会整体丢失。这里先按段落把记录拼成一条，再取从 Depends:
+    # 到下一个字段之间的全部内容。
     deps=$(awk -v RS='' -v pkg="$cur" '
-      $0 ~ "(^|\n)Package: " pkg "\n" {
-        if (match($0, /\nDepends: [^\n]*/)) {
-          s = substr($0, RSTART + 10, RLENGTH - 10)
+      {
+        for (i = 1; i <= NF; i++) if ($i == "Package:") { if ($(i+1) != pkg) next }
+        if (match($0, /\nDepends:[^\n]*(\n [^\n]*)*/)) {
+          s = substr($0, RSTART + 9, RLENGTH - 9)
           gsub(/\n[ ]+/, " ", s)
           n = split(s, a, ",")
           for (i = 1; i <= n; i++) {
