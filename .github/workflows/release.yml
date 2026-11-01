@@ -873,7 +873,10 @@ jobs:
       - name: Install host build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config protobuf-compiler libssl-dev libclang-dev
+          # rpm：tauri build --bundles deb,rpm 需要 rpmbuild；宿主未装时会在
+          # 打包阶段才失败，白跑一遍交叉编译。与其余平台保持一致。
+          sudo apt-get install -y pkg-config protobuf-compiler libssl-dev libclang-dev \
+            rpm xdg-utils patchelf
       - name: Fetch loong64 cross toolchain
         env:
           TOOLS_TAG: '20260912'
@@ -911,14 +914,20 @@ jobs:
         run: |
           echo "CARGO_TARGET_LOONGARCH64_UNKNOWN_LINUX_GNU_LINKER=loongarch64-unknown-linux-gnu-gcc" >> "$GITHUB_ENV"
           echo "PKG_CONFIG_SYSROOT_DIR=${{ runner.temp }}/loong64-sysroot" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_LIBDIR=${{ runner.temp }}/loong64-sysroot/usr/lib/loongarch64-linux-gnu/pkgconfig:${{ runner.temp }}/loong64-sysroot/usr/share/pkgconfig" >> "$GITHUB_ENV"
+          # 与 build-loong64-sysroot.sh 的 PKGCONFIG_DIRS 保持完全一致：
+          # 脚本按这三个目录校验 .pc 齐备，这里少一个就会出现「脚本校验通过、
+          # cargo 阶段却找不到」的分裂。
+          echo "PKG_CONFIG_LIBDIR=${{ runner.temp }}/loong64-sysroot/usr/lib/loongarch64-linux-gnu/pkgconfig:${{ runner.temp }}/loong64-sysroot/usr/share/pkgconfig:${{ runner.temp }}/loong64-sysroot/usr/lib/pkgconfig" >> "$GITHUB_ENV"
           # 清空 PKG_CONFIG_PATH：否则 pkg-config 会回落到宿主
           # /usr/lib/x86_64-linux-gnu/pkgconfig，把 amd64 库链进LoongArch 产物。
           echo "PKG_CONFIG_PATH=" >> "$GITHUB_ENV"
           echo "/opt/x-tools/loongarch64-unknown-linux-gnu/bin" >> "$GITHUB_PATH"
           # Debian multiarch 下部分架构相关头只在 usr/include/<triple>/ 子目录，
           # 而 pkg-config 只发 -I$sysroot/usr/include；缺这层 openssl-sys 等会失败。
-          echo "C_INCLUDE_PATH=${{ runner.temp }}/loong64-sysroot/usr/include/loongarch64-unknown-linux-gnu" >> "$GITHUB_ENV"
+          # 注意用 Debian multiarch 元组（loongarch64-linux-gnu），不是 Rust/工具链
+          # 三元组（loongarch64-unknown-linux-gnu）——后者在该目录下不存在，
+          # sysroot 脚本末尾也按前者断言。
+          echo "C_INCLUDE_PATH=${{ runner.temp }}/loong64-sysroot/usr/include/loongarch64-linux-gnu" >> "$GITHUB_ENV"
           # glibc 的 libc.so 是 GNU ld script，内部写的是绝对路径
           # /lib64/libc.so.6、/usr/lib64/libc_nonshared.a，须显式给出这两个目录。
           echo "LDFLAGS=-L${{ runner.temp }}/loong64-sysroot/lib64 -L${{ runner.temp }}/loong64-sysroot/usr/lib64" >> "$GITHUB_ENV"
@@ -978,8 +987,13 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # 走 step env 而非 run 体插值：displayVersion 源自 workflow_dispatch 的
+          # 版本输入，run 体里的 ${{ }} 是文本拼接，构造的版本文本会在持有签名
+          # 私钥的步骤里被 shell 执行。
+          VERSION: ${{ needs.setup.outputs.displayVersion }}
+          REPO: ${{ github.repository }}
+          SERVER: ${{ github.server_url }}
         run: |
-          VERSION="${{ needs.setup.outputs.displayVersion }}"
           BUNDLE_DIR="src-tauri/target/loongarch64-unknown-linux-gnu/release/bundle"
           echo "=== Bundle dir contents ==="
           find "$BUNDLE_DIR" -type f | head -30
@@ -987,7 +1001,7 @@ jobs:
           ARCHIVE=$(find "$BUNDLE_DIR" -name "*.AppImage.tar.gz" 2>/dev/null | head -1)
           if [ -n "$ARCHIVE" ]; then
             ASSET_NAME=$(basename "$ARCHIVE")
-            URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+            URL="$SERVER/$REPO/releases/download/$VERSION/$ASSET_NAME"
             SIG_FILE="${ARCHIVE}.sig"
             if [ -f "$SIG_FILE" ]; then
               SIGNATURE=$(cat "$SIG_FILE" | tr -d '\n')
@@ -1001,19 +1015,17 @@ jobs:
             if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.rpm' 2>/dev/null | head -1); fi
             if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found"; exit 1; fi
             ASSET_NAME=$(basename "$BUNDLE")
-            URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
+            URL="$SERVER/$REPO/releases/download/$VERSION/$ASSET_NAME"
             # loong64 无 linuxdeploy 支持，不出 AppImage → 走 deb/rpm，没有 .sig。
             # Tauri 清单要求每个条目都有签名，后端 update.rs 会把 signature 为空的
             # 条目整体 retain 掉，于是 loong64 客户端永远查不到更新。这里用与
             # 自更新包同一把 minisign 私钥对 deb 本体签名，让条目带有效签名。
-            # 签名必须在工作区之外跑：npx 会优先命中容器/工作区那份 @tauri-apps/cli，
-            # 其原生二进制无 loong64 变体，在 x86_64 宿主上加载会失败。
+            #
+            # 用仓库锁定的 CLI（pnpm exec，版本由 lockfile 决定），不用 npx 现装：
+            # 本步骤持有签名私钥，从 registry 拉未锁定版本等于把私钥交给未 review 的代码。
             SIG_FILE="${BUNDLE}.sig"
             if [ ! -f "$SIG_FILE" ]; then
-              BUNDLE_ABS="$PWD/$BUNDLE"
-              CLI_DIR=$(mktemp -d)
-              (cd "$CLI_DIR" && npx --yes "@tauri-apps/cli@2.11.4" signer sign "$BUNDLE_ABS")
-              rm -rf "$CLI_DIR"
+              pnpm exec tauri signer sign "$BUNDLE"
             fi
             if [ -f "$SIG_FILE" ]; then
               SIGNATURE=$(cat "$SIG_FILE" | tr -d '\n')
@@ -1386,14 +1398,14 @@ jobs:
     # 至少有一个构建作业真正成功：否则非法输入或全部构建失败时，这里会
     # 放行一个 platforms 为空、不含任何启动器资产的空发布。
     #
-    # loongarch64 只要求「不是 failure」：交叉编译失败时本次发布缺 loong64
-    # 产物即可，不应阻塞其余八个平台。它已在 needs 中，故 release 会等它结束，
-    # 不存在片段未上传就合并的竞态。
+    # loongarch64 是可选平台：无论它 success、failure 还是 skipped，都不影响
+    # 发布决策（故不在下面的条件里出现）。它已在 needs 中，release 会等它结束，
+    # 因此不存在「片段未上传就先合并清单」的竞态；失败时只是本次缺 loong64 产物，
+    # 由首个步骤打 warning 提示。
     if: |
       !cancelled() &&
       needs.setup.result == 'success' &&
       needs.quality-gate.result == 'success' &&
-      needs.loongarch64.result != 'failure' &&
       (needs.windows-x64.result == 'success' || needs.windows-x64.result == 'skipped') &&
       (needs.windows-arm64.result == 'success' || needs.windows-arm64.result == 'skipped') &&
       (needs.linux-x64.result == 'success' || needs.linux-x64.result == 'skipped') &&
