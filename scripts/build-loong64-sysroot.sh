@@ -1,0 +1,471 @@
+#!/usr/bin/env bash
+# 在 x86_64 宿主上构建 LoongArch64 sysroot，供 loongarch64 交叉编译使用。
+#
+# 背景：release.yml 的 loongarch64 作业原先跑在 QEMU 用户态模拟的 loong64 容器里，
+# 整个 Rust + Tauri 构建都在模拟下执行，耗时是原生的数量级，且 pnpm tarball 完整性
+# 校验在 QEMU 下异常（工作流曾被迫把 --frozen-lockfile 降级为 --no-frozen-lockfile）。
+# 改为在 x86_64 runner 上直接交叉编译后，构建阶段不再有任何架构模拟。
+#
+# 工具链取 loong64 官方 loong64/cross-tools releases，自带完整 glibc sysroot；
+# 本脚本把 loong64 Debian 的原生库 deb 解进**同一个** sysroot，使 gcc 与 glibc
+# 版本一致（工具链 glibc 必须 ≥ 系统库所依赖的 glibc，否则链接期符号缺失）。
+#
+# 用法：
+#   TOOLS_DIR=/opt/x-tools bash scripts/build-loong64-sysroot.sh
+# 产物：$SYSROOT（默认 $RUNNER_TEMP/loong64-sysroot，未设置 RUNNER_TEMP 时用 ./loong64-sysroot）
+#
+# 关键设计：deb 的 .pc 文件归属不能靠猜包名。实测 glib-2.0.pc 属于 libgio-2.0-dev 而非
+# libglib2.0-dev，靠「看 Depends 递归」会静默漏包。故此处用官方 Contents-loong64.gz
+# 建立 文件→包 的确定性映射，缺 .pc 时反查并补包。
+
+set -euo pipefail
+
+MIRROR="${LOONG64_MIRROR:-https://mirrors.loong64.com}"
+SUITE="${LOONG64_SUITE:-trixie}"
+TOOLS_DIR="${TOOLS_DIR:-/opt/x-tools}"
+SYSROOT="${SYSROOT:-${RUNNER_TEMP:-.}/loong64-sysroot}"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+# Rust/工具链三元组，与 Debian 的 multiarch 元组（DEB_ARCH）不是同一个名字。
+TRIPLE="loongarch64-unknown-linux-gnu"
+DEB_ARCH="loongarch64-linux-gnu"
+PKGCONFIG_DIRS=(
+  "$SYSROOT/usr/lib/loongarch64-linux-gnu/pkgconfig"
+  "$SYSROOT/usr/share/pkgconfig"
+  "$SYSROOT/usr/lib/pkgconfig"
+)
+
+# 与 release.yml 现有 apt 行、.github/docker/Dockerfile.loong64 保持一致。
+SEED_PACKAGES=(
+  libwebkit2gtk-4.1-dev
+  libgtk-3-dev
+  libayatana-appindicator3-dev
+  librsvg2-dev
+  libssl-dev
+  libglib2.0-dev
+)
+
+# 这些 .pc 是 tauri / wry / webkit2gtk-sys / gtk-sys / openssl-sys 等 -sys crate
+# 在构建期用 pkg-config 查找的入口，缺任何一个都会在 cargo 阶段才报错，难定位。
+REQUIRED_PC=(
+  glib-2.0 gobject-2.0 gio-2.0
+  gtk+-3.0 cairo pango pangocairo
+  atk gdk-3.0 gdk-pixbuf-2.0
+  webkit2gtk-4.1 javascriptcoregtk-4.1 libsoup-3.0
+  ayatana-appindicator3-0.1
+  openssl
+)
+
+log() { printf '>>> %s\n' "$*"; }
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+# --- 镜像信任链 ---------------------------------------------------------------
+# 镜像同时提供 InRelease / Release / Release.gpg，用其官方 keyring 可做完整的
+# GPG + 哈希链校验。keyring 包本身也从同一镜像取，属 TOFU，故把它的摘要钉在
+# 仓库里，让信任锚点只发生一次且可 review。
+KEYRING_URL="$MIRROR/debian/pool/main/d/debian-loong64-non-official-archive-keyring/debian-loong64-non-official-archive-keyring_2025.12.22_all.deb"
+KEYRING_SHA256="${LOONG64_KEYRING_SHA256:-e42053b7ae8d034ab6eb37113b74b2149d7616f110084fe14fe7b1c0eed6810d}"
+KEYRING_DIR="$WORK/keyring"
+GPG_HOME="$WORK/gnupg"
+
+setup_trust() {
+  mkdir -p "$KEYRING_DIR" "$GPG_HOME"
+  chmod 700 "$GPG_HOME"
+  fetch "$KEYRING_URL" "$WORK/keyring.deb"
+  local actual
+  actual=$(sha256sum "$WORK/keyring.deb" | awk '{print $1}')
+  [ "$actual" = "$KEYRING_SHA256" ] \
+    || die "keyring 摘要不匹配（期望 $KEYRING_SHA256，实际 $actual），镜像可能被篡改"
+
+  # 只取公钥文件，不装包
+  dpkg-deb --fsys-tarfile "$WORK/keyring.deb" \
+    | tar -x -C "$KEYRING_DIR" --wildcards './etc/apt/trusted.gpg.d/*' './usr/share/keyrings/*' 2>/dev/null \
+    || die "解包 keyring 失败"
+
+  local key
+  key=$(find "$KEYRING_DIR" -name '*.pgp' -o -name '*.asc' -o -name '*.gpg' | head -1)
+  [ -n "$key" ] || die "keyring 中未找到公钥文件"
+  gpg --homedir "$GPG_HOME" --batch --quiet --import "$key" 2>/dev/null \
+    || die "导入 keyring 公钥失败"
+  log "镜像公钥已导入: $(basename "$key")"
+}
+
+# 校验 dists/$SUITE/InRelease 的签名，并把其中 SHA256 段落解析成
+# 「相对路径 空格 摘要」的映射文件，供后续逐个文件比对。
+verify_inrelease() {
+  fetch "$MIRROR/debian/dists/$SUITE/InRelease" "$WORK/InRelease"
+  gpg --homedir "$GPG_HOME" --batch --quiet --verify "$WORK/InRelease" 2>"$WORK/gpg.err" \
+    || { cat "$WORK/gpg.err" >&2; die "InRelease 签名校验失败，拒绝使用该镜像"; }
+  log "InRelease 签名校验通过"
+
+  # SHA256 段：以 "SHA256:" 开头，随后是缩进的「摘要 大小 路径」若干行，
+  # 直到出现下一个非缩进行。同时兼容 MD5Sum 段不参与。
+  awk '
+    /^SHA256:/ { in_sha = 1; next }
+    in_sha && /^[ \t]+[0-9a-f]{64}[ \t]+[0-9]+[ \t]+\S+$/ {
+      print $3, $1
+    }
+    in_sha && /^[^ \t]/ { in_sha = 0 }
+  ' "$WORK/InRelease" > "$WORK/InRelease.sha256"
+  [ -s "$WORK/InRelease.sha256" ] || die "InRelease 中未解析出 SHA256 段"
+  log "InRelease SHA256 条目: $(wc -l < "$WORK/InRelease.sha256")"
+}
+
+# 用已验签的 InRelease 摘要校验单个文件。rel 是相对 dists/$SUITE/ 的路径。
+verify_against_release() { # verify_against_release <文件> <相对路径>
+  local file="$1" rel="$2" want actual
+  want=$(awk -v p="$rel" '$1 == p { print $2; exit }' "$WORK/InRelease.sha256")
+  [ -n "$want" ] || die "InRelease 中没有 $rel 的摘要"
+  actual=$(sha256sum "$file" | awk '{print $1}')
+  [ "$actual" = "$want" ] \
+    || die "$rel 摘要不匹配（期望 $want，实际 $actual），镜像内容可能被篡改"
+}
+
+fetch() { # fetch <url> <dest>
+  # 整包重下，不用 -C -续传：CI 实测续传拼出的文件让 dpkg-deb 报
+  # 「lzma write error: Broken pipe」（半截旧数据接新数据，偏移错乱）。
+  # 索引有 .gz，损坏会被 zcat 直接发现并快速失败，不会像 deb 那样静默。
+  # --speed-time 给宽限：这条链路常长时间低于 10KB/s 但仍在推进，卡太紧会
+  # 把「慢」误判成「挂」而反复重来。
+  rm -f "$2"
+  curl -fL --retry 8 --retry-delay 3 --retry-all-errors \
+    --speed-limit 1024 --speed-time 120 "$1" -o "$2" \
+    || die "下载失败: $1"
+}
+
+# --- 索引 ---------------------------------------------------------------------
+log "建立镜像信任链"
+setup_trust
+verify_inrelease
+
+log "拉取 $SUITE 的 Packages 与 Contents 索引"
+fetch "$MIRROR/debian/dists/$SUITE/main/binary-loong64/Packages.gz" "$WORK/Packages.gz"
+fetch "$MIRROR/debian/dists/$SUITE/main/Contents-loong64.gz" "$WORK/Contents.gz"
+# 索引必须与已验签的 InRelease 一致，否则后续用它解析出的 Filename 与摘要都不可信。
+verify_against_release "$WORK/Packages.gz" "main/binary-loong64/Packages.gz"
+verify_against_release "$WORK/Contents.gz" "main/Contents-loong64.gz"
+log "索引摘要与 InRelease 一致"
+
+# Contents 是全量文件清单（数十 MB），只在需要反查时建索引。
+contents_lookup() { # contents_lookup <相对路径> → 打印提供该文件的包名
+  local want="$1"
+  # Contents 第二列形如 "    libdevel/libgtk-3-dev"（前导空格 + 可选 section 前缀，
+  # 多属主时逗号分隔）。不 trim 会让 install_pkg 查不到包而静默跳过。
+  [ -f "$WORK/contents.idx" ] || zcat "$WORK/Contents.gz" \
+    | awk -F'\t' '$1 ~ /pkgconfig\/.*\.pc$/ { print $1 "\t" $2 }' > "$WORK/contents.idx"
+  awk -F'\t' -v w="$want" '
+    $1 == w {
+      n = split($2, owners, ",")
+      for (i = 1; i <= n; i++) {
+        o = owners[i]
+        sub(/^[ \t]+/, "", o); sub(/[ \t]+$/, "", o)
+        sub(/^.*\//, "", o)
+        if (o != "") { print o; exit }
+      }
+    }
+  ' "$WORK/contents.idx"
+}
+
+# --- sysroot 准备 -------------------------------------------------------------
+# glibc 的权威来源是工具链自带的 sysroot，系统库 deb 解进同一棵树。
+# 路径不写死：交叉 tarball 解包后 sysroot 位于 $TRIPLE/$TRIPLE/sysroot（嵌套一层），
+# 而 gcc 的 --print-sysroot 已内建正确解析，直接问它，避免随工具链版本改布局就失效。
+CROSS_GCC="$TOOLS_DIR/$TRIPLE/bin/$TRIPLE-gcc"
+[ -x "$CROSS_GCC" ] || die "未找到交叉 gcc: $CROSS_GCC（先解包 cross-tools 到 $TOOLS_DIR）"
+
+TOOLCHAIN_SYSROOT="$("$CROSS_GCC" --print-sysroot)"
+[ -d "$TOOLCHAIN_SYSROOT" ] || die "工具链 sysroot 不存在: $TOOLCHAIN_SYSROOT"
+
+# 复用 $SYSROOT 时必须先清空：cp -a 与 tar -x 只覆盖同名成员，换 LOONG64_SUITE
+# 或 TOOLS_DIR 后旧版本的 .pc / 头文件 / 库会残留，而末尾校验只查 .pc 存在，
+# 过期的 .pc 照样通过，构建就会用上过期头文件。
+# 不能直接 rm -rf：$SYSROOT 由调用方指定，可能指向共享目录甚至 /。
+# 故用标记文件确认「这个目录是本脚本建的」；非空且无标记直接报错。
+MARKER="$SYSROOT/.qomicex-loong64-sysroot"
+if [ -d "$SYSROOT" ] && [ -n "$(ls -A "$SYSROOT" 2>/dev/null)" ]; then
+  [ -f "$MARKER" ] || die "$SYSROOT 非空且不是本脚本生成（缺少 $MARKER），拒绝清空；请换一个空目录或手工删除"
+  log "清理上次生成的 sysroot: $SYSROOT"
+  find "$SYSROOT" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+fi
+mkdir -p "$SYSROOT"
+: > "$MARKER"
+# 用 cp -a 而非就地解包：工具链 sysroot 属于 /opt/x-tools，污染后本作业后续步骤不可复用。
+cp -a "$TOOLCHAIN_SYSROOT/." "$SYSROOT/"
+log "sysroot 基底来自工具链自带的 glibc: $TOOLCHAIN_SYSROOT"
+
+# 记录每个包已处理，避免重复下载；SKIPPED 收集索引中不存在的包。
+declare -A INSTALLED=()
+SKIPPED=()
+
+install_pkg() { # install_pkg <包名>
+  local pkg="$1"
+  [ -n "${INSTALLED[$pkg]:-}" ] && return 0
+  local fn
+  # 包名按字面比较，不拼进正则：libstdc++6 这类名字里的 `+` 在正则中是量词，
+  # 会匹配到 libstdcc6 之类的错误记录，或让该包被静默跳过。
+  fn=$(awk -v RS='' -v pkg="$pkg" '
+    {
+      for (i = 1; i <= NF; i++) {
+        if ($i == "Package:") { if ($(i+1) != pkg) next; found = 1 }
+        if (found && $i == "Filename:") { print $(i+1); exit }
+      }
+    }
+  ' "$WORK/Packages.txt")
+  # 闭包里允许出现索引中不存在的包：loong64 移植源的 Depends 常引用只在
+  # 原生 Debian 存在的 -dev 包（如 gir1.2-*-dev 只提供 GIR 描述，不提供
+  # 链接期需要的 .so/.pc）。这类包对交叉编译无用，跳过而非中断——
+  # 是否真的需要，由末尾的 .pc 校验判定。
+  if [ -z "$fn" ]; then
+    SKIPPED+=("$pkg")
+    INSTALLED[$pkg]=1
+    return 0
+  fi
+  # 只抽取交叉链接真正用得到的路径：头文件、.pc、.so/.a。
+  #
+  # 不用 dpkg-deb -x 全量展开：它会把 debconf、dictionaries-common、locale、
+  # gsettings schema 一并拉进来（-dev 包的 Depends 会链到这些桌面配置包），
+  # 实测闭包 386 个包即 1.4G，CI runner 磁盘会被撑爆且毫无用处。
+  # 这里用 tar 按路径白名单抽取，天然把闭包大小限制在链接所需的规模。
+  log "  解包 $pkg"
+  # 先从归档清单筛出实际存在的白名单成员，再按名字解包，而不是用通配符让 tar
+  # 自行匹配。
+  #
+  # 原因：实测 GNU tar 对「请求的成员不存在」返回 2，与真正的 IO/格式失败同码，
+  # 无法靠退出码区分（预检归档可读性也不能替代——那只拦得住下载截断，拦不住
+  # 解包阶段的磁盘满/权限错误）。改成先列举再按名解包后：
+  #  - 没有匹配成员 → 列表为空，正常跳过（很多纯数据包不含 lib/）
+  #  - 有匹配成员 → 整条管道退出码必须为 0，否则是真失败，直接中断
+  # 每个包只下载一次、开头先清残留：不用 curl -C - 直接续传——CI 实测续传拼出
+  # 的文件让 dpkg-deb 报「lzma write error: Broken pipe」，即半截旧数据接上
+  # 新数据导致归档内部偏移错乱。整包重来慢一点，但结果总是正确的归档。
+  rm -f "$WORK/pkg.deb"
+  curl -fL --retry 8 --retry-delay 3 --retry-all-errors \
+    --speed-limit 1024 --speed-time 120 "$MIRROR/debian/$fn" -o "$WORK/pkg.deb" \
+    || die "下载 $pkg 失败"
+
+  # 用已验签的 Packages 索引里的 SHA256 校验 deb 本体：索引本身已被
+  # InRelease 的 GPG 签名保护，故这一步把信任从镜像传输延伸到包内容。
+  local want_sha actual_sha
+  want_sha=$(awk -v RS='' -v pkg="$pkg" '
+    {
+      for (i = 1; i <= NF; i++) {
+        if ($i == "Package:") { if ($(i+1) != pkg) next; found = 1 }
+        if (found && $i == "SHA256:") { print $(i+1); exit }
+      }
+    }
+  ' "$WORK/Packages.txt")
+  if [ -n "$want_sha" ]; then
+    actual_sha=$(sha256sum "$WORK/pkg.deb" | awk '{print $1}')
+    [ "$actual_sha" = "$want_sha" ] \
+      || die "$pkg 摘要不匹配（索引 $want_sha，实际 $actual_sha），拒绝解包"
+  else
+    # 索引缺 SHA256 字段本身就可疑（Debian 索引必带），不静默放行。
+    die "$pkg 在索引中没有 SHA256 字段，无法校验"
+  fi
+
+  # 列举必须直接在当前 shell 里跑管道，不能写成$( ... ) 命令替换：命令替换会开
+  # 子 shell，父 shell 的 PIPESTATUS 拿不到子shell 里的管道状态（实测 ps[1]
+  # 直接 unbound，set -u 下会中止脚本）。故先落盘再筛。
+  # stderr 先落盘而不是丢弃：只在失败时回显。平时 400+ 个包都会报些无关噪声，
+  # 但一旦die，日志里就能直接看到是 deb 截断还是 tar 解不开，而不必再复现一遍。
+  set +e
+  dpkg-deb --fsys-tarfile "$WORK/pkg.deb" 2>"$WORK/dpkg.err" \
+    | tar -tf /dev/stdin 2>"$WORK/tar.err" > "$WORK/list.txt"
+  ps=("${PIPESTATUS[@]}")
+  grep -E '^\./(usr/include|usr/lib|lib|usr/share/pkgconfig)/' \
+    "$WORK/list.txt" > "$WORK/members.txt"
+  grep_rc=$?
+  set -e
+  # 三段都要查：grep 无匹配返回 1 属正常（很多纯数据包不含这些路径），
+  # 但 grep 的 2（读失败/写失败）会让 members.txt 为空或被截断，若不区分
+  # 就会被当成「无匹配成员」跳过并标记已装。
+  # dpkg-deb / tar 失败同样表现为 members.txt 为空，一并硬性检查。
+  if [ "${ps[0]}" -ne 0 ] || [ "${ps[1]}" -ne 0 ] || [ "$grep_rc" -ge 2 ]; then
+    printf 'dpkg-deb: %s\n' "$(cat "$WORK/dpkg.err")" >&2
+    printf 'tar: %s\n' "$(cat "$WORK/tar.err")" >&2
+    die "读取归档失败 $pkg（dpkg-deb=${ps[0]} tar=${ps[1]} grep=$grep_rc）"
+  fi
+  if [ -s "$WORK/members.txt" ]; then
+    set +e
+    dpkg-deb --fsys-tarfile "$WORK/pkg.deb" \
+      | tar -x -C "$SYSROOT" --no-recursion -T "$WORK/members.txt"
+    ps=("${PIPESTATUS[@]}")
+    set -e
+    # dpkg-deb 也要查：它在第二次读取时中途停止且恰好停在成员边界时，
+    # tar 仍可能返回 0，会把不完整的包标记成已装。
+    [ "${ps[0]}" -eq 0 ] && [ "${ps[1]}" -eq 0 ] \
+      || die "解包 $pkg 失败（dpkg-deb=${ps[0]} tar=${ps[1]}）"
+  else
+    log "    （$pkg 不含 include/lib/pkgconfig，跳过）"
+  fi
+  INSTALLED[$pkg]=1
+}
+
+# Depends 展开（含 Provides 兜底）。不做版本约束比较：本仓库只需要闭包存在，
+# 而 loong64 源内的版本是自洽的。
+expand_deps() { # expand_deps <已排队的包...>
+  local queue=("$@")
+  while [ ${#queue[@]} -gt 0 ]; do
+    local cur="${queue[0]}"
+    queue=("${queue[@]:1}")
+    [ -n "${INSTALLED[$cur]:-}" ] && continue
+    install_pkg "$cur"
+    local deps
+    # Depends 字段在 Packages 索引里常折行：续行以单个空格开头，且可能有多行。
+    # 原实现用 match(/\nDepends: [^\n]*/) 只取含 Depends: 的那一物理行，
+    # 续行里的依赖会整体丢失。这里先按段落把记录拼成一条，再取从 Depends:
+    # 到下一个字段之间的全部内容。
+    deps=$(awk -v RS='' -v pkg="$cur" '
+      {
+        for (i = 1; i <= NF; i++) if ($i == "Package:") { if ($(i+1) != pkg) next }
+        if (match($0, /\nDepends:[^\n]*(\n [^\n]*)*/)) {
+          s = substr($0, RSTART + 9, RLENGTH - 9)
+          gsub(/\n[ ]+/, " ", s)
+          n = split(s, a, ",")
+          for (i = 1; i <= n; i++) {
+            gsub(/^ +| +$/, "", a[i])
+            sub(/ .*/, "", a[i])
+            sub(/\(.*/, "", a[i])
+            gsub(/^ +| +$/, "", a[i])
+            if (a[i] != "") print a[i]
+          }
+        }
+      }
+    ' "$WORK/Packages.txt")
+    local d
+    for d in $deps; do
+      case "$d" in
+        libc6|libc-bin) continue ;;   # glibc 由工具链 sysroot 提供，不能被 deb 覆盖
+      esac
+      queue+=("$d")
+    done
+  done
+}
+
+log "展开依赖闭包（种子 ${#SEED_PACKAGES[@]} 个）"
+zcat "$WORK/Packages.gz" > "$WORK/Packages.txt"
+expand_deps "${SEED_PACKAGES[@]}"
+
+# --- .pc 反查补包 --------------------------------------------------------------
+# 上面的 Depends 闭包可能不含某个 .pc 的真正属主（.pc 常在 -dev-bin / -x-dev 等
+# 旁支包里）。逐个校验，缺失则用 Contents 反查属主并重跑闭包。
+#
+# 只看 REQUIRED_PC 是否 exists 不够：pkg-config --exists 在 .pc 自身存在但
+# 其 Requires 指向的 .pc 缺失时也会返回非 0，而按名字反查得到的属主可能已装过，
+# expand_deps 装不进任何新包，三轮后脚本以「补包后仍缺失」退出。故这里对
+# pkg-config 的输出做二次解析，把 Requires / Requires.private 里的名字也纳入
+# 反查对象。
+pkgconfig_dirs_export() {
+  export PKG_CONFIG_SYSROOT_DIR="$SYSROOT"
+  export PKG_CONFIG_PATH=""
+  export PKG_CONFIG_LIBDIR
+  PKG_CONFIG_LIBDIR="$(IFS=:; echo "${PKGCONFIG_DIRS[*]}")"
+}
+
+# 列出某个 .pc 缺失时，实际缺的是哪些 .pc 名（自身 + Requires 链上缺失的）。
+# pkg-config 的报错形如：
+#   Package foo was not found in the pkg-config search path.
+#   Package 'bar', required by 'foo', not found
+# 从中抽出所有被点名的包名。
+missing_pc_names() { # missing_pc_names <pc> → 打印缺失的 .pc 名
+  local pc="$1" out
+  out=$(pkg-config --exists "$pc" 2>&1) || true
+  {
+    printf '%s\n' "$out" \
+      | sed -n \
+          -e "s/^Package \([^ ]*\) was not found.*/\1/p" \
+          -e "s/^Package '\([^']*\)', required by.*/\1/p"
+    # 自身确实不存在时也算一个
+    [ -f "$SYSROOT/usr/lib/loongarch64-linux-gnu/pkgconfig/$pc.pc" ] \
+      || [ -f "$SYSROOT/usr/share/pkgconfig/$pc.pc" ] \
+      || [ -f "$SYSROOT/usr/lib/pkgconfig/$pc.pc" ] \
+      || printf '%s\n' "$pc"
+  } | sort -u
+}
+
+for _round in 1 2 3 4 5; do
+  pkgconfig_dirs_export
+  missing=()
+  for pc in "${REQUIRED_PC[@]}"; do
+    pkg-config --exists "$pc" 2>/dev/null || missing+=("$pc")
+  done
+  [ ${#missing[@]} -eq 0 ] && break
+  [ "$_round" = "5" ] && die "以下 .pc 在五轮补包后仍缺失: ${missing[*]}"
+
+  extra=()
+  for pc in "${missing[@]}"; do
+    # 先展开该 pc 缺失链上的全部名字（含 Requires 指向的），再逐个反查属主。
+    while IFS= read -r name; do
+      [ -n "$name" ] || continue
+      owner=$(contents_lookup "usr/lib/loongarch64-linux-gnu/pkgconfig/$name.pc")
+      [ -n "$owner" ] || owner=$(contents_lookup "usr/lib/pkgconfig/$name.pc")
+      [ -n "$owner" ] || owner=$(contents_lookup "usr/share/pkgconfig/$name.pc")
+      if [ -z "$owner" ]; then
+        log "  警告: Contents 中找不到 $name.pc 的属主，跳过"
+        continue
+      fi
+      log "  反查补包: $name.pc ← $owner（因 $pc 缺失）"
+      extra+=("$owner")
+    done < <(missing_pc_names "$pc")
+  done
+  [ ${#extra[@]} -eq 0 ] && die "无法定位缺失 .pc 的属主: ${missing[*]}"
+  # 去重后再展开，避免同一轮重复下载同一个包
+  mapfile -t extra < <(printf '%s\n' "${extra[@]}" | sort -u)
+  expand_deps "${extra[@]}"
+done
+
+# --- 最终校验 ------------------------------------------------------------------
+pkgconfig_dirs_export
+failed=()
+for pc in "${REQUIRED_PC[@]}"; do
+  pkg-config --exists "$pc" 2>/dev/null || failed+=("$pc")
+done
+if [ ${#failed[@]} -gt 0 ]; then
+  printf 'pkg-config 搜索路径:\n  %s\n' "${PKGCONFIG_DIRS[*]}" >&2
+  for pc in "${failed[@]}"; do
+    printf '  %s 缺失链: %s\n' "$pc" "$(missing_pc_names "$pc" | tr '\n' ' ')" >&2
+  done
+  die "关键 .pc 缺失: ${failed[*]}"
+fi
+
+log "全部关键 .pc 就绪: ${REQUIRED_PC[*]}"
+
+# 跳过的包多为 loong64 移植源里不存在的 gir1.2-*-dev（GIR 描述，交叉编译不链接），
+# 列出以备核对，但不影响构建。
+if [ ${#SKIPPED[@]} -gt 0 ]; then
+  log "跳过 ${#SKIPPED[@]} 个索引中不存在的依赖包（多为 GIR 描述，交叉编译不需要）"
+fi
+
+# 架构校验：逐个检查 sysroot 里的关键 .so 真的是 LoongArch。
+# 比“有没有 x86_64 目录”更可靠——交叉链接最危险的失败模式是把宿主 amd64 的
+# 库链进 LoongArch 产物，而那不会留下明显的目录痕迹。
+for so in libwebkit2gtk-4.1.so.0 libgtk-3.so.0 libsoup-3.0.so.0 libssl.so.3 libcrypto.so.3; do
+  hit=$(find "$SYSROOT" -name "${so}*" -type f | head -1)
+  [ -n "$hit" ] || die "sysroot 缺少 $so"
+  if command -v readelf >/dev/null; then
+    readelf -h "$hit" | grep -q 'Machine:.*LoongArch' \
+      || die "$so 不是 LoongArch（$(readelf -h "$hit" | grep Machine)）: $hit"
+  fi
+done
+log "架构校验通过: 关键运行时库均为 LoongArch"
+
+# Debian multiarch 布局下，部分架构相关头（opensslconf.h、asm/*.h 等）只存在于
+# usr/include/<triple>/ 子目录，而 pkg-config 只发 -I$sysroot/usr/include。
+# 缺了这一层，-sys crate 会在 cargo 阶段报「No such file or directory」。
+# 由调用方把该目录加入 C_INCLUDE_PATH（见 release.yml的 Export cross-compile
+# environment 步骤）；此处只校验它存在，不做逐文件软链——软链要跟着
+# configuration.h 之类的链式包含逐个补，漏一个就又炸。
+# 注意：Debian 的 multiarch 元组（loongarch64-linux-gnu）与 Rust/工具链三元组
+# （loongarch64-unknown-linux-gnu）不同名，这里必须用前者。
+MULTIARCH_INC="$SYSROOT/usr/include/$DEB_ARCH"
+[ -d "$MULTIARCH_INC" ] || die "multiarch 头目录不存在: $MULTIARCH_INC"
+log "multiarch 头目录就绪: $MULTIARCH_INC"
+
+# 链接期同样需要它：glibc 的 libc.so 是 GNU ld script，内部写的是绝对路径
+# /lib64/libc.so.6、/usr/lib64/libc_nonshared.a，不带 --sysroot 时 ld 找不到。
+for d in "$SYSROOT/lib64" "$SYSROOT/usr/lib64"; do
+  [ -d "$d" ] || die "glibc 链接目录不存在: $d（工具链 sysroot 拷贝失败？）"
+done
+
+printf '%s\n' "$SYSROOT"
