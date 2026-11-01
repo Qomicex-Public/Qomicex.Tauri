@@ -350,39 +350,82 @@ expand_deps "${SEED_PACKAGES[@]}"
 # --- .pc 反查补包 --------------------------------------------------------------
 # 上面的 Depends 闭包可能不含某个 .pc 的真正属主（.pc 常在 -dev-bin / -x-dev 等
 # 旁支包里）。逐个校验，缺失则用 Contents 反查属主并重跑闭包。
-for _round in 1 2 3; do
-  missing=()
+#
+# 只看 REQUIRED_PC 是否 exists 不够：pkg-config --exists 在 .pc 自身存在但
+# 其 Requires 指向的 .pc 缺失时也会返回非 0，而按名字反查得到的属主可能已装过，
+# expand_deps 装不进任何新包，三轮后脚本以「补包后仍缺失」退出。故这里对
+# pkg-config 的输出做二次解析，把 Requires / Requires.private 里的名字也纳入
+# 反查对象。
+pkgconfig_dirs_export() {
   export PKG_CONFIG_SYSROOT_DIR="$SYSROOT"
   export PKG_CONFIG_PATH=""
   export PKG_CONFIG_LIBDIR
   PKG_CONFIG_LIBDIR="$(IFS=:; echo "${PKGCONFIG_DIRS[*]}")"
+}
+
+# 列出某个 .pc 缺失时，实际缺的是哪些 .pc 名（自身 + Requires 链上缺失的）。
+# pkg-config 的报错形如：
+#   Package foo was not found in the pkg-config search path.
+#   Package 'bar', required by 'foo', not found
+# 从中抽出所有被点名的包名。
+missing_pc_names() { # missing_pc_names <pc> → 打印缺失的 .pc 名
+  local pc="$1" out
+  out=$(pkg-config --exists "$pc" 2>&1) || true
+  {
+    printf '%s\n' "$out" \
+      | sed -n \
+          -e "s/^Package \([^ ]*\) was not found.*/\1/p" \
+          -e "s/^Package '\([^']*\)', required by.*/\1/p"
+    # 自身确实不存在时也算一个
+    [ -f "$SYSROOT/usr/lib/loongarch64-linux-gnu/pkgconfig/$pc.pc" ] \
+      || [ -f "$SYSROOT/usr/share/pkgconfig/$pc.pc" ] \
+      || [ -f "$SYSROOT/usr/lib/pkgconfig/$pc.pc" ] \
+      || printf '%s\n' "$pc"
+  } | sort -u
+}
+
+for _round in 1 2 3 4 5; do
+  pkgconfig_dirs_export
+  missing=()
   for pc in "${REQUIRED_PC[@]}"; do
     pkg-config --exists "$pc" 2>/dev/null || missing+=("$pc")
   done
   [ ${#missing[@]} -eq 0 ] && break
-  [ "$_round" = "3" ] && die "以下 .pc 在三轮补包后仍缺失: ${missing[*]}"
+  [ "$_round" = "5" ] && die "以下 .pc 在五轮补包后仍缺失: ${missing[*]}"
+
   extra=()
   for pc in "${missing[@]}"; do
-    owner=$(contents_lookup "usr/lib/loongarch64-linux-gnu/pkgconfig/$pc.pc")
-    [ -n "$owner" ] || owner=$(contents_lookup "usr/lib/pkgconfig/$pc.pc")
-    if [ -z "$owner" ]; then
-      log "  警告: Contents 中找不到 $pc.pc 的属主，跳过"
-      continue
-    fi
-    log "  反查补包: $pc.pc ← $owner"
-    extra+=("$owner")
+    # 先展开该 pc 缺失链上的全部名字（含 Requires 指向的），再逐个反查属主。
+    while IFS= read -r name; do
+      [ -n "$name" ] || continue
+      owner=$(contents_lookup "usr/lib/loongarch64-linux-gnu/pkgconfig/$name.pc")
+      [ -n "$owner" ] || owner=$(contents_lookup "usr/lib/pkgconfig/$name.pc")
+      [ -n "$owner" ] || owner=$(contents_lookup "usr/share/pkgconfig/$name.pc")
+      if [ -z "$owner" ]; then
+        log "  警告: Contents 中找不到 $name.pc 的属主，跳过"
+        continue
+      fi
+      log "  反查补包: $name.pc ← $owner（因 $pc 缺失）"
+      extra+=("$owner")
+    done < <(missing_pc_names "$pc")
   done
   [ ${#extra[@]} -eq 0 ] && die "无法定位缺失 .pc 的属主: ${missing[*]}"
+  # 去重后再展开，避免同一轮重复下载同一个包
+  mapfile -t extra < <(printf '%s\n' "${extra[@]}" | sort -u)
   expand_deps "${extra[@]}"
 done
 
 # --- 最终校验 ------------------------------------------------------------------
+pkgconfig_dirs_export
 failed=()
 for pc in "${REQUIRED_PC[@]}"; do
   pkg-config --exists "$pc" 2>/dev/null || failed+=("$pc")
 done
 if [ ${#failed[@]} -gt 0 ]; then
   printf 'pkg-config 搜索路径:\n  %s\n' "${PKGCONFIG_DIRS[*]}" >&2
+  for pc in "${failed[@]}"; do
+    printf '  %s 缺失链: %s\n' "$pc" "$(missing_pc_names "$pc" | tr '\n' ' ')" >&2
+  done
   die "关键 .pc 缺失: ${failed[*]}"
 fi
 

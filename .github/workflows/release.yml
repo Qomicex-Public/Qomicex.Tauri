@@ -1471,6 +1471,25 @@ jobs:
         with:
           pattern: qomicex-launcher-*
 
+      # 分次 dispatch 同一版本时，本次只产出一部分平台的 fragment。若直接用它
+      # 从零重建清单，先前已发布平台的条目会被整体抹掉（action-gh-release 默认
+      # 覆盖同名资产）。故先把已发布版本的清单取下来作为基线。
+      # 取不到（首次发布 / 该 tag 尚无资产）时留空，后续逻辑退化为从零构建。
+      - name: Fetch existing manifests for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.setup.outputs.displayVersion }}
+        run: |
+          mkdir -p existing
+          for name in latest.json updates.json alpha.json; do
+            if gh release download "$TAG" --pattern "$name" --dir existing --clobber 2>/dev/null; then
+              echo "已取得现有 $name"
+            else
+              echo "无现有 $name（首次发布或该 tag 尚无此资产）"
+            fi
+          done
+          ls -la existing || true
+
       - name: Merge update fragments into latest.json
         run: |
           # manifest.version 必须是合法 semver（Tauri updater 用它跟安装版 current_version 比较，
@@ -1479,11 +1498,18 @@ jobs:
           VERSION="${{ needs.setup.outputs.version }}"
           REQUIRED=${{ needs.setup.outputs.required }}
           NOTES_JSON=$(cat RELEASE_NOTES.md | jq -Rs '.')
+          # 以现有清单的 platforms 为基线，保留本次未重建平台的条目。
+          BASE='{}'
+          if [ -f existing/latest.json ]; then
+            BASE=$(jq -c '.platforms // {}' existing/latest.json)
+            echo "继承现有平台条目: $(jq -r 'keys | join(", ")' <<< "$BASE")"
+          fi
           jq -n \
             --arg version "$VERSION" \
             --argjson required "$REQUIRED" \
             --argjson notes "$NOTES_JSON" \
-            '{version: $version, required: $required, notes: $notes, pub_date: (now | strftime("%Y-%m-%dT%H:%M:%SZ")), platforms: {}}' \
+            --argjson base "$BASE" \
+            '{version: $version, required: $required, notes: $notes, pub_date: (now | strftime("%Y-%m-%dT%H:%M:%SZ")), platforms: $base}' \
             > latest.json
           for f in update-fragment-*.json; do
             if [ -f "$f" ]; then
@@ -1507,11 +1533,17 @@ jobs:
           VERSION="${{ needs.setup.outputs.version }}"
           REQUIRED=${{ needs.setup.outputs.required }}
           NOTES_JSON=$(cat RELEASE_NOTES.md | jq -Rs '.')
+          BASE='{}'
+          if [ -f existing/updates.json ]; then
+            BASE=$(jq -c '.platforms // {}' existing/updates.json)
+            echo "继承现有平台条目: $(jq -r 'keys | join(", ")' <<< "$BASE")"
+          fi
           jq -n \
             --arg version "$VERSION" \
             --argjson required "$REQUIRED" \
             --argjson notes "$NOTES_JSON" \
-            '{version: $version, required: $required, notes: $notes, pub_date: (now | strftime("%Y-%m-%dT%H:%M:%SZ")), platforms: {}}' \
+            --argjson base "$BASE" \
+            '{version: $version, required: $required, notes: $notes, pub_date: (now | strftime("%Y-%m-%dT%H:%M:%SZ")), platforms: $base}' \
             > updates.json
           for f in update-package-fragment-*.json; do
             if [ -f "$f" ]; then
@@ -1530,11 +1562,17 @@ jobs:
           VERSION="${{ needs.setup.outputs.version }}"
           REQUIRED=${{ needs.setup.outputs.required }}
           NOTES_JSON=$(cat RELEASE_NOTES.md | jq -Rs '.')
+          BASE='{}'
+          if [ -f existing/alpha.json ]; then
+            BASE=$(jq -c '.platforms // {}' existing/alpha.json)
+            echo "继承现有平台条目: $(jq -r 'keys | join(", ")' <<< "$BASE")"
+          fi
           jq -n \
             --arg version "$VERSION" \
             --argjson required "$REQUIRED" \
             --argjson notes "$NOTES_JSON" \
-            '{version: $version, required: $required, channel: "alpha", notes: $notes, pub_date: (now | strftime("%Y-%m-%dT%H:%M:%SZ")), platforms: {}}' \
+            --argjson base "$BASE" \
+            '{version: $version, required: $required, channel: "alpha", notes: $notes, pub_date: (now | strftime("%Y-%m-%dT%H:%M:%SZ")), platforms: $base}' \
             > alpha.json
           for f in update-fragment-*.json; do
             if [ -f "$f" ]; then
