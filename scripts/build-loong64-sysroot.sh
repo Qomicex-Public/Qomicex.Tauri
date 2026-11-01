@@ -60,6 +60,68 @@ REQUIRED_PC=(
 log() { printf '>>> %s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
+# --- 镜像信任链 ---------------------------------------------------------------
+# 镜像同时提供 InRelease / Release / Release.gpg，用其官方 keyring 可做完整的
+# GPG + 哈希链校验。keyring 包本身也从同一镜像取，属 TOFU，故把它的摘要钉在
+# 仓库里，让信任锚点只发生一次且可 review。
+KEYRING_URL="$MIRROR/debian/pool/main/d/debian-loong64-non-official-archive-keyring/debian-loong64-non-official-archive-keyring_2025.12.22_all.deb"
+KEYRING_SHA256="${LOONG64_KEYRING_SHA256:-e42053b7ae8d034ab6eb37113b74b2149d7616f110084fe14fe7b1c0eed6810d}"
+KEYRING_DIR="$WORK/keyring"
+GPG_HOME="$WORK/gnupg"
+
+setup_trust() {
+  mkdir -p "$KEYRING_DIR" "$GPG_HOME"
+  chmod 700 "$GPG_HOME"
+  fetch "$KEYRING_URL" "$WORK/keyring.deb"
+  local actual
+  actual=$(sha256sum "$WORK/keyring.deb" | awk '{print $1}')
+  [ "$actual" = "$KEYRING_SHA256" ] \
+    || die "keyring 摘要不匹配（期望 $KEYRING_SHA256，实际 $actual），镜像可能被篡改"
+
+  # 只取公钥文件，不装包
+  dpkg-deb --fsys-tarfile "$WORK/keyring.deb" \
+    | tar -x -C "$KEYRING_DIR" --wildcards './etc/apt/trusted.gpg.d/*' './usr/share/keyrings/*' 2>/dev/null \
+    || die "解包 keyring 失败"
+
+  local key
+  key=$(find "$KEYRING_DIR" -name '*.pgp' -o -name '*.asc' -o -name '*.gpg' | head -1)
+  [ -n "$key" ] || die "keyring 中未找到公钥文件"
+  gpg --homedir "$GPG_HOME" --batch --quiet --import "$key" 2>/dev/null \
+    || die "导入 keyring 公钥失败"
+  log "镜像公钥已导入: $(basename "$key")"
+}
+
+# 校验 dists/$SUITE/InRelease 的签名，并把其中 SHA256 段落解析成
+# 「相对路径 空格 摘要」的映射文件，供后续逐个文件比对。
+verify_inrelease() {
+  fetch "$MIRROR/debian/dists/$SUITE/InRelease" "$WORK/InRelease"
+  gpg --homedir "$GPG_HOME" --batch --quiet --verify "$WORK/InRelease" 2>"$WORK/gpg.err" \
+    || { cat "$WORK/gpg.err" >&2; die "InRelease 签名校验失败，拒绝使用该镜像"; }
+  log "InRelease 签名校验通过"
+
+  # SHA256 段：以 "SHA256:" 开头，随后是缩进的「摘要 大小 路径」若干行，
+  # 直到出现下一个非缩进行。同时兼容 MD5Sum 段不参与。
+  awk '
+    /^SHA256:/ { in_sha = 1; next }
+    in_sha && /^[ \t]+[0-9a-f]{64}[ \t]+[0-9]+[ \t]+\S+$/ {
+      print $3, $1
+    }
+    in_sha && /^[^ \t]/ { in_sha = 0 }
+  ' "$WORK/InRelease" > "$WORK/InRelease.sha256"
+  [ -s "$WORK/InRelease.sha256" ] || die "InRelease 中未解析出 SHA256 段"
+  log "InRelease SHA256 条目: $(wc -l < "$WORK/InRelease.sha256")"
+}
+
+# 用已验签的 InRelease 摘要校验单个文件。rel 是相对 dists/$SUITE/ 的路径。
+verify_against_release() { # verify_against_release <文件> <相对路径>
+  local file="$1" rel="$2" want actual
+  want=$(awk -v p="$rel" '$1 == p { print $2; exit }' "$WORK/InRelease.sha256")
+  [ -n "$want" ] || die "InRelease 中没有 $rel 的摘要"
+  actual=$(sha256sum "$file" | awk '{print $1}')
+  [ "$actual" = "$want" ] \
+    || die "$rel 摘要不匹配（期望 $want，实际 $actual），镜像内容可能被篡改"
+}
+
 fetch() { # fetch <url> <dest>
   # 整包重下，不用 -C -续传：CI 实测续传拼出的文件让 dpkg-deb 报
   # 「lzma write error: Broken pipe」（半截旧数据接新数据，偏移错乱）。
@@ -73,9 +135,17 @@ fetch() { # fetch <url> <dest>
 }
 
 # --- 索引 ---------------------------------------------------------------------
+log "建立镜像信任链"
+setup_trust
+verify_inrelease
+
 log "拉取 $SUITE 的 Packages 与 Contents 索引"
 fetch "$MIRROR/debian/dists/$SUITE/main/binary-loong64/Packages.gz" "$WORK/Packages.gz"
 fetch "$MIRROR/debian/dists/$SUITE/main/Contents-loong64.gz" "$WORK/Contents.gz"
+# 索引必须与已验签的 InRelease 一致，否则后续用它解析出的 Filename 与摘要都不可信。
+verify_against_release "$WORK/Packages.gz" "main/binary-loong64/Packages.gz"
+verify_against_release "$WORK/Contents.gz" "main/Contents-loong64.gz"
+log "索引摘要与 InRelease 一致"
 
 # Contents 是全量文件清单（数十 MB），只在需要反查时建索引。
 contents_lookup() { # contents_lookup <相对路径> → 打印提供该文件的包名
@@ -173,6 +243,26 @@ install_pkg() { # install_pkg <包名>
   curl -fL --retry 8 --retry-delay 3 --retry-all-errors \
     --speed-limit 1024 --speed-time 120 "$MIRROR/debian/$fn" -o "$WORK/pkg.deb" \
     || die "下载 $pkg 失败"
+
+  # 用已验签的 Packages 索引里的 SHA256 校验 deb 本体：索引本身已被
+  # InRelease 的 GPG 签名保护，故这一步把信任从镜像传输延伸到包内容。
+  local want_sha actual_sha
+  want_sha=$(awk -v RS='' -v pkg="$pkg" '
+    {
+      for (i = 1; i <= NF; i++) {
+        if ($i == "Package:") { if ($(i+1) != pkg) next; found = 1 }
+        if (found && $i == "SHA256:") { print $(i+1); exit }
+      }
+    }
+  ' "$WORK/Packages.txt")
+  if [ -n "$want_sha" ]; then
+    actual_sha=$(sha256sum "$WORK/pkg.deb" | awk '{print $1}')
+    [ "$actual_sha" = "$want_sha" ] \
+      || die "$pkg 摘要不匹配（索引 $want_sha，实际 $actual_sha），拒绝解包"
+  else
+    # 索引缺 SHA256 字段本身就可疑（Debian 索引必带），不静默放行。
+    die "$pkg 在索引中没有 SHA256 字段，无法校验"
+  fi
 
   # 列举必须直接在当前 shell 里跑管道，不能写成$( ... ) 命令替换：命令替换会开
   # 子 shell，父 shell 的 PIPESTATUS 拿不到子shell 里的管道状态（实测 ps[1]

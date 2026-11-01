@@ -880,10 +880,13 @@ jobs:
       - name: Fetch loong64 cross toolchain
         env:
           TOOLS_TAG: '20260912'
+          # 该 release 的 immutable 为 false，固定 tag 挡不住资产被替换，
+          # 而 xz -t 只验压缩流完整性、不验文件身份。这个编译器参与 tauri build，
+          # 而该步骤持有 TAURI_SIGNING_PRIVATE_KEY，被替换的编译器可在链接期
+          # 读走私钥。故把资产摘要钉在仓库里，解包前比对。
+          EXPECTED_SHA256: 'f600fa153b09d1a64143af2c05a633e09b1bdb6dd760919437ee6b2901126329'
         run: |
-          # 官方 loong64/cross-tools（loong64 组织维护）。固定 release tag：
-          # 解析到可变引用（@main / latest）意味着工具链可在无人 review 的情况下
-          # 被替换，而本作业持有发布签名私钥。
+          # 官方 loong64/cross-tools（loong64 组织维护）。
           # mainline 变体的 glibc 2.41 与 loong64 Debian trixie 的 libc6 2.41 一致
           # （stable 变体为 2.38，低于宿主系统库，链接期会缺符号）。
           URL="https://github.com/loong64/cross-tools/releases/download/${TOOLS_TAG}/x86_64-cross-tools-loongarch64-unknown-linux-gnu-mainline.tar.xz"
@@ -893,6 +896,15 @@ jobs:
           rm -f "$TARBALL"
           curl -fL --retry 8 --retry-delay 3 --retry-all-errors \
             --speed-limit 1024 --speed-time 120 "$URL" -o "$TARBALL"
+          # 先验身份（摘要），再验完整性（xz -t）。两者不可互相替代。
+          ACTUAL=$(sha256sum "$TARBALL" | awk '{print $1}')
+          if [ "$ACTUAL" != "$EXPECTED_SHA256" ]; then
+            echo "工具链摘要不匹配，拒绝解包"
+            echo "  期望: $EXPECTED_SHA256"
+            echo "  实际: $ACTUAL"
+            exit 1
+          fi
+          echo "工具链摘要校验通过: $ACTUAL"
           # 解包前先验魔数与完整性：只报「File format not recognized」看不出
           # 拿到的到底是截断包、错误页还是代理返回的 HTML。
           if ! xz -t "$TARBALL"; then
