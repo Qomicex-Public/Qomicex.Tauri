@@ -143,6 +143,24 @@ jobs:
             PATCH="${{ github.event.inputs.patch }}"
             RNUM="${{ github.event.inputs.releaseNum }}"
 
+            # 这些输入会拼进 VERSION 并流到持有 TAURI_SIGNING_PRIVATE_KEY 的
+            # 步骤。虽然下游一律经 step env 传递、不拼进 run 体，仍在此按预期
+            # 格式白名单校验一次：版本号只应是数字，releaseNum 只应是数字，
+            # releaseType 只应是三个已知取值。不合格直接失败，不产生任何 tag。
+            case "$RTYPE" in
+              release|beta|alpha) ;;
+              *) echo "::error::releaseType 非法: $RTYPE"; exit 1 ;;
+            esac
+            for pair in "major:$MAJOR" "minor:$MINOR" "patch:$PATCH" "releaseNum:$RNUM"; do
+              name="${pair%%:*}"
+              value="${pair#*:}"
+              # releaseNum 可为空（非必填）；其余必须是纯数字
+              if [ -z "$value" ] && [ "$name" = "releaseNum" ]; then continue; fi
+              case "$value" in
+                ''|*[!0-9]*) echo "::error::$name 必须是纯数字，实际: '$value'"; exit 1 ;;
+              esac
+            done
+
             if [ "$RTYPE" = "alpha" ]; then
               DATE=$(date +%Y%m%d)
               MAX_N=-1
@@ -1037,7 +1055,10 @@ jobs:
             # 本步骤持有签名私钥，从 registry 拉未锁定版本等于把私钥交给未 review 的代码。
             SIG_FILE="${BUNDLE}.sig"
             if [ ! -f "$SIG_FILE" ]; then
-              pnpm exec tauri signer sign "$BUNDLE"
+              # 不能让它中止本步骤：签名失败时应走下面的无签名回退分支，
+              # 否则后续 upload-artifact 全部跳过、作业判 failure，整个发布被拖下水。
+              pnpm exec tauri signer sign "$BUNDLE" \
+                || echo "::warning::pnpm exec tauri signer sign 失败，将写无签名条目"
             fi
             if [ -f "$SIG_FILE" ]; then
               SIGNATURE=$(cat "$SIG_FILE" | tr -d '\n')
