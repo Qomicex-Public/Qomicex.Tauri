@@ -846,10 +846,14 @@ jobs:
     if: |
       github.event_name == 'release' ||
       (github.event_name == 'workflow_dispatch' &&
-        (github.event.inputs.buildPlatform == 'loongarch64'))
+        (github.event.inputs.buildPlatform == 'loongarch64' ||
+         github.event.inputs.buildPlatform == 'all'))
     # 与 quality-gate 并行：release 汇总时仍要求 gate 通过，坏产物不会发布
     needs: [setup]
     runs-on: ubuntu-24.04
+    # 交叉编译不模拟目标架构，正常应在原生作业量级内完成；设上限只用于
+    # 拦截 sysroot 下载卡死或 cargo 挂起，避免拖住依赖它的 release。
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
         with:
@@ -971,6 +975,9 @@ jobs:
           done
           echo "产物与运行时依赖架构校验通过: LoongArch"
       - name: Generate update manifest fragment
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           VERSION="${{ needs.setup.outputs.displayVersion }}"
           BUNDLE_DIR="src-tauri/target/loongarch64-unknown-linux-gnu/release/bundle"
@@ -995,7 +1002,26 @@ jobs:
             if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found"; exit 1; fi
             ASSET_NAME=$(basename "$BUNDLE")
             URL="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION/$ASSET_NAME"
-            echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+            # loong64 无 linuxdeploy 支持，不出 AppImage → 走 deb/rpm，没有 .sig。
+            # Tauri 清单要求每个条目都有签名，后端 update.rs 会把 signature 为空的
+            # 条目整体 retain 掉，于是 loong64 客户端永远查不到更新。这里用与
+            # 自更新包同一把 minisign 私钥对 deb 本体签名，让条目带有效签名。
+            # 签名必须在工作区之外跑：npx 会优先命中容器/工作区那份 @tauri-apps/cli，
+            # 其原生二进制无 loong64 变体，在 x86_64 宿主上加载会失败。
+            SIG_FILE="${BUNDLE}.sig"
+            if [ ! -f "$SIG_FILE" ]; then
+              BUNDLE_ABS="$PWD/$BUNDLE"
+              CLI_DIR=$(mktemp -d)
+              (cd "$CLI_DIR" && npx --yes "@tauri-apps/cli@2.11.4" signer sign "$BUNDLE_ABS")
+              rm -rf "$CLI_DIR"
+            fi
+            if [ -f "$SIG_FILE" ]; then
+              SIGNATURE=$(cat "$SIG_FILE" | tr -d '\n')
+              echo "{\"$PLATFORM\":{\"url\":\"$URL\",\"signature\":\"$SIGNATURE\"}}" > "update-fragment-$PLATFORM.json"
+            else
+              echo "::warning::loong64 无法为 $ASSET_NAME 生成签名，该条目会被后端丢弃"
+              echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
+            fi
           fi
           cat "update-fragment-$PLATFORM.json"
       - name: Generate self-update package (linux-loongarch64)
@@ -1351,8 +1377,42 @@ jobs:
       - linux-arm64
       - macos-arm64
       - macos-x64
+      - loongarch64
+    # 显式写状态函数，不用默认的隐式 success() 门禁：
+    # 默认语义下 needs 里任一作业 skipped/failure 都会连带本作业 skipped，
+    # 于是单独 dispatch 一个平台（其余平台 skipped）时永远发不了版。
+    #
+    # 逐平台判 success||skipped 让「只构建部分平台」可行，但必须再要求
+    # 至少有一个构建作业真正成功：否则非法输入或全部构建失败时，这里会
+    # 放行一个 platforms 为空、不含任何启动器资产的空发布。
+    #
+    # loongarch64 只要求「不是 failure」：交叉编译失败时本次发布缺 loong64
+    # 产物即可，不应阻塞其余八个平台。它已在 needs 中，故 release 会等它结束，
+    # 不存在片段未上传就合并的竞态。
+    if: |
+      !cancelled() &&
+      needs.setup.result == 'success' &&
+      needs.quality-gate.result == 'success' &&
+      needs.loongarch64.result != 'failure' &&
+      (needs.windows-x64.result == 'success' || needs.windows-x64.result == 'skipped') &&
+      (needs.windows-arm64.result == 'success' || needs.windows-arm64.result == 'skipped') &&
+      (needs.linux-x64.result == 'success' || needs.linux-x64.result == 'skipped') &&
+      (needs.linux-arm64.result == 'success' || needs.linux-arm64.result == 'skipped') &&
+      (needs.macos-arm64.result == 'success' || needs.macos-arm64.result == 'skipped') &&
+      (needs.macos-x64.result == 'success' || needs.macos-x64.result == 'skipped') &&
+      (needs.windows-x64.result == 'success' ||
+       needs.windows-arm64.result == 'success' ||
+       needs.linux-x64.result == 'success' ||
+       needs.linux-arm64.result == 'success' ||
+       needs.macos-arm64.result == 'success' ||
+       needs.macos-x64.result == 'success' ||
+       needs.loongarch64.result == 'success')
     runs-on: ubuntu-latest
     steps:
+      - name: Warn when loongarch64 did not ship
+        if: needs.loongarch64.result != 'success'
+        run: |
+          echo "::warning::loongarch64 本次未产出（${{ needs.loongarch64.result }}），发布不含 loong64 产物"
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
