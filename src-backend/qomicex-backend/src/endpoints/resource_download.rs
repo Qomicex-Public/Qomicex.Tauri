@@ -1516,4 +1516,27 @@ mod tests {
         let after = a.load(std::sync::atomic::Ordering::SeqCst);
         assert!(after > before, "代号必须严格递增（{before} -> {after}）");
     }
+
+    /// REST 响应必须带 `speed` 键（issue #199 的根因正是该字段缺失）。加 `#[serde(skip)]`
+    /// 或改序列化名都能编译通过，只有序列化层的断言能盖住这类回归。
+    #[test]
+    fn progress_response_serializes_speed() {
+        const ID: TaskId = 424_242;
+        task_registry().lock().unwrap().insert(
+            ID,
+            TaskSnapshot {
+                status: "downloading".to_string(),
+                downloaded: 100,
+                total: 200,
+                speed: 12_345,
+                error: None,
+                file_name: Some("x.jar".to_string()),
+                terminal_at: None,
+            },
+        );
+        let json = serde_json::to_value(build_progress(ID)).unwrap();
+        assert_eq!(json["speed"], serde_json::json!(12_345));
+        // registry 是进程级单例，测试并行跑，用完即清。
+        task_registry().lock().unwrap().remove(&ID);
+    }
 }

@@ -223,10 +223,11 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
   /** 受限文件由插件自己补全的任务（服务端搭建等）：launcher 不开实例对话框。 */
   const pluginOwned = task.kind === 'plugin' || task.kind === 'server'
   const safeIcon = getSafeIconSrc(task.icon)
-  // 图片挂掉时降级到带状态底色的回退图标，避免透明容器里留一块破图。
-  const [iconFailed, setIconFailed] = useState(false)
-  useEffect(() => { setIconFailed(false) }, [task.icon])
-  const showImage = safeIcon !== null && !iconFailed
+  // 失败按 URL 记录而非布尔：icon 变更后旧请求的 onError 仍可能晚到，布尔态会把
+  // 新图标一并压成回退；img 以 src 为 key，地址变更即重挂，旧元素的过期 error 不会
+  // 进入 React 事件系统，重置随地址变化天然发生。
+  const [failedIcon, setFailedIcon] = useState<string | null>(null)
+  const showImage = safeIcon !== null && failedIcon !== safeIcon
   const steps = task.steps && task.steps.length > 0 ? task.steps : undefined
   const stepsLive = task.status === 'downloading' || task.status === 'paused'
   const stepsDoneCount = steps?.filter((s) => s.status === 'done').length ?? 0
@@ -256,10 +257,11 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
           >
             {showImage ? (
               <img
+                key={safeIcon}
                 src={safeIcon!}
                 alt=""
                 className="h-full w-full object-cover"
-                onError={() => setIconFailed(true)}
+                onError={() => setFailedIcon(safeIcon)}
               />
             ) : (
               <TypeIcon
