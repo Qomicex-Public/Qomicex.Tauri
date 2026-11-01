@@ -78,9 +78,16 @@ setup_trust() {
   [ "$actual" = "$KEYRING_SHA256" ] \
     || die "keyring 摘要不匹配（期望 $KEYRING_SHA256，实际 $actual），镜像可能被篡改"
 
-  # 只取公钥文件，不装包
-  dpkg-deb --fsys-tarfile "$WORK/keyring.deb" \
-    | tar -x -C "$KEYRING_DIR" --wildcards './etc/apt/trusted.gpg.d/*' './usr/share/keyrings/*' 2>/dev/null \
+  # 只取公钥文件，不装包。与 install_pkg 同样用 ar 取 data.tar.* 再解，
+  # 避免 dpkg-deb 与 tar 之间的管道。
+  local kmember
+  kmember=$(ar t "$WORK/keyring.deb" 2>/dev/null | grep -E '^data\.tar\.' | head -1)
+  [ -n "$kmember" ] || die "keyring deb 中未找到 data.tar.* 成员"
+  ar p "$WORK/keyring.deb" "$kmember" > "$WORK/keyring-data.tar" \
+    || die "从 keyring deb 提取 $kmember 失败"
+  tar -x -C "$KEYRING_DIR" --wildcards \
+    -f "$WORK/keyring-data.tar" \
+    './etc/apt/trusted.gpg.d/*' './usr/share/keyrings/*' 2>/dev/null \
     || die "解包 keyring 失败"
 
   local key
@@ -264,38 +271,55 @@ install_pkg() { # install_pkg <包名>
     die "$pkg 在索引中没有 SHA256 字段，无法校验"
   fi
 
-  # 列举必须直接在当前 shell 里跑管道，不能写成$( ... ) 命令替换：命令替换会开
-  # 子 shell，父 shell 的 PIPESTATUS 拿不到子shell 里的管道状态（实测 ps[1]
-  # 直接 unbound，set -u 下会中止脚本）。故先落盘再筛。
-  # stderr 先落盘而不是丢弃：只在失败时回显。平时 400+ 个包都会报些无关噪声，
-  # 但一旦die，日志里就能直接看到是 deb 截断还是 tar 解不开，而不必再复现一遍。
+  # 只用 ar 抽出 data.tar.* 落到磁盘，不做「dpkg-deb | tar」管道。
+  #
+  # 原先两次调用 dpkg-deb --fsys-tarfile 直接喂管道：第一次 tar -tf 列举、
+  # 第二次 tar -x 解包。每个包都要把 data.tar.* 解压两遍，且 dpkg-deb 的解压
+  # 子进程与 tar 通过管道相连——实测 libicu-dev（15MB xz、230 个成员）在 CI 上
+  # 稳定报「lzma write error: Broken pipe」，而该 deb 的 size 与 SHA256 与已验签
+  # 索引完全一致，说明包没问题，是管道在该负载下不可靠。
+  #
+  # 改为：ar p 取出 data.tar.* 到临时文件（一次），之后列举与解包都针对这个
+  # 文件，管道两端不再是「解压子进程 | tar」，中断不再会互相牵连。
+  #
+  # deb 是 ar 归档，成员名形如 data.tar.xz。不同包用不同压缩（xz/gz/zst），
+  # tar 的 -xf 会自动探测，无需按扩展名分支。
+  local data_member data_file
+  data_member=$(ar t "$WORK/pkg.deb" 2>/dev/null | grep -E '^data\.tar\.' | head -1)
+  if [ -z "$data_member" ]; then
+    die "$pkg 中未找到 data.tar.* 成员（不是合法 deb？）"
+  fi
+  data_file="$WORK/data.tar.pkg"
+  rm -f "$data_file"
+  ar p "$WORK/pkg.deb" "$data_member" > "$data_file" \
+    || die "从 $pkg 提取 $data_member 失败"
+  [ -s "$data_file" ] || die "$pkg 的 $data_member 为空"
+
+  # 先列举，再按名解包。这样能区分「包本身不含白名单路径」与「读取失败」。
   set +e
-  dpkg-deb --fsys-tarfile "$WORK/pkg.deb" 2>"$WORK/dpkg.err" \
-    | tar -tf /dev/stdin 2>"$WORK/tar.err" > "$WORK/list.txt"
-  ps=("${PIPESTATUS[@]}")
+  tar -tf "$data_file" 2>"$WORK/tar.err" > "$WORK/list.txt"
+  list_rc=$?
   grep -E '^\./(usr/include|usr/lib|lib|usr/share/pkgconfig)/' \
     "$WORK/list.txt" > "$WORK/members.txt"
   grep_rc=$?
   set -e
-  # 三段都要查：grep 无匹配返回 1 属正常（很多纯数据包不含这些路径），
-  # 但 grep 的 2（读失败/写失败）会让 members.txt 为空或被截断，若不区分
-  # 就会被当成「无匹配成员」跳过并标记已装。
-  # dpkg-deb / tar 失败同样表现为 members.txt 为空，一并硬性检查。
-  if [ "${ps[0]}" -ne 0 ] || [ "${ps[1]}" -ne 0 ] || [ "$grep_rc" -ge 2 ]; then
-    printf 'dpkg-deb: %s\n' "$(cat "$WORK/dpkg.err")" >&2
+  # tar 列举失败或 grep 的 2（读/写失败）都要中断：否则 members.txt 为空会被
+  # 当成「无匹配成员」跳过并标记已装，缺头文件要到 cargo 阶段才炸。
+  # grep 返回 1 是正常的「无匹配」，不算失败。
+  if [ "$list_rc" -ne 0 ] || [ "$grep_rc" -ge 2 ]; then
     printf 'tar: %s\n' "$(cat "$WORK/tar.err")" >&2
-    die "读取归档失败 $pkg（dpkg-deb=${ps[0]} tar=${ps[1]} grep=$grep_rc）"
+    die "读取归档失败 $pkg（tar -tf=$list_rc grep=$grep_rc）"
   fi
   if [ -s "$WORK/members.txt" ]; then
     set +e
-    dpkg-deb --fsys-tarfile "$WORK/pkg.deb" \
-      | tar -x -C "$SYSROOT" --no-recursion -T "$WORK/members.txt"
-    ps=("${PIPESTATUS[@]}")
+    tar -x -C "$SYSROOT" --no-recursion -T "$WORK/members.txt" -f "$data_file" \
+      2>"$WORK/tar.err"
+    extract_rc=$?
     set -e
-    # dpkg-deb 也要查：它在第二次读取时中途停止且恰好停在成员边界时，
-    # tar 仍可能返回 0，会把不完整的包标记成已装。
-    [ "${ps[0]}" -eq 0 ] && [ "${ps[1]}" -eq 0 ] \
-      || die "解包 $pkg 失败（dpkg-deb=${ps[0]} tar=${ps[1]}）"
+    if [ "$extract_rc" -ne 0 ]; then
+      printf 'tar: %s\n' "$(cat "$WORK/tar.err")" >&2
+      die "解包 $pkg 失败（tar -x=$extract_rc）"
+    fi
   else
     log "    （$pkg 不含 include/lib/pkgconfig，跳过）"
   fi
