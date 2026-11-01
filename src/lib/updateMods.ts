@@ -5,6 +5,7 @@ import { startResourceDownload, getResourceDownloadProgress } from '../api/resou
 import { deleteMod, invalidateModUpdatesCache } from '../api/instance-files.ts'
 import { addTask, updateTask } from '../stores/downloadStore.ts'
 import { cacheInvalidate } from './simple-cache.ts'
+import { normalizeSpeed } from './download-format.ts'
 import type { ModUpdateEntry, ResourceDownloadState } from '../types/index.ts'
 
 const POLL_INTERVAL_MS = 800
@@ -60,15 +61,17 @@ export async function waitForCompletion(
       terminalUpdate(taskId, 'timeout', t)
       return 'timeout'
     }
+    // 旧后端/插件回退响应可能缺 speed（undefined），进 store 与聚合回调前先归一。
+    const speed = normalizeSpeed(p.speed)
     updateTask(taskId, {
       status: 'downloading',
       progress: Math.round(p.progress),
-      speed: p.speed,
+      speed,
       downloadedBytes: p.downloadedBytes,
       totalBytes: p.totalBytes,
       error: p.error || undefined,
     })
-    onProgress?.(p)
+    onProgress?.({ ...p, speed })
     await new Promise(r => setTimeout(r, POLL_INTERVAL_MS))
   }
 }

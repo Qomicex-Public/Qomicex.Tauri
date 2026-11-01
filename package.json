@@ -31,6 +31,7 @@
     "test:dependency-install-plan": "node scripts/test-dependency-install-plan.mjs",
     "test:favorite-folder-install-plan": "node scripts/test-favorite-folder-install-plan.mjs",
     "test:download-name-pool": "node scripts/test-download-name-pool.mjs",
+    "test:download-format": "node scripts/test-download-format.mjs",
     "license:check": "node scripts/add-license-headers.mjs --check",
     "license:apply": "node scripts/add-license-headers.mjs"
   },

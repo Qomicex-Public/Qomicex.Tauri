@@ -67,6 +67,10 @@ struct DownloadProgressResponse {
     progress: f64,
     downloaded_bytes: u64,
     total_bytes: u64,
+    /// 字节/秒，与 SSE 资源速度同单位。`serde(default)` 给插件回退路径：
+    /// `session_progress_json` 的载荷没有该字段，缺了也必须能反序列化。
+    #[serde(default)]
+    speed: u64,
     status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
@@ -470,6 +474,7 @@ fn build_progress(task_id: TaskId) -> DownloadProgressResponse {
                 progress,
                 downloaded_bytes: s.downloaded,
                 total_bytes: s.total,
+                speed: s.speed,
                 status: s.status,
                 error: s.error,
                 file_name: s.file_name,
@@ -484,6 +489,7 @@ fn build_progress(task_id: TaskId) -> DownloadProgressResponse {
             progress: 0.0,
             downloaded_bytes: 0,
             total_bytes: 0,
+            speed: 0,
             status: "not_found".to_string(),
             error: None,
             file_name: None,
@@ -759,6 +765,7 @@ async fn progress(
         progress: 0.0,
         downloaded_bytes: 0,
         total_bytes: 0,
+        speed: 0,
         status: "not_found".to_string(),
         error: None,
         file_name: None,
@@ -1508,5 +1515,28 @@ mod tests {
         a.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let after = a.load(std::sync::atomic::Ordering::SeqCst);
         assert!(after > before, "代号必须严格递增（{before} -> {after}）");
+    }
+
+    /// REST 响应必须带 `speed` 键（issue #199 的根因正是该字段缺失）。加 `#[serde(skip)]`
+    /// 或改序列化名都能编译通过，只有序列化层的断言能盖住这类回归。
+    #[test]
+    fn progress_response_serializes_speed() {
+        const ID: TaskId = 424_242;
+        task_registry().lock().unwrap().insert(
+            ID,
+            TaskSnapshot {
+                status: "downloading".to_string(),
+                downloaded: 100,
+                total: 200,
+                speed: 12_345,
+                error: None,
+                file_name: Some("x.jar".to_string()),
+                terminal_at: None,
+            },
+        );
+        let json = serde_json::to_value(build_progress(ID)).unwrap();
+        assert_eq!(json["speed"], serde_json::json!(12_345));
+        // registry 是进程级单例，测试并行跑，用完即清。
+        task_registry().lock().unwrap().remove(&ID);
     }
 }

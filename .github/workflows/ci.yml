@@ -196,6 +196,9 @@ jobs:
       # 快捷安装前置计划的护栏（issue #249）：已安装的前置不得进入删除名单。
       # 该判定此前用本地文件名与上游文件名比较，两域必然不等 → 已装前置被删且不补下载。
       - run: pnpm run test:dependency-install-plan
+      # 下载速度的数值护栏（issue #199）：REST 进度缺 speed 时前端不得把
+      # NaN/Infinity 带进下载中心——normalizeSpeed 拦截脏值，formatSpeed 返回空串。
+      - run: pnpm run test:download-format
       # 版权头护栏（issue #248）：源文件须带 GPL-3.0-or-later 的 SPDX 声明。
       # 缺头就失败，避免新增文件再次无声明（CLI 模板与 plugins-dev 为有意例外，见脚本）。
       - run: pnpm run license:check

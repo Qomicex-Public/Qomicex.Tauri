@@ -19,7 +19,7 @@ import { cancelResourceDownload, getResourceDownloadProgress } from '../api/reso
 import { cancelJavaDownload, pauseJavaDownload, resumeJavaDownload, getJavaDownloadProgress } from '../api/java.ts'
 import { refreshCustomRuntimes } from '../stores/javaStore.ts'
 import { useI18n } from '../i18n/index.tsx'
-import { formatBytes } from '../lib/download-format.ts'
+import { formatBytes, normalizeSpeed } from '../lib/download-format.ts'
 import { groupTasks, readCollapsedGroups, writeCollapsedGroups } from '../lib/downloadGroups.ts'
 import type { DownloadGroup, DownloadGroupKey } from '../lib/downloadGroups.ts'
 import InstallStepsList from '../components/InstallStepsList.tsx'
@@ -223,6 +223,11 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
   /** 受限文件由插件自己补全的任务（服务端搭建等）：launcher 不开实例对话框。 */
   const pluginOwned = task.kind === 'plugin' || task.kind === 'server'
   const safeIcon = getSafeIconSrc(task.icon)
+  // 失败按 URL 记录而非布尔：icon 变更后旧请求的 onError 仍可能晚到，布尔态会把
+  // 新图标一并压成回退；img 以 src 为 key，地址变更即重挂，旧元素的过期 error 不会
+  // 进入 React 事件系统，重置随地址变化天然发生。
+  const [failedIcon, setFailedIcon] = useState<string | null>(null)
+  const showImage = safeIcon !== null && failedIcon !== safeIcon
   const steps = task.steps && task.steps.length > 0 ? task.steps : undefined
   const stepsLive = task.status === 'downloading' || task.status === 'paused'
   const stepsDoneCount = steps?.filter((s) => s.status === 'done').length ?? 0
@@ -235,12 +240,29 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
     <div className="group glass-surface rounded-xl border bg-card p-4 transition-all hover:border-primary/20">
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
-          <div className={cn(
-            'flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg',
-            task.status === 'completed' ? 'bg-emerald-500/10' : task.status === 'failed' ? 'bg-red-500/10' : isAwaiting ? 'bg-amber-500/10' : 'bg-primary/10'
-          )}>
-            {safeIcon ? (
-              <img src={safeIcon} alt="" className="h-full w-full object-cover" />
+          <div
+            className={cn(
+              'flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg',
+              // 状态底色只给回退图标：透明模组 PNG 会把底色透出来（issue #199）。
+              showImage
+                ? ''
+                : task.status === 'completed'
+                  ? 'bg-emerald-500/10'
+                  : task.status === 'failed'
+                    ? 'bg-red-500/10'
+                    : isAwaiting
+                      ? 'bg-amber-500/10'
+                      : 'bg-primary/10',
+            )}
+          >
+            {showImage ? (
+              <img
+                key={safeIcon}
+                src={safeIcon!}
+                alt=""
+                className="h-full w-full object-cover"
+                onError={() => setFailedIcon(safeIcon)}
+              />
             ) : (
               <TypeIcon
                 taskType={task.type}
@@ -424,7 +446,7 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
             ))}
             {showSpeedGraph && (
               <DownloadSpeedGraph
-                speed={task.speed ?? 0}
+                speed={normalizeSpeed(task.speed)}
                 className={cn('w-44 shrink-0', task.status === 'paused' ? 'text-amber-400' : 'text-primary')}
               />
             )}

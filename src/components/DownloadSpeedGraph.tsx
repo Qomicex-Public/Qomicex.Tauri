@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { useEffect, useRef, useState } from 'react'
-import { formatSpeed } from '../lib/download-format.ts'
+import { formatSpeed, normalizeSpeed } from '../lib/download-format.ts'
 
 const SAMPLE_MS = 500
 const MAX_POINTS = 40
@@ -17,8 +17,10 @@ interface DownloadSpeedGraphProps {
  * 手绘 SVG 面积图，无第三方图表依赖。颜色跟随父级文字色（currentColor）。
  */
 export default function DownloadSpeedGraph({ speed, className }: DownloadSpeedGraphProps) {
-  const speedRef = useRef(speed)
-  speedRef.current = speed
+  // 入图前归一：一个 NaN 样本会污染整个 20s 历史窗口（Math.max/SVG 坐标全变 NaN）。
+  const safeSpeed = normalizeSpeed(speed)
+  const speedRef = useRef(safeSpeed)
+  speedRef.current = safeSpeed
   const [history, setHistory] = useState<number[]>([])
 
   useEffect(() => {
@@ -51,7 +53,7 @@ export default function DownloadSpeedGraph({ speed, className }: DownloadSpeedGr
         )}
       </svg>
       <div className="mt-1 text-right text-[10px] tabular-nums text-muted-foreground">
-        {formatSpeed(speed) || '—'}
+        {formatSpeed(safeSpeed) || '—'}
       </div>
     </div>
   )

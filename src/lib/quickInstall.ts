@@ -11,6 +11,7 @@ import { getSettings } from '../api/settings.ts'
 import { formatDownloadFileName } from './download-naming.ts'
 import { acquireNamePool, releaseNamePool, makeNaming } from './downloadNamePool.ts'
 import { normalizeResourceKind } from './downloadGroups.ts'
+import { normalizeSpeed } from './download-format.ts'
 import type { InstallStepInfo } from '../types/index.ts'
 
 type TFunc = (key: string, params?: Record<string, string | number>) => string
@@ -285,12 +286,14 @@ async function aggregate(
     steps[idx] = { ...steps[idx], ...patch }
     updateTask(batchId, { steps: steps.map(s => ({ ...s })) })
   }
-  const sumSpeed = () => [...speedMap.values()].reduce((a, b) => a + b, 0)
+  // 第二层归一：子任务 speed 已在 waitForCompletion 归一过，这里兜底
+  // 插件/持久化数据等未过闸来源，保证 NaN 无法抵达 batch 卡片。
+  const sumSpeed = () => normalizeSpeed([...speedMap.values()].reduce((a, b) => a + b, 0))
   const track = (stepId: string, ids: string[]) =>
     Promise.all(ids.map(async id => {
       const status = await waitForCompletion(id, t, undefined, p => {
         prog.set(id, p.progress)
-        speedMap.set(id, p.speed)
+        speedMap.set(id, normalizeSpeed(p.speed))
         const avg = ids.reduce((a, x) => a + (prog.get(x) ?? 0), 0) / ids.length
         setStep(stepId, { percent: avg })
         const overall = [...prog.values()].reduce((a, b) => a + b, 0) / total
