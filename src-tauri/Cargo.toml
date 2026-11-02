@@ -58,17 +58,25 @@ windows = { version = "0.61", features = [
 windows-core = "0.61"
 
 # Cranelift 没有 loongarch64 后端（bytecodealliance/wasmtime#9612，2024-11 提出至今
-# 未实现，维护者明确表示需要有人志愿写完整后端）。
-# cranelift-codegen 的 build.rs 逻辑是：若「已启用的 ISA 集合」为空，就按宿主三元组
-# 去猜 ISA，猜不到直接 panic：
+# 未实现，维护者明确表示需要有人志愿写完整后端）。cranelift-codegen 的 build.rs
+# 会在编译期 panic：
 #   error when identifying target: "no supported isa found for arch `loongarch64`"
-# 该分支只在 isas 非空时被跳过，所以必须在 loongarch64 上显式打开 pulley feature，
-# 让 cranelift-codegen 的 ISA 集合含 Pulley64。
-# pulley 是 wasmtime 官方的可移植解释器后端，WebAssembly 功能与 Cranelift 对齐，
-# 代价是执行慢约一个数量级——插件 WASM 沙箱不是性能敏感路径，可接受。
-# 只在 loongarch64 上追加该 feature，其余平台继续走原生 Cranelift。
+#
+# 该 build.rs 的判定是：
+#   host_isa = CARGO_FEATURE_HOST_ARCH && !CARGO_FEATURE_ALL_NATIVE_ARCH
+#   if isas.is_empty() || host_isa { isa_from_arch(TARGET).expect(...) }
+# 而 wasmtime-cranelift 在依赖里硬编码了 cranelift-codegen 的 host-arch，
+# 所以只加 pulley（让 isas 非空）不够——host_isa 仍为真，照样进 panic 分支。
+#
+# 必须启用 all-arch：它展开为 cranelift-codegen 的 all-native-arch + pulley，
+# 既让 isas 非空，又把 all_native_arch 置真使 host_isa 为假，两条路都堵死。
+# 代价是编进 x86/arm64/s390x/riscv64 + Pulley 全部后端，体积增大；
+# 运行时 wasmtime 仍按宿主自动选 Pulley 解释器（官方文档：不支持 Cranelift 的
+# 架构默认走 Pulley，功能与 Cranelift 对等，执行慢约一个数量级）。
+# 插件 WASM 沙箱不是性能敏感路径，可接受。
+# 只在 loongarch64 上启用，其余平台继续走原生 Cranelift。
 [target.'cfg(target_arch = "loongarch64")'.dependencies]
-wasmtime = { version = "26", features = ["pulley"] }
+wasmtime = { version = "26", features = ["all-arch"] }
 
 [dev-dependencies]
 semver = "1"
