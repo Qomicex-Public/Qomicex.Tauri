@@ -31,12 +31,15 @@ rfd = { version = "0.16", default-features = false, features = ["xdg-portal"] }
 serde = { version = "1", features = ["derive"] }
 log = { version = "0.4", features = ["std"] }
 serde_json = "1"
-wasmtime = "26"
-wasmtime-wasi = "26"
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 semver = "1"
+
+# WASM 插件网关的运行时。loongarch64 上不可用，见下方 target 段的说明。
+[target.'cfg(not(target_arch = "loongarch64"))'.dependencies]
+wasmtime = "26"
+wasmtime-wasi = "26"
 
 # 自实现 IDropTarget 读取文本拖拽（authlib-injector 的 DnD 走 text/plain，
 # 而 tauri/wry 的拖放处理器只认 CF_HDROP 文件，非文件直接丢弃不发事件）。
@@ -57,26 +60,18 @@ windows = { version = "0.61", features = [
 # 存在（wry/tao 同样这么做）。版本与上面的 windows 0.61 对齐。
 windows-core = "0.61"
 
-# Cranelift 没有 loongarch64 后端（bytecodealliance/wasmtime#9612，2024-11 提出至今
-# 未实现，维护者明确表示需要有人志愿写完整后端）。cranelift-codegen 的 build.rs
-# 会在编译期 panic：
-#   error when identifying target: "no supported isa found for arch `loongarch64`"
-#
-# 该 build.rs 的判定是：
-#   host_isa = CARGO_FEATURE_HOST_ARCH && !CARGO_FEATURE_ALL_NATIVE_ARCH
-#   if isas.is_empty() || host_isa { isa_from_arch(TARGET).expect(...) }
-# 而 wasmtime-cranelift 在依赖里硬编码了 cranelift-codegen 的 host-arch，
-# 所以只加 pulley（让 isas 非空）不够——host_isa 仍为真，照样进 panic 分支。
-#
-# 必须启用 all-arch：它展开为 cranelift-codegen 的 all-native-arch + pulley，
-# 既让 isas 非空，又把 all_native_arch 置真使 host_isa 为假，两条路都堵死。
-# 代价是编进 x86/arm64/s390x/riscv64 + Pulley 全部后端，体积增大；
-# 运行时 wasmtime 仍按宿主自动选 Pulley 解释器（官方文档：不支持 Cranelift 的
-# 架构默认走 Pulley，功能与 Cranelift 对等，执行慢约一个数量级）。
-# 插件 WASM 沙箱不是性能敏感路径，可接受。
-# 只在 loongarch64 上启用，其余平台继续走原生 Cranelift。
-[target.'cfg(target_arch = "loongarch64")'.dependencies]
-wasmtime = { version = "26", features = ["all-arch"] }
+# loongarch64 上不编译 WASM 插件网关，原因链（均已在 CI 实测确认）：
+#   1. cranelift-codegen 无 loongarch64 后端（wasmtime#9612），build.rs 在
+#      host-arch 开启且无匹配 ISA 时 panic：「no supported isa found for arch
+#      `loongarch64`」。可用 all-arch feature 绕过（让 isas 非空且关掉 host_isa）。
+#   2. 但 wasmtime-wasi 在依赖里硬编码了 wasmtime 的 async feature，无法关闭；
+#      async → wasmtime-fiber，其栈切换是平台相关汇编，cfg_if 白名单只有
+#      aarch64/x86_64/x86/arm/s390x/riscv64，loongarch64 直接 compile_error!
+#      「fibers are not supported on this CPU architecture」。
+# 第 2 条无法从本仓库绕过（只能换运行时或等上游实现 fiber），故该架构整体排除
+# 插件网关：wasmtime / wasmtime-wasi 不参与编译，src/lib.rs 里 plugin_gateway
+# 模块与其启动代码同样按 cfg 排除。龙芯平台上插件功能不可用，其余功能正常。
+# 详见 docs/junsi-dev-docs/8-部署运维/构建部署.md 的 LoongArch64 小节。
 
 [dev-dependencies]
 semver = "1"

@@ -14,6 +14,12 @@ mod dialog_cmd;
 #[cfg(target_os = "windows")]
 mod dnd;
 mod ipc;
+// WASM 插件网关依赖 wasmtime，而 wasmtime 在 loongarch64 上不可用：
+// wasmtime-wasi 硬依赖 async feature → wasmtime-fiber，后者的栈切换是平台相关
+// 汇编，cfg_if 白名单里没有 loongarch64，直接 compile_error!。上游未支持
+// （bytecodealliance/wasmtime#9612 同源问题），故该架构上整体排除插件网关，
+// 其余功能不受影响。
+#[cfg(not(target_arch = "loongarch64"))]
 mod plugin_gateway;
 mod updater;
 
@@ -330,16 +336,20 @@ pub fn run() {
                 });
             }
             spawn_backend(app, &pipe_name);
-            let mut runtime = plugin_gateway::loader::PluginRuntime::new().unwrap();
-            if let Err(e) = runtime.scan_and_load() {
-                tauri_log!("gateway", "plugin scan failed: {e:#}");
-            }
-            tauri::async_runtime::spawn(async move {
-                match plugin_gateway::server::start_gateway(runtime).await {
-                    Ok(port) => tauri_log!("gateway", "ready on 127.0.0.1:{port}"),
-                    Err(e) => tauri_log!("gateway", "start failed: {e}"),
+            // 插件网关在 loongarch64 上不编译（见文件顶部 mod 声明处的说明）。
+            #[cfg(not(target_arch = "loongarch64"))]
+            {
+                let mut runtime = plugin_gateway::loader::PluginRuntime::new().unwrap();
+                if let Err(e) = runtime.scan_and_load() {
+                    tauri_log!("gateway", "plugin scan failed: {e:#}");
                 }
-            });
+                tauri::async_runtime::spawn(async move {
+                    match plugin_gateway::server::start_gateway(runtime).await {
+                        Ok(port) => tauri_log!("gateway", "ready on 127.0.0.1:{port}"),
+                        Err(e) => tauri_log!("gateway", "start failed: {e}"),
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
