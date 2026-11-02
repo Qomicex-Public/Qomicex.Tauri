@@ -57,6 +57,19 @@ windows = { version = "0.61", features = [
 # 存在（wry/tao 同样这么做）。版本与上面的 windows 0.61 对齐。
 windows-core = "0.61"
 
+# Cranelift 没有 loongarch64 后端（bytecodealliance/wasmtime#9612，2024-11 提出至今
+# 未实现，维护者明确表示需要有人志愿写完整后端）。
+# cranelift-codegen 的 build.rs 逻辑是：若「已启用的 ISA 集合」为空，就按宿主三元组
+# 去猜 ISA，猜不到直接 panic：
+#   error when identifying target: "no supported isa found for arch `loongarch64`"
+# 该分支只在 isas 非空时被跳过，所以必须在 loongarch64 上显式打开 pulley feature，
+# 让 cranelift-codegen 的 ISA 集合含 Pulley64。
+# pulley 是 wasmtime 官方的可移植解释器后端，WebAssembly 功能与 Cranelift 对齐，
+# 代价是执行慢约一个数量级——插件 WASM 沙箱不是性能敏感路径，可接受。
+# 只在 loongarch64 上追加该 feature，其余平台继续走原生 Cranelift。
+[target.'cfg(target_arch = "loongarch64")'.dependencies]
+wasmtime = { version = "26", features = ["pulley"] }
+
 [dev-dependencies]
 semver = "1"
 
