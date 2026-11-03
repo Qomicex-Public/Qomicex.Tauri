@@ -229,6 +229,27 @@ export async function startModpackInstall(data: ModpackInstallRequest): Promise<
   return { message: res.message, instanceId: res.versionId }
 }
 
+/**
+ * 丢弃失败安装留下的暂存文件。
+ *
+ * 安装失败时后端会把已下载的版本目录挪进 `{gameDir}/.qml-install-staging`，重试时
+ * 复用；用户在下载中心移除任务即不再重试，这里把暂存一并删除，下次从头下载。
+ */
+export async function dropModpackStaging(params: {
+  gameDir: string
+  source: string
+  projectId: string
+  versionId: string
+}): Promise<{ dropped: boolean }> {
+  const query = new URLSearchParams({
+    gameDir: params.gameDir,
+    source: params.source,
+    projectId: params.projectId,
+    versionId: params.versionId,
+  })
+  return del<{ dropped: boolean }>(`/modpack/staging?${query.toString()}`)
+}
+
 // --- 整合包原地更新（issue #118）---
 
 /**

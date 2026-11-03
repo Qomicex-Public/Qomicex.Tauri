@@ -1,4 +1,4 @@
-// Copyright (C) 2026 Qomicex Launcher Contributors
+﻿// Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
@@ -14,7 +14,7 @@ import { Tabs } from '../components/ui'
 import type { Tab } from '../components/ui'
 import { useNavigate } from 'react-router-dom'
 import { getTasks, subscribe, removeTask, updateTask, addTask } from '../stores/downloadStore.ts'
-import { pauseInstall, resumeInstall, cancelInstall, getInstallProgress } from '../api/instance.ts'
+import { pauseInstall, resumeInstall, cancelInstall, getInstallProgress, dropModpackStaging } from '../api/instance.ts'
 import { cancelResourceDownload, getResourceDownloadProgress } from '../api/resource-download.ts'
 import { cancelJavaDownload, pauseJavaDownload, resumeJavaDownload, getJavaDownloadProgress } from '../api/java.ts'
 import { refreshCustomRuntimes } from '../stores/javaStore.ts'
@@ -33,6 +33,34 @@ import { useDownloadSSE } from '../hooks/useDownloadSSE.ts'
 import { retryTask } from '../lib/retryTask.ts'
 
 type FilterMode = 'all' | 'downloading' | 'paused' | 'awaiting' | 'completed' | 'failed'
+
+/**
+ * 丢弃失败/取消的整合包任务留下的暂存文件。
+ *
+ * 同一组坐标可能同时存在多张卡片（重试会重新建任务）：只要还有别的卡片引用这组坐标，
+ * 就不能删——那份暂存正被新的重试复用。删不删由调用方决定是否吞掉异常。
+ */
+async function dropStagingForTask(task: DownloadTask): Promise<void> {
+  const spec = task.retry
+  if (spec?.kind !== 'modpack') return
+  if (task.status !== 'failed' && task.status !== 'cancelled') return
+  const shared = getTasks().some(
+    (other) =>
+      other.id !== task.id &&
+      other.retry?.kind === 'modpack' &&
+      other.retry.gameDir === spec.gameDir &&
+      other.retry.source === spec.source &&
+      other.retry.projectId === spec.projectId &&
+      other.retry.versionId === spec.versionId,
+  )
+  if (shared) return
+  await dropModpackStaging({
+    gameDir: spec.gameDir,
+    source: spec.source,
+    projectId: spec.projectId,
+    versionId: spec.versionId,
+  })
+}
 
 /** 资源图标可能是 data URL，也可能是 Modrinth/CurseForge 的 https CDN 地址（CSP img-src 已放行 https:）。 */
 function getSafeIconSrc(icon?: string): string | null {
@@ -401,10 +429,16 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
           )}
           {(task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled' || task.status === 'queued') && (
             <Tooltip content={t('downloads.remove')}>
-              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => {
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={async () => {
                 // 后端发起的任务（process 管线）在 SSE 保留窗口内会被自动补卡——
                 // 用户点删除时登记 instanceId，补卡逻辑据此跳过，否则清除后复活。
                 if (task.instanceId) dismissBackendTask(task.instanceId)
+                try {
+                  // 丢弃失败时保留卡片，用户可以再点一次：静默失败会留下几百 MB 暂存文件。
+                  await dropStagingForTask(task)
+                } catch {
+                  return
+                }
                 removeTask(task.id)
               }}>
                 <Trash2 className="h-3.5 w-3.5" />
@@ -466,14 +500,14 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
              activeStep ? (
                <>
                  {stepLabel(activeStep, t)}
-                 {(activeStep.percent ?? 0) > 0 && ` (${Math.round(activeStep.percent!)}%)`}
+                 {(activeStep.percent ?? 0) > 0 && ` (${Math.floor(activeStep.percent!)}%)`}
                </>
              ) :
              // "连接中" only while nothing is known yet — a large file can sit at
              // a rounded 0% with bytes already flowing.
               (task.progress > 0 || (task.downloadedBytes ?? 0) > 0 || (task.totalBytes ?? 0) > 0) ? (
                <>
-                 {task.stage && STAGE_LABELS[task.stage] ? t(`downloads.stage.${task.stage}`) : t('downloads.statusText.downloading')} ({Math.round((task.currentFileProgress ?? 0) > 0 ? (task.currentFileProgress ?? 0) : task.progress)}%)
+                 {task.stage && STAGE_LABELS[task.stage] ? t(`downloads.stage.${task.stage}`) : t('downloads.statusText.downloading')} ({Math.floor((task.currentFileProgress ?? 0) > 0 ? (task.currentFileProgress ?? 0) : task.progress)}%)
                  {task.currentFile && <span className="ml-1.5 opacity-70">· {task.currentFile}</span>}
                </>
              ) : (
@@ -630,7 +664,7 @@ export default function DownloadCenter() {
           if (!p || !(p.status in STATUS_CONFIG)) return
           updateTask(taskId, {
             status: p.status as DownloadTask['status'],
-            progress: Math.round(p.progress),
+            progress: Math.floor(p.progress),
             blockedFiles: p.blockedFiles ?? undefined,
           })
         })
@@ -708,7 +742,7 @@ export default function DownloadCenter() {
         gameVersion: '',
         status: 'downloading',
         stage: inst.stage,
-        progress: Math.round(inst.progress),
+        progress: Math.floor(inst.progress),
         currentFile: inst.currentFile || undefined,
         totalFiles: inst.totalFiles || undefined,
         completedFiles: inst.completedFiles || undefined,
@@ -740,7 +774,7 @@ export default function DownloadCenter() {
           updateTask(task.id, {
             status: newStatus,
             stage: match.status,
-            progress: Math.round(match.progress),
+            progress: Math.floor(match.progress),
             speed: match.speed,
             currentFile: match.fileName || undefined,
             error: match.error || undefined,
@@ -776,7 +810,7 @@ export default function DownloadCenter() {
           else if (match.status === 'failed') newStatus = 'failed'
           updateTask(task.id, {
             status: newStatus,
-            progress: newStatus === 'completed' ? 100 : Math.round(match.progress),
+            progress: newStatus === 'completed' ? 100 : Math.floor(match.progress),
             speed: newStatus === 'completed' ? 0 : match.speed,
             error: match.error || undefined,
             currentFile: match.currentFile || undefined,
@@ -824,7 +858,7 @@ if (task.instanceId && task.type !== 'batch') {
             name: match.title || task.name,
             status: newStatus,
             stage: match.stage,
-            progress: Math.round(match.progress),
+            progress: Math.floor(match.progress),
             speed: match.speed,
             currentFile: match.currentFile || undefined,
             totalFiles: match.totalFiles || undefined,
@@ -870,7 +904,7 @@ if (task.instanceId && task.type !== 'batch') {
               // 后端重启后 SSE 缺项，但清单仍在：保留等待态，别降级成失败。
               updateTask(task.id, {
                 status: 'awaiting-files',
-                progress: Math.round(p.progress),
+                progress: Math.floor(p.progress),
                 blockedFiles: p.blockedFiles ?? task.blockedFiles,
               })
             } else if (p.status === 'failed' || p.status === 'cancelled') {
@@ -935,6 +969,9 @@ if (task.instanceId && task.type !== 'batch') {
             m.getTasks().filter(t => t.status !== 'downloading' && t.status !== 'paused' && t.status !== 'queued' && t.status !== 'awaiting-files').forEach(t => {
               // 后端发起任务的 instanceId 一并登记：SSE 保留窗口内不自动补卡
               if (t.instanceId) dismissBackendTask(t.instanceId)
+              // 与单卡删除同一套清理：批量清除也要丢弃失败/取消的整合包暂存。
+              // 批量场景不阻塞、不提示；删不掉的由 7 天 TTL 兜底。
+              void dropStagingForTask(t).catch(() => {})
               m.removeTask(t.id)
             })
             setTimeout(() => setClearing(false), 800)

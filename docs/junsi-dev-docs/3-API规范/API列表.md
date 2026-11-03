@@ -3062,6 +3062,28 @@ CurseForge 的作者可以关闭 Project Distribution Toggle。开关关闭后�
 
 > **原地更新的额外过滤**：目标版本分发受限的文件，若实例里已有同名文件则**不计入**阻塞清单——更新只差这一版文件时用户手头那个照样能跑，报出来只会让人以为实例坏了。
 
+#### DELETE `/api/modpack/staging`
+
+丢弃失败安装留下的暂存文件（ADR-124）。
+
+在线整合包安装失败时，版本隔离目录会被移入 `{gameDir}/.qml-install-staging/{key}/payload`，只删除实例记录；重试同一 `source/project/version` 时搬回并跳过已完整的文件。用户在下载中心移除失败任务即不再重试，前端调用本端点删除暂存，下次安装从头下载。
+
+**查询参数：** `gameDir`（绝对路径或相对启动器基础目录）、`source`、`projectId`、`versionId`（与安装请求一致，用于生成暂存键）。坐标均为可选字段，缺失时按「没有可删条目」处理。
+
+**响应：**
+
+```json
+{ "dropped": true }
+```
+
+坐标不完整（缺少 `gameDir` / `projectId` / `versionId`）、暂存不存在，或条目内记录的坐标与查询不一致时返回 `{ "dropped": false }`，不视为错误。
+
+**错误码：** `STAGING_ORIGIN_REJECTED`(403 非本机来源)、`INTERNAL_ERROR`(500 目录删除失败)
+
+> 来源校验：后端监听 `127.0.0.1` 且 CORS 放行任意来源，本端点额外要求 `Origin` 为本机地址或 Tauri 自定义协议，否则 403。跨站页面无法借浏览器请求删掉用户的续传文件；不带 `Origin` 的命令行调用不受限制。
+
+> 暂存条目同时受 7 天 TTL 约束：每次发起整合包安装时会顺手清理过期条目。
+
 ---
 
 

@@ -29,6 +29,7 @@ use qomicex_core::services::installers::factory::DefaultInstallerFactory;
 use qomicex_core::services::installers::installer::{Installer, MissFileData};
 use qomicex_downloader::{DownloadEvent, DownloadManager, DownloadTask, TaskState};
 use serde_json::Value;
+use tokio::sync::broadcast;
 
 use crate::services::install_tracker::{InstallHandle, InstallStatus, InstallStepSpec};
 
@@ -1696,6 +1697,28 @@ pub(crate) async fn download_batch_with_mirrors(
     let rescue_urls: usize = extra_mirrors.values().map(Vec::len).sum();
     let mut attached_urls = 0usize;
 
+    // 上一轮失败后从暂存区恢复的实例目录：只复用**大小与暂存记录一致**的文件。
+    // 记录缺失或大小不符一律重下——截断/过期的文件混进来比多下一次更糟。
+    let (files, pre_done) = if handle.resume_existing() {
+        let mut kept = Vec::with_capacity(files.len());
+        let mut done = 0u64;
+        for f in files {
+            let complete = handle.resume_size_of(&f.1).is_some_and(|expected| {
+                std::fs::metadata(&f.1)
+                    .map(|m| m.is_file() && m.len() == expected)
+                    .unwrap_or(false)
+            });
+            if complete {
+                done += 1;
+            } else {
+                kept.push(f);
+            }
+        }
+        (kept, done)
+    } else {
+        (files, 0u64)
+    };
+
     // Pre-compute display names before consuming `files` in the loop below.
     let file_names: Vec<String> = files
         .iter()
@@ -1761,7 +1784,18 @@ pub(crate) async fn download_batch_with_mirrors(
         );
     }
 
-    let total = ids.len() as u64;
+    // 已存在的文件计入分母与已完成数：重试时进度从上次的位置继续，而不是从 0 重数。
+    let total = ids.len() as u64 + pre_done;
+    if ids.is_empty() {
+        if let Some(sid) = step_id {
+            handle.set_step_percent(sid, 100.0);
+        }
+        handle.update(|f| {
+            f.total_files = total as i32;
+            f.completed_files = total as i32;
+        });
+        return Ok(());
+    }
     let id_set: HashSet<u64> = ids.iter().copied().collect();
     let mut done_ids: HashSet<u64> = HashSet::new();
     let mut failed: Option<String> = None;
@@ -1787,6 +1821,8 @@ pub(crate) async fn download_batch_with_mirrors(
     // penalizing cold start.
     let mut last_event = Instant::now() - DOWNLOAD_BATCH_TIMEOUT;
     let mut started = false;
+    // 上一次对账时间：主循环里按 1s 节流，与事件到达与否无关。
+    let mut last_poll = Instant::now();
     // 批次进度累加器：吸收「分母随新任务增长」与「分子被重试清零」两处回退，
     // 保证同一批次内展示的百分比单调不减（见 BatchProgress 注释）。
     let mut batch_pct = BatchProgress::default();
@@ -1820,6 +1856,28 @@ pub(crate) async fn download_batch_with_mirrors(
             COLD_START_TIMEOUT
         };
         if last_event.elapsed() > stall_limit {
+            // 超时前一并记录各任务状态分布：只报"超时"没法区分「全在排队」与
+            // 「全部卡在探测」，线上只能靠它定位。
+            let mut counts: std::collections::BTreeMap<String, usize> =
+                std::collections::BTreeMap::new();
+            for id in &ids {
+                if done_ids.contains(id) {
+                    continue;
+                }
+                let key = match mgr.state(*id).await {
+                    Ok(state) => format!("{state:?}"),
+                    Err(_) => "gone".to_string(),
+                };
+                *counts.entry(key).or_default() += 1;
+            }
+            tracing::warn!(
+                done = done_ids.len() as u64 + pre_done,
+                total,
+                pending = ids.len() as u64 - done_ids.len() as u64,
+                states = ?counts,
+                timeout_s = stall_limit.as_secs(),
+                "下载批次无进展，判定超时"
+            );
             for id in &ids {
                 let _ = mgr.cancel(*id).await;
             }
@@ -1866,32 +1924,51 @@ pub(crate) async fn download_batch_with_mirrors(
                         started = true;
                         apply_terminal_state(id, state, detail, &mut done_ids, &mut prog, &mut task_speed, &mut failed);
                     }
-                _ => {}
-            },
-            _ = tokio::time::sleep(Duration::from_secs(5)) => {
-                // Broadcast events can be lost (single-consumer channel, SSE
-                // watcher may grab them first). Poll the downloader's internal
-                // state as a fallback so Completed/Failed/Cancelled tasks are
-                // always reconciled.
-                if started {
-                    poll_task_states(mgr, &id_set, &mut done_ids, &mut prog, &mut task_speed, &mut failed).await;
+                Ok(_) => {}
+                // 事件积压（订阅端落后）不代表下载停摆，但也不能据此续命看门狗：
+                // 通道里别的任务在动并不说明本批次在动。这里只记录，活性交给字节轮询。
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::warn!(skipped, "下载批次事件通道落后，改由轮询判定活性");
                 }
+                Err(broadcast::error::RecvError::Closed) => {
+                    return Err("下载器事件通道已关闭".to_string());
+                }
+            },
+            // 固定 300ms 的"心跳"：没有事件时也要周期性醒来复查看门狗。
+            // 不能写成 select 里新建的 `sleep(5s)`：分支每轮重建，事件持续到达时计时器
+            // 永远重新开始，挂在分支里的对账会被饿死。对账本身在 select 之外按 1s 节流，
+            // 与哪个分支先返回无关。
+            _ = tokio::time::sleep(Duration::from_millis(300)) => {}
+        }
+
+        // 对账与活性判定放在主循环里按 1s 节流执行：无论事件是否丢失、是否持续到达，
+        // 都能把终态任务计入 done，并用真实字节数续命看门狗。
+        if last_poll.elapsed() >= Duration::from_secs(1) {
+            last_poll = Instant::now();
+            if poll_task_states(
+                mgr,
+                &id_set,
+                &mut done_ids,
+                &mut prog,
+                &mut prog_raw,
+                &mut task_speed,
+                &mut failed,
+            )
+            .await
+            {
+                started = true;
+                last_event = Instant::now();
             }
         }
 
-        let done = done_ids.len() as u64;
-        let (sum_dl, sum_tot) = {
-            let mut dl = 0u64;
-            let mut tot = 0u64;
-            for (d, t) in prog.values() {
-                dl += *d;
-                tot += t.max(d);
-            }
-            (dl, tot)
-        };
-        // 分母是新任务不断加入的 Σtot：单独用它仍会让百分比回退，故由
-        // BatchProgress 取历史高水位，使批次内进度单调不减。
-        let pct_in = batch_pct.observe(done, total, sum_dl, sum_tot);
+        let done = done_ids.len() as u64 + pre_done;
+        // 已传输比例按「已完成文件数 + 在途文件的完成度」计算，而不是纯字节比：
+        // 未开始的文件既不在 `prog` 分子也不在分母，纯字节比会在仅剩几十个未调度
+        // 文件时冲到 99%（409/493 却显示 99%→100%）。文件数口径下 409/493 就是 83%。
+        let inflight = inflight_credit(&prog, &done_ids);
+        // 在途文件的部分完成度已经包含在 `inflight` 里，无需再与历史高水位之外的口径对齐；
+        // BatchProgress 仍负责吸收重试清零带来的回退。
+        let pct_in = batch_pct.observe(done, total, inflight);
         // Current file: the active (not-yet-completed) task whose last speed
         // was highest. If everything is done, clear so the UI shows the final
         // "completed" state without a stale file name.
@@ -1940,33 +2017,44 @@ pub(crate) async fn download_batch_with_mirrors(
     }
 }
 
-/// 批次字节进度（0.0-1.0）。
+/// 批次进度（0.0-1.0），按文件数口径。
 ///
-/// `sum_tot` 会随新任务进入 `prog` 而增长（排队任务尚未进入分母），因此该值本身
-/// 可能回退；调用方需与历史高水位取 max 后再展示（见 [`BatchProgress`]）。
-///
-/// **未完成时不封顶 1.0**：`prog` 只含已发过首个 Progress 的任务，当这批任务全部
-/// 下完而仍有文件排队时，`Σdl == Σtot` 会让本函数返回 1.0；高水位随即把进度锁死在
-/// 100%，直到整批结束（CodeRabbit review）。排队任务的字节数未知、无法计入分母，
-/// 故在 `done < total` 时把上界压到 `PARTIAL_CAP`，批次真正结束（`done >= total`）
-/// 才允许报满。
-fn batch_percent(done: u64, total: u64, sum_dl: u64, sum_tot: u64) -> f64 {
-    /// 未完成阶段允许的最大展示进度：留出「还有文件没下」的余量，避免误报 100%。
-    const PARTIAL_CAP: f64 = 0.99;
-    if total > 0 && done >= total {
-        1.0
-    } else if sum_tot > 0 {
-        (sum_dl as f64 / sum_tot as f64).min(PARTIAL_CAP)
-    } else {
-        0.0
+/// `inflight` 是在途文件完成度之和（每项 0.0-1.0）。已完成的文件贡献 1，未开始的文件
+/// 贡献 0：409/493 文件、其中若干在途时得到 83%~99% 之间的值，只有全部文件结束时才
+/// 到 100%。旧实现用 Σdl/Σtot，未开始的文件对分子分母都是 0，会提前冲到 99%。
+fn batch_percent(done: u64, total: u64, inflight: f64) -> f64 {
+    if total == 0 {
+        return 0.0;
     }
+    if done >= total {
+        return 1.0;
+    }
+    // 每个未结束文件的在途贡献上限为 0.99：最后一个文件字节已经传完、但 Completed 事件
+    // 还没到达时，in-flight 会等于剩余文件数，不加这层就会提前报满。`done` 才是唯一判据。
+    let remaining = (total - done) as f64;
+    let capped = inflight.min(remaining * 0.99);
+    ((done as f64 + capped) / total as f64).clamp(0.0, 1.0)
+}
+
+/// 在途文件的完成度之和（每项 0.0-1.0）。
+///
+/// 已完成的任务已经由 `done` 计数，必须跳过，否则会被重复计算：50 个文件下完 18 个时
+/// 会算成 (18+18)/50 = 72%，部分完成阶段直接冲到 100%。
+fn inflight_credit(prog: &HashMap<u64, (u64, u64)>, done_ids: &HashSet<u64>) -> f64 {
+    let mut acc = 0.0f64;
+    for (id, (d, t)) in prog {
+        if done_ids.contains(id) || *t == 0 {
+            continue;
+        }
+        acc += (*d as f64 / *t as f64).min(1.0);
+    }
+    acc
 }
 
 /// 批次进度累加器：保证展示值在批次内**单调不减**。
 ///
 /// 两个回退来源都被吸收：
-/// 1. 分母增长 —— `prog` 只含已发过首个 Progress 的任务，排队任务随调度推进以
-///    (0, total) 进入分母，使 Σtot 变大而分子不动（「99% 跳回 60%」）；
+/// 1. 分母变化 —— 重试时 `pre_done` 与在途任务数会变，分子分母可能不同步；
 /// 2. 分子清零 —— 下载器流式路径每次重试前 `stats.downloaded.store(0)`
 ///    （engine.rs::run_streamed），单文件已下载字节会归零（「200/300 跳回 100/300」）。
 ///
@@ -1979,12 +2067,10 @@ struct BatchProgress {
 
 impl BatchProgress {
     /// 记录一次采样并返回单调化后的百分比（0.0-1.0）。
-    fn observe(&mut self, done: u64, total: u64, sum_dl: u64, sum_tot: u64) -> f64 {
+    fn observe(&mut self, done: u64, total: u64, inflight: f64) -> f64 {
         // batch_percent 在 done >= total 时已返回 1.0，故取 max 即可：批次结束的
         // 终态自然封顶 100%，且不会让进度回退。
-        self.high_water = self
-            .high_water
-            .max(batch_percent(done, total, sum_dl, sum_tot));
+        self.high_water = self.high_water.max(batch_percent(done, total, inflight));
         self.high_water
     }
 }
@@ -2039,17 +2125,37 @@ fn apply_terminal_state(
 /// Failed-task detection still works (loop exits via `done_ids`), but the
 /// detailed error message is best-effort — the broadcast path carries it when
 /// it wins the race.
+/// 轮询对账：广播事件可能丢失，用下载器内部状态补齐终态，并用已下载字节数判断
+/// 批次是否仍在推进。返回 `true` 表示本轮观察到了实际进展（调用方据此续命看门狗）。
 async fn poll_task_states(
     mgr: &DownloadManager,
     id_set: &HashSet<u64>,
     done_ids: &mut HashSet<u64>,
     prog: &mut HashMap<u64, (u64, u64)>,
+    prog_raw: &mut HashMap<u64, u64>,
     task_speed: &mut HashMap<u64, u64>,
     _failed: &mut Option<String>,
-) {
+) -> bool {
+    let mut active = false;
     for &id in id_set {
         if done_ids.contains(&id) {
             continue;
+        }
+        // 字节数是「真的在传」的唯一可靠证据：状态停在 Downloading 也可能是卡住的。
+        if let Ok(p) = mgr.progress(id).await {
+            let prev_raw = prog_raw.entry(id).or_insert(p.downloaded);
+            if *prev_raw != p.downloaded {
+                *prev_raw = p.downloaded;
+                active = true;
+            }
+            let e = prog.entry(id).or_insert((0, 0));
+            if p.downloaded > e.0 {
+                e.0 = p.downloaded;
+            }
+            if p.total > 0 {
+                e.1 = p.total;
+            }
+            e.1 = e.1.max(e.0);
         }
         if let Ok(state) = mgr.state(id).await {
             if matches!(
@@ -2057,9 +2163,11 @@ async fn poll_task_states(
                 TaskState::Completed | TaskState::Failed | TaskState::Cancelled
             ) {
                 apply_terminal_state(id, state, None, done_ids, prog, task_speed, _failed);
+                active = true;
             }
         }
     }
+    active
 }
 
 #[cfg(test)]
@@ -2589,55 +2697,79 @@ mod tests {
         .contains_key(&dedup_key(Path::new("g/a.jar"))));
     }
 
-    /// 批次进度必须单调：新任务陆续进入分母（Σtot 增长）不得让百分比回退。
-    ///
-    /// 回归场景（安装实例进度条反复横跳、99% 跳回 60%）：分母 `sum_tot` 只统计
-    /// 已发过首个 Progress 的任务，排队任务随调度推进以 (0, total) 进入，使分母变大
-    /// 而分子不动。修复前直接用 Σdl/Σtot，百分比回退。
+    /// 已完成的任务不得重复计入在途完成度（409/493 显示 99% 的成因之一）。
     #[test]
-    fn batch_progress_does_not_regress_when_tasks_join_denominator() {
-        let mb = 1024 * 1024u64;
-        let mut bp = BatchProgress::default();
-
-        // 4 个 8MB 任务各完成一半：Σdl=16MB, Σtot=32MB
-        let p1 = bp.observe(0, 8, 16 * mb, 32 * mb);
-        assert!((p1 - 0.5).abs() < 1e-9, "首次采样应为 50%，实际 {p1}");
-
-        // 又有 4 个任务进入分母（Σtot 翻倍），分子不变 → 裸比例会掉到 25%
-        let raw = batch_percent(0, 8, 16 * mb, 64 * mb);
+    fn inflight_credit_skips_completed_tasks() {
+        let mut prog: HashMap<u64, (u64, u64)> = HashMap::new();
+        prog.insert(1, (100, 100)); // 已完成
+        prog.insert(2, (50, 100)); // 在途一半
+        prog.insert(3, (0, 0)); // 大小未知
+        let done: HashSet<u64> = [1u64].into_iter().collect();
+        let credit = inflight_credit(&prog, &done);
         assert!(
-            raw < p1,
-            "前提校验：分母增长确实拉低瞬时百分比（{p1} -> {raw}）"
+            (credit - 0.5).abs() < 1e-9,
+            "只应统计在途任务，实际 {credit}"
         );
-
-        // 修复后：展示值保持高水位，不回退
-        let p2 = bp.observe(0, 8, 16 * mb, 64 * mb);
-        assert!(p2 >= p1, "批次展示进度不得回退：{p1} -> {p2}（raw={raw}）");
-        assert_eq!(p2, p1, "回退被高水位吸收，保持峰值 50%");
+        // 已完成 1 个 + 在途 0.5 → 50 个文件时是 3%？
+        let pct = batch_percent(1, 50, credit);
+        assert!((pct - 1.5 / 50.0).abs() < 1e-9);
     }
 
-    /// 单调性在整批随机采样序列下持续成立（覆盖分母增长 / 分子清零 / 完成）。
+    /// 进度按文件数口径：409/493 已完成、其余在途时不能显示 99%~100%。
+    ///
+    /// 旧实现用 Σdl/Σtot，未开始的文件对分子分母都贡献 0，最后 84 个文件还没调度就
+    /// 冲到 99%（截图里「409/493 文件 100%」的成因）。
+    #[test]
+    fn batch_percent_counts_files_not_bytes() {
+        // 493 个文件里 409 个已完成，剩余 84 个中 10 个各下了一半
+        let pct = batch_percent(409, 493, 5.0);
+        assert!(
+            (pct - 414.0 / 493.0).abs() < 1e-9,
+            "应按 (已完成 + 在途完成度) / 总数 计算，实际 {pct}"
+        );
+        assert!(pct < 0.85, "409/493 应显示约 84%，实际 {pct}");
+        // 仅剩 1 个文件时也不允许报满
+        assert!(batch_percent(492, 493, 0.99) < 1.0);
+        // 在途贡献满额（最后一份字节已传完、终态事件未到）同样不得报满
+        assert!(batch_percent(492, 493, 1.0) < 1.0);
+        assert!(batch_percent(490, 493, 10.0) < 1.0);
+    }
+
+    /// 批次展示进度不得回退：在途文件的字节被重试清零时，高水位吸收回退。
+    #[test]
+    fn batch_progress_does_not_regress_when_inflight_resets() {
+        let mut bp = BatchProgress::default();
+        let p1 = bp.observe(100, 493, 40.0);
+        assert!(p1 > 0.28, "首次采样应为 (100+40)/493，实际 {p1}");
+
+        // 在途任务重试，完成度归零 → 裸值下降
+        let raw = batch_percent(100, 493, 0.0);
+        assert!(raw < p1, "前提校验：在途清零确实拉低瞬时百分比");
+
+        let p2 = bp.observe(100, 493, 0.0);
+        assert_eq!(p2, p1, "回退被高水位吸收，保持峰值");
+    }
+
+    /// 单调性在整批采样序列下持续成立（覆盖在途波动 / 完成数递增 / 结束）。
     #[test]
     fn batch_progress_monotonic_over_sample_sequence() {
-        let mb = 1024 * 1024u64;
         let mut bp = BatchProgress::default();
         let mut last = 0.0f64;
-        // (done, total, sum_dl, sum_tot)：模拟 300 文件、并发 64、任务陆续进入分母，
-        // 中间夹带「分子被重试清零」的采样（第 3 项 sum_dl 变小）。
-        let samples: &[(u64, u64, u64, u64)] = &[
-            (0, 300, 10 * mb, 64 * mb),
-            (5, 300, 40 * mb, 128 * mb), // 分母增长
-            (5, 300, 0, 128 * mb),       // 分子被清零（重试）
-            (5, 300, 40 * mb, 128 * mb),
-            (60, 300, 300 * mb, 384 * mb), // 分母再增长
-            (250, 300, 900 * mb, 1024 * mb),
-            (300, 300, 100 * mb, 1024 * mb), // 全部完成但分子偏小
+        // (done, total, inflight)：模拟 493 文件、并发 64，中间夹带在途清零的采样。
+        let samples: &[(u64, u64, f64)] = &[
+            (0, 493, 0.0),
+            (0, 493, 0.0),
+            (60, 493, 20.0),
+            (60, 493, 0.0), // 在途被重试清零
+            (180, 493, 64.0),
+            (409, 493, 5.0),
+            (493, 493, 0.0),
         ];
-        for &(d, t, dl, tt) in samples {
-            let p = bp.observe(d, t, dl, tt);
+        for &(d, t, inflight) in samples {
+            let p = bp.observe(d, t, inflight);
             assert!(
                 p >= last,
-                "进度回退：{last} -> {p} @ sample(done={d}, total={t}, dl={dl}, tot={tt})"
+                "进度回退：{last} -> {p} @ sample(done={d}, total={t}, inflight={inflight})"
             );
             last = p;
         }
@@ -2674,39 +2806,27 @@ mod tests {
         );
     }
 
-    /// 全部完成后必须报满：即使分子因重试清零而小于分母，也不得显示 <100%。
+    /// 全部完成后必须报满；空批次不得除零。
     #[test]
     fn batch_percent_reaches_full_when_all_done() {
-        // done == total，但分子偏小（模拟个别任务重试清零）
-        assert_eq!(batch_percent(8, 8, 100, 1000), 1.0);
-        // 未完成时不封顶到 1.0，按真实比例
-        assert!(batch_percent(7, 8, 100, 1000) < 1.0);
-        // total 为 0（空批次）不应除零
-        assert_eq!(batch_percent(0, 0, 0, 0), 0.0);
+        assert_eq!(batch_percent(8, 8, 0.0), 1.0);
+        assert!(batch_percent(7, 8, 0.0) < 1.0);
+        assert_eq!(batch_percent(0, 0, 0.0), 0.0);
     }
 
-    /// 回归（CodeRabbit review）：已上报的任务全部下完、但仍有文件排队时，
-    /// 不得把进度锁死 100%。
-    ///
-    /// `prog` 只含已发过首个 Progress 的任务；当这批任务都完成而其余任务仍在队列里，
-    /// `Σdl == Σtot` 会让裸比例达到 1.0，高水位随即把进度钉在 100% 直到整批结束。
+    /// 回归：已上报的任务全部下完、但仍有文件排队时不得显示 100%。
     #[test]
     fn batch_progress_does_not_lock_hundred_while_tasks_queued() {
-        let mb = 1024 * 1024u64;
-        // 总 300 个文件，但只有 8 个已上报且全部下完（done=8 < total=300）
         let mut bp = BatchProgress::default();
-        let p = bp.observe(8, 300, 64 * mb, 64 * mb);
-        assert!(
-            p < 1.0,
-            "仍有 {} 个文件排队时不应显示 100%，实际 {p}",
-            300 - 8
-        );
-        // 排队任务随后进入分母：进度可以不增，但绝不能已经停在 100%
-        let p2 = bp.observe(8, 300, 64 * mb, 256 * mb);
-        assert!(p2 < 1.0, "排队任务进入分母后仍不应是 100%，实际 {p2}");
-        assert!(p2 >= p, "高水位语义：不得回退（{p} -> {p2}）");
+        // 总 300 个文件，只有 8 个已完成，其余在途但完成度为 0
+        let p = bp.observe(8, 300, 0.0);
+        assert!(p < 1.0, "仍有文件排队时不应显示 100%，实际 {p}");
+        // 在途文件陆续推进：进度上升
+        let p2 = bp.observe(8, 300, 10.0);
+        assert!(p2 > p, "在途推进应让进度上升（{p} -> {p2}）");
+        assert!(p2 < 1.0);
         // 真正全部完成才允许 100%
-        let p3 = bp.observe(300, 300, 40 * mb, 256 * mb);
+        let p3 = bp.observe(300, 300, 0.0);
         assert_eq!(p3, 1.0, "整批完成必须报满");
     }
 

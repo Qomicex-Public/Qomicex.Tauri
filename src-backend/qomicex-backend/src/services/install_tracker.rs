@@ -179,6 +179,35 @@ impl InstallHandle {
         self.0.paused.load(Ordering::SeqCst)
     }
 
+    /// 标记本次安装的目标目录来自上次失败的暂存区：批次下载可跳过已完整的文件。
+    pub fn set_resume_existing(&self) {
+        self.0.resume_existing.store(true, Ordering::SeqCst);
+    }
+
+    pub fn resume_existing(&self) -> bool {
+        self.0.resume_existing.load(Ordering::SeqCst)
+    }
+
+    /// 登记暂存区里可复用的文件（绝对路径 → 期望大小）。
+    pub fn set_resume_sizes(&self, sizes: std::collections::HashMap<std::path::PathBuf, u64>) {
+        let mut guard = self
+            .0
+            .resume_sizes
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        *guard = Some(sizes);
+    }
+
+    /// 该路径在暂存区记录中的期望大小；未登记返回 `None`（不可跳过）。
+    pub fn resume_size_of(&self, path: &std::path::Path) -> Option<u64> {
+        let guard = self
+            .0
+            .resume_sizes
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        guard.as_ref().and_then(|m| m.get(path).copied())
+    }
+
     pub fn set_status(&self, status: InstallStatus) {
         self.update(|f| f.set_status(status));
     }
@@ -479,6 +508,10 @@ struct InstallState {
     inner: Mutex<ProgressField>,
     cancelled: AtomicBool,
     paused: AtomicBool,
+    /// 本次安装的目标目录来自上次失败的暂存区：目录里已存在的完整文件可直接复用。
+    resume_existing: AtomicBool,
+    /// 暂存区记录的可复用文件（绝对路径 → 期望大小）。缺失的路径一律重下。
+    resume_sizes: Mutex<Option<std::collections::HashMap<std::path::PathBuf, u64>>>,
     tx: broadcast::Sender<InstallProgress>,
 }
 
@@ -511,6 +544,8 @@ impl InstallState {
             }),
             cancelled: AtomicBool::new(false),
             paused: AtomicBool::new(false),
+            resume_existing: AtomicBool::new(false),
+            resume_sizes: Mutex::new(None),
             tx,
         }
     }

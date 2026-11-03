@@ -35,10 +35,10 @@ use std::sync::{Arc, OnceLock};
 
 use arc_swap::ArcSwap;
 use axum::body::Body;
-use axum::extract::{DefaultBodyLimit, Multipart, Path as AxumPath, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path as AxumPath, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::Response;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
@@ -147,6 +147,76 @@ pub fn router() -> Router<SharedState> {
             "/modpack/blocked/{instanceId}/submit/{fileId}",
             post(submit_blocked_mod),
         )
+        // 移除失败任务时丢弃暂存区：用户不再重试，下次安装从头下载。
+        .route("/modpack/staging", delete(drop_staging))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DropStagingQuery {
+    /// 坐标缺失时返回 `dropped: false`，不能直接 4xx：前端对已清理的旧任务也会调用。
+    #[serde(default)]
+    game_dir: String,
+    #[serde(default)]
+    source: String,
+    #[serde(default)]
+    project_id: String,
+    #[serde(default)]
+    version_id: String,
+}
+
+/// 浏览器同源来源白名单。后端监听 `127.0.0.1` 且 CORS 放行任意来源，只靠这一点
+/// 挡不住任意网页发起的跨站请求；跨站请求必带 `Origin`，应用内请求只来自本机地址
+/// 与 Tauri 自定义协议。
+fn is_local_origin(origin: &str) -> bool {
+    let o = origin.trim().to_ascii_lowercase();
+    o == "http://localhost"
+        || o.starts_with("http://localhost:")
+        || o == "http://127.0.0.1"
+        || o.starts_with("http://127.0.0.1:")
+        || o.starts_with("tauri://")
+        || o.starts_with("http://tauri.localhost")
+        || o.starts_with("https://tauri.localhost")
+}
+
+/// 丢弃失败安装留下的暂存区（用户在下载中心移除任务时调用）。
+async fn drop_staging(
+    headers: axum::http::HeaderMap,
+    Query(q): Query<DropStagingQuery>,
+) -> ApiResult<Json<serde_json::Value>> {
+    if let Some(origin) = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+    {
+        if !is_local_origin(origin) {
+            return Err(ApiError::forbidden(
+                "STAGING_ORIGIN_REJECTED",
+                "该操作仅允许在启动器内调用",
+            ));
+        }
+    }
+    let project = q.project_id.trim();
+    let version = q.version_id.trim();
+    if q.game_dir.trim().is_empty() || project.is_empty() || version.is_empty() {
+        return Ok(Json(serde_json::json!({ "dropped": false })));
+    }
+    let Some(key) =
+        crate::services::modpack_staging::key_for(&q.source, Some(project), Some(version))
+    else {
+        return Ok(Json(serde_json::json!({ "dropped": false })));
+    };
+    let game_dir = crate::services::instance_config::resolve_game_root(&q.game_dir);
+    // 只删除坐标与条目记录一致的暂存：键由坐标派生，这里再核对一次，避免误删同目录下
+    // 其他包（或键空间将来变化）的条目。
+    match crate::services::modpack_staging::meta_of(&game_dir, &key) {
+        Some(meta) if meta.project_id == project && meta.version_id == version => {
+            match crate::services::modpack_staging::drop_entry(&game_dir, &key) {
+                Ok(dropped) => Ok(Json(serde_json::json!({ "dropped": dropped }))),
+                Err(e) => Err(ApiError::internal(e)),
+            }
+        }
+        _ => Ok(Json(serde_json::json!({ "dropped": false }))),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3273,6 +3343,21 @@ impl ModpackServiceData {
             req.version_isolation
         };
 
+        // 失败重试的暂存键：同一 source/project/version 的重试可复用上次已下载的文件。
+        let staging_key = crate::services::modpack_staging::key_for(
+            &src_norm,
+            req.project_id.as_deref(),
+            req.version_id.as_deref(),
+        );
+        // 顺手清理过期暂存（7 天），放在安装入口，避免为它单独起定时器。
+        let cleanup_dir = std::path::PathBuf::from(&resolved_game_dir);
+        tokio::task::spawn_blocking(move || {
+            crate::services::modpack_staging::cleanup_expired(
+                &cleanup_dir,
+                crate::services::modpack_staging::DEFAULT_TTL,
+            );
+        });
+
         let mut instance = crate::services::instance::GameInstance {
             name: req.name.clone(),
             game_version: req.game_version.clone(),
@@ -3371,6 +3456,35 @@ impl ModpackServiceData {
             None
         };
         tracker.start_modpack_install(instance_id.clone(), move |handle| async move {
+            // 上次失败留下的暂存目录：搬回来再跑管线，批次只跳过大小与记录一致的文件。
+            if let Some(key) = staging_key.as_deref() {
+                match crate::services::modpack_staging::take(
+                    std::path::Path::new(&game_dir),
+                    key,
+                    &version_dir_name,
+                ) {
+                    Ok(Some(meta)) => {
+                        let target = std::path::Path::new(&game_dir)
+                            .join("versions")
+                            .join(&version_dir_name);
+                        tracing::info!(
+                            instance = %inst_id_inner,
+                            restored = %version_dir_name,
+                            previous = %meta.name,
+                            reusable = meta.files.len(),
+                            "整合包安装：已从暂存区恢复上次未完成的文件"
+                        );
+                        handle.set_resume_sizes(meta.size_map(&target));
+                        handle.set_resume_existing();
+                    }
+                    Ok(None) => {}
+                    Err(e) => tracing::warn!(
+                        instance = %inst_id_inner,
+                        error = %e,
+                        "整合包安装：恢复暂存目录失败，将从头安装"
+                    ),
+                }
+            }
             let result = run_modpack_pipeline(
                 &handle,
                 &mgr,
@@ -3463,7 +3577,46 @@ impl ModpackServiceData {
                 let _ = std::fs::remove_file(&p);
             }
             if result.is_err() {
-                // 回滚：安装失败/取消 → 删除实例记录 + 版本隔离目录，不残留不可用实例。
+                // 取消是用户主动行为，直接删除；并行分支快速失败也会置位 cancelled 标志，
+                // 但那种情况的结果是真实错误（与 classify_outcome 同一判据），必须暂存。
+                // 非版本隔离的安装没有独立版本目录可搬，保持原有删除逻辑。
+                let user_cancelled = matches!(&result, Err(msg) if msg == "安装已取消");
+                let mut kept = false;
+                if !user_cancelled && version_isolation {
+                    if let Some(key) = staging_key.as_deref() {
+                        let meta = crate::services::modpack_staging::StagingMeta {
+                            name: version_dir_name.clone(),
+                            source: source.clone(),
+                            project_id: project_id.clone().unwrap_or_default(),
+                            version_id: file_id.clone().unwrap_or_default(),
+                            created_at: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0),
+                            // 实际文件清单由 stash 扫描 payload 后填写。
+                            files: Vec::new(),
+                        };
+                        match crate::services::modpack_staging::stash(
+                            std::path::Path::new(&game_dir),
+                            &version_dir_name,
+                            key,
+                            meta,
+                        ) {
+                            Ok(dir) => {
+                                kept = true;
+                                tracing::info!(
+                                    dir = %dir.display(),
+                                    "整合包安装失败：已保留已下载文件，重试时继续"
+                                );
+                            }
+                            Err(e) => tracing::warn!(
+                                error = %e,
+                                "整合包安装失败：保存已下载文件失败，按原逻辑删除"
+                            ),
+                        }
+                    }
+                }
+                // 删除实例记录 + 版本隔离目录（已暂存时目录不存在，只剩记录）。
                 // 共享目录（libraries/assets/非隔离 mods）不清理，避免误删。
                 // 目录删除失败 → 保留记录防幽灵实例复活，错误并入任务失败信息。
                 if let Err(e) = inst_svc.try_delete(&inst_id_inner) {
@@ -3473,6 +3626,10 @@ impl ModpackServiceData {
                     );
                     return Err(msg);
                 }
+                return match result {
+                    Err(msg) if kept => Err(format!("{msg}；已下载的文件已保留，可直接重试继续")),
+                    other => other.map(|_| ()),
+                };
             }
             result
         });
