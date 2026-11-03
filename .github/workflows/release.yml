@@ -958,9 +958,15 @@ jobs:
           # 三元组（loongarch64-unknown-linux-gnu）——后者在该目录下不存在，
           # sysroot 脚本末尾也按前者断言。
           echo "C_INCLUDE_PATH=${{ runner.temp }}/loong64-sysroot/usr/include/loongarch64-linux-gnu" >> "$GITHUB_ENV"
-          # glibc 的 libc.so 是 GNU ld script，内部写的是绝对路径
-          # /lib64/libc.so.6、/usr/lib64/libc_nonshared.a，须显式给出这两个目录。
-          echo "LDFLAGS=-L${{ runner.temp }}/loong64-sysroot/lib64 -L${{ runner.temp }}/loong64-sysroot/usr/lib64" >> "$GITHUB_ENV"
+          # glibc 的 libc.so 是 GNU ld script，内部写的是**绝对路径**。不同工具链
+          # 变体写的路径不同——本工具链实测写的是 multiarch 形式：
+          #   /lib/loongarch64-linux-gnu/libc.so.6
+          #   /usr/lib/loongarch64-linux-gnu/libc_nonshared.a
+          # 直接 -L 加目录解决不了绝对路径引用，必须给 ld 一个 --sysroot，
+          # 它会把这类绝对路径重定位到 sysroot 内部。
+          # 同时保留 lib64/usr/lib64 的 -L：部分库仍以传统布局存在。
+          SYSROOT_DIR="${{ runner.temp }}/loong64-sysroot"
+          echo "LDFLAGS=--sysroot=$SYSROOT_DIR -L$SYSROOT_DIR/lib64 -L$SYSROOT_DIR/usr/lib64 -L$SYSROOT_DIR/usr/lib/loongarch64-linux-gnu -L$SYSROOT_DIR/lib/loongarch64-linux-gnu" >> "$GITHUB_ENV"
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
       - name: Setup connector build
         id: connector
