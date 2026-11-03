@@ -22,6 +22,7 @@ pub mod log_analysis;
 pub mod modpack_blocked;
 pub mod modpack_export;
 pub mod modpack_manifest;
+pub mod modpack_staging;
 pub mod modpack_update;
 pub mod multimc;
 pub mod options;

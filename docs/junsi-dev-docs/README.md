@@ -124,6 +124,7 @@
 - [ADR-120：分享页接入：深链 open 透传查询参数、官方域免确认与启动器分享入口](1-决策记录/ADR-120-分享页接入-深链-open-透传查询参数-官方域免确认与启动器分享入口.md)
 - [ADR-121：实例独立配置 qomicex.json——按键合并、增量写入与重置隔离](1-决策记录/ADR-121-实例独立配置-qomicex-json-按键合并与增量写入-防止重置穿越.md)
 - [ADR-122：游戏目录搬迁时接管实例设置——修复 gameDir 变更导致 JVM 参数丢失](1-决策记录/ADR-122-游戏目录搬迁时接管实例设置-修复-gameDir-变更导致-JVM-参数丢失.md)
+- [ADR-124：整合包安装失败保留已下载文件、重试续传，进度改按文件数计](1-决策记录/ADR-124-整合包安装失败保留已下载文件-重试续传-进度按文件数计.md)
 - [ADR-123：受限补全入口改用精确版本文件页，不写回 sidecar（issue #301）](1-决策记录/ADR-123-受限补全入口改用精确版本文件页-不写回-sidecar-issue-301.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
