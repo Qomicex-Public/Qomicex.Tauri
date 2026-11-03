@@ -975,12 +975,20 @@ jobs:
           # 三元组（loongarch64-unknown-linux-gnu）——后者在该目录下不存在，
           # sysroot 脚本末尾也按前者断言。
           echo "C_INCLUDE_PATH=$SYSROOT_DIR/usr/include/loongarch64-linux-gnu" >> "$GITHUB_ENV"
-          # 补 glibc 传统布局目录。用 CARGO_TARGET_<TRIPLE>_RUSTFLAGS 而不是
-          # 全局 RUSTFLAGS：后者会连宿主侧的 build script 一起影响，把 loong64
-          # 的库目录塞进宿主链接。target 级变量只作用于该目标。
-          # 注意 target 级 rustflags 同样会覆盖 config.toml 的 [build].rustflags，
-          # 故 reqwest_unstable 必须一并带上。
-          echo "CARGO_TARGET_LOONGARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS=--cfg reqwest_unstable -L $SYSROOT_DIR/lib64 -L $SYSROOT_DIR/usr/lib64 -L $SYSROOT_DIR/usr/lib/loongarch64-linux-gnu -L $SYSROOT_DIR/lib/loongarch64-linux-gnu" >> "$GITHUB_ENV"
+          # 补 glibc 传统布局目录，并放行共享库的未解析符号。
+          #
+          # 用 CARGO_TARGET_<TRIPLE>_RUSTFLAGS 而不是全局 RUSTFLAGS：后者会连
+          # 宿主侧的 build script 一起影响，把 loong64 的库目录塞进宿主链接。
+          # target 级变量会覆盖 config.toml 的 [build].rustflags，故
+          # reqwest_unstable 必须一并带上。
+          #
+          # --allow-shlib-undefined：sysroot 里的 libwebkit2gtk-4.1.so、
+          # libgdk-3.so 自身对 gstreamer / X11 / sqlite3 有未解析符号。这些是
+          # 它们的**运行时**依赖（在 .pc 的 Requires.private 里，pkg-config 的
+          # --libs 默认不展开），目标机上由发行版的对应 .so 提供。产物是动态
+          # 链接的可执行文件，这些符号本就该留给运行时，不该在链接期强制解析。
+          # 不加这个参数会报 2000+ 个 undefined reference。
+          echo "CARGO_TARGET_LOONGARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS=--cfg reqwest_unstable -C link-arg=-Wl,--allow-shlib-undefined -L $SYSROOT_DIR/lib64 -L $SYSROOT_DIR/usr/lib64 -L $SYSROOT_DIR/usr/lib/loongarch64-linux-gnu -L $SYSROOT_DIR/lib/loongarch64-linux-gnu" >> "$GITHUB_ENV"
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
       - name: Setup connector build
         id: connector
