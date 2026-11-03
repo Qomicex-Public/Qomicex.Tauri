@@ -942,8 +942,25 @@ jobs:
         run: bash scripts/build-loong64-sysroot.sh
       - name: Export cross-compile environment
         run: |
+          SYSROOT_DIR="${{ runner.temp }}/loong64-sysroot"
+          # Rust 不读 LDFLAGS（那是 autotools 约定）：rustc 用
+          # CARGO_TARGET_<TRIPLE>_LINKER 直接调 gcc，gcc 再调 ld。上一轮把
+          # --sysroot 放进 LDFLAGS 因此完全没生效，链接仍报
+          #   cannot find /lib/loongarch64-linux-gnu/libc.so.6
+          # （glibc 的 libc.so 是 GNU ld script，内部引用绝对路径）。
+          # 改为包一层 gcc：真实编译器前面拼 --sysroot，让 gcc 把 ld script 里
+          # 的绝对路径重定位到 sysroot 内。只对链接生效，不影响头文件搜索
+          # （头文件路径已由 C_INCLUDE_PATH / pkg-config 单独指定）。
+          WRAP_DIR="$(mktemp -d)"
+          REAL_CC="/opt/x-tools/loongarch64-unknown-linux-gnu/bin/loongarch64-unknown-linux-gnu-gcc"
+          # 用 printf 而不是 heredoc：YAML 的 run: | 会给每行加缩进，
+          # 而 heredoc 的结束标记必须顶格，两者冲突。
+          printf '#!/bin/sh\nexec "%s" --sysroot="%s" "$@"\n' "$REAL_CC" "$SYSROOT_DIR" \
+            > "$WRAP_DIR/loongarch64-unknown-linux-gnu-gcc"
+          chmod +x "$WRAP_DIR/loongarch64-unknown-linux-gnu-gcc"
+          echo "$WRAP_DIR" >> "$GITHUB_PATH"
           echo "CARGO_TARGET_LOONGARCH64_UNKNOWN_LINUX_GNU_LINKER=loongarch64-unknown-linux-gnu-gcc" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_SYSROOT_DIR=${{ runner.temp }}/loong64-sysroot" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_SYSROOT_DIR=$SYSROOT_DIR" >> "$GITHUB_ENV"
           # 与 build-loong64-sysroot.sh 的 PKGCONFIG_DIRS 保持完全一致：
           # 脚本按这三个目录校验 .pc 齐备，这里少一个就会出现「脚本校验通过、
           # cargo 阶段却找不到」的分裂。
@@ -957,16 +974,13 @@ jobs:
           # 注意用 Debian multiarch 元组（loongarch64-linux-gnu），不是 Rust/工具链
           # 三元组（loongarch64-unknown-linux-gnu）——后者在该目录下不存在，
           # sysroot 脚本末尾也按前者断言。
-          echo "C_INCLUDE_PATH=${{ runner.temp }}/loong64-sysroot/usr/include/loongarch64-linux-gnu" >> "$GITHUB_ENV"
-          # glibc 的 libc.so 是 GNU ld script，内部写的是**绝对路径**。不同工具链
-          # 变体写的路径不同——本工具链实测写的是 multiarch 形式：
-          #   /lib/loongarch64-linux-gnu/libc.so.6
-          #   /usr/lib/loongarch64-linux-gnu/libc_nonshared.a
-          # 直接 -L 加目录解决不了绝对路径引用，必须给 ld 一个 --sysroot，
-          # 它会把这类绝对路径重定位到 sysroot 内部。
-          # 同时保留 lib64/usr/lib64 的 -L：部分库仍以传统布局存在。
-          SYSROOT_DIR="${{ runner.temp }}/loong64-sysroot"
-          echo "LDFLAGS=--sysroot=$SYSROOT_DIR -L$SYSROOT_DIR/lib64 -L$SYSROOT_DIR/usr/lib64 -L$SYSROOT_DIR/usr/lib/loongarch64-linux-gnu -L$SYSROOT_DIR/lib/loongarch64-linux-gnu" >> "$GITHUB_ENV"
+          echo "C_INCLUDE_PATH=$SYSROOT_DIR/usr/include/loongarch64-linux-gnu" >> "$GITHUB_ENV"
+          # 补 glibc 传统布局目录。用 CARGO_TARGET_<TRIPLE>_RUSTFLAGS 而不是
+          # 全局 RUSTFLAGS：后者会连宿主侧的 build script 一起影响，把 loong64
+          # 的库目录塞进宿主链接。target 级变量只作用于该目标。
+          # 注意 target 级 rustflags 同样会覆盖 config.toml 的 [build].rustflags，
+          # 故 reqwest_unstable 必须一并带上。
+          echo "CARGO_TARGET_LOONGARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS=--cfg reqwest_unstable -L $SYSROOT_DIR/lib64 -L $SYSROOT_DIR/usr/lib64 -L $SYSROOT_DIR/usr/lib/loongarch64-linux-gnu -L $SYSROOT_DIR/lib/loongarch64-linux-gnu" >> "$GITHUB_ENV"
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
       - name: Setup connector build
         id: connector
