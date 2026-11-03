@@ -760,7 +760,6 @@ dependencies = [
  "gimli",
  "hashbrown 0.14.5",
  "log",
- "pulley-interpreter",
  "regalloc2",
  "rustc-hash",
  "smallvec",
