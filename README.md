@@ -2,11 +2,13 @@
 
 <div align="center">
 
-<img width="96" height="96" alt="QML Icon" src="public/logo.svg" />
+<img width="96" height="96" alt="Qomicex Launcher" src="public/logo.svg" />
 
-# Qomicex Minecraft Launcher
+# Qomicex Launcher
 
-Rediscover Minecraft with pure elegance — A modern, fast, and open launcher for creators and players.
+**A Minecraft launcher with plugin support**
+
+Instance management, resource downloads, world previews and multiplayer. Available for Windows, macOS and Linux, licensed under GPLv3.
 
 [![Stars](https://img.shields.io/github/stars/Qomicex-Public/Qomicex.Tauri?style=for-the-badge&logo=github&labelColor=282C34&color=EAC54F)](https://github.com/Qomicex-Public/Qomicex.Tauri/)
 [![Release](https://img.shields.io/github/v/release/Qomicex-Public/Qomicex.Tauri?style=for-the-badge&logo=github&labelColor=282C34&color=4CAF50)](https://github.com/Qomicex-Public/Qomicex.Tauri/releases)
@@ -15,58 +17,186 @@ Rediscover Minecraft with pure elegance — A modern, fast, and open launcher fo
 [![Build Status](https://img.shields.io/github/actions/workflow/status/Qomicex-Public/Qomicex.Tauri/ci.yml?style=for-the-badge&logo=githubactions&labelColor=282C34)](https://github.com/Qomicex-Public/Qomicex.Tauri/actions)
 [![License: GPLv3](https://img.shields.io/badge/License-GPL_v3-yellow?style=for-the-badge&labelColor=282C34)](LICENSE)
 
-[![Rust](https://img.shields.io/badge/Rust-stable-000000?style=flat-square&logo=rust)](https://www.rust-lang.org)
-[![React 19](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react)](https://react.dev)
-[![Tauri v2](https://img.shields.io/badge/Tauri-v2-FFC131?style=flat-square&logo=tauri)](https://tauri.app)
+[**Download**](https://www.qomicex.top/download) · [Website](https://www.qomicex.top) · [Docs](https://docs.qomicex.top) · [Plugin Store](https://plugins.qomicex.top) · [QQ Group](https://qm.qq.com/q/rKiwzrkg8w) · [Afdian](https://afdian.com/a/QomicexLauncher)
 
-[🌐 Official Website](https://www.qomicex.top) • [📥 Download Latest](https://github.com/Qomicex-Public/Qomicex.Tauri/releases/latest) • [💬 QQ Group](https://qm.qq.com/q/rKiwzrkg8w)
+<a href="https://www.qomicex.top"><img src="docs/screenshots/home.webp" alt="Qomicex Launcher main window" /></a>
 
 </div>
 
 ---
 
-## ✨ Features at a Glance
+## Overview
 
-### 🚀 Smooth Launch & Easy Setup
-Say goodbye to complicated setups. One-click install for Vanilla, Forge, Fabric, NeoForge, and more. Everything just works, with clear logs if anything ever goes wrong.
-
-### 🔐 Accounts Made Simple
-Log in securely with your Microsoft account, or hop into offline mode instantly for local testing. Got custom skins? Just drag and drop your skin server link to import it.
-
-### 🌐 Play Together, No Public IP Needed
-Want to play with friends? Jump straight into online mode without messing with port forwarding. It handles the connection for you, keeps out griefers, and even works smoothly with other popular launchers.
-
-### 📐 3D Blueprint Previews
-Inspect Litematica schematics in 3D right inside the app before building them in-game. Slide through layers and check material lists without needing any official Mojang assets.
-
-### 📦 Clean Mod & Instance Management
-Keep your modpacks, saves, and shaders neatly separated. Search and download directly from Modrinth and CurseForge, and let the launcher automatically fix missing mod dependencies for you.
-
-### 📥 Import & Export with Ease
-Got a modpack to share? Export it in a snap or drop a `.zip` / `.mrpack` right in to start playing immediately.
+| Item | Details |
+|:---|:---|
+| Platforms | Windows, macOS and Linux, with x64 and ARM64 builds |
+| Loaders | Vanilla, Forge, NeoForge, Fabric, Quilt, LiteLoader, OptiFine, Cleanroom |
+| Content platforms | Modrinth, CurseForge, FTB, Technic, MCMod |
+| Languages | Simplified Chinese, Traditional Chinese, English, Japanese, Russian |
+| Installer | About 19 MB for Windows |
 
 ---
 
-## 🖥️ Platform Support
+## Features
 
-| Platform | Architectures | Minimum OS | Status |
+### Plugins
+
+Third-party plugins can be installed to extend the interface and functionality.
+
+- Plugins can add pages, overlay windows, menu entries, themes and dashboard widgets
+- The plugin store provides browsing, installation, updates and ratings
+- A component library and command-line tool are available for plugin development
+
+### World preview
+
+Save data can be viewed without starting the game.
+
+- **World map**: shows the explored area of a save, with a height filter for caves and underground structures
+- **Waypoints**: shows waypoints from JourneyMap, Xaero's Minimap and VoxelMap, together with player positions
+- **Schematic preview**: opens `.litematic` files in 3D, with layer clipping and a material list
+- **World settings**: edits world name, game mode, difficulty, cheats and hardcore mode
+
+### Multiplayer
+
+- P2P multiplayer without a public IP address or port forwarding, joined by room code
+- Hosts can view the member list and remove members
+- Players on other launchers can join the same room
+
+### Instances and accounts
+
+- Instances are isolated, each with its own mods, saves, settings and launch arguments
+- Instances can be grouped, given custom icons, imported and exported
+- Supports Microsoft accounts, LittleSkin and offline accounts
+- Checks the Java runtime before launch and offers to download a missing version
+
+### Resources and downloads
+
+- Search and install mods, modpacks, resource packs and shaders in the launcher
+- Detects and installs required dependencies when installing a mod
+- Separate download sources can be selected for game files and mod files
+- Multi-threaded segmented downloads with pause and resume
+- Supports system and custom proxies
+
+### Modpacks
+
+- Imports CurseForge, Modrinth, FTB, Technic and MultiMC modpacks
+- Exports to CurseForge zip or Modrinth mrpack
+- Failed modpack updates roll back automatically without deleting the instance
+
+### Appearance
+
+- Dark, light and system themes
+- Custom accent colour, frosted glass and liquid glass surfaces
+- Image, animated image and video backgrounds
+- Custom fonts and theme packs
+- Dashboard widgets can be arranged freely
+
+### Other
+
+- **Crash analysis**: classifies a pasted log by problem type and identifies the mod involved
+- **Mod updates**: checks installed mods for new versions in batches
+- **Favorites**: folders, notes and tags, with group installation
+- **Logs**: live output during launch, with automatic saving and export
+- **Automatic updates**: downloaded in the background and installed on the next start
+- **Page sharing**: `qomicex-launcher://` links open an instance directly
+- **Local data**: settings and instances are stored locally and can be backed up or moved
+
+---
+
+## Screenshots
+
+| Instances | Resource center |
+|:---:|:---:|
+| <img src="docs/screenshots/instances.webp" width="440" alt="Instance management" /> | <img src="docs/screenshots/resource-center.webp" width="440" alt="Resource center" /> |
+| Isolated instances with their own settings and groups | Unified search across Modrinth, CurseForge, FTB and Technic |
+
+| Instance detail | Downloads |
+|:---:|:---:|
+| <img src="docs/screenshots/instance-detail.webp" width="440" alt="Instance detail" /> | <img src="docs/screenshots/download-management.webp" width="440" alt="Download management" /> |
+| Mods, saves, shaders, schematics and servers | Progress, pause and resume, retry |
+
+| World map | World settings |
+|:---:|:---:|
+| <img src="docs/screenshots/world-preview.webp" width="440" alt="World preview" /> | <img src="docs/screenshots/world-settings.webp" width="440" alt="World settings" /> |
+| Explored area and underground structures | Edits `level.dat` directly |
+
+| Schematic preview | Dependencies |
+|:---:|:---:|
+| <img src="docs/screenshots/projection-preview.webp" width="440" alt="Schematic preview" /> | <img src="docs/screenshots/download-mod.webp" width="440" alt="Dependency installation" /> |
+| 3D preview and material list for `.litematic` | Detects and installs mod dependencies |
+
+| Multiplayer | Accounts |
+|:---:|:---:|
+| <img src="docs/screenshots/online.webp" width="440" alt="Multiplayer" /> | <img src="docs/screenshots/accounts.webp" width="440" alt="Account management" /> |
+| Room codes and member management | Multiple account types |
+
+| Version list | Game settings |
+|:---:|:---:|
+| <img src="docs/screenshots/download-instance.webp" width="440" alt="Version list" /> | <img src="docs/screenshots/game-settings.webp" width="440" alt="Game settings" /> |
+| Filter by release type and loader | Searchable editing of game settings |
+
+---
+
+## Platform support
+
+| Platform | Architectures | Minimum OS | Package |
 |:---|:---|:---|:---|
-| **Windows** | `x64`, `ARM64` | Windows 10 (1809+) | ✅ Stable |
-| **macOS** | `x64`, `ARM64` | macOS 10.15+ | ✅ Stable |
-| **Linux** | `x64`, `ARM64` | Ubuntu 20.04+ / glibc 2.28+ | ✅ Stable |
+| **Windows** | `x64`, `ARM64` | Windows 10 (1809+) | `.exe` |
+| **macOS** | `x64`, `ARM64` | macOS 10.15+ | `.dmg` |
+| **Linux** | `x64`, `ARM64` | Ubuntu 20.04+ / glibc 2.28+ | `.AppImage`, `.deb`, `.rpm` |
 
 ---
 
-## 🔗 Related Projects & Partners
+## Download
 
-- **[qomicex-core-rust](https://github.com/Qomicex-Public/qomicex-core-rust)** — Core launcher logic library.
-- **[qomicex-downloader-rust](https://github.com/Qomicex-Public/qomicex-downloader-rust)** — High-speed async multi-threaded downloader.
-- **[qomicex-connector-rust](https://github.com/Qomicex-Public/qomicex-connector-rust)** — Scaffolding protocol & P2P networking library.
-- **[EuoraCraft-Launcher (ECLteam)](https://github.com/ECLteam/EuoraCraft-Launcher)** — Partner project sharing online nodes and cross-launcher multiplayer compatibility.
+Get the installer for your platform from the [download page](https://www.qomicex.top/download) or [GitHub Releases](https://github.com/Qomicex-Public/Qomicex.Tauri/releases/latest).
+
+- Stable and beta releases are published on separate channels, switchable in settings
+- The launcher updates itself
+- Windows requires the WebView2 runtime, which is included with Windows 11
 
 ---
 
-## ⭐ Star History
+## Build from source
+
+Requires Node.js 22+, pnpm 11+ and the Rust toolchain pinned in `rust-toolchain.toml`.
+
+```bash
+pnpm install --frozen-lockfile
+pnpm --filter @qomicex/plugin-ui build
+pnpm run tauri dev     # develop
+pnpm exec tauri build  # package
+```
+
+The backend can run separately; during development the frontend connects to `:5000` directly.
+
+```bash
+cargo run --manifest-path src-backend/qomicex-backend/Cargo.toml
+```
+
+Development conventions and directory structure are described in [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
+
+## Contributing
+
+- Report issues or suggest features in [Issues](https://github.com/Qomicex-Public/Qomicex.Tauri/issues); include the version, OS and logs
+- Plugin development: [Plugin API](docs/junsi-dev-docs/3-API规范/插件系统API.md)
+- Translations: see the language files in the repository
+- Chat: [QQ group](https://qm.qq.com/q/rKiwzrkg8w)
+
+---
+
+## Related projects
+
+- **[qomicex-core-rust](https://github.com/Qomicex-Public/qomicex-core-rust)**: core launcher logic
+- **[qomicex-downloader-rust](https://github.com/Qomicex-Public/qomicex-downloader-rust)**: download engine
+- **[qomicex-connector-rust](https://github.com/Qomicex-Public/qomicex-connector-rust)**: multiplayer networking
+- **[EuoraCraft-Launcher](https://github.com/ECLteam/EuoraCraft-Launcher)**: shared multiplayer nodes and cross-launcher compatibility
+
+---
+
+## Star history
 
 <a href="https://www.star-history.com/?repos=Qomicex-Public%2FQomicex.Tauri&type=date&legend=bottom-right">
  <picture>
@@ -78,9 +208,9 @@ Got a modpack to share? Export it in a snap or drop a `.zip` / `.mrpack` right i
 
 ---
 
-## ❤️ Contributors
+## Contributors
 
-Thank you to all the people who have contributed to Qomicex Launcher!
+Thanks to everyone who has contributed to Qomicex Launcher.
 
 <a href="https://github.com/Qomicex-Public/Qomicex.Tauri/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=Qomicex-Public/Qomicex.Tauri" />
@@ -88,14 +218,14 @@ Thank you to all the people who have contributed to Qomicex Launcher!
 
 ---
 
-## 📄 License & Pronunciation
+## Pronunciation and license
 
 - **Pronunciation**: Qomicex `/kˈɑːmaɪsˌɛks/` (q·om·ic·ex)
-- **License**: Distributed under the [GPLv3 License](LICENSE).
+- **License**: [GPLv3](LICENSE)
 
 ### Legal notice
 
 - Game files are downloaded from Mojang's official servers and their public mirrors. This project does not host or redistribute Minecraft itself.
 - Qomicex Launcher is a third-party tool. It is not affiliated with, endorsed by, or sponsored by Mojang, Microsoft or NetEase.
 - Offline accounts are intended for offline play and self-hosted servers. Using an offline account on servers that require authentication may violate those servers' rules.
-- A Microsoft account must be signed in before offline or third-party accounts can be added (see [ADR-117](docs/junsi-dev-docs/1-决策记录/ADR-117-离线账户要求先绑定-Microsoft-账户-并按中国大陆区域展示合规提示.md)).
+- A Microsoft account must be signed in before offline or third-party accounts can be added.
