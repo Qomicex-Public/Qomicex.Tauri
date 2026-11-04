@@ -4,3 +4,4 @@
 pub mod error;
 pub mod pcl_icon;
 pub mod sysinfo;
+pub mod url;

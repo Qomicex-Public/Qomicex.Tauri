@@ -29,10 +29,12 @@ pub async fn log_api_errors(req: Request, next: Next) -> Response {
         if meta.status < 500 && !is_api {
             return response;
         }
+        // 只记 path，丢掉 query：签名/令牌常在 query 里。
+        let path = uri.path();
         if meta.status >= 500 {
             tracing::error!(
                 method = %method,
-                uri = %uri,
+                uri = %path,
                 status = meta.status,
                 code = %meta.code,
                 message = %meta.message,
@@ -44,7 +46,7 @@ pub async fn log_api_errors(req: Request, next: Next) -> Response {
         } else {
             tracing::warn!(
                 method = %method,
-                uri = %uri,
+                uri = %path,
                 status = meta.status,
                 code = %meta.code,
                 message = %meta.message,
@@ -52,6 +54,20 @@ pub async fn log_api_errors(req: Request, next: Next) -> Response {
                 trace_id = %meta.trace_id,
                 latency_ms,
                 "api error"
+            );
+        }
+    } else {
+        // 框架层错误（JSON extractor 拒绝、路由 405 等）没有 ApiErrorMeta：
+        // 至少把 method/path/status 记下来，避免只剩 TraceLayer 的通用行。
+        let status = response.status();
+        if status.as_u16() >= 400 && (status.is_server_error() || uri.path().starts_with("/api")) {
+            tracing::warn!(
+                method = %method,
+                uri = %uri.path(),
+                status = status.as_u16(),
+                code = "FRAMEWORK_ERROR",
+                latency_ms,
+                "api error (framework)"
             );
         }
     }

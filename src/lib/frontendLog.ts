@@ -9,7 +9,7 @@
 //   - 每条错误都带「哪个操作 + 哪个对象 + 错误码/状态码/后端 traceId」；
 //   - 全局未捕获异常在 App 挂载前也能上报（installGlobalErrorLogging）。
 
-import { reportFrontendLog } from '../api/logs.ts'
+import { flushFrontendLogsNow, reportFrontendLog } from '../api/logs.ts'
 
 interface ApiErrorLike {
   code: string
@@ -83,4 +83,6 @@ export function installGlobalErrorLogging(): void {
   window.addEventListener('unhandledrejection', (event) => {
     reportFrontendLog('error', buildLine('global.unhandledrejection', event.reason))
   })
+  // 窗口/WebView 关闭前把 300ms 窗口内尚未发送的日志冲出去。
+  window.addEventListener('pagehide', () => flushFrontendLogsNow())
 }

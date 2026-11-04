@@ -972,7 +972,10 @@ async fn proxy(
     let parsed = url::Url::parse(&req.url).map_err(|e| {
         ApiError::bad_request(
             "PROXY_INVALID_URL",
-            format!("无效的代理 URL（{}）: {e}", req.url),
+            format!(
+                "无效的代理 URL（{}）: {e}",
+                crate::util::url::redact_url(&req.url)
+            ),
         )
     })?;
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
@@ -1031,7 +1034,7 @@ async fn proxy(
             "PROXY_UPSTREAM_FAILED",
             format!(
                 "上游响应中断（url={}）: {}",
-                req.url,
+                crate::util::url::redact_url(&req.url),
                 crate::util::error::error_chain(&e)
             ),
         )
@@ -1071,7 +1074,7 @@ async fn proxy(
             "PROXY_UPSTREAM_FAILED",
             format!(
                 "上游响应体读取中断（url={}，status={status}）: {}",
-                req.url,
+                crate::util::url::redact_url(&req.url),
                 crate::util::error::error_chain(&e)
             ),
         )

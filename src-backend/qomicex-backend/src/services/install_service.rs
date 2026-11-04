@@ -1629,6 +1629,9 @@ pub(crate) fn dedup_download_targets(
                     "download_batch: 重复目标的完整性元数据冲突，忽略冲突 URL"
                 );
             } else {
+                // 两侧校验元数据不冲突：把重复条目缺的那一侧补到保留条目上
+                // （例如保留条目只有期望大小、重复条目带 SHA-1），再把它降级成镜像。
+                merge_integrity_metadata(&mut kept[kept_index], &target);
                 dropped.push(DroppedTarget {
                     key,
                     name,
@@ -1642,6 +1645,18 @@ pub(crate) fn dedup_download_targets(
         kept.push(target);
     }
     (kept, dropped)
+}
+
+/// 两个绝对 URL 是否同源（scheme/host/port 一致）。解析失败按字符串比较。
+fn same_origin(a: &str, b: &str) -> bool {
+    match (url::Url::parse(a), url::Url::parse(b)) {
+        (Ok(a), Ok(b)) => {
+            a.scheme() == b.scheme()
+                && a.host_str() == b.host_str()
+                && a.port_or_known_default() == b.port_or_known_default()
+        }
+        _ => a == b,
+    }
 }
 
 /// 是否带可校验内容的信息（SHA-1 或期望字节数）。
@@ -1660,6 +1675,16 @@ fn integrity_metadata_conflicts(a: &DownloadTarget, b: &DownloadTarget) -> bool 
         _ => false,
     };
     sha1_conflict || size_conflict
+}
+
+/// 把重复条目的 SHA-1 / 期望大小补到保留条目上（调用方已排除冲突）。
+fn merge_integrity_metadata(kept: &mut DownloadTarget, duplicate: &DownloadTarget) {
+    if kept.sha1.is_none() {
+        kept.sha1 = duplicate.sha1.clone();
+    }
+    if kept.expected_size.is_none() {
+        kept.expected_size = duplicate.expected_size;
+    }
 }
 
 /// 按 `path` 去重 `MissFileInfo`（保留首次出现），返回 `(去重后列表, 被合并的记录)`。
@@ -1712,6 +1737,51 @@ const DOWNLOAD_BATCH_TIMEOUT: Duration = Duration::from_secs(120);
 /// 冷启动宽容超时：从调用到第一个事件到达的最长容忍时间。
 /// 覆盖 semaphore 等待（全局并发上限）+ probe 重试 + 首文件 TCP 建连。
 const COLD_START_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// 暂存区文件是否仍满足当前目标的完整性元数据。
+///
+/// `resume_existing` 原先只比「记录的大小 == 磁盘大小」，同尺寸坏字节会被当成完成；
+/// 有 SHA-1 时必须重新算一遍，否则安装会带着损坏的库继续。
+fn staged_file_matches_target(path: &std::path::Path, target: &DownloadTarget) -> bool {
+    use sha1::Digest;
+    use std::io::Read;
+
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !meta.is_file() {
+        return false;
+    }
+    if let Some(expected) = target.expected_size {
+        if meta.len() != expected {
+            return false;
+        }
+    }
+    let Some(expected_sha1) = target.sha1.as_deref() else {
+        return true;
+    };
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut reader = std::io::BufReader::new(file);
+    let mut hasher = sha1::Sha1::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let Ok(n) = reader.read(&mut buf) else {
+            return false;
+        };
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let actual: String = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    actual.eq_ignore_ascii_case(expected_sha1)
+}
 
 pub(crate) async fn download_batch(
     handle: &InstallHandle,
@@ -1769,14 +1839,16 @@ pub(crate) async fn download_batch_with_mirrors(
 
     let (files, duplicate_targets) = dedup_download_targets(files);
     let duplicates_len = duplicate_targets.len();
-    // 被合并条目的鉴权头：保留条目没有头而它有头时补上（同 dest 不同源的典型场景）。
-    let mut dropped_headers: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    // 被合并条目的鉴权头：保留条目没有头而它有头时补上。
+    // 头只属于它原来的 URL：跨源转移会把凭据发给另一台主机，因此存下来源 URL，
+    // 使用前再做同源判断。
+    let mut dropped_headers: HashMap<String, Vec<(String, Vec<(String, String)>)>> = HashMap::new();
     for d in &duplicate_targets {
         if !d.headers.is_empty() {
             dropped_headers
                 .entry(d.key.clone())
                 .or_default()
-                .extend(d.headers.iter().cloned());
+                .push((d.url.clone(), d.headers.clone()));
         }
     }
     // 被合并掉的 URL 不是纯冗余：同 dest 不同源时它可能是唯一可达的源，挂成保留条目的镜像
@@ -1793,11 +1865,12 @@ pub(crate) async fn download_batch_with_mirrors(
         let mut kept = Vec::with_capacity(files.len());
         let mut done = 0u64;
         for f in files {
-            let complete = handle.resume_size_of(&f.dest).is_some_and(|expected| {
+            let recorded_ok = handle.resume_size_of(&f.dest).is_some_and(|expected| {
                 std::fs::metadata(&f.dest)
                     .map(|m| m.is_file() && m.len() == expected)
                     .unwrap_or(false)
             });
+            let complete = recorded_ok && staged_file_matches_target(&f.dest, &f);
             if complete {
                 done += 1;
             } else {
@@ -1845,14 +1918,34 @@ pub(crate) async fn download_batch_with_mirrors(
         attach_mirrors(&mut mirrors, &url, extra);
         attach_mirrors(&mut mirrors, &url, extra_mirrors.remove(&key));
         attached_urls += mirrors.len() - before;
-        // 补上被合并条目自带的鉴权头（保留条目没有头时）。
+        // 补上被合并条目自带的鉴权头（保留条目没有头时）；只接受同源 URL 的头，
+        // 避免把凭据发给 promoted/镜像后的另一台主机。
         let mut headers = target.headers;
         if headers.is_empty() {
-            if let Some(h) = dropped_headers.remove(&key) {
-                headers = h;
+            if let Some(list) = dropped_headers.remove(&key) {
+                headers = list
+                    .into_iter()
+                    .filter(|(source_url, _)| same_origin(source_url, &url))
+                    .flat_map(|(_, h)| h)
+                    .collect();
             }
         }
         let mut task = DownloadTask::new(&url, target.dest);
+        // Authorization 是主机凭据：只允许发给同源镜像，避免换源时把 Bearer 外发。
+        if headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+        {
+            let before = mirrors.len();
+            mirrors.retain(|m| same_origin(m, &url));
+            if mirrors.len() != before {
+                tracing::warn!(
+                    url = %crate::util::url::redact_url(&url),
+                    dropped = before - mirrors.len(),
+                    "带 Authorization 的任务丢弃跨源镜像，避免凭据外发"
+                );
+            }
+        }
         task.headers = headers;
         if let Some(sha1) = &target.sha1 {
             task = task.with_sha1_hex(sha1);
@@ -1908,6 +2001,9 @@ pub(crate) async fn download_batch_with_mirrors(
     let mut done_ids: HashSet<u64> = HashSet::new();
     let mut failed: Option<String> = None;
     let mut failed_count: usize = 0;
+    // 同 dest 的并发任务在 DownloadManager 层会短暂互斥；失败详情是「正在被另一个
+    // 下载任务写入」时不是真失败，等对方完成后重试，避免跨批次安装直接失败。
+    let mut dest_retries: HashMap<u64, u32> = HashMap::new();
     let mut prog: HashMap<u64, (u64, u64)> = HashMap::new();
     // 每任务**最近一次原始上报**的 downloaded（不做只增钳位）。仅用于 stall 看门狗的
     // 活跃判定：下载器重试会把计数打回 0，展示值因高水位不变，若用它判活会漏掉
@@ -2051,18 +2147,38 @@ pub(crate) async fn download_batch_with_mirrors(
                     if id_set.contains(&id) => {
                         last_event = Instant::now();
                         started = true;
-                        apply_terminal_state(
-                            id,
-                            state,
-                            detail,
-                            &mut done_ids,
-                            &mut prog,
-                            &mut task_speed,
-                            &mut failed,
-                            &mut failed_count,
-                            &file_name,
-                            &file_url,
-                        );
+                        let mut retried = false;
+                        if state == TaskState::Failed {
+                            if let Some(reason) = detail.as_deref() {
+                                if is_dest_contention(reason) {
+                                    let attempt = dest_retries.entry(id).or_insert(0);
+                                    *attempt += 1;
+                                    if *attempt <= 5 {
+                                        tracing::warn!(
+                                            id,
+                                            attempt = *attempt,
+                                            "目标文件被并发任务占用，稍后重试"
+                                        );
+                                        let _ = mgr.retry(id).await;
+                                        retried = true;
+                                    }
+                                }
+                            }
+                        }
+                        if !retried {
+                            apply_terminal_state(
+                                id,
+                                state,
+                                detail,
+                                &mut done_ids,
+                                &mut prog,
+                                &mut task_speed,
+                                &mut failed,
+                                &mut failed_count,
+                                &file_name,
+                                &file_url,
+                            );
+                        }
                     }
                 Ok(_) => {}
                 // 事件积压（订阅端落后）不代表下载停摆，但也不能据此续命看门狗：
@@ -2096,6 +2212,7 @@ pub(crate) async fn download_batch_with_mirrors(
                 &mut failed_count,
                 &file_name,
                 &file_url,
+                &mut dest_retries,
             )
             .await
             {
@@ -2231,6 +2348,11 @@ impl BatchProgress {
     }
 }
 
+/// 目标文件被同 dest 的并发任务短暂占用（DownloadManager 的 DestGuard），不是真失败。
+fn is_dest_contention(reason: &str) -> bool {
+    reason.contains("目标文件正在被另一个下载任务写入")
+}
+
 /// Apply a terminal-state event to the batch tracking maps. Extracted so the
 /// polling fallback can reuse the exact same logic without duplicating state
 /// machines.
@@ -2247,6 +2369,9 @@ fn apply_terminal_state(
     file_name: &HashMap<u64, String>,
     file_url: &HashMap<u64, String>,
 ) {
+    if done_ids.contains(&id) {
+        return;
+    }
     match state {
         TaskState::Completed => {
             done_ids.insert(id);
@@ -2270,8 +2395,12 @@ fn apply_terminal_state(
                     .get(&id)
                     .cloned()
                     .unwrap_or_else(|| format!("#{id}"));
-                let url = file_url.get(&id).cloned().unwrap_or_default();
-                let reason = detail.unwrap_or_else(|| "下载器未返回原因".to_string());
+                let url = crate::util::url::redact_url(
+                    file_url.get(&id).map(String::as_str).unwrap_or(""),
+                );
+                let reason = crate::util::url::redact_urls_in_text(
+                    &detail.unwrap_or_else(|| "下载器未返回原因".to_string()),
+                );
                 *failed = Some(format!("{name} 下载失败（url={url}）: {reason}"));
             }
         }
@@ -2302,6 +2431,7 @@ async fn poll_task_states(
     failed_count: &mut usize,
     file_name: &HashMap<u64, String>,
     file_url: &HashMap<u64, String>,
+    dest_retries: &mut HashMap<u64, u32>,
 ) -> bool {
     let mut active = false;
     for &id in id_set {
@@ -2330,6 +2460,19 @@ async fn poll_task_states(
                 TaskState::Completed | TaskState::Failed | TaskState::Cancelled
             ) {
                 let detail = mgr.last_error(id).await;
+                if state == TaskState::Failed {
+                    if let Some(reason) = detail.as_deref() {
+                        if is_dest_contention(reason) {
+                            let attempt = dest_retries.entry(id).or_insert(0);
+                            *attempt += 1;
+                            if *attempt <= 5 {
+                                let _ = mgr.retry(id).await;
+                                active = true;
+                                continue;
+                            }
+                        }
+                    }
+                }
                 apply_terminal_state(
                     id,
                     state,
@@ -2675,6 +2818,33 @@ mod tests {
         assert_eq!(dropped.len(), 1);
         assert_eq!(dropped[0].url, "https://cdn/a.jar");
         assert_eq!(dropped[0].key, dedup_key(Path::new("mods/a.jar")));
+    }
+
+    /// 保留条目只有期望大小时，重复条目的 SHA-1 必须合并进来，否则同尺寸坏字节
+    /// 仍会通过校验。
+    #[test]
+    fn dedup_download_targets_merges_missing_sha1() {
+        let (kept, dropped) = dedup_download_targets(vec![
+            target("https://cdn/a.jar", "mods/a.jar").with_size(Some(1024)),
+            target("https://other/a.jar", "mods/a.jar")
+                .with_sha1("AABBCC")
+                .with_size(Some(1024)),
+        ]);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].sha1.as_deref(), Some("AABBCC"));
+        assert_eq!(kept[0].expected_size, Some(1024));
+        assert_eq!(dropped.len(), 1, "重复 URL 仍应作为镜像备选");
+    }
+
+    #[test]
+    fn same_origin_compares_scheme_host_port() {
+        assert!(same_origin("https://a.example/x", "https://a.example/y"));
+        assert!(!same_origin("https://a.example/x", "http://a.example/x"));
+        assert!(!same_origin("https://a.example/x", "https://b.example/x"));
+        assert!(!same_origin(
+            "https://a.example/x",
+            "https://a.example:8443/x"
+        ));
     }
 
     /// 两个 URL 都带校验值且对不上：它们不是同一个文件。保留先到的可校验条目，冲突 URL
