@@ -66,11 +66,11 @@ mkdir -p "$APPDIR/usr/bin" \
          "$APPDIR/usr/share/icons/hicolor/256x256@2/apps"
 
 install -m 0755 "$BIN" "$APPDIR/usr/bin/$APP_NAME"
-for size in 32x32 128x128 128x128@2; do
+for size in 32x32 128x128 128x128@2x; do
   case "$size" in
-    32x32)        dst="$APPDIR/usr/share/icons/hicolor/32x32/apps" ;;
-    128x128)      dst="$APPDIR/usr/share/icons/hicolor/128x128/apps" ;;
-    128x128@2)    dst="$APPDIR/usr/share/icons/hicolor/256x256@2/apps" ;;
+    32x32)       dst="$APPDIR/usr/share/icons/hicolor/32x32/apps" ;;
+    128x128)     dst="$APPDIR/usr/share/icons/hicolor/128x128/apps" ;;
+    128x128@2x)  dst="$APPDIR/usr/share/icons/hicolor/256x256@2/apps" ;;
   esac
   src="$ICON_DIR/$size.png"
   [ -f "$src" ] || die "缺少图标: $src"
