@@ -575,13 +575,16 @@ async fn refresh_mods_cache(
     instance_id: &str,
 ) -> ApiResult<Vec<ModMetadataDto>> {
     let r = resolve(instance_id, state)?;
-    let mods = state.core.local_resource_provider().create_mods(
-        r.game_dir.to_str().unwrap_or_default(),
-        &r.version,
-        r.isolated,
-        &state.curse_forge_api_key,
-        r.loader.as_deref(),
-    );
+    let mods = state
+        .core
+        .local_resource_provider()
+        .create_mods_with_loader(
+            r.game_dir.to_str().unwrap_or_default(),
+            &r.version,
+            r.isolated,
+            &state.curse_forge_api_key,
+            r.loader.as_deref(),
+        );
     let mut list = mods.get_mod_list(None).await.map_err(map_core_error)?;
     mods.enrich_mod_ids(&mut list).await;
     let mut dtos = map_mod_dtos(&list);
@@ -1412,13 +1415,16 @@ async fn refresh_mod_updates(
     let game_version = inst.game_version.clone();
     let loader = inst.loader.clone().unwrap_or_default();
 
-    let mods = state.core.local_resource_provider().create_mods(
-        r.game_dir.to_str().unwrap_or_default(),
-        &r.version,
-        r.isolated,
-        &state.curse_forge_api_key,
-        r.loader.as_deref(),
-    );
+    let mods = state
+        .core
+        .local_resource_provider()
+        .create_mods_with_loader(
+            r.game_dir.to_str().unwrap_or_default(),
+            &r.version,
+            r.isolated,
+            &state.curse_forge_api_key,
+            r.loader.as_deref(),
+        );
     let list = mods.get_mod_list_light().await.map_err(map_core_error)?;
 
     let mut updates: Vec<ModUpdateEntryDto> = Vec::new();
@@ -1700,13 +1706,16 @@ async fn enable_mod(
         .join(&name)
         .to_string_lossy()
         .into_owned();
-    let mods = state.core.local_resource_provider().create_mods(
-        r.game_dir.to_str().unwrap_or_default(),
-        &r.version,
-        r.isolated,
-        &state.curse_forge_api_key,
-        r.loader.as_deref(),
-    );
+    let mods = state
+        .core
+        .local_resource_provider()
+        .create_mods_with_loader(
+            r.game_dir.to_str().unwrap_or_default(),
+            &r.version,
+            r.isolated,
+            &state.curse_forge_api_key,
+            r.loader.as_deref(),
+        );
     mods.enable_mod(&path);
     Ok(StatusCode::OK)
 }
@@ -1722,13 +1731,16 @@ async fn disable_mod(
         .join(&name)
         .to_string_lossy()
         .into_owned();
-    let mods = state.core.local_resource_provider().create_mods(
-        r.game_dir.to_str().unwrap_or_default(),
-        &r.version,
-        r.isolated,
-        &state.curse_forge_api_key,
-        r.loader.as_deref(),
-    );
+    let mods = state
+        .core
+        .local_resource_provider()
+        .create_mods_with_loader(
+            r.game_dir.to_str().unwrap_or_default(),
+            &r.version,
+            r.isolated,
+            &state.curse_forge_api_key,
+            r.loader.as_deref(),
+        );
     mods.disable_mod(&path);
     Ok(StatusCode::OK)
 }
@@ -1753,13 +1765,16 @@ async fn batch_enable_mods(
 ) -> ApiResult<StatusCode> {
     let r = resolve(&id, &state)?;
     let dir = category_dir(&r, "mods");
-    let mods = state.core.local_resource_provider().create_mods(
-        r.game_dir.to_str().unwrap_or_default(),
-        &r.version,
-        r.isolated,
-        &state.curse_forge_api_key,
-        r.loader.as_deref(),
-    );
+    let mods = state
+        .core
+        .local_resource_provider()
+        .create_mods_with_loader(
+            r.game_dir.to_str().unwrap_or_default(),
+            &r.version,
+            r.isolated,
+            &state.curse_forge_api_key,
+            r.loader.as_deref(),
+        );
     for name in names {
         let path = dir.join(&name).to_string_lossy().into_owned();
         mods.enable_mod(&path);
@@ -1774,13 +1789,16 @@ async fn batch_disable_mods(
 ) -> ApiResult<StatusCode> {
     let r = resolve(&id, &state)?;
     let dir = category_dir(&r, "mods");
-    let mods = state.core.local_resource_provider().create_mods(
-        r.game_dir.to_str().unwrap_or_default(),
-        &r.version,
-        r.isolated,
-        &state.curse_forge_api_key,
-        r.loader.as_deref(),
-    );
+    let mods = state
+        .core
+        .local_resource_provider()
+        .create_mods_with_loader(
+            r.game_dir.to_str().unwrap_or_default(),
+            &r.version,
+            r.isolated,
+            &state.curse_forge_api_key,
+            r.loader.as_deref(),
+        );
     for name in names {
         let path = dir.join(&name).to_string_lossy().into_owned();
         mods.disable_mod(&path);
