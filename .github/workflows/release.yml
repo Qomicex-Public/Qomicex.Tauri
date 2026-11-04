@@ -1017,22 +1017,44 @@ jobs:
           cp Qomicex.Updater/target/loongarch64-unknown-linux-gnu/release/qomicex-updater src-tauri/binaries/updater
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
-      # AppImage 无 loong64 的 linuxdeploy 支持，固定 deb,rpm
-      - run: pnpm exec tauri build --bundles deb,rpm --target loongarch64-unknown-linux-gnu
+      # tauri-bundler 的 Settings::binary_arch 用硬编码 triple 前缀匹配架构，
+      # 白名单只有 x86_64/i*/arm*/aarch64/riscv64/universal，LoongArch 会直接
+      # panic!("Unexpected target triple")。故这里只编译、不打包（--no-bundle），
+      # 由 scripts/package-loong64.sh 按 Tauri 官方 deb/rpm 布局自行组包。
+      - name: Build application (compile only)
+        run: pnpm exec tauri build --no-bundle --target loongarch64-unknown-linux-gnu
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Package deb/rpm (loongarch64)
+        run: |
+          VERSION="${{ needs.setup.outputs.version }}" \
+          OUT_DIR="$PWD/dist-loong64" \
+          bash scripts/package-loong64.sh
       # 交叉编译静默出错时，产物会是 amd64 ELF 却挂loong64 的 deb 名。
       # 这里显式断言架构，避免错误产物流到 release。
       - name: Assert loongarch64 artifacts
         run: |
           set -euo pipefail
-          BUNDLE_DIR="src-tauri/target/loongarch64-unknown-linux-gnu/release/bundle"
-          DEB=$(find "$BUNDLE_DIR/deb" -name '*.deb' | head -1)
+          OUT_DIR="$PWD/dist-loong64"
+          DEB=$(find "$OUT_DIR" -name '*.deb' | head -1)
           [ -n "$DEB" ] || { echo "ERROR: 未找到 deb 产物"; exit 1; }
-          ARCH=$(dpkg-deb --fsys-tarfile "$DEB" \
-            | tar -xO "./usr/bin/Qomicex Launcher" | file - | grep -o 'LoongArch' || true)
-          [ "$ARCH" = "LoongArch" ] || { echo "ERROR: 产物不是 LoongArch（得到: ${ARCH:-未知}）"; exit 1; }
+
+          # 包元数据的架构字段必须是龙芯约定值，否则安装在龙芯机器上会被拒绝。
+          ARCH_FIELD=$(ar p "$DEB" control.tar.gz | tar -xzO ./control | sed -n 's/^Architecture: //p')
+          [ "$ARCH_FIELD" = "loong64" ] \
+            || { echo "ERROR: deb Architecture 应为 loong64，实际: '$ARCH_FIELD'"; exit 1; }
+
+          # 交叉编译静默出错时，产物可能是宿主 amd64 ELF 却挂着 loong64 的包名，
+          # 故从包内直接取二进制断言架构。
+          ELF_ARCH=$(ar p "$DEB" data.tar.gz | tar -xzO ./usr/bin/qomicex-launcher \
+            | head -c 20 | od -An -tx1 | tr -d ' \n')
+          # LoongArch ELF 的 e_machine = 0x0102（258），位于 ELF 头偏移 18-19 字节。
+          case "$ELF_ARCH" in
+            *0102) echo "deb 内二进制架构校验通过: LoongArch (e_machine=0x0102)" ;;
+            *) echo "ERROR: deb 内二进制不是 LoongArch，ELF 头前 20 字节: $ELF_ARCH"; exit 1 ;;
+          esac
+
           # 交叉链接最危险的失败模式是把宿主 amd64 的 .so 链进来，逐个确认关键库。
           for so in libwebkit2gtk-4.1.so.0 libgtk-3.so.0 libsoup-3.0.so.0; do
             hit=$(find "$PKG_CONFIG_SYSROOT_DIR" -name "${so}*" -type f | head -1)
@@ -1052,11 +1074,11 @@ jobs:
           REPO: ${{ github.repository }}
           SERVER: ${{ github.server_url }}
         run: |
-          BUNDLE_DIR="src-tauri/target/loongarch64-unknown-linux-gnu/release/bundle"
-          echo "=== Bundle dir contents ==="
-          find "$BUNDLE_DIR" -type f | head -30
+          OUT_DIR="$PWD/dist-loong64"
+          echo "=== dist-loong64 contents ==="
+          find "$OUT_DIR" -type f | head -30
           PLATFORM="linux-loongarch64"
-          ARCHIVE=$(find "$BUNDLE_DIR" -name "*.AppImage.tar.gz" 2>/dev/null | head -1)
+          ARCHIVE=$(find "$OUT_DIR" -name "*.AppImage.tar.gz" 2>/dev/null | head -1)
           if [ -n "$ARCHIVE" ]; then
             ASSET_NAME=$(basename "$ARCHIVE")
             URL="$SERVER/$REPO/releases/download/$VERSION/$ASSET_NAME"
@@ -1068,9 +1090,9 @@ jobs:
               echo "{\"$PLATFORM\":{\"url\":\"$URL\"}}" > "update-fragment-$PLATFORM.json"
             fi
           else
-            BUNDLE=$(find "$BUNDLE_DIR" -name '*.AppImage' 2>/dev/null | head -1)
-            if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.deb' 2>/dev/null | head -1); fi
-            if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$BUNDLE_DIR" -name '*.rpm' 2>/dev/null | head -1); fi
+            BUNDLE=$(find "$OUT_DIR" -name '*.AppImage' 2>/dev/null | head -1)
+            if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$OUT_DIR" -name '*.deb' 2>/dev/null | head -1); fi
+            if [ -z "$BUNDLE" ]; then BUNDLE=$(find "$OUT_DIR" -name '*.rpm' 2>/dev/null | head -1); fi
             if [ -z "$BUNDLE" ]; then echo "ERROR: No bundle found"; exit 1; fi
             ASSET_NAME=$(basename "$BUNDLE")
             URL="$SERVER/$REPO/releases/download/$VERSION/$ASSET_NAME"
@@ -1106,33 +1128,25 @@ jobs:
           # 构造的版本文本会在持有签名私钥的步骤里被执行。
           RELEASE_TAG: ${{ needs.setup.outputs.displayVersion }}
         run: |
-          BUNDLE_DIR="src-tauri/target/loongarch64-unknown-linux-gnu/release/bundle"
+          OUT_DIR="$PWD/dist-loong64"
           # 下载 URL 必须用带 v 前缀的 displayVersion：release 作业按
           # needs.setup.outputs.displayVersion 建 tag，用不带 v 的 version 会 404。
           URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$RELEASE_TAG"
 
-          # 签名必须在工作区之外跑：npx 优先命中容器装进共享 workspace 的那份
-          # @tauri-apps/cli，而它的原生二进制经 optionalDependencies 分发、没有
-          # loong64 变体，容器内 pnpm install 跳过了全部平台可选依赖。那份副本在
-          # x86_64 宿主上加载 native binding 会失败（Cannot find module
-          # '@tauri-apps/cli-linux-x64-gnu'），--yes 也不会强制改从 registry 取。
-          # 换到独立目录执行即可解析到宿主架构的 CLI。版本与 package.json / pnpm-lock 对齐。
-          TAURI_CLI="@tauri-apps/cli@2.11.4"
-          CLI_DIR=$(mktemp -d)
-
           # loong64 无 linuxdeploy 支持，产物固定 deb,rpm → 不出 appimage 包。
-          # system 包以 deb 布局为基线：dpkg-deb -x 收集 / 相对布局
-          DEB=$(find "$BUNDLE_DIR" -name '*.deb' | head -1)
+          # system 包以 deb 布局为基线：解出 / 相对布局后整体 zip。
+          # 用 ar + tar 而非 dpkg-deb：与 build-loong64-sysroot.sh 一致，避开
+          # dpkg-deb 在部分包上的解压管道问题。
+          DEB=$(find "$OUT_DIR" -name '*.deb' | head -1)
           if [ -z "$DEB" ]; then echo "ERROR: No deb found"; exit 1; fi
           STAGING=$(mktemp -d)
-          dpkg-deb -x "$DEB" "$STAGING"
+          ar p "$DEB" data.tar.gz | tar -xz -C "$STAGING"
           PKG_SYS="qomicex-update-linux-loongarch64-system.zip"
+          rm -f "$PKG_SYS" "$PKG_SYS.sig"
           (cd "$STAGING" && zip -qr "$OLDPWD/$PKG_SYS" .)
-          # 传绝对路径：CLI_DIR 里没有工作区上下文，相对路径会找不到包。
-          # 签名把 .sig 写到包旁边，故包必须仍在工作区内。
-          PKG_SYS_PATH="$PWD/$PKG_SYS"
-          (cd "$CLI_DIR" && npx --yes "$TAURI_CLI" signer sign "$PKG_SYS_PATH")
-          rm -rf "$CLI_DIR" "$STAGING"
+          # 用仓库锁定的 CLI 签名（pnpm exec），不用 npx 现装：本步骤持有签名私钥。
+          pnpm exec tauri signer sign "$PWD/$PKG_SYS"
+          rm -rf "$STAGING"
           echo "{\"linux-loongarch64-system\":{\"url\":\"$URL_BASE/$PKG_SYS\",\"signature\":\"$(tr -d '\n' < "$PKG_SYS.sig")\",\"strategy\":\"system\"}}" > "update-package-fragment-linux-loongarch64-system.json"
           cat update-package-fragment-*.json
       - uses: actions/upload-artifact@v7
@@ -1153,10 +1167,9 @@ jobs:
         with:
           name: qomicex-launcher-linux-loongarch64
           path: |
-            src-tauri/target/loongarch64-unknown-linux-gnu/release/bundle/**/*.AppImage
-            src-tauri/target/loongarch64-unknown-linux-gnu/release/bundle/**/*.AppImage.sig
-            src-tauri/target/loongarch64-unknown-linux-gnu/release/bundle/**/*.deb
-            src-tauri/target/loongarch64-unknown-linux-gnu/release/bundle/**/*.rpm
+            dist-loong64/*.deb
+            dist-loong64/*.rpm
+            dist-loong64/*.sig
 
   macos-arm64:
     if: |
