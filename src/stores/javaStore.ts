@@ -3,6 +3,7 @@
 
 import type { JavaRuntime } from '../types/index.ts'
 import { searchJava, getCustomJavaRuntimes, type JavaSearchMode } from '../api/java.ts'
+import { logError, logWarn } from '../lib/frontendLog.ts'
 
 const SCANNED_KEY = 'qomicex-java-scanned'
 const CUSTOM_KEY = 'qomicex-java-custom'
@@ -34,7 +35,7 @@ function saveScanned() {
     // localStorage 在无痕/隐私上下文或被禁用时抛异常，超配额时抛 QuotaExceededError。
     // 失败只意味着缓存没写进去（刷新后需重扫），不阻断调用方，但不能无声——
     // 否则表现为「扫描结果莫名不见了」且无从排查。
-    console.warn('保存 Java 扫描缓存失败：', e)
+    logWarn('java.cache.saveScanned', e)
   }
 }
 
@@ -43,7 +44,7 @@ function saveCustom() {
     localStorage.setItem(CUSTOM_KEY, JSON.stringify(customRuntimes))
   } catch (e) {
     // 同上：自定义 Java 运行时会因此不落盘，重启后从界面消失；留日志以便定位。
-    console.warn('保存自定义 Java 运行时缓存失败：', e)
+    logWarn('java.cache.saveCustom', e)
   }
 }
 
@@ -104,7 +105,7 @@ export function clearRuntimes() {
   } catch (e) {
     // 清不掉则重启后旧的 Java 运行时又会回来，用户看到「清除了却仍在」；
     // 不阻断内存中的清理结果，但必须留下线索。
-    console.warn('清除 Java 运行时缓存失败：', e)
+    logWarn('java.cache.clear', e)
   }
   emitChange()
 }
@@ -130,7 +131,7 @@ export async function loadCustomRuntimes(): Promise<JavaRuntime[]> {
     // refreshCustomRuntimes()，抛出去会变成 unhandled rejection 并触发全局错误处理。
     // 失败时 customRuntimes 保持为空，与「本来就没有自定义运行时」在 UI 上无法区分，
     // 因此这里必须留下日志。注意 customLoaded 已被置 true，本次启动内不会自动重试。
-    console.error('加载自定义 Java 运行时失败：', e)
+    logError('java.custom.load', e)
   }
   return customRuntimes
 }

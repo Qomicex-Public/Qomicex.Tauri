@@ -183,23 +183,35 @@ async function request<T>(path: string, options?: RequestOptions): Promise<T> {
 
   if (!res.ok) {
     let parsed: ApiErrorResponse | null = null
+    const bodyForLog = res.clone()
     try {
       const json = await res.json()
       if (json && typeof json.code === 'string' && typeof json.message === 'string') {
         parsed = json as ApiErrorResponse
       }
     } catch {
-      // 非 JSON 响应体（HTML 错误页 / 空体）是预期情况：下面按通用 HTTP 状态处理，
-      // 不需要知道 body 内容，静默回退即可。
+      // 非 JSON 响应体（HTML 错误页 / 空体）是预期情况：下面按通用 HTTP 状态处理。
     }
     if (parsed) {
-      console.error(`[API] ${method} ${path} => ${res.status} [${parsed.code}] ${parsed.message}${parsed.detail ? ` (${parsed.detail})` : ''}`)
+      console.error(
+        `[API] ${method} ${path} => ${res.status} [${parsed.code}] ${parsed.message}` +
+          `${parsed.detail ? ` (${parsed.detail})` : ''}` +
+          `${parsed.traceId ? ` traceId=${parsed.traceId}` : ''}`,
+      )
       throw new ApiError(parsed)
     }
-    console.error(`[API] ${method} ${path} => ${res.status} UNKNOWN_ERROR`)
+    let snippet = ''
+    try {
+      snippet = (await bodyForLog.text()).slice(0, 500)
+    } catch {
+      // 读取失败不影响错误抛出
+    }
+    console.error(
+      `[API] ${method} ${path} => ${res.status} UNKNOWN_ERROR${snippet ? ` body=${snippet}` : ''}`,
+    )
     throw new ApiError({
       code: 'UNKNOWN_ERROR', message: `请求失败 (${res.status})`,
-      detail: null, traceId: '', timestamp: new Date().toISOString(), status: res.status,
+      detail: snippet || null, traceId: '', timestamp: new Date().toISOString(), status: res.status,
     })
   }
   if (res.status === 204) return undefined as T

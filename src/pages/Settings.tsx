@@ -44,6 +44,7 @@ import type { LangChoice } from '../i18n/lang.ts'
 import { cn } from '../lib/utils.ts'
 import { normalizeHex, THEME_COLOR_MODE_BACKGROUND } from '../lib/themeColor.ts'
 import { applySettingsToDom } from '../lib/applySettingsToDom.ts'
+import { logError } from '../lib/frontendLog.ts'
 import type { SystemInfo, JavaDownloadVendorInfo, DownloadTask } from '../types/index.ts'
 import {
   addCustomJavaRuntime,
@@ -990,7 +991,7 @@ export default function Settings() {
       setJavaStatus(newCount > 0 ? t('settings.java.scanDoneFound', { count: newCount }) : t('settings.java.scanDoneNone'))
     } catch (e) {
       setJavaStatus(t('settings.java.scanFailed'))
-      console.error(e)
+      logError('settings.java.scan', e, { mode })
     } finally {
       setScanning('idle')
     }

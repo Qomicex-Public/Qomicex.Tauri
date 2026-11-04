@@ -10,6 +10,7 @@ import { useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import { useRunning } from '../contexts/RunningContext.tsx'
 import { usePluginStore } from '../stores/pluginStore.ts'
+import { logError } from '../lib/frontendLog.ts'
 import { getSettings } from '../api/settings.ts'
 import { getInstances, installModpackDirect, resolveModpack } from '../api/instance.ts'
 import { joinRoom } from '../api/connector.ts'
@@ -283,7 +284,7 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
         ackRetryRef.current.delete(raw)
       } catch (e) {
         ackRetryRef.current.add(raw)
-        console.error('[deep-link] ack failed:', e)
+        logError('deeplink.ack', e)
       }
     }
 
@@ -325,7 +326,7 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
       try {
         await run(action)
       } catch (e) {
-        console.error('[deep-link] action failed:', e)
+        logError('deeplink.action', e)
       } finally {
         inFlightRef.current.delete(raw)
         void ack(raw)
@@ -359,7 +360,7 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
         }
         for (const url of urls ?? []) accept(url)
       } catch (e) {
-        console.error('[deep-link] take pending failed:', e)
+        logError('deeplink.takePending', e)
       }
     }
 
@@ -378,7 +379,7 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
         unlisteners.push(fn)
       } catch (e) {
         // 监听注册失败也要继续读集合：能处理多少算多少。
-        console.error('[deep-link] listen failed:', e)
+        logError('deeplink.listen', e)
       }
       await drainPending()
     })()
@@ -396,7 +397,7 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
         }
         unlisteners.push(fn)
       } catch (e) {
-        console.error('[deep-link] focus listen failed:', e)
+        logError('deeplink.focusListen', e)
       }
     })()
 

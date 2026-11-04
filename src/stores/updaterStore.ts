@@ -14,6 +14,7 @@ import {
 import { getSettings } from '../api/settings.ts'
 import { APP_INFO } from '../constants/credits.ts'
 import { stagedChannelMatchesCurrent } from '../lib/updateChannel.ts'
+import { logError, logWarn } from '../lib/frontendLog.ts'
 
 export type UpdaterPhase =
   | 'idle'
@@ -288,7 +289,7 @@ export const useUpdaterStore = create<UpdaterState>((set, getState) => ({
       // idle（discardStaged/reset 已经写过状态，这里再写可能覆盖它们刚设好的值）。
       if (e instanceof Error && e.message === DOWNLOAD_ABORTED) return
       // 自动流程失败不打扰用户：回到 idle，保留 available 供手动更新入口使用。
-      console.warn('[updater] auto download failed:', e)
+      logWarn('updater.autoDownload', e)
       set({ phase: 'idle', progress: 0, error: undefined })
     }
   },
@@ -302,6 +303,7 @@ export const useUpdaterStore = create<UpdaterState>((set, getState) => ({
       // 成功路径应用已退出；若仍在运行说明 updater 未生效
       set({ phase: 'error', error: 'UPDATER_NOT_CONFIRMED' })
     } catch (e) {
+      logError('updater.installStaged', e, { version: staged.version })
       set({ phase: 'error', error: e instanceof Error ? e.message : String(e) })
     }
   },
@@ -318,13 +320,13 @@ export const useUpdaterStore = create<UpdaterState>((set, getState) => ({
       // 读不出待安装记录（IPC 失败/后端未就绪）：**不能**当成「没有记录」静默返回，
       // 否则更新就此永久卡住且用户毫无提示。这里保留 available，让 App.tsx 的后台
       // 检查（5s，晚于本函数的 2s）照常弹更新对话框，用户仍有手动入口。
-      console.warn('[updater] take pending install failed — 回退手动更新入口:', e)
+      logWarn('updater.takePending', e)
       return
     }
     if (taken.status === 'installed') {
       // 目标版本已在运行 = 上次更新装成了、或用户已通过别的途径升到更新版本，
       // 记录已被壳侧清掉（自动流程的收敛点）。
-      console.warn('[updater] auto install already applied:', taken.version)
+      logWarn('updater.autoInstall.alreadyApplied', taken.version)
       return
     }
     if (taken.status === 'abandoned' || taken.status === 'unpersisted') {
@@ -332,7 +334,7 @@ export const useUpdaterStore = create<UpdaterState>((set, getState) => ({
       // unpersisted：尝试计数写不进盘，壳侧拒绝无人值守安装（否则永不触顶、无限重装）。
       // 两条都由 App.tsx 的下一次后台检查（5s，晚于本函数所在的 2s 定时器）读到并
       // 回退到原有更新对话框，用户仍可手动安装。
-      console.warn(`[updater] auto install skipped (${taken.status}):`, taken.version)
+      logWarn('updater.autoInstall.skipped', taken.status, { version: taken.version })
       return
     }
     if (taken.status !== 'ready' || !taken.install) {
@@ -343,9 +345,9 @@ export const useUpdaterStore = create<UpdaterState>((set, getState) => ({
     // 通道切换必须由用户显式决定，无人值守装上一份别列车的包会绕过这个前提——
     // 丢弃记录并交回正常流程（下次检查会按当前列车重新发现更新）。
     if (!stagedChannelMatchesCurrent(taken.install.channel, APP_INFO.version)) {
-      console.warn(
-        `[updater] auto install skipped: staged channel ${taken.install.channel} != current`,
-      )
+      logWarn('updater.autoInstall.channelMismatch', taken.install.channel, {
+        current: APP_INFO.version,
+      })
       await clearPendingInstall(dataDir)
       return
     }

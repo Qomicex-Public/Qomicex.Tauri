@@ -33,6 +33,7 @@ import { addTask } from '../stores/downloadStore.ts'
 import { useFavoritesStore, useFavoriteKeys, useFolderMap, favoriteKey } from '../stores/favoritesStore.ts'
 import FavoriteEditDialog from '../components/FavoriteEditDialog.tsx'
 import { cn } from '../lib/utils.ts'
+import { logError } from '../lib/frontendLog.ts'
 import { cacheGet, cacheSet, cacheInvalidate } from '../lib/simple-cache.ts'
 import { save } from '@tauri-apps/plugin-dialog'
 import { loadSettings } from '../api/settings.ts'
@@ -359,7 +360,7 @@ export default function ResourceDetailPage() {
   const handleOpenMcmod = useCallback(() => {
     if (!mcmodId) return
     openUrl(`https://www.mcmod.cn/class/${mcmodId}`).catch((e) => {
-      console.error('Open mcmod failed:', mcmodId, e)
+      logError('resource.openMcmod', e, { mcmodId })
       notify(t('dialogs.common.openFailed'), 'error')
     })
   }, [mcmodId, notify, t])

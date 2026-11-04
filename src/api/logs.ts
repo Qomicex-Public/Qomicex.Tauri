@@ -56,16 +56,69 @@ export function getLogContent(path: string): Promise<LogContent> {
 
 /**
  * 上报前端 console 日志到后端（构建版无控制台时仍可查看）。
- * 失败静默（不阻塞主流程）。由 App.tsx 的 console 拦截器调用。
+ *
+ * 批量 + 节流：console 拦截器会把所有 log/warn/error 都送进来，逐条 fetch 会在
+ * 高频日志下打出成百上千个请求。这里按 300ms 窗口聚合、每批最多 20 条、按级别
+ * 分组，失败静默（不阻塞主流程，也不重试导致雪崩）。
  */
+const FRONTEND_LOG_BATCH = 20
+const FRONTEND_LOG_MAX_LINE = 4000
+const FRONTEND_LOG_MAX_QUEUE = 500
+const frontendLogQueue: Array<{ level: string; message: string }> = []
+let frontendLogTimer: ReturnType<typeof setTimeout> | null = null
+let frontendLogFlushing = false
+
+function scheduleFrontendLogFlush(): void {
+  if (frontendLogTimer !== null) return
+  frontendLogTimer = setTimeout(() => {
+    frontendLogTimer = null
+    void flushFrontendLogs()
+  }, 300)
+}
+
+async function flushFrontendLogs(): Promise<void> {
+  if (frontendLogFlushing || frontendLogQueue.length === 0) return
+  frontendLogFlushing = true
+  const batch = frontendLogQueue.splice(0, FRONTEND_LOG_BATCH)
+  const groups = new Map<string, string[]>()
+  for (const item of batch) {
+    const level =
+      item.level === 'error' || item.level === 'warn' || item.level === 'info' || item.level === 'debug'
+        ? item.level
+        : 'log'
+    const lines = groups.get(level) ?? []
+    lines.push(item.message)
+    groups.set(level, lines)
+  }
+  await Promise.all(
+    [...groups.entries()].map(([level, lines]) =>
+      fetch(`${API_BASE}/logs/frontend`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ level, message: lines.join('\n') }),
+        keepalive: true,
+      }).catch(() => {}),
+    ),
+  )
+  frontendLogFlushing = false
+  if (frontendLogQueue.length > 0) scheduleFrontendLogFlush()
+}
+
 export function reportFrontendLog(level: string, message: string): void {
   try {
-    void fetch(`${API_BASE}/logs/frontend`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ level, message }),
-    }).catch(() => {})
-  } catch { /* 忽略 */ }
+    frontendLogQueue.push({
+      level,
+      message: message.length > FRONTEND_LOG_MAX_LINE
+        ? `${message.slice(0, FRONTEND_LOG_MAX_LINE)}…[truncated]`
+        : message,
+    })
+    if (frontendLogQueue.length > FRONTEND_LOG_MAX_QUEUE) {
+      frontendLogQueue.splice(0, frontendLogQueue.length - FRONTEND_LOG_MAX_QUEUE)
+    }
+    scheduleFrontendLogFlush()
+  } catch {
+    /* 忽略 */
+  }
 }
 
 export interface ClientLogEntry {
