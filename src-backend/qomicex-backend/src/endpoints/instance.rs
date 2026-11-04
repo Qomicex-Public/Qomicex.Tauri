@@ -1546,14 +1546,15 @@ fn spawn_repair_task(
         // 复用批量下载：已含同 dest 合并（issue #122）、镜像备选、暂停/取消与
         // 冷启动/stall 看门狗，无需在补全路径重写一遍。
         let game_root = std::path::PathBuf::from(&game_dir);
-        let files: Vec<(String, std::path::PathBuf, Vec<(String, String)>)> = miss_files
+        let files: Vec<crate::services::install_service::DownloadTarget> = miss_files
             .into_iter()
             .map(|f| {
                 let dest = game_root.join(&f.path);
                 if let Some(parent) = dest.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
-                (f.url, dest, Vec::<(String, String)>::new())
+                crate::services::install_service::DownloadTarget::new(f.url, dest)
+                    .with_sha1(&f.sha1)
             })
             .collect();
         let result =
@@ -1602,7 +1603,12 @@ async fn install_instance(
         version_isolation: req
             .version_isolation
             .unwrap_or_else(crate::settings::get_global_version_isolation),
-        download_source_id: req.download_source_id.unwrap_or(0),
+        // 前端不传具体源（前端 startInstall 约定后端统一解析）：按设置的
+        // 「偏好 + 资源类型」解析，与整合包安装一致；写死 0 会让「镜像源优先」
+        // 对实例安装静默失效。
+        download_source_id: req.download_source_id.unwrap_or_else(|| {
+            crate::services::source_policy::SourcePlan::load().vanilla_mirror_id()
+        }),
         optifine_version: req.optifine_version.clone(),
     };
 

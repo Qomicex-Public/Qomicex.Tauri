@@ -356,28 +356,38 @@ fn new_download_manager(settings: &SettingsResponse) -> Arc<DownloadManager> {
         Some(v) if v > 0 => v.clamp(1, 16) as u32,
         _ => DownloadOptions::default().max_segments,
     };
-    let dm = Arc::new(DownloadManager::new(
-        DownloadOptions {
-            user_agent: USER_AGENT.to_string(),
-            max_segments,
-            // 关闭：enable_http3=false → 只建 h2 client，完全不用 HTTP/3，强制 HTTP/2。
-            // 开启：enable_http3=true → 优先 HTTP/3，http3_fallback=true → 服务器不支持
-            // QUIC 时自动回退 HTTP/2（下载器默认回退行为）。
-            enable_http3,
-            http3_fallback: true,
-            // 网络设置：代理 + 忽略 SSL，随下载管理器热替换即时生效。
-            proxy: proxy_settings(settings).0,
-            no_proxy: proxy_settings(settings).1,
-            ignore_ssl_certs: settings.ignore_ssl_cert.unwrap_or(false),
-            // 下载传输按来源自动路由：`http1_parallel` 为「强制 H1」开关（默认关，不强制）；
-            // `h1_parallel_hosts` 恒含「按连接限速」CDN（Modrinth），其余源（Mojang/BMCLAPI/
-            // CurseForge 等）保持 HTTP/2。实测 Modrinth CDN 上 H1 并行比 H2 多路复用快 3.7 倍。
-            http1_parallel: settings.http1_parallel,
-            h1_parallel_hosts: H1_PARALLEL_HOSTS.iter().map(|s| s.to_string()).collect(),
-            ..Default::default()
-        },
+    let options = DownloadOptions {
+        user_agent: USER_AGENT.to_string(),
+        max_segments,
+        // 关闭：enable_http3=false → 只建 h2 client，完全不用 HTTP/3，强制 HTTP/2。
+        // 开启：enable_http3=true → 优先 HTTP/3，http3_fallback=true → 服务器不支持
+        // QUIC 时自动回退 HTTP/2（下载器默认回退行为）。
+        enable_http3,
+        http3_fallback: true,
+        // 网络设置：代理 + 忽略 SSL，随下载管理器热替换即时生效。
+        proxy: proxy_settings(settings).0,
+        no_proxy: proxy_settings(settings).1,
+        ignore_ssl_certs: settings.ignore_ssl_cert.unwrap_or(false),
+        // 下载传输按来源自动路由：`http1_parallel` 为「强制 H1」开关（默认关，不强制）；
+        // `h1_parallel_hosts` 恒含「按连接限速」CDN（Modrinth），其余源（Mojang/BMCLAPI/
+        // CurseForge 等）保持 HTTP/2。实测 Modrinth CDN 上 H1 并行比 H2 多路复用快 3.7 倍。
+        http1_parallel: settings.http1_parallel,
+        h1_parallel_hosts: H1_PARALLEL_HOSTS.iter().map(|s| s.to_string()).collect(),
+        ..Default::default()
+    };
+    let max_total_segments = options.max_total_segments;
+    let dm = Arc::new(DownloadManager::new(options, concurrency));
+    tracing::info!(
         concurrency,
-    ));
+        max_segments,
+        max_total_segments,
+        enable_http3,
+        http1_parallel = settings.http1_parallel,
+        proxy_mode = %settings.proxy_mode,
+        ignore_ssl_certs = settings.ignore_ssl_cert.unwrap_or(false),
+        h1_parallel_hosts = ?H1_PARALLEL_HOSTS,
+        "下载管理器配置"
+    );
     spawn_downloader_log_forward(&dm);
     dm
 }

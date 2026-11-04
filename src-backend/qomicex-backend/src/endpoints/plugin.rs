@@ -1972,7 +1972,10 @@ async fn download_batch_start(
             .as_ref()
             .map(|h| h.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
             .unwrap_or_default();
-        targets.push((f.url.clone(), dest, headers));
+        targets.push(
+            crate::services::install_service::DownloadTarget::new(f.url.clone(), dest)
+                .with_headers(headers),
+        );
     }
 
     let total = targets.len();
