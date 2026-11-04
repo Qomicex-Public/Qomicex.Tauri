@@ -71,7 +71,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                      latency: std::time::Duration,
                      span: &tracing::Span| {
                         let status = response.status();
-                        if status.as_u16() >= 400 {
+                        // ApiError 响应由 middleware::error_log 记录（含 code/detail/traceId），
+                        // 这里只兜底非 ApiError 的错误响应，避免同一请求两条错误日志。
+                        if status.as_u16() >= 400
+                            && response
+                                .extensions()
+                                .get::<crate::error::ApiErrorMeta>()
+                                .is_none()
+                        {
                             // span 的 debug 输出即 `request{method=GET uri=/api/...}`，
                             // 事件落在 span 上下文内，fmt 会附加字段
                             tracing::event!(
@@ -98,6 +105,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                     },
                 ),
         )
+        // 统一记录 ApiError 响应：method/uri/status/code/message/detail/traceId/latency。
+        // 放在 TraceLayer 外层，确保能看到最终响应的 ApiErrorMeta 扩展。
+        .layer(axum::middleware::from_fn(
+            crate::middleware::error_log::log_api_errors,
+        ))
         .with_state(state);
 
     app

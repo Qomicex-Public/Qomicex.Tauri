@@ -237,8 +237,15 @@ async fn open_url(Json(body): Json<OpenUrlRequest>) -> ApiResult<StatusCode> {
     if url.is_empty() || !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err(ApiError::bad_request("BAD_REQUEST", "Invalid URL"));
     }
-    open::that_detached(url)
-        .map_err(|_| ApiError::bad_request("BAD_REQUEST", "Failed to open URL"))?;
+    open::that_detached(url).map_err(|e| {
+        ApiError::bad_request(
+            "BAD_REQUEST",
+            format!(
+                "打开 URL 失败（{url}）: {}",
+                crate::util::error::error_chain(&e)
+            ),
+        )
+    })?;
     Ok(StatusCode::OK)
 }
 

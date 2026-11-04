@@ -3218,11 +3218,17 @@ impl ModpackServiceData {
         project_id: &str,
         version_id: &str,
     ) -> ApiResult<ModpackParseResult> {
-        let pack_id: i32 = project_id
-            .parse()
-            .map_err(|_| ApiError::bad_request("MODPACK_SOURCE_INVALID", "Invalid FTB pack id"))?;
-        let pack_version_id: i32 = version_id.parse().map_err(|_| {
-            ApiError::bad_request("MODPACK_SOURCE_INVALID", "Invalid FTB version id")
+        let pack_id: i32 = project_id.parse().map_err(|e| {
+            ApiError::bad_request(
+                "MODPACK_SOURCE_INVALID",
+                format!("Invalid FTB pack id（{project_id}）: {e}"),
+            )
+        })?;
+        let pack_version_id: i32 = version_id.parse().map_err(|e| {
+            ApiError::bad_request(
+                "MODPACK_SOURCE_INVALID",
+                format!("Invalid FTB version id（{version_id}）: {e}"),
+            )
         })?;
 
         let ftb = self.core.create_ftb_source();

@@ -543,14 +543,12 @@ async fn upload(
     mut multipart: Multipart,
 ) -> ApiResult<Json<PluginInfo>> {
     let mut plugin_bytes: Option<Vec<u8>> = None;
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|_| ApiError::bad_request("INVALID_MULTIPART", "Expected multipart form"))?
-    {
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        ApiError::bad_request("INVALID_MULTIPART", format!("multipart 解析失败: {e}"))
+    })? {
         if field.name() == Some("plugin") {
-            let bytes = field.bytes().await.map_err(|_| {
-                ApiError::bad_request("INVALID_MULTIPART", "Expected multipart form")
+            let bytes = field.bytes().await.map_err(|e| {
+                ApiError::bad_request("INVALID_MULTIPART", format!("读取 multipart 字段失败: {e}"))
             })?;
             plugin_bytes = Some(bytes.to_vec());
             break;
@@ -616,8 +614,12 @@ async fn install_url(
             "url 不能为空",
         ));
     }
-    let parsed = url::Url::parse(raw)
-        .map_err(|_| ApiError::bad_request("INSTALL_URL_INVALID", "无效的下载 URL"))?;
+    let parsed = url::Url::parse(raw).map_err(|e| {
+        ApiError::bad_request(
+            "INSTALL_URL_INVALID",
+            format!("无效的下载 URL（{raw}）: {e}"),
+        )
+    })?;
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return Err(ApiError::bad_request(
             "INSTALL_URL_SCHEME_NOT_ALLOWED",
@@ -742,9 +744,12 @@ async fn plugin_file(AxumPath((id, path)): AxumPath<(String, String)>) -> ApiRes
             "File not found",
         ));
     };
-    let bytes = tokio::fs::read(&file_path)
-        .await
-        .map_err(|_| ApiError::not_found("PLUGIN_FILE_NOT_FOUND", "File not found"))?;
+    let bytes = tokio::fs::read(&file_path).await.map_err(|e| {
+        ApiError::not_found(
+            "PLUGIN_FILE_NOT_FOUND",
+            crate::util::error::io_context(file_path.display(), &e),
+        )
+    })?;
     let ext = file_path
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
@@ -964,8 +969,12 @@ async fn proxy(
     if req.url.trim().is_empty() {
         return Err(ApiError::bad_request("PROXY_URL_REQUIRED", "url 不能为空"));
     }
-    let parsed = url::Url::parse(&req.url)
-        .map_err(|_| ApiError::bad_request("PROXY_INVALID_URL", "无效的代理 URL"))?;
+    let parsed = url::Url::parse(&req.url).map_err(|e| {
+        ApiError::bad_request(
+            "PROXY_INVALID_URL",
+            format!("无效的代理 URL（{}）: {e}", req.url),
+        )
+    })?;
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return Err(ApiError::bad_request(
             "PROXY_SCHEME_NOT_ALLOWED",
@@ -1016,11 +1025,15 @@ async fn proxy(
     let timeout_ms = req.timeout_ms.unwrap_or(15000).clamp(1000, 60000);
     request = request.timeout(Duration::from_millis(timeout_ms as u64));
 
-    let resp = request.send().await.map_err(|_| {
+    let resp = request.send().await.map_err(|e| {
         ApiError::new(
             StatusCode::BAD_GATEWAY,
             "PROXY_UPSTREAM_FAILED",
-            "上游响应中断",
+            format!(
+                "上游响应中断（url={}）: {}",
+                req.url,
+                crate::util::error::error_chain(&e)
+            ),
         )
     })?;
 
@@ -1052,11 +1065,15 @@ async fn proxy(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
-    let body_bytes = resp.bytes().await.map_err(|_| {
+    let body_bytes = resp.bytes().await.map_err(|e| {
         ApiError::new(
             StatusCode::BAD_GATEWAY,
             "PROXY_UPSTREAM_FAILED",
-            "上游响应中断",
+            format!(
+                "上游响应体读取中断（url={}，status={status}）: {}",
+                req.url,
+                crate::util::error::error_chain(&e)
+            ),
         )
     })?;
 
@@ -1086,9 +1103,15 @@ async fn proxy(
 }
 
 async fn validate_target(host: &str, port: u16) -> Result<(), ApiError> {
-    let addrs = tokio::net::lookup_host((host, port))
-        .await
-        .map_err(|_| ApiError::bad_request("PROXY_DNS_FAILED", "无法解析目标主机"))?;
+    let addrs = tokio::net::lookup_host((host, port)).await.map_err(|e| {
+        ApiError::bad_request(
+            "PROXY_DNS_FAILED",
+            format!(
+                "无法解析目标主机 {host}:{port}: {}",
+                crate::util::error::error_chain(&e)
+            ),
+        )
+    })?;
     let mut any = false;
     for addr in addrs {
         any = true;
@@ -2394,9 +2417,12 @@ async fn archive_read_entry(
     let file = std::fs::File::open(&archive_path)?;
     let mut zip = zip::ZipArchive::new(file)
         .map_err(|e| ApiError::bad_request("ARCHIVE_INVALID", format!("不是有效的 zip: {e}")))?;
-    let mut entry = zip
-        .by_name(&req.entry_path)
-        .map_err(|_| ApiError::not_found("ARCHIVE_ENTRY_NOT_FOUND", "包内条目不存在"))?;
+    let mut entry = zip.by_name(&req.entry_path).map_err(|e| {
+        ApiError::not_found(
+            "ARCHIVE_ENTRY_NOT_FOUND",
+            format!("包内条目不存在（{}）: {e}", req.entry_path),
+        )
+    })?;
     if entry.size() > max {
         return Err(ApiError::bad_request(
             "ARCHIVE_ENTRY_TOO_LARGE",

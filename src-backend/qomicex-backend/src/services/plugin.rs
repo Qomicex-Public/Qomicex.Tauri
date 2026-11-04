@@ -537,8 +537,9 @@ pub fn install_from_package(
     let plugins_dir = settings::plugins_dir();
     let _ = std::fs::create_dir_all(&plugins_dir);
 
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(package_bytes))
-        .map_err(|_| ApiError::bad_request("INVALID_PLUGIN_PACKAGE", "Invalid plugin package"))?;
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(package_bytes)).map_err(|e| {
+        ApiError::bad_request("INVALID_PLUGIN_PACKAGE", format!("插件包不是有效 zip: {e}"))
+    })?;
 
     let mut manifest: PluginManifest = {
         let mut reader = match archive.by_name("manifest.json") {
