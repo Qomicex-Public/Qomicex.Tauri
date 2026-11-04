@@ -182,10 +182,11 @@ async function request<T>(path: string, options?: RequestOptions): Promise<T> {
   }
 
   if (!res.ok) {
+    // 只读一次响应体：clone + json + text 会让大错误页峰值内存翻倍。
+    const bodyText = await res.text().catch(() => '')
     let parsed: ApiErrorResponse | null = null
-    const bodyForLog = res.clone()
     try {
-      const json = await res.json()
+      const json = JSON.parse(bodyText)
       if (json && typeof json.code === 'string' && typeof json.message === 'string') {
         parsed = json as ApiErrorResponse
       }
@@ -200,12 +201,7 @@ async function request<T>(path: string, options?: RequestOptions): Promise<T> {
       )
       throw new ApiError(parsed)
     }
-    let snippet = ''
-    try {
-      snippet = (await bodyForLog.text()).slice(0, 500)
-    } catch {
-      // 读取失败不影响错误抛出
-    }
+    const snippet = bodyText.slice(0, 500)
     console.error(
       `[API] ${method} ${path} => ${res.status} UNKNOWN_ERROR${snippet ? ` body=${snippet}` : ''}`,
     )

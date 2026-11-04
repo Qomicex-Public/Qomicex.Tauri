@@ -45,16 +45,51 @@ export function formatError(error: unknown): string {
   return String(error)
 }
 
+function sanitizeExtraValue(value: unknown): unknown {
+  if (typeof value === 'string') {
+    // 本地绝对路径可能带用户名：只保留最后一段，避免随错误上报外发。
+    if (/^[A-Za-z]:[\\/]/.test(value) || value.startsWith('/') || value.startsWith('\\\\')) {
+      const name = value.split(/[\\/]/).filter(Boolean).pop() ?? 'path'
+      return `[path]/${name}`
+    }
+    return value
+  }
+  if (Array.isArray(value)) return value.map(sanitizeExtraValue)
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = sanitizeExtraValue(item)
+    }
+    return out
+  }
+  return value
+}
+
+/** 去掉 URL 的 userinfo/query，避免签名/令牌进入可上传日志。 */
+function redactSensitiveText(text: string): string {
+  return text.replace(/https?:\/\/[^\s"'`]+/g, (match) => {
+    try {
+      const url = new URL(match)
+      if (url.username) url.username = '***'
+      if (url.password) url.password = '***'
+      if (url.search) url.search = '?redacted'
+      return url.toString()
+    } catch {
+      return match
+    }
+  })
+}
+
 function buildLine(context: string, error: unknown, extra?: Record<string, unknown>): string {
   const parts = [`[${context}]`, formatError(error)]
   if (extra && Object.keys(extra).length > 0) {
     try {
-      parts.push(JSON.stringify(extra))
+      parts.push(JSON.stringify(sanitizeExtraValue(extra)))
     } catch {
       // 循环引用等序列化失败不影响主错误
     }
   }
-  return parts.join(' ')
+  return redactSensitiveText(parts.join(' '))
 }
 
 /** 记录一条带业务上下文的错误（经 console 拦截器转发到后端）。 */
