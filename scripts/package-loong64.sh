@@ -34,6 +34,10 @@ APP_NAME="qomicex-launcher"
 PKG_NAME="qomicex-launcher"
 PRODUCT_NAME="Qomicex Launcher"
 VERSION="${VERSION:?VERSION 环境变量必须提供}"
+# RPM 的 Version 字段不允许 '-'（'-' 是 NEVRA 的 version/release 分隔符）。
+# 预发布版本 1.1.2-alpha... 必须把 '-' 换成 '.' 才能交给 rpmbuild。
+RPM_VERSION="${VERSION#v}"
+RPM_VERSION="${RPM_VERSION//-/.}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${BIN:-$REPO_ROOT/src-tauri/target/$TRIPLE/release/Qomicex Launcher}"
 OUT_DIR="${OUT_DIR:-$REPO_ROOT/dist-loong64}"
@@ -133,14 +137,23 @@ if command -v rpmbuild >/dev/null; then
   mkdir -p "$TOPDIR"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
   tar -czf "$TOPDIR/SOURCES/$PKG_NAME-$VERSION.tar.gz" -C "$STAGE" appdir
 
+  # 宿主 rpmrc 只允许本机架构；追加 loongarch64 的 buildarch_compat，
+  # 否则 `rpmbuild --target loongarch64` 报 "No compatible architectures found"。
+  RPMRC_SYSTEM="$(rpm --eval '%{_rpmconfigdir}')/rpmrc"
+  RPMRC_LOCAL="$STAGE/rpmrc"
+  printf 'arch_canon: loongarch64: loongarch64 1\nbuildarch_compat: %s: loongarch64\n' \
+    "$(uname -m)" > "$RPMRC_LOCAL"
+
   cat > "$TOPDIR/SPECS/$PKG_NAME.spec" <<EOF
+%define debug_package %{nil}
 Name:           $PKG_NAME
-Version:        ${VERSION#v}
+Version:        $RPM_VERSION
 Release:        1
 Summary:        $DESCRIPTION
 License:        GPL-3.0-or-later
 URL:            $HOMEPAGE
 BuildArch:      $ARCH_RPM
+Source0:        $PKG_NAME-$VERSION.tar.gz
 AutoReqProv:    no
 Requires:       webkit2gtk4.1
 
@@ -164,17 +177,22 @@ cp -a appdir/. %{buildroot}/
 /usr/share/icons/hicolor/256x256@2/apps/$APP_NAME.png
 
 %changelog
+* Wed Nov 04 2026 Qomicex Launcher Contributors - $RPM_VERSION-1
+- Automated loongarch64 build
 EOF
 
-  rpmbuild --define "_topdir $TOPDIR" \
+  if ! rpmbuild --rcfile="$RPMRC_SYSTEM:$RPMRC_LOCAL" \
+           --define "_topdir $TOPDIR" \
            --define "_binary_payload w2.xzdio" \
            --target "$ARCH_RPM" \
-           -bb "$TOPDIR/SPECS/$PKG_NAME.spec" >/dev/null 2>&1 \
-    || die "rpmbuild 失败（去掉 >/dev/null 可看完整输出）"
+           -bb "$TOPDIR/SPECS/$PKG_NAME.spec" >"$STAGE/rpmbuild.log" 2>&1; then
+    cat "$STAGE/rpmbuild.log" >&2
+    die "rpmbuild 失败"
+  fi
 
   found=$(find "$TOPDIR/RPMS" -name '*.rpm' | head -1)
   [ -n "$found" ] || die "rpmbuild 未产出 rpm"
-  RPM_OUT="$OUT_DIR/${PKG_NAME}-${VERSION#v}-1.${ARCH_RPM}.rpm"
+  RPM_OUT="$OUT_DIR/${PKG_NAME}-${RPM_VERSION}-1.${ARCH_RPM}.rpm"
   cp "$found" "$RPM_OUT"
   log "  -> $RPM_OUT"
 else
