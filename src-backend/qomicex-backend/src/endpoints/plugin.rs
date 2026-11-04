@@ -617,7 +617,10 @@ async fn install_url(
     let parsed = url::Url::parse(raw).map_err(|e| {
         ApiError::bad_request(
             "INSTALL_URL_INVALID",
-            format!("无效的下载 URL（{raw}）: {e}"),
+            format!(
+                "无效的下载 URL（{}）: {e}",
+                crate::util::url::redact_url(raw)
+            ),
         )
     })?;
     if parsed.scheme() != "http" && parsed.scheme() != "https" {

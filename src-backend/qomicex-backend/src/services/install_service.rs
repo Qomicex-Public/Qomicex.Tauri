@@ -1740,7 +1740,7 @@ const COLD_START_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// 暂存区文件是否仍满足当前目标的完整性元数据。
 ///
-/// `resume_existing` 原先只比「记录的大小 == 磁盘大小」，同尺寸坏字节会被当成完成；
+/// `resume_existing` 只比「记录的大小 == 磁盘大小」时，同尺寸坏字节会被当成完成；
 /// 有 SHA-1 时必须重新算一遍，否则安装会带着损坏的库继续。
 fn staged_file_matches_target(path: &std::path::Path, target: &DownloadTarget) -> bool {
     use sha1::Digest;

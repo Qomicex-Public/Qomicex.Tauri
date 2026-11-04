@@ -233,8 +233,8 @@ pub fn loader_fallback_urls(url: &str) -> Vec<String> {
 ///
 /// 方向由 **URL 自身所在的源** 决定，不能由调用方的偏好推：同一个安装里，加载器
 /// 安装器 URL 可能是镜像形态（镜像优先时由核心库给出），而版本 JSON 里的库地址
-/// 恒为官方形态。旧实现只按偏好推方向，导致「偏好=镜像 + 官方 URL」完全没有兜底：
-/// NeoForge 版本 JSON 的 `maven.neoforged.net` 库在官方源不可达时重试耗尽、整包安装失败。
+/// 恒为官方形态；按偏好推方向会让其中一半没有兜底，官方 maven 不可达时重试耗尽、
+/// 整包安装失败。
 pub fn vanilla_fallback(url: &str) -> Vec<String> {
     let mut out: Vec<String> = official_to_bmclapi(url)
         .or_else(|| bmclapi_to_official(url))

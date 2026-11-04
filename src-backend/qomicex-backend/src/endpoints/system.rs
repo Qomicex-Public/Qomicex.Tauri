@@ -241,7 +241,8 @@ async fn open_url(Json(body): Json<OpenUrlRequest>) -> ApiResult<StatusCode> {
         ApiError::bad_request(
             "BAD_REQUEST",
             format!(
-                "打开 URL 失败（{url}）: {}",
+                "打开 URL 失败（{}）: {}",
+                crate::util::url::redact_url(url),
                 crate::util::error::error_chain(&e)
             ),
         )
