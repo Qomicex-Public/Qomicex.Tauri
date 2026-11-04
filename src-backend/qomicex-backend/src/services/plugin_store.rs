@@ -114,11 +114,13 @@ fn map_upstream_error(status: StatusCode, body: &serde_json::Value) -> Option<Ap
 }
 
 async fn store_send(builder: reqwest::RequestBuilder) -> Result<serde_json::Value, ApiError> {
-    let resp = builder
-        .timeout(API_TIMEOUT)
-        .send()
-        .await
-        .map_err(|_| ApiError::upstream("无法连接插件商店"))?;
+    let resp = builder.timeout(API_TIMEOUT).send().await.map_err(|e| {
+        let url = e.url().map(|u| u.as_str()).unwrap_or("?");
+        ApiError::upstream(format!(
+            "无法连接插件商店（url={url}）: {}",
+            crate::util::error::error_chain(&e)
+        ))
+    })?;
     let status =
         StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
@@ -353,7 +355,12 @@ async fn fetch_one(
         .timeout(DOWNLOAD_TIMEOUT)
         .send()
         .await
-        .map_err(|_| ApiError::upstream("插件包下载失败"))?;
+        .map_err(|e| {
+            ApiError::upstream(format!(
+                "插件包下载失败（url={url}）: {}",
+                crate::util::error::error_chain(&e)
+            ))
+        })?;
     if !resp.status().is_success() {
         return Err(ApiError::new(
             StatusCode::BAD_GATEWAY,
@@ -371,11 +378,12 @@ async fn fetch_one(
         ));
     }
     let mut bytes: Vec<u8> = Vec::new();
-    while let Some(chunk) = resp
-        .chunk()
-        .await
-        .map_err(|_| ApiError::upstream("插件包下载中断"))?
-    {
+    while let Some(chunk) = resp.chunk().await.map_err(|e| {
+        ApiError::upstream(format!(
+            "插件包下载中断（url={url}）: {}",
+            crate::util::error::error_chain(&e)
+        ))
+    })? {
         if bytes.len() + chunk.len() > MAX_PACKAGE_BYTES {
             return Err(ApiError::bad_request(
                 "STORE_TOO_LARGE",
@@ -422,11 +430,15 @@ pub async fn install(
 
 /// 校验包内 manifest.id 与请求的商店 slug 对应，防止串包安装。
 fn verify_package_matches_slug(package_bytes: &[u8], slug: &str) -> Result<(), ApiError> {
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(package_bytes))
-        .map_err(|_| ApiError::bad_request("INVALID_PLUGIN_PACKAGE", "插件包无效"))?;
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(package_bytes)).map_err(|e| {
+        ApiError::bad_request("INVALID_PLUGIN_PACKAGE", format!("插件包不是有效 zip: {e}"))
+    })?;
     let id: String = {
-        let mut reader = archive.by_name("manifest.json").map_err(|_| {
-            ApiError::bad_request("INVALID_PLUGIN_PACKAGE", "插件包缺少 manifest.json")
+        let mut reader = archive.by_name("manifest.json").map_err(|e| {
+            ApiError::bad_request(
+                "INVALID_PLUGIN_PACKAGE",
+                format!("插件包缺少 manifest.json: {e}"),
+            )
         })?;
         let mut json = String::new();
         std::io::Read::read_to_string(&mut reader, &mut json)
@@ -521,7 +533,13 @@ async fn authed_send(
         .timeout(API_TIMEOUT)
         .send()
         .await
-        .map_err(|_| ApiError::upstream("无法连接插件商店"))?;
+        .map_err(|e| {
+            let url = e.url().map(|u| u.as_str()).unwrap_or("?");
+            ApiError::upstream(format!(
+                "无法连接插件商店（url={url}）: {}",
+                crate::util::error::error_chain(&e)
+            ))
+        })?;
     let status =
         StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);

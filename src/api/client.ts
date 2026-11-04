@@ -182,24 +182,32 @@ async function request<T>(path: string, options?: RequestOptions): Promise<T> {
   }
 
   if (!res.ok) {
+    // 只读一次响应体：clone + json + text 会让大错误页峰值内存翻倍。
+    const bodyText = await res.text().catch(() => '')
     let parsed: ApiErrorResponse | null = null
     try {
-      const json = await res.json()
+      const json = JSON.parse(bodyText)
       if (json && typeof json.code === 'string' && typeof json.message === 'string') {
         parsed = json as ApiErrorResponse
       }
     } catch {
-      // 非 JSON 响应体（HTML 错误页 / 空体）是预期情况：下面按通用 HTTP 状态处理，
-      // 不需要知道 body 内容，静默回退即可。
+      // 非 JSON 响应体（HTML 错误页 / 空体）是预期情况：下面按通用 HTTP 状态处理。
     }
     if (parsed) {
-      console.error(`[API] ${method} ${path} => ${res.status} [${parsed.code}] ${parsed.message}${parsed.detail ? ` (${parsed.detail})` : ''}`)
+      console.error(
+        `[API] ${method} ${path} => ${res.status} [${parsed.code}] ${parsed.message}` +
+          `${parsed.detail ? ` (${parsed.detail})` : ''}` +
+          `${parsed.traceId ? ` traceId=${parsed.traceId}` : ''}`,
+      )
       throw new ApiError(parsed)
     }
-    console.error(`[API] ${method} ${path} => ${res.status} UNKNOWN_ERROR`)
+    const snippet = bodyText.slice(0, 500)
+    console.error(
+      `[API] ${method} ${path} => ${res.status} UNKNOWN_ERROR${snippet ? ` body=${snippet}` : ''}`,
+    )
     throw new ApiError({
       code: 'UNKNOWN_ERROR', message: `请求失败 (${res.status})`,
-      detail: null, traceId: '', timestamp: new Date().toISOString(), status: res.status,
+      detail: snippet || null, traceId: '', timestamp: new Date().toISOString(), status: res.status,
     })
   }
   if (res.status === 204) return undefined as T

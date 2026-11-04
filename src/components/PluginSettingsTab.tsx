@@ -9,6 +9,7 @@ import { consumePluginSettings } from '../plugins/pluginSettingsNav.ts'
 import { createSlotSandbox } from '../plugins/sandbox.ts'
 import { PluginSlot } from '../plugins/PluginSlot.tsx'
 import type { SandboxInstance } from '../plugins/sandbox.ts'
+import { logError } from '../lib/frontendLog.ts'
 
 /**
  * 插件设置：聚合所有贡献了 `contributes.settingsPages` 的 active 插件，
@@ -63,7 +64,7 @@ export default function PluginSettingsTab() {
         map.set(current.key, createSlotSandbox(current.plugin, current.file))
         bump((v) => v + 1)
       } catch (e) {
-        console.error('[plugin-settings] 挂载失败', current.key, e)
+        logError('plugin.settings.mount', e, { plugin: current.plugin, key: current.key })
       }
     }
   }, [entries, current])

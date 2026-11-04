@@ -45,6 +45,7 @@ import { scheduleFavoriteInstall } from '../stores/pendingFavoriteInstallStore.t
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 import ImportDialog from '../components/ImportDialog.tsx'
 import { cacheInvalidate, cacheGet, cacheSet } from '../lib/simple-cache.ts'
+import { logError } from '../lib/frontendLog.ts'
 import { logWindowUrl, openLogWindow } from '../lib/gameLogWindow.ts'
 import { useRunning } from '../contexts/RunningContext.tsx'
 
@@ -275,7 +276,7 @@ export default function Instances() {
     } catch (e) {
       // 失败时保留上一份列表、只记日志：一次网络抖动不该把刚渲染好的 73 个实例
       // 变成"未检测到版本"，更不该触发一次带残留清理的全量 sync。
-      console.error(e)
+      logError('instances.scan.fast', e, { dir })
       setScanning(false)
       return
     }
@@ -291,7 +292,7 @@ export default function Instances() {
         setScannedLocal(full)
         const instances = await syncScan(dir, full)
         if (!stale()) setBackedInstances(instances)
-      } catch (e) { console.error(e) }
+      } catch (e) { logError('instances.scan.full', e, { dir }) }
       return
     }
 
@@ -299,7 +300,7 @@ export default function Instances() {
     try {
       const instances = await syncScan(dir, versions)
       if (!stale()) setBackedInstances(instances)
-    } catch (e) { console.error(e) }
+    } catch (e) { logError('instances.sync.fast', e, { dir }) }
   }, [])
 
   useEffect(() => {
@@ -317,7 +318,7 @@ export default function Instances() {
         cacheSet('api-instances', instances)
         setDefaultInstanceId(def?.id ?? null)
         if (settings.gameDir) setCurrentDir(settings.gameDir)
-      } catch (e) { console.error(e) } finally { setLoading(false) }
+      } catch (e) { logError('instances.init', e) } finally { setLoading(false) }
     }
     init()
   }, [instanceRefreshKey])

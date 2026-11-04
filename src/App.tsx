@@ -28,6 +28,7 @@ import useCloseGuard from './hooks/useCloseGuard.ts'
 import ErrorBoundary from './components/ErrorBoundary.tsx'
 import { loadSettings, onSettingsChange, getSettings, isSettingsLoaded, DEFAULT_SETTINGS, type AppSettings } from './api/settings.ts'
 import { reportFrontendLog } from './api/logs.ts'
+import { logError, logWarn } from './lib/frontendLog.ts'
 import { pushConsole } from './lib/error-report.ts'
 import { I18nProvider, useI18n } from './i18n/index.tsx'
 import { RunningProvider, useRunning } from './contexts/RunningContext.tsx'
@@ -123,7 +124,7 @@ async function resolveAutoInstallPlan(
     if (state.hasPending) return null
     return plan
   } catch (e) {
-    console.warn('[updater] auto install state check failed:', e)
+    logWarn('updater.autoInstallState', e)
     return null
   }
 }
@@ -258,8 +259,8 @@ function AppContent() {
         }
       } catch (e) {
         // 引导失败时下面那句「缺少 Java」 alert 不会出现，用户卡在向导前；
-        // 这里用 console 而非 alert——引导期连弹两个对话框会把窗口挡死。
-        console.error('Java 运行时引导失败：', e)
+        // 这里用日志而非 alert——引导期连弹两个对话框会把窗口挡死。
+        logError('java.bootstrap', e, { backendState, settingsReady })
       }
     })()
   }, [backendState, settingsReady, showWizard, alert])
@@ -319,7 +320,7 @@ function AppContent() {
         setPendingUpdate(plan)
         setPendingUpdateRequired(required)
       } catch (e) {
-        console.warn('[updater] background check failed:', e)
+        logWarn('updater.backgroundCheck', e)
       }
     }, 5000)
     return () => clearTimeout(timer)
@@ -353,15 +354,17 @@ function AppContent() {
             // 与 installStagedOnLaunch 用同一个判定函数，两条路径结论必须一致。
             if (stagedChannelMatchesCurrent(state.pending.channel, APP_INFO.version)) {
               useUpdaterStore.getState().restoreStaged(state.pending)
-              console.warn('[updater] 有实例运行中，推迟自动安装到下次启动')
+              logWarn('updater.autoInstall.deferred', '有实例运行中，推迟到下次启动')
             } else {
-              console.warn('[updater] 暂存包属于别的通道，不提供自动安装入口')
+              logWarn('updater.autoInstall.channelMismatch', state.pending.channel, {
+                current: APP_INFO.version,
+              })
               void clearPendingInstallFromApi(dataDir)
             }
             return
           }
         } catch (e) {
-          console.warn('[updater] restore staged state failed:', e)
+          logWarn('updater.restoreStaged', e)
         }
         return
       }
@@ -427,7 +430,7 @@ function AppContent() {
           const map = buildUpdatesMap(res.updates ?? [], loaded)
           if (Object.keys(map).length > 0) usePluginStore.getState().setUpdates(map)
         })
-        .catch((e) => console.warn('[plugins] silent update check failed:', e))
+        .catch((e) => logWarn('plugins.updateCheck', e))
     })
   }, [backendState, loadPlugins])
 
@@ -581,7 +584,23 @@ function setConsoleLevel(level: string) {
 
 /** 把 console 参数转成可读字符串（对象序列化，Error 取 stack/message）。 */
 function fmtConsoleArg(arg: unknown): string {
-  if (arg instanceof Error) return arg.stack || arg.message || String(arg)
+  if (arg instanceof Error) {
+    // ApiError 额外带 code/status/detail/traceId：只打 stack 会把这些关键信息丢掉。
+    const e = arg as Error & {
+      code?: unknown
+      status?: unknown
+      detail?: unknown
+      traceId?: unknown
+    }
+    if (typeof e.code === 'string' && typeof e.status === 'number') {
+      const parts = [`[${e.code}] ${e.message}`, `status=${e.status}`]
+      if (e.detail) parts.push(`detail=${String(e.detail)}`)
+      if (e.traceId) parts.push(`traceId=${String(e.traceId)}`)
+      if (e.stack) parts.push(e.stack)
+      return parts.join(' | ')
+    }
+    return e.stack || e.message || String(e)
+  }
   if (typeof arg === 'object' && arg !== null) {
     try { return JSON.stringify(arg) } catch { return String(arg) }
   }
@@ -680,21 +699,7 @@ Console - Qomicex Launcher ======================================`)
     restoreSavedTheme()
   }, [])
 
-  useEffect(() => {
-    const handler = (event: PromiseRejectionEvent) => {
-      console.error('[GLOBAL] Unhandled Promise Rejection:', event.reason)
-    }
-    window.addEventListener('unhandledrejection', handler)
-    return () => window.removeEventListener('unhandledrejection', handler)
-  }, [])
-
-  useEffect(() => {
-    const handler = (event: ErrorEvent) => {
-      console.error('[GLOBAL] Uncaught Error:', event.error ?? event.message)
-    }
-    window.addEventListener('error', handler)
-    return () => window.removeEventListener('error', handler)
-  }, [])
+  // 全局未捕获异常由 main.tsx 的 installGlobalErrorLogging 统一上报，避免重复监听。
 
   // 独立日志窗口：直接渲染日志页（仍用 I18nProvider 供翻译），
   // 不加载主 Layout / 路由 / 后台健康轮询等重逻辑。

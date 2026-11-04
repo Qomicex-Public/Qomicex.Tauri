@@ -20,6 +20,7 @@ import { Popover } from '../components/ui'
 import { I18nBatchToolbar } from '../components/I18nBatchToolbar.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../components/ui'
 import { cn } from '../lib/utils.ts'
+import { logError } from '../lib/frontendLog.ts'
 import { cacheGet, cacheSet, cacheFresh, cacheInvalidate } from '../lib/simple-cache.ts'
 import { updateModsViaDownloadCenter } from '../lib/updateMods.ts'
 import { computeMissingDependencies } from '../lib/modDependencies.ts'
@@ -238,7 +239,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
         try { await deleteSave(instanceId, name) } catch { failed.push(name) }
       }
     } catch (e) {
-      console.error('Batch delete failed:', e)
+      logError('instance.batchDelete', e)
       // 外层失败（典型为动态导入 API 失败）时一项都未执行，全部计为失败，避免谎报成功
       failed.push(...names.filter(n => !failed.includes(n)))
     }
@@ -275,7 +276,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
                 <ListChecks className="h-3.5 w-3.5" />
               </button>
             </Tooltip>
-            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/saves').catch((e) => { console.error('Open folder failed:', gameDir + '/saves', e); notify(t('dialogs.common.openFailed'), 'error') })} className="gap-1.5 h-7 text-xs">
+            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/saves').catch((e) => { logError('instance.openFolder', e, { path: gameDir + '/saves' }); notify(t('dialogs.common.openFailed'), 'error') })} className="gap-1.5 h-7 text-xs">
               <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
           </div>
@@ -388,7 +389,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
         try { await deleteScreenshot(instanceId, name) } catch { failed.push(name) }
       }
     } catch (e) {
-      console.error('Batch delete failed:', e)
+      logError('instance.batchDelete', e)
       // 外层失败（典型为动态导入 API 失败）时一项都未执行，全部计为失败，避免谎报成功
       failed.push(...names.filter(n => !failed.includes(n)))
     }
@@ -425,7 +426,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
                 <ListChecks className="h-3.5 w-3.5" />
               </button>
             </Tooltip>
-            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/screenshots').catch((e) => { console.error('Open folder failed:', gameDir + '/screenshots', e); notify(t('dialogs.common.openFailed'), 'error') })} className="gap-1.5 h-7 text-xs">
+            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/screenshots').catch((e) => { logError('instance.openFolder', e, { path: gameDir + '/screenshots' }); notify(t('dialogs.common.openFailed'), 'error') })} className="gap-1.5 h-7 text-xs">
               <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
           </div>
@@ -668,14 +669,14 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
       void applyEnrich()
     } catch (e) {
       if (isStale()) return
-      console.error('Load mods failed:', e)
+      logError('instance.loadMods', e, { gameDir })
       setMods([])
       setLoadError(e instanceof Error ? e.message : String(e))
     } finally {
       if (pollId !== undefined) clearInterval(pollId)
       if (!isStale()) setLoading(false)
     }
-  }, [instanceId])
+  }, [instanceId, gameDir])
 
   /**
    * 统一的「失效后重载」：单卡片删除与批量操作共用同一条刷新路径。
@@ -876,7 +877,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
       }
       await refreshMods()
       setSelected(new Set())
-    } catch (e) { console.error('Batch action failed:', e) }
+    } catch (e) { logError('instance.batchAction', e) }
     setBatchProcessing(false)
     setBatchConfirm(null)
   }, [batchConfirm, selected, instanceId, refreshMods, notify, t])
@@ -986,7 +987,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
               </button>
             </Tooltip>
             <Tooltip content={t('instanceDetail.openFolder')}>
-              <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/mods').catch((e) => { console.error('Open folder failed:', gameDir + '/mods', e); notify(t('dialogs.common.openFailed'), 'error') })} className="h-7 w-7 p-0">
+              <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/mods').catch((e) => { logError('instance.openFolder', e, { path: gameDir + '/mods' }); notify(t('dialogs.common.openFailed'), 'error') })} className="h-7 w-7 p-0">
                 <FolderOpen className="h-3.5 w-3.5" />
               </Button>
             </Tooltip>
@@ -1276,7 +1277,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
         try { await deleteResourcePack(instanceId, name) } catch { failed.push(name) }
       }
     } catch (e) {
-      console.error('Batch delete failed:', e)
+      logError('instance.batchDelete', e)
       // 外层失败（典型为动态导入 API 失败）时一项都未执行，全部计为失败，避免谎报成功
       failed.push(...names.filter(n => !failed.includes(n)))
     }
@@ -1331,7 +1332,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
               </button>
             </Tooltip>
             <Tooltip content={t('instanceDetail.openFolder')}>
-              <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/resourcepacks').catch((e) => { console.error('Open folder failed:', gameDir + '/resourcepacks', e); notify(t('dialogs.common.openFailed'), 'error') })} className="h-7 w-7 p-0">
+              <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/resourcepacks').catch((e) => { logError('instance.openFolder', e, { path: gameDir + '/resourcepacks' }); notify(t('dialogs.common.openFailed'), 'error') })} className="h-7 w-7 p-0">
                 <FolderOpen className="h-3.5 w-3.5" />
               </Button>
             </Tooltip>
@@ -1531,7 +1532,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
         try { await deleteShaderPack(instanceId, name) } catch { failed.push(name) }
       }
     } catch (e) {
-      console.error('Batch delete failed:', e)
+      logError('instance.batchDelete', e)
       // 外层失败（典型为动态导入 API 失败）时一项都未执行，全部计为失败，避免谎报成功
       failed.push(...names.filter(n => !failed.includes(n)))
     }
@@ -1584,7 +1585,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
               </button>
             </Tooltip>
             <Tooltip content={t('instanceDetail.openFolder')}>
-              <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/shaderpacks').catch((e) => { console.error('Open folder failed:', gameDir + '/shaderpacks', e); notify(t('dialogs.common.openFailed'), 'error') })} className="h-7 w-7 p-0">
+              <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/shaderpacks').catch((e) => { logError('instance.openFolder', e, { path: gameDir + '/shaderpacks' }); notify(t('dialogs.common.openFailed'), 'error') })} className="h-7 w-7 p-0">
                 <FolderOpen className="h-3.5 w-3.5" />
               </Button>
             </Tooltip>
@@ -1782,7 +1783,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
         try { await deleteDataPack(instanceId, name) } catch { failed.push(name) }
       }
     } catch (e) {
-      console.error('Batch delete failed:', e)
+      logError('instance.batchDelete', e)
       // 外层失败（典型为动态导入 API 失败）时一项都未执行，全部计为失败，避免谎报成功
       failed.push(...names.filter(n => !failed.includes(n)))
     }
@@ -1835,7 +1836,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
               </button>
             </Tooltip>
             <Tooltip content={t('instanceDetail.openFolder')}>
-              <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/datapacks').catch((e) => { console.error('Open folder failed:', gameDir + '/datapacks', e); notify(t('dialogs.common.openFailed'), 'error') })} className="h-7 w-7 p-0">
+              <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/datapacks').catch((e) => { logError('instance.openFolder', e, { path: gameDir + '/datapacks' }); notify(t('dialogs.common.openFailed'), 'error') })} className="h-7 w-7 p-0">
                 <FolderOpen className="h-3.5 w-3.5" />
               </Button>
             </Tooltip>
@@ -2043,7 +2044,7 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
         try { await deleteSchematic(instanceId, name) } catch { failed.push(name) }
       }
     } catch (e) {
-      console.error('Batch delete failed:', e)
+      logError('instance.batchDelete', e)
       // 外层失败（典型为动态导入 API 失败）时一项都未执行，全部计为失败，避免谎报成功
       failed.push(...names.filter(n => !failed.includes(n)))
     }
@@ -2082,7 +2083,7 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
                 <ListChecks className="h-3.5 w-3.5" />
               </button>
             </Tooltip>
-            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/schematics').catch((e) => { console.error('Open folder failed:', gameDir + '/schematics', e); notify(t('dialogs.common.openFailed'), 'error') })} className="gap-1.5 h-7 text-xs">
+            <Button size="sm" variant="ghost" onClick={() => openFolder(gameDir + '/schematics').catch((e) => { logError('instance.openFolder', e, { path: gameDir + '/schematics' }); notify(t('dialogs.common.openFailed'), 'error') })} className="gap-1.5 h-7 text-xs">
               <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.openFolder')}
             </Button>
             <Button size="sm" onClick={() => fileInputRef.current?.click()} disabled={importing} className="gap-1.5 h-7 text-xs">
@@ -3531,7 +3532,7 @@ export default function InstanceDetailPage() {
               <Star className={cn('h-4 w-4', isDefault && 'text-yellow-400')} />
             </Button>
           </Tooltip>
-          <Button variant="outline" size="icon" onClick={() => openFolder(gameDir).catch((e) => { console.error('Open folder failed:', gameDir, e); notify(t('dialogs.common.openFailed'), 'error') })}>
+          <Button variant="outline" size="icon" onClick={() => openFolder(gameDir).catch((e) => { logError('instance.openFolder', e, { path: gameDir }); notify(t('dialogs.common.openFailed'), 'error') })}>
             <FolderOpen className="h-4 w-4" />
           </Button>
         </div>
@@ -3693,7 +3694,7 @@ export default function InstanceDetailPage() {
                   {repairing && (
                     <span className="self-center text-xs text-muted-foreground">{t('instanceDetail.overview.repairing', { progress: repairProgress })}</span>
                   )}
-                  <Button size="sm" variant="outline" className="gap-2" onClick={() => openFolder(gameDir).catch((e) => { console.error('Open folder failed:', gameDir, e); notify(t('dialogs.common.openFailed'), 'error') })}>
+                  <Button size="sm" variant="outline" className="gap-2" onClick={() => openFolder(gameDir).catch((e) => { logError('instance.openFolder', e, { path: gameDir }); notify(t('dialogs.common.openFailed'), 'error') })}>
                     <FolderOpen className="h-3.5 w-3.5" />{t('instanceDetail.overview.openGameDir')}
                   </Button>
                   <Button size="sm" variant="outline" className="gap-2" onClick={() => setExportOpen(true)}>
@@ -3751,7 +3752,7 @@ export default function InstanceDetailPage() {
                             const updated = await updateInstance(id, { icon: name })
                             setInstance(updated)
                             cacheSet(`api-instance-${id}`, updated)
-                          } catch (e) { console.error('Update icon failed:', e) }
+                          } catch (e) { logError('instance.updateIcon', e) }
                         }}
                         className={cn(
                           'flex items-center justify-center rounded-lg border p-1 transition-colors hover:border-muted-foreground/30',

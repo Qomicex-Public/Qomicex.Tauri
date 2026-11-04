@@ -43,7 +43,19 @@ pub fn init_file_log(log: Arc<FileLog>) {
 }
 
 /// 向全局缓冲追加一行（未初始化时静默丢弃），广播到 SSE 订阅者，并双写到文件日志。
+///
+/// tracing 的 fmt 行自带 `[YYYY-MM-DD HH:MM:SS.mmm]` 前缀；downloader / frontend /
+/// plugin 等直接走 `trace_append` 的行没有时间戳，这里统一补上，否则用户日志无法
+/// 按时间对齐事件。
 pub fn trace_append(line: String) {
+    let line = if line.starts_with("[20") {
+        line
+    } else {
+        format!(
+            "[{}] {line}",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f")
+        )
+    };
     if let Some(b) = TRACE_BUFFER.get() {
         b.append(line.clone());
     }

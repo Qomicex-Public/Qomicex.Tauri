@@ -10,6 +10,7 @@ import { ContextMenu, ContextMenuItem } from './ContextMenu.tsx'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
 import { Button } from './ui'
 import { cn } from '../lib/utils.ts'
+import { logError } from '../lib/frontendLog.ts'
 import { formatBytes } from '../lib/download-format.ts'
 import { MinecraftText } from './MinecraftText.tsx'
 import { enableMod, disableMod, deleteMod } from '../api/instance-files.ts'
@@ -96,7 +97,7 @@ export default function ModCard({
         await enableMod(instanceId, disabledName)
       }
       onToggle(mod.fileName)
-    } catch (e) { console.error('Toggle mod failed:', e) }
+    } catch (e) { logError('mod.toggle', e, { instanceId, fileName: mod.fileName }) }
     setToggling(false)
   }, [instanceId, mod, onToggle])
 
@@ -178,7 +179,7 @@ export default function ModCard({
         // 失败不能静默：目录缺失 / 平台打开器拒绝时给出可见反馈（与其它资源卡片一致）
         if (!modsDir) { notify(t('dialogs.common.openFailed'), 'error'); return }
         openPath(modsDir).catch((e) => {
-          console.error('Open mods folder failed:', modsDir, e)
+          logError('mod.openFolder', e, { path: modsDir })
           notify(t('dialogs.common.openFailed'), 'error')
         })
       },

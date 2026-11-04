@@ -87,6 +87,39 @@ impl ApiError {
             status: StatusCode::BAD_GATEWAY,
         }
     }
+
+    /// 上游请求失败 + 完整错误链（DNS/TLS/连接重置/解析位置）。
+    pub fn upstream_cause(
+        context: impl std::fmt::Display,
+        err: &(dyn std::error::Error + 'static),
+    ) -> Self {
+        let chain = crate::util::error::error_chain(err);
+        Self {
+            code: "UPSTREAM_ERROR".to_string(),
+            message: format!("Upstream request failed: {context}: {chain}"),
+            detail: Some(chain),
+            status: StatusCode::BAD_GATEWAY,
+        }
+    }
+
+    /// 补充 detail（不覆盖已有 detail）。
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        if self.detail.is_none() {
+            self.detail = Some(detail.into());
+        }
+        self
+    }
+}
+
+/// `ApiError` 转成响应时附带的元数据；由 `middleware::error_log` 读取并写日志。
+/// 这样日志能同时拿到请求 method/uri 与错误 code/detail/traceId。
+#[derive(Clone, Debug)]
+pub struct ApiErrorMeta {
+    pub code: String,
+    pub message: String,
+    pub detail: Option<String>,
+    pub trace_id: String,
+    pub status: u16,
 }
 
 /// 序列化到响应体的 ApiError（camelCase，忽略详细/空值）。
@@ -105,15 +138,26 @@ pub struct ApiErrorBody {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        let trace_id = uuid::Uuid::new_v4().to_string();
+        let meta = ApiErrorMeta {
+            code: self.code.clone(),
+            message: self.message.clone(),
+            detail: self.detail.clone(),
+            trace_id: trace_id.clone(),
+            status: self.status.as_u16(),
+        };
         let body = ApiErrorBody {
             code: self.code,
             message: self.message,
             detail: self.detail,
-            trace_id: uuid::Uuid::new_v4().to_string(),
+            trace_id,
             timestamp: chrono::Utc::now().to_rfc3339(),
             status: self.status.as_u16(),
         };
-        (self.status, Json(body)).into_response()
+        let mut response = (self.status, Json(body)).into_response();
+        // 供 middleware::error_log 读取：日志里同时带上 method/uri 与错误详情。
+        response.extensions_mut().insert(meta);
+        response
     }
 }
 
@@ -149,6 +193,23 @@ mod tests {
     fn upstream_error_code_unchanged_for_other_callers() {
         let err = ApiError::upstream("资源站不可达");
         assert_eq!(err.code, "UPSTREAM_ERROR");
+    }
+
+    /// 回归：错误响应必须携带 ApiErrorMeta，否则 middleware::error_log 拿不到
+    /// code/detail/traceId，用户日志又退化成只有 status。
+    #[test]
+    fn api_error_response_carries_log_meta() {
+        let response = ApiError::bad_request("TEST_CODE", "测试消息")
+            .with_detail("底层原因")
+            .into_response();
+        let meta = response
+            .extensions()
+            .get::<ApiErrorMeta>()
+            .expect("ApiError 响应必须挂 ApiErrorMeta");
+        assert_eq!(meta.code, "TEST_CODE");
+        assert_eq!(meta.status, 400);
+        assert_eq!(meta.detail.as_deref(), Some("底层原因"));
+        assert!(!meta.trace_id.is_empty());
     }
 }
 

@@ -553,7 +553,7 @@ async fn scan_mods_to_entries(
     version_segmented: bool,
     loader: Option<&str>,
 ) -> Vec<GameModEntry> {
-    let mods = core.local_resource_provider().create_mods(
+    let mods = core.local_resource_provider().create_mods_with_loader(
         &abs_game_dir(game_dir),
         version,
         version_segmented,
@@ -1580,7 +1580,7 @@ async fn match_instances(
                     let isolated = inst
                         .version_isolation
                         .unwrap_or_else(crate::settings::get_global_version_isolation);
-                    let mods = core.local_resource_provider().create_mods(
+                    let mods = core.local_resource_provider().create_mods_with_loader(
                         &abs_game_dir(&inst.game_dir),
                         &inst.name,
                         isolated,

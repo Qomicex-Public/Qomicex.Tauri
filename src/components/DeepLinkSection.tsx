@@ -7,6 +7,7 @@ import { Link2, RotateCw } from 'lucide-react'
 import { Button, Switch, Tooltip, useMessageBox } from './ui'
 import { SettingRow, SettingSection } from './settings/SettingRow.tsx'
 import { useI18n } from '../i18n/index.tsx'
+import { logError } from '../lib/frontendLog.ts'
 
 /** `deep_link_status` / `set_deep_link_enabled` 的返回结构（与 Rust 侧 camelCase 对齐）。 */
 interface DeepLinkStatus {
@@ -44,7 +45,7 @@ export default function DeepLinkSection() {
     try {
       setStatus(await invoke<DeepLinkStatus>('deep_link_status'))
     } catch (e) {
-      console.error('[settings] deep_link_status failed:', e)
+      logError('deeplink.status', e)
     }
   }, [])
 
@@ -62,7 +63,7 @@ export default function DeepLinkSection() {
         notify(t('settings.integration.deepLinkFailed'), 'error')
       }
     } catch (e) {
-      console.error('[settings] set_deep_link_enabled failed:', e)
+      logError('deeplink.setEnabled', e)
       notify(t('settings.integration.deepLinkFailed'), 'error')
     } finally {
       setBusy(false)

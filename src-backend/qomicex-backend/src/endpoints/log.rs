@@ -251,10 +251,21 @@ pub fn router() -> Router<SharedState> {
 /// POST /api/logs/frontend — 前端 console 日志上报（构建版无控制台时仍可查看）。
 /// body: `{ "level": "warn", "message": "..." }`，写入 trace 缓冲 + 落盘文件。
 async fn frontend_log(Json(body): Json<FrontendLogRequest>) -> ApiResult<StatusCode> {
-    let level = body.level.unwrap_or_else(|| "log".to_string());
+    let level = match body.level.as_deref() {
+        Some("error") => "error",
+        Some("warn") => "warn",
+        Some("info") => "info",
+        Some("debug") => "debug",
+        _ => "log",
+    };
     let message = body.message.unwrap_or_default();
-    // 消息可含换行（多行 console），逐行写入便于查看器按行过滤
-    for l in message.lines() {
+    if message.trim().is_empty() {
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    // 防滥用：单条上报最多 64KiB / 200 行；按字符截断，避免切断 UTF-8。
+    let message: String = message.chars().take(64 * 1024).collect();
+    let message = crate::util::url::redact_urls_in_text(&message);
+    for l in message.lines().take(200) {
         crate::services::trace::trace_append(format!("[frontend:{level}] {l}"));
     }
     Ok(StatusCode::NO_CONTENT)
