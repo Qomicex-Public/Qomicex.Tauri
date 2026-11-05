@@ -1,0 +1,138 @@
+name: Retry starved macOS jobs
+
+# 托管 macOS runner 容量不足时，作业会在排队约 15 分钟后被判 cancelled：
+# runner_name 为空、steps 为空，annotation 为 "The job was not acquired by
+# Runner of type hosted even after multiple attempts"。这类取消不是构建失败，
+# 重排一次通常就能拿到 runner。
+#
+# 重跑只能等整次 run 结束后做：GitHub 拒绝重跑进行中的 run（403 "This
+# workflow run cannot be retried"），而 run 的完成判定又包含本作业，故不能
+# 写在 release.yml 内部，只能由 workflow_run 事件触发。
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  retry:
+    # 失败与取消都要看：macOS 被饿死的 run 是否被判 cancelled 取决于是不是
+    # 还有其他失败作业，两种结论都出现过。人工取消的 run 也会进来，但下面的
+    # 检测要求「所有阻塞项都是零步骤的 macOS 作业」，已启动的作业 steps 非空、
+    # 会被排除，因此不会把人主动中止的发布重排回来。
+    #
+    # job 级 if 读不到 env 上下文，上限只能写成字面量，须与下面
+    # Re-run 步骤里的 MAX_ATTEMPT 保持一致。
+    if: |
+      (github.event.workflow_run.conclusion == 'failure' ||
+       github.event.workflow_run.conclusion == 'cancelled') &&
+      github.event.workflow_run.run_attempt < 4
+    runs-on: ubuntu-latest
+    steps:
+      - name: Detect starved macOS jobs
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          # gh api 遇到瞬时 5xx / 限流会非零退出。此处失败就等于放弃自动重排，
+          # 而不会再有第二个 completed 事件来兜，故加有限重试。
+          gh_get() {
+            local n=1 out
+            while [ "$n" -le 3 ]; do
+              if out=$(gh api "$@" 2>&1); then printf '%s' "$out"; return 0; fi
+              echo "::warning::gh api 失败（第 $n/3 次）：$out" >&2
+              [ "$n" -eq 3 ] && return 1
+              sleep $((n * 5)); n=$((n + 1))
+            done
+          }
+
+          jobs=$(gh_get "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100") || {
+            echo "::error::无法读取作业列表，放弃本次自动重排"; exit 1; }
+
+          # 判据：阻塞发布的作业（非 success / skipped，且不是可选平台
+          # loongarch64）必须全部是「cancelled + 零步骤 + 未分配 runner」的
+          # macOS 作业。真实构建失败带 steps、超时是 timed_out，都不会命中，
+          # 因此不会对代码问题反复重排。
+          #
+          # runner_name 未分配时为 null（缺字段时 jq 同样得到 null），不能只判
+          # 空字符串。
+          verdict=$(jq -r '
+            [ .jobs[]
+              | select(.conclusion != null and .conclusion != "success" and .conclusion != "skipped")
+              | select(.name != "loongarch64") ] as $blockers
+            | [ .jobs[]
+              | select(.conclusion == "cancelled")
+              | select(((.steps // []) | length) == 0)
+              | select(.runner_name == null or .runner_name == "")
+              | select(.name | startswith("macos-")) ] as $starved
+            | [ ($blockers | map(.name) | sort), ($starved | map(.name) | sort),
+                (($blockers | length) > 0
+                 and ($starved | length) > 0
+                 and (($blockers | map(.name) | sort) == ($starved | map(.name) | sort))) ]
+            ' <<<"$jobs")
+
+          echo "阻塞项: $(jq -r '.[0] | join(", ")' <<<"$verdict")"
+          echo "饥饿的 macOS 作业: $(jq -r '.[1] | join(", ")' <<<"$verdict")"
+
+          if [ "$(jq -r '.[2]' <<<"$verdict")" = "true" ]; then
+            job_id=$(jq -r '[[.jobs[] | select(.conclusion == "cancelled")
+                        | select(((.steps // []) | length) == 0)
+                        | select(.runner_name == null or .runner_name == "")
+                        | select(.name | startswith("macos-"))] | sort_by(.name) | .[0].id] | .[0]' <<<"$jobs")
+            echo "retry=true"   >> "$GITHUB_OUTPUT"
+            echo "job_id=$job_id" >> "$GITHUB_OUTPUT"
+          else
+            echo "retry=false"  >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Re-run a starved macOS job
+        if: steps.detect.outputs.retry == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          JOB_ID: ${{ steps.detect.outputs.job_id }}
+          MAX_ATTEMPT: 4
+        run: |
+          gh_api_retry() {
+            local n=1 out
+            while [ "$n" -le 3 ]; do
+              if out=$(gh api "$@" 2>&1); then printf '%s' "$out"; return 0; fi
+              echo "::warning::gh api 失败（第 $n/3 次）：$out" >&2
+              [ "$n" -eq 3 ] && return 1
+              sleep $((n * 5)); n=$((n + 1))
+            done
+          }
+
+          # workflow_run 事件可能延迟投递，携带的 run_attempt 会过时。上限必须按
+          # run 的当前值判断，否则旧事件会在已达上限时再发起一次重跑。
+          current=$(gh_api_retry "repos/$REPO/actions/runs/$RUN_ID" --jq '.run_attempt') || {
+            echo "::error::无法读取当前 attempt"; exit 1; }
+          if [ "$current" -ge "$MAX_ATTEMPT" ]; then
+            echo "::warning::已达重试上限（attempt=$current，上限 $MAX_ATTEMPT），不再重排"
+            exit 0
+          fi
+
+          # 按作业重跑而不是 run 级 rerun：
+          # - run 级重跑会重跑已成功的平台作业，而 upload-artifact v4+ 对同名
+          #   artifact 返回 409，重跑必然失败；
+          # - run 级重跑还会重跑 setup，alpha 版本按当前日期与 tag 重算，重试可能
+          #   发到与原计划不同的版本号。
+          # 作业级重跑只重跑该 macOS 作业及其下游 release，上面两点都不成立。
+          #
+          # 一次只重跑一个：任意重跑都会开新的 attempt，另一个作业的 id 属于旧
+          # attempt，第二次调用会被 403 "Only jobs from the current attempt can be
+          # re-run" 拒绝。若两个 macOS 作业都被饿死，下一个 attempt 会再次触发
+          # 本工作流，从而补上第二个。
+          echo "::warning::macOS runner 未分配导致作业被取消，重跑作业 $JOB_ID（当前 attempt=$current）"
+          # POST 是副作用操作，不能盲重试：第一次请求若已被受理但响应丢失，
+          # 重试会对同一作业再开一个 attempt。失败即显式报错，交给人工判断。
+          if ! gh api -X POST "repos/$REPO/actions/jobs/$JOB_ID/rerun" >/dev/null; then
+            echo "::error::作业 $JOB_ID 的重跑请求失败（不自动重试，避免重复触发 attempt）"
+            exit 1
+          fi
