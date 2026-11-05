@@ -130,4 +130,9 @@ jobs:
           # re-run" 拒绝。若两个 macOS 作业都被饿死，下一个 attempt 会再次触发
           # 本工作流，从而补上第二个。
           echo "::warning::macOS runner 未分配导致作业被取消，重跑作业 $JOB_ID（当前 attempt=$current）"
-          gh_api_retry -X POST "repos/$REPO/actions/jobs/$JOB_ID/rerun"
+          # POST 是副作用操作，不能盲重试：第一次请求若已被受理但响应丢失，
+          # 重试会对同一作业再开一个 attempt。失败即显式报错，交给人工判断。
+          if ! gh api -X POST "repos/$REPO/actions/jobs/$JOB_ID/rerun" >/dev/null; then
+            echo "::error::作业 $JOB_ID 的重跑请求失败（不自动重试，避免重复触发 attempt）"
+            exit 1
+          fi
