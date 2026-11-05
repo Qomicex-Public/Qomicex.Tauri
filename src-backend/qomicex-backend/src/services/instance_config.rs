@@ -37,6 +37,7 @@ const ALLOWED_KEYS: &[&str] = &[
     "loaderVersion",
     "javaPath",
     "maxMemory",
+    "memoryMode",
     "jvmArgs",
     "isHidden",
     "versionIsolation",

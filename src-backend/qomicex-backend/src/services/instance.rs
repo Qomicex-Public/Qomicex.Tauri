@@ -27,6 +27,9 @@ pub struct GameInstance {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub java_path: Option<String>,
     pub max_memory: i32,
+    /// 内存模式：缺失/null 与 "auto" = 启动前按模组数自动重算；"custom" = 使用用户值。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_mode: Option<String>,
     pub game_dir: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account_name: Option<String>,
@@ -108,6 +111,7 @@ impl Default for GameInstance {
             loader_version: None,
             java_path: None,
             max_memory: DEFAULT_MAX_MEMORY,
+            memory_mode: None,
             game_dir: ".minecraft".to_string(),
             account_name: None,
             account_uuid: None,
@@ -582,6 +586,12 @@ impl InstanceService {
             "maxMemory",
             old.max_memory != DEFAULT_MAX_MEMORY,
             next.max_memory != DEFAULT_MAX_MEMORY,
+        );
+        track(
+            &mut cleared,
+            "memoryMode",
+            old.memory_mode.is_some(),
+            next.memory_mode.is_some(),
         );
         track(
             &mut cleared,

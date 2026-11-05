@@ -25,7 +25,7 @@ import { cacheGet, cacheSet, cacheFresh, cacheInvalidate } from '../lib/simple-c
 import { updateModsViaDownloadCenter } from '../lib/updateMods.ts'
 import { computeMissingDependencies } from '../lib/modDependencies.ts'
 import { useMessageBox } from '../components/ui'
-import { getInstance, updateInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting, getInstanceGroups } from '../api/instance.ts'
+import { getInstance, updateInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting, getInstanceGroups, getMemoryRecommendation } from '../api/instance.ts'
 import type { InstanceGroup } from '../api/instance.ts'
 import { openFolder, getSettings } from '../api/settings.ts'
 import { getRuntimes, getValidRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
@@ -2943,6 +2943,7 @@ const INSTANCE_PATCH_FIELDS = new Set<string>([
   'loaderVersion',
   'javaPath',
   'maxMemory',
+  'memoryMode',
   'jvmArgs',
   'isHidden',
   'versionIsolation',
@@ -2974,6 +2975,11 @@ function toInstancePatch(field: string, value: unknown): InstancePatch | null {
   if (field === 'versionIsolation') {
     // undefined 也代表“跟随全局”：必须显式发 null 清除，不能当成“未修改”。
     return { versionIsolation: value === undefined ? null : (value as boolean | null) }
+  }
+  if (field === 'memoryMode') {
+    // undefined 代表“恢复默认 auto”：必须显式发 null 清除独立配置里的值。
+    if (value === 'auto' || value === 'custom') return { memoryMode: value }
+    return { memoryMode: null }
   }
   if (value === undefined) return null
   return { [field]: value } as InstancePatch
@@ -3072,7 +3078,7 @@ export default function InstanceDetailPage() {
         setAccounts(accts)
         setSysInfo(sys)
         setIsDefault(def?.id === id)
-        setMemoryMode(sys ? 'auto' : 'custom')
+        setMemoryMode(inst.memoryMode === 'custom' ? 'custom' : 'auto')
         getInstanceGroups().then(setGroups).catch(() => {})
       } catch { if (!cancelled) navigate('/instances') }
       if (!cancelled) setLoading(false)
@@ -3448,6 +3454,23 @@ export default function InstanceDetailPage() {
     if (patch) queuePatch(patch)
   }, [queuePatch])
 
+  /** 自动内存：后端按实际模组数与系统内存推荐，切到 auto 并写入推荐值。 */
+  const handleAutoMemory = useCallback(async () => {
+    if (!id) return
+    const requestId = id
+    setMemoryMode('auto')
+    update('memoryMode', 'auto')
+    try {
+      const rec = await getMemoryRecommendation(requestId)
+      // 已切到别的实例：推荐值不能写进当前页面。
+      if (currentIdRef.current !== requestId) return
+      update('maxMemory', rec.recommendedMb)
+    } catch (e) {
+      // 推荐接口失败仍保留 auto：启动前后端会再算一次，避免设置页卡在旧值。
+      notify(e instanceof ApiError ? e.displayMessage : String(e), 'error')
+    }
+  }, [id, update, notify])
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center p-8">
@@ -3800,16 +3823,16 @@ export default function InstanceDetailPage() {
                 <SettingRow label={t('instanceDetail.settingsTab.skipIntegrity')} description={t('instanceDetail.settingsTab.skipIntegrityDesc')} control={<Switch checked={form.skipIntegrityCheck === true} onCheckedChange={(c) => update('skipIntegrityCheck', c === true)} />} />
               </SettingSection>
 
-              <SettingSection title={t('instanceDetail.settingsTab.memoryAllocation')} icon={<MemoryStick className="h-4 w-4" />} action={<ResetButton fields={['maxMemory']} />}>
+              <SettingSection title={t('instanceDetail.settingsTab.memoryAllocation')} icon={<MemoryStick className="h-4 w-4" />} action={<ResetButton fields={['maxMemory', 'memoryMode']} />}>
                 <div className="space-y-3 px-4 py-3">
                   <div className="flex items-center gap-2">
-                    <button onClick={() => {
-                      setMemoryMode('auto')
-                      if (sysInfo) update('maxMemory', Math.max(512, Math.floor(sysInfo.availableMemory * 0.7)))
-                    }} className={cn('inline-flex items-center gap-1.5 h-9 rounded-lg border px-3.5 text-sm transition-colors', memoryMode === 'auto' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
+                    <button onClick={() => { void handleAutoMemory() }} className={cn('inline-flex items-center gap-1.5 h-9 rounded-lg border px-3.5 text-sm transition-colors', memoryMode === 'auto' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
                       <Bot className="h-3.5 w-3.5" />{t('instanceDetail.settingsTab.auto')}
                     </button>
-                    <button onClick={() => setMemoryMode('custom')} className={cn('inline-flex items-center gap-1.5 h-9 rounded-lg border px-3.5 text-sm transition-colors', memoryMode === 'custom' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
+                    <button onClick={() => {
+                      setMemoryMode('custom')
+                      update('memoryMode', 'custom')
+                    }} className={cn('inline-flex items-center gap-1.5 h-9 rounded-lg border px-3.5 text-sm transition-colors', memoryMode === 'custom' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>
                       <SlidersHorizontal className="h-3.5 w-3.5" />{t('instanceDetail.settingsTab.custom')}
                     </button>
                   </div>

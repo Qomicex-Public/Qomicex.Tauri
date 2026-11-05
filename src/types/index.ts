@@ -219,6 +219,8 @@ export interface GameInstance {
   loaderVersion: string | null
   javaPath: string | null
   maxMemory: number
+  /** 内存模式：缺失/null 与 'auto' = 启动前按模组数自动重算；'custom' = 使用用户值 */
+  memoryMode?: 'auto' | 'custom' | null
   gameDir: string
   accountName: string | null
   accountUuid: string | null
@@ -261,6 +263,7 @@ export interface CreateInstanceRequest {
   loaderVersion?: string
   javaPath?: string | null
   maxMemory: number
+  memoryMode?: 'auto' | 'custom' | null
   gameDir: string
   accountName?: string
   accountUuid?: string
