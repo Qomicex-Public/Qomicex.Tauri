@@ -631,15 +631,15 @@ jobs:
 
           # 选了却不存在的格式要报错，没选的才允许缺失：前者是构建异常，
           # 静默跳过会让该通道的用户收不到更新且没有失败信号。
-          # 输入经 step env 传入并按与 Build bundles 步骤一致的写法归一化：
-          # workflow_dispatch 可被 API 绕过 choices 白名单。
+          # 这里再归一化一次（去空格、转小写）：Build bundles 步骤会拒绝这类非
+          # 法 token，但本步骤不应依赖上游的校验顺序。
           BUNDLES="${LINUX_BUNDLES_INPUT:-appimage,deb,rpm}"
           BUNDLES="${BUNDLES// /}"
           BUNDLES="${BUNDLES,,}"
           has_bundle() { case ",$BUNDLES," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
 
-          # 上一轮残留的片段会被收尾的 cat 一并读出并上传，导致 updates.json 里
-          # 出现指向不存在的包的条目。先清掉，只保留本次生成的。
+          # 托管 runner 每次的工作区都是干净的，这里清掉的只是本步骤自身可能留下
+          # 的旧片段；跨 attempt 的残留由 release 汇总作业的 artifact 合并处理。
           rm -f update-package-fragment-*.json
 
           # AppImage 包：zip 内放 AppImage 本体（updater appimage 策略整文件替换）
@@ -863,15 +863,15 @@ jobs:
 
           # 选了却不存在的格式要报错，没选的才允许缺失：前者是构建异常，
           # 静默跳过会让该通道的用户收不到更新且没有失败信号。
-          # 输入经 step env 传入并按与 Build bundles 步骤一致的写法归一化：
-          # workflow_dispatch 可被 API 绕过 choices 白名单。
+          # 这里再归一化一次（去空格、转小写）：Build bundles 步骤会拒绝这类非
+          # 法 token，但本步骤不应依赖上游的校验顺序。
           BUNDLES="${LINUX_BUNDLES_INPUT:-appimage,deb,rpm}"
           BUNDLES="${BUNDLES// /}"
           BUNDLES="${BUNDLES,,}"
           has_bundle() { case ",$BUNDLES," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
 
-          # 上一轮残留的片段会被收尾的 cat 一并读出并上传，导致 updates.json 里
-          # 出现指向不存在的包的条目。先清掉，只保留本次生成的。
+          # 托管 runner 每次的工作区都是干净的，这里清掉的只是本步骤自身可能留下
+          # 的旧片段；跨 attempt 的残留由 release 汇总作业的 artifact 合并处理。
           rm -f update-package-fragment-*.json
 
           # AppImage 包：zip 内放 AppImage 本体（updater appimage 策略整文件替换）。
