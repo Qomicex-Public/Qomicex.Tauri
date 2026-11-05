@@ -1061,9 +1061,10 @@ jobs:
           # 故从包内直接取二进制断言架构。
           ELF_ARCH=$(ar p "$DEB" data.tar.gz | tar -xzO ./usr/bin/qomicex-launcher \
             | head -c 20 | od -An -tx1 | tr -d ' \n')
-          # LoongArch ELF 的 e_machine = 0x0102（258），位于 ELF 头偏移 18-19 字节。
+          # LoongArch 为小端序，e_machine = 0x0102（258）在偏移 18-19 字节存为
+          # 02 01，十六进制串因此以 0201 结尾（按大端写成 0102 永远匹配不上）。
           case "$ELF_ARCH" in
-            *0102) echo "deb 内二进制架构校验通过: LoongArch (e_machine=0x0102)" ;;
+            *0201) echo "deb 内二进制架构校验通过: LoongArch (e_machine=0x0102)" ;;
             *) echo "ERROR: deb 内二进制不是 LoongArch，ELF 头前 20 字节: $ELF_ARCH"; exit 1 ;;
           esac
 
