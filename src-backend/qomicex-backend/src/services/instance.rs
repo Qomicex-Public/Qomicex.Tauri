@@ -27,6 +27,9 @@ pub struct GameInstance {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub java_path: Option<String>,
     pub max_memory: i32,
+    /// 内存模式：缺失/null 与 "auto" = 启动前按模组数自动重算；"custom" = 使用用户值。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_mode: Option<String>,
     pub game_dir: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account_name: Option<String>,
@@ -108,6 +111,7 @@ impl Default for GameInstance {
             loader_version: None,
             java_path: None,
             max_memory: DEFAULT_MAX_MEMORY,
+            memory_mode: None,
             game_dir: ".minecraft".to_string(),
             account_name: None,
             account_uuid: None,
@@ -582,6 +586,12 @@ impl InstanceService {
             "maxMemory",
             old.max_memory != DEFAULT_MAX_MEMORY,
             next.max_memory != DEFAULT_MAX_MEMORY,
+        );
+        track(
+            &mut cleared,
+            "memoryMode",
+            old.memory_mode.is_some(),
+            next.memory_mode.is_some(),
         );
         track(
             &mut cleared,
@@ -1475,6 +1485,9 @@ impl InstanceService {
         {
             target.max_memory = source.max_memory;
         }
+        if target.memory_mode.is_none() && !cleared.contains("memoryMode") {
+            target.memory_mode = source.memory_mode.clone();
+        }
         if target.version_isolation.is_none() && !cleared.contains("versionIsolation") {
             target.version_isolation = source.version_isolation;
         }
@@ -1662,6 +1675,9 @@ impl InstanceService {
         if cleared("maxMemory") {
             slot.max_memory = cur.max_memory;
         }
+        if cleared("memoryMode") {
+            slot.memory_mode = cur.memory_mode.clone();
+        }
         if cleared("versionIsolation") {
             slot.version_isolation = cur.version_isolation;
         }
@@ -1693,6 +1709,9 @@ impl InstanceService {
         }
         if cur.max_memory != orig.max_memory {
             slot.max_memory = cur.max_memory;
+        }
+        if cur.memory_mode != orig.memory_mode {
+            slot.memory_mode = cur.memory_mode.clone();
         }
         if cur.java_path != orig.java_path {
             slot.java_path = cur.java_path.clone();
@@ -2368,6 +2387,7 @@ mod tests {
         old.game_version = "1.7.10".to_string();
         old.loader = Some("Forge".to_string());
         old.max_memory = 8192;
+        old.memory_mode = Some("custom".into());
         old.jvm_args =
             Some("-Dfile.encoding=UTF-8 --add-opens java.base/java.lang=ALL-UNNAMED".into());
         old.java_path = Some("C:/Java/jdk-21/bin/java.exe".into());
@@ -2412,6 +2432,11 @@ mod tests {
             .unwrap_or_else(|| panic!("新目录记录应保留: {result:?}"));
         assert_eq!(kept.jvm_args, old_created.jvm_args, "JVM 参数应补回");
         assert_eq!(kept.max_memory, 8192, "内存应补回");
+        assert_eq!(
+            kept.memory_mode.as_deref(),
+            Some("custom"),
+            "内存模式应补回，否则启动前会用推荐值覆盖自定义内存"
+        );
         assert_eq!(kept.java_path, old_created.java_path, "Java 路径应补回");
         assert_eq!(kept.play_time, 36, "游玩时长应保留较长的一份");
         assert_eq!(
@@ -2461,6 +2486,7 @@ mod tests {
         old.game_version = "1.7.10".to_string();
         old.loader = Some("Forge".to_string());
         old.max_memory = 8192;
+        old.memory_mode = Some("custom".into());
         old.jvm_args = Some("-Dfile.encoding=UTF-8".into());
         let old_created = service.create(old).unwrap();
         {
@@ -2472,7 +2498,7 @@ mod tests {
         let mut fresh = make_instance("GTNH 2.8.4", new_game_dir.to_str().unwrap(), Some(true));
         fresh.game_version = "1.7.10".to_string();
         fresh.loader = Some("Forge".to_string());
-        fresh.cleared_settings = vec!["jvmArgs".into(), "maxMemory".into()];
+        fresh.cleared_settings = vec!["jvmArgs".into(), "maxMemory".into(), "memoryMode".into()];
         let fresh_created = service.create(fresh).unwrap();
 
         let scanned = vec![ScannedVersionInfo {
@@ -2498,6 +2524,10 @@ mod tests {
         assert_eq!(
             kept.max_memory, DEFAULT_MAX_MEMORY,
             "用户显式重置的内存不得被旧值覆盖"
+        );
+        assert_eq!(
+            kept.memory_mode, None,
+            "用户显式重置的内存模式不得被旧值覆盖"
         );
         assert!(
             result.iter().all(|i| i.id != old_created.id),

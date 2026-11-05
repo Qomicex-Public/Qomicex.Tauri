@@ -26,6 +26,7 @@ use qomicex_downloader::{DownloadEvent, DownloadTask, TaskId, TaskState};
 use crate::endpoints::java;
 use crate::endpoints::loader::LoaderVersionInfo;
 use crate::error::{ApiError, ApiResult};
+use crate::services::auto_memory;
 use crate::services::install_service::InstallRequestData;
 use crate::services::install_tracker::InstallProgress;
 use crate::services::instance::GameInstance;
@@ -53,6 +54,8 @@ struct CreateInstanceRequest {
     #[serde(default)]
     max_memory: Option<i32>,
     #[serde(default)]
+    memory_mode: Option<String>,
+    #[serde(default)]
     game_dir: Option<String>,
 }
 
@@ -72,6 +75,9 @@ struct UpdateInstanceRequest {
     java_path: Option<Option<String>>,
     #[serde(default)]
     max_memory: Option<i32>,
+    /// 缺失=不修改；null=恢复默认 auto；"auto"/"custom"=设置。
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    memory_mode: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_double_option")]
     jvm_args: Option<Option<String>>,
     #[serde(default)]
@@ -109,10 +115,31 @@ fn normalize_optional_text(value: String) -> Option<String> {
     }
 }
 
+/// 实例内存模式：空白/null 恢复默认 auto；只接受 auto/custom。
+fn normalize_memory_mode(value: Option<String>) -> ApiResult<Option<String>> {
+    match value.as_deref().map(str::trim) {
+        None | Some("") => Ok(None),
+        Some("auto") => Ok(Some("auto".to_string())),
+        Some("custom") => Ok(Some("custom".to_string())),
+        Some(_) => Err(ApiError::bad_request(
+            "INSTANCE_MEMORY_MODE_INVALID",
+            "memoryMode must be auto or custom",
+        )),
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct MessageResponse {
     message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MemoryRecommendationDto {
+    recommended_mb: i32,
+    mod_count: usize,
+    modpack: bool,
 }
 
 #[derive(Deserialize)]
@@ -234,6 +261,10 @@ pub fn router() -> Router<SharedState> {
         .route("/instance/{id}/launch", post(launch_instance))
         .route("/instance/{id}/launch/progress", get(launch_progress))
         .route("/instance/{id}/launch/cancel", post(launch_cancel))
+        .route(
+            "/instance/{id}/memory-recommendation",
+            get(memory_recommendation),
+        )
         .route(
             "/instance/{id}/export-diagnostics",
             post(export_diagnostics),
@@ -382,6 +413,7 @@ async fn create_instance(
         loader_version: req.loader_version,
         java_path: req.java_path,
         max_memory: req.max_memory.unwrap_or(4096),
+        memory_mode: normalize_memory_mode(req.memory_mode)?,
         game_dir: req.game_dir.unwrap_or_else(|| ".minecraft".to_string()),
         ..Default::default()
     };
@@ -415,6 +447,12 @@ async fn update_instance(
     // name 即 VersionDirName：先同步重命名磁盘版本目录，成功才更新记录；
     // 目录被占用/目标已存在/名称非法 → 拒绝改名并返回错误（记录保持原名不变）。
     let new_name = req.name.as_deref().map(str::trim);
+    // 先校验 memoryMode：非法值必须在任何目录改名之前返回，否则请求失败会留下
+    // 「目录已改名、记录未更新」的半完成状态。
+    let memory_mode_patch = match req.memory_mode.clone() {
+        Some(value) => Some(normalize_memory_mode(value)?),
+        None => None,
+    };
     // 改名成功但后续配置/镜像写入失败时，需要把目录名还原，避免记录与磁盘错位。
     let mut renamed_from: Option<(GameInstance, String)> = None;
     if let Some(name) = new_name {
@@ -467,6 +505,9 @@ async fn update_instance(
         }
         if let Some(v) = req.max_memory {
             existing.max_memory = v;
+        }
+        if let Some(v) = memory_mode_patch.clone() {
+            existing.memory_mode = v;
         }
         if let Some(v) = req.jvm_args.clone() {
             existing.jvm_args = v.and_then(normalize_optional_text);
@@ -657,6 +698,30 @@ async fn list_loaders(
 // Launch (depends on LaunchTracker + core.launch())
 // =====================================================================
 
+/// GET /api/instance/{id}/memory-recommendation — 自动内存推荐值（issue #319）。
+async fn memory_recommendation(
+    AxumPath(id): AxumPath<String>,
+    State(state): State<SharedState>,
+) -> ApiResult<Json<MemoryRecommendationDto>> {
+    let instance = state
+        .instance
+        .get_by_id(&id)
+        .ok_or_else(|| instance_not_found(&id))?;
+    let (total_mb, available_mb) = crate::util::sysinfo::memory();
+    let modpack = auto_memory::is_modpack(&instance);
+    let mod_count = tokio::task::spawn_blocking(move || auto_memory::count_mods(&instance))
+        .await
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .map_err(ApiError::internal)?;
+    let recommended_mb =
+        auto_memory::recommend_memory_mb(available_mb as f64, total_mb as f64, mod_count, modpack);
+    Ok(Json(MemoryRecommendationDto {
+        recommended_mb,
+        mod_count,
+        modpack,
+    }))
+}
+
 /// POST /api/instance/{id}/launch — start a game instance in the background.
 ///
 /// Mirrors the C# `InstanceEndpoints` launch orchestration: resolve the auth
@@ -696,6 +761,62 @@ async fn launch_instance(
     .await?;
     let auth_options = resolve_auth_options(account);
 
+    // issue #319：auto 模式在每次启动前按实际模组数重算，并落盘供设置页展示。
+    let mut max_memory = instance.max_memory;
+    if auto_memory::is_auto_mode(&instance) {
+        let (total_mb, available_mb) = crate::util::sysinfo::memory();
+        let modpack = auto_memory::is_modpack(&instance);
+        let snapshot = instance.clone();
+        let scan = tokio::task::spawn_blocking(move || auto_memory::count_mods(&snapshot)).await;
+        let mod_count = match scan {
+            Ok(Ok(count)) => Some(count),
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    instance_id = %instance_id,
+                    error = %error,
+                    "统计模组目录失败，跳过自动内存重算"
+                );
+                None
+            }
+            Err(error) => {
+                tracing::warn!(
+                    instance_id = %instance_id,
+                    error = %error,
+                    "统计模组目录任务失败，跳过自动内存重算"
+                );
+                None
+            }
+        };
+        if let Some(mod_count) = mod_count {
+            let recommended = auto_memory::recommend_memory_mb(
+                available_mb as f64,
+                total_mb as f64,
+                mod_count,
+                modpack,
+            );
+            // 等待期间用户可能已切到自定义：以锁内最新记录为准，
+            // 只有仍是 auto 才写入推荐值；custom 则用其当前 maxMemory 启动。
+            match state.instance.update_with(&instance_id, |current| {
+                if auto_memory::is_auto_mode(current) {
+                    current.max_memory = recommended;
+                }
+            }) {
+                Ok(Some(current)) => {
+                    max_memory = current.max_memory;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        instance_id = %instance_id,
+                        error = %error,
+                        "自动内存落盘失败，本次启动仍使用推荐值"
+                    );
+                    max_memory = recommended;
+                }
+            }
+        }
+    }
+
     let tracker = state.launch_tracker.clone();
     let game_log = state.game_log.clone();
     let core = state.core.clone();
@@ -704,7 +825,6 @@ async fn launch_instance(
     let name = instance.name.clone();
     let skip_integrity_check = instance.skip_integrity_check;
     let user_java_path = instance.java_path.clone();
-    let max_memory = instance.max_memory;
     let jvm_args = instance.jvm_args.clone();
     let version_isolation = instance
         .version_isolation

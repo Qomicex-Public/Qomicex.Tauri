@@ -64,6 +64,17 @@ export async function updateInstance(id: string, data: Partial<CreateInstanceReq
   return put<GameInstance>(`/instance/${id}`, data)
 }
 
+export interface MemoryRecommendation {
+  recommendedMb: number
+  modCount: number
+  modpack: boolean
+}
+
+/** 自动内存推荐（issue #319）：按实例模组数与系统内存计算。 */
+export function getMemoryRecommendation(instanceId: string): Promise<MemoryRecommendation> {
+  return get<MemoryRecommendation>(`/instance/${instanceId}/memory-recommendation`)
+}
+
 export async function deleteInstance(id: string): Promise<void> {
   await del(`/instance/${id}`)
 }

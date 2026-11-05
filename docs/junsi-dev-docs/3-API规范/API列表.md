@@ -3087,3 +3087,35 @@ CurseForge 的作者可以关闭 Project Distribution Toggle。开关关闭后�
 ---
 
 
+
+
+### 2026-11-05 更新
+
+---
+
+## 实例自动内存推荐（issue #319）
+
+### GET `/api/instance/{id}/memory-recommendation`
+
+按实例当前模组数与系统内存计算推荐最大堆内存。模组数统计 `mods/` 下的 `.jar` 与 `.jar.disabled`。
+
+**响应：**
+```json
+{
+  "recommendedMb": 6912,
+  "modCount": 400,
+  "modpack": true
+}
+```
+
+计算规则：
+
+- `rawCap = floor((modpack ? 总内存 : 可用内存) * 0.7)`
+- `cap = max(1024, rawCap)`
+- `desired = 1536 + modCount * 12 + (modpack ? 512 : 0)`
+- `capped = min(max(desired, 2048), cap)`
+- `result = max(min(round256(capped), floor(cap / 256) * 256), 1024)`
+- `cap < 2048` 时结果允许低于 2048，但不会低于 1024
+
+实例字段新增 `memoryMode`：缺失/null 与 `"auto"` 表示启动前按上述规则重算；`"custom"` 表示使用用户填写的 `maxMemory`。该字段随实例写入 `qomicex.json`。
+
