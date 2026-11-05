@@ -1,0 +1,74 @@
+name: Retry starved macOS jobs
+
+# 托管 macOS runner 容量不足时，作业会在排队约 15 分钟后被判 cancelled：
+# runner_name 为空、steps 为空，annotation 为 "The job was not acquired by
+# Runner of type hosted even after multiple attempts"（run 41855512148）。
+# 这类取消不是构建失败，重排一次通常就能拿到 runner。
+#
+# 重跑只能等整次 run 结束后做：GitHub 拒绝重跑进行中的 run（403 "This
+# workflow run cannot be retried"），而 run 的完成判定又包含本作业，故不能
+# 写在 release.yml 内部，只能由 workflow_run 事件触发。
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  retry:
+    # 只处理「跑完但没成功」的 run。手动取消时 conclusion 是 cancelled，
+    # 直接排除，避免把人主动中止的发布又重排回来。
+    # run_attempt 上限 3（初次 + 2 次重跑）：macOS 容量长期紧张时不无限重排。
+    if: |
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.run_attempt < 3
+    runs-on: ubuntu-latest
+    steps:
+      - name: Detect starved macOS jobs
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          # 判据是「cancelled + 零步骤 + 无 runner」：作业一个步骤都没执行，
+          # 说明它压根没被分配 runner。真实构建失败带 steps 且 conclusion 为
+          # failure，不会命中。
+          #
+          # 门禁只看会阻塞发布的作业：loongarch64 是可选平台（release 的 if
+          # 不校验其结果），它真实失败时不应连带放弃 mac 的重排。其余作业若
+          # 失败，说明是代码问题，重跑只会白跑，故不重排。
+          jobs=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100")
+          blocking=$(jq -r '[.jobs[]
+              | select(.conclusion == "failure" or .conclusion == "cancelled")
+              | select(.name != "loongarch64")] | length' <<<"$jobs")
+          starved_macos=$(jq -r '[.jobs[]
+              | select(.conclusion == "cancelled")
+              | select((.steps // []) | length == 0)
+              | select(.runner_name == "")
+              | select(.name | startswith("macos-"))] | length' <<<"$jobs")
+
+          echo "阻塞发布的失败/取消作业: $blocking，其中未拿到 runner 的 macOS 作业: $starved_macos"
+          if [ "$blocking" -gt 0 ] && [ "$blocking" -eq "$starved_macos" ]; then
+            echo "retry=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "retry=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Re-run the workflow
+        if: steps.detect.outputs.retry == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          # 用 run 级 rerun 而不是 rerun-failed-jobs：后者只承诺重跑 failed
+          # 作业，而被 runner 饿死的作业 conclusion 是 cancelled、release 是
+          # skipped，都不在 "failed" 里；一旦它们不被重跑，重试就只剩 mac 产物、
+          # 不产出发布。run 级重跑语义明确，代价是各平台重新构建（约 40 分钟）。
+          echo "::warning::macOS runner 未分配导致作业被取消，重跑第 $((ATTEMPT + 1)) 次尝试"
+          gh api -X POST "repos/$REPO/actions/runs/$RUN_ID/rerun"
