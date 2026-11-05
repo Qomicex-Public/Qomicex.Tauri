@@ -4,14 +4,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw as RefreshCwData } from 'lucide'
 import { MorphActionIcon } from './MorphActionIcon.tsx'
-import { Button, Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Input, Separator, useMessageBox } from './ui'
+import { Button, Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Input, TabContent, Tabs, useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 import { PluginCard } from './PluginCard.tsx'
 import { PluginIcon } from './PluginIcon.tsx'
 import { resolvePluginAssetUrl, deactivatePlugin } from '../plugins/plugin-loader.tsx'
 import { usePluginStore, collectInstalledPlugins, buildUpdatesMap } from '../stores/pluginStore.ts'
-import { PERMISSION_CATALOG, type PluginInfo } from '../plugins/types.ts'
+import type { PluginInfo } from '../plugins/types.ts'
+import { PluginPermissionPanel } from './PluginPermissionPanel.tsx'
 import { setPluginState as apiSetPluginState, rollbackPlugin } from '../api/plugins.ts'
 import { API_BASE } from '../api/client.ts'
 import { uploadFile } from '../api/ipc.ts'
@@ -25,6 +26,7 @@ export default function PluginStoreManage() {
   const [pluginQuery, setPluginQuery] = useState('')
   const [pluginsMsg, setPluginsMsg] = useState<string | null>(null)
   const [pluginDetail, setPluginDetail] = useState<PluginInfo | null>(null)
+  const [detailTab, setDetailTab] = useState<'overview' | 'permissions'>('overview')
   const [pluginInstalling, setPluginInstalling] = useState(false)
   const [checkingUpdates, setCheckingUpdates] = useState(false)
   /** localId → 升级中 */
@@ -261,7 +263,10 @@ export default function PluginStoreManage() {
                     plugin={p}
                     onToggle={handlePluginToggle}
                     onUninstall={handlePluginUninstall}
-                    onClick={() => setPluginDetail(p)}
+                    onClick={() => {
+                      setDetailTab('overview')
+                      setPluginDetail(p)
+                    }}
                     upgradeTo={updateTo?.latestVersion}
                     upgrading={!!upgrading[p.manifest.id]}
                     onUpgrade={handlePluginUpgrade}
@@ -285,48 +290,40 @@ export default function PluginStoreManage() {
         <DialogBody className="space-y-4">
           {pluginDetail && (
             <>
-              <div className="text-sm text-muted-foreground">
-                {pluginDetail.manifest.id}@{pluginDetail.manifest.version}
-              </div>
-              <div className="flex flex-wrap gap-1">
+              <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                <span>{pluginDetail.manifest.id}@{pluginDetail.manifest.version}</span>
                 {pluginDetail.manifest.layers.map((layer) => (
-                  <span key={layer} className="rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground">{layer.toUpperCase()}</span>
+                  <span key={layer} className="rounded border border-border px-1.5 py-0.5 text-xs">{layer.toUpperCase()}</span>
                 ))}
               </div>
-              <Separator />
-              {pluginDetail.manifest.permissions.length > 0 && (
-                <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">{t('settings.plugins.permissions', { count: pluginDetail.manifest.permissions.length })}</p>
-                  {pluginDetail.manifest.permissions.map((p) => {
-                    const info = PERMISSION_CATALOG[p]
-                    const colors: Record<string, string> = {
-                      normal: 'border-blue-500/30 text-blue-400',
-                      warning: 'border-yellow-500/30 text-yellow-400',
-                      danger: 'border-red-500/30 text-red-400',
-                    }
-                    return (
-                      <div key={p} className="flex items-center gap-2 text-sm">
-                        <span className={`rounded border px-1.5 py-0.5 text-xs ${colors[info?.risk ?? 'normal'] ?? ''}`}>
-                          {info?.risk ?? 'normal'}
-                        </span>
-                        <span>{info?.key ? t(info.key) : p}</span>
+              <Tabs
+                className="w-fit"
+                activeTab={detailTab}
+                onChange={(id) => setDetailTab(id as 'overview' | 'permissions')}
+                tabs={[
+                  { id: 'overview', label: t('settings.plugins.detailOverview') },
+                  { id: 'permissions', label: t('settings.plugins.detailPermissions'), count: pluginDetail.manifest.permissions.length },
+                ]}
+              />
+              <TabContent activeTab={detailTab} tabId="overview">
+                {pluginDetail.manifest.contributes?.menuItems && pluginDetail.manifest.contributes.menuItems.length > 0 ? (
+                  <div className="space-y-1">
+                    <p className="text-sm text-muted-foreground">{t('settings.plugins.contributes')}</p>
+                    {pluginDetail.manifest.contributes.menuItems.map((item) => (
+                      <div key={item.path} className="flex items-center gap-2 text-sm">
+                        <PluginIcon pluginId={pluginDetail.manifest.id} icon={resolvePluginAssetUrl(pluginDetail.manifest.id, item.icon ?? '')} fallback="" />
+                        <span>{item.label}</span>
+                        <span className="text-xs text-muted-foreground">{item.path}</span>
                       </div>
-                    )
-                  })}
-                </div>
-              )}
-              {pluginDetail.manifest.contributes?.menuItems && pluginDetail.manifest.contributes.menuItems.length > 0 && (
-                <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">{t('settings.plugins.contributes')}</p>
-                  {pluginDetail.manifest.contributes.menuItems.map((item) => (
-                    <div key={item.path} className="flex items-center gap-2 text-sm">
-                      <PluginIcon pluginId={pluginDetail.manifest.id} icon={resolvePluginAssetUrl(pluginDetail.manifest.id, item.icon ?? '')} fallback="" />
-                      <span>{item.label}</span>
-                      <span className="text-xs text-muted-foreground">{item.path}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">{t('settings.plugins.contributionsEmpty')}</p>
+                )}
+              </TabContent>
+              <TabContent activeTab={detailTab} tabId="permissions">
+                <PluginPermissionPanel key={pluginDetail.manifest.id} plugin={pluginDetail} />
+              </TabContent>
             </>
           )}
         </DialogBody>

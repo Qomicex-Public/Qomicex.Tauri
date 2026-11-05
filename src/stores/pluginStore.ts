@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { create } from 'zustand'
-import type { PluginInfo, PluginState } from '../plugins/types.ts'
-import { fetchPlugins, rescanPlugins } from '../api/plugins.ts'
+import type { PluginInfo, PluginPermissionConfig, PluginState } from '../plugins/types.ts'
+import { DEFAULT_PLUGIN_PERMISSION_CONFIG } from '../plugins/types.ts'
+import { fetchPlugins, fetchPluginPermissions, rescanPlugins } from '../api/plugins.ts'
 import type { StoreUpdateEntry } from '../api/pluginStore.ts'
 import { resolveManifestL10n, invalidatePluginL10n } from '../plugins/l10n.ts'
 
@@ -83,12 +84,15 @@ let nextOrder = 100
 
 interface PluginStore {
   plugins: PluginInfo[]
+  /** 用户层权限覆盖（pluginId → 配置）。缺项等价于默认（全部启用、严格出网）。 */
+  permissionConfigs: Record<string, PluginPermissionConfig>
   loading: boolean
   error: string | null
 
   loadPlugins: () => Promise<void>
   getPlugin: (id: string) => PluginInfo | undefined
   setPluginState: (id: string, state: PluginState) => void
+  setPermissionConfig: (id: string, config: PluginPermissionConfig) => void
   rescan: () => Promise<void>
 
   /** localId → 可升级信息（启动静默轮询 + 管理 tab 检查更新共用） */
@@ -108,6 +112,7 @@ interface PluginStore {
 
 export const usePluginStore = create<PluginStore>((set, get) => ({
   plugins: [],
+  permissionConfigs: {},
   loading: false,
   error: null,
 
@@ -136,7 +141,10 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
           })
         )
       } catch { /* l10n 解析失败按原文案显示 */ }
-      set({ plugins: resolvedPlugins, loading: false })
+      // 权限配置与插件列表同一生命周期加载：桥方法校验是同步读取，晚于激活就会
+      // 在窗口期按 manifest 全量放行（用户关掉的权限短暂生效）。
+      const permissionConfigs = await loadPermissionConfigs(resolvedPlugins)
+      set({ plugins: resolvedPlugins, permissionConfigs, loading: false })
     } catch (e) {
       set({ error: e instanceof Error ? e.message : 'Unknown error', loading: false })
     }
@@ -152,6 +160,10 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
         p.manifest.id === id ? { ...p, state } : p
       )
     }))
+  },
+
+  setPermissionConfig: (id, config) => {
+    set(s => ({ permissionConfigs: { ...s.permissionConfigs, [id]: config } }))
   },
 
   rescan: async () => {
@@ -223,3 +235,23 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
     }))
   },
 }))
+
+/**
+ * 预载每个插件的权限配置。单个失败只退回默认配置——权限文件读不到不该让整个
+ * 插件列表加载失败，而默认配置与「从未改过」等价。
+ */
+async function loadPermissionConfigs(
+  plugins: PluginInfo[]
+): Promise<Record<string, PluginPermissionConfig>> {
+  const entries = await Promise.all(
+    plugins.map(async (p) => {
+      try {
+        return [p.manifest.id, await fetchPluginPermissions(p.manifest.id)] as const
+      } catch (e) {
+        console.warn(`[plugin] 读取权限配置失败 ${p.manifest.id}`, e)
+        return [p.manifest.id, DEFAULT_PLUGIN_PERMISSION_CONFIG] as const
+      }
+    })
+  )
+  return Object.fromEntries(entries)
+}

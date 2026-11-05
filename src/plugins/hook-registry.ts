@@ -20,7 +20,7 @@
  * 由 sandbox.ts 的 apiBridgeScript 内联实现（iframe 无法 import 启动器模块）。
  */
 
-import { usePluginStore } from '../stores/pluginStore.ts'
+import { isPermissionGranted } from './permissions.ts'
 
 /** 一条 hook 注册（主窗口内存态） */
 export interface RegisteredHook {
@@ -154,9 +154,8 @@ if (window === window.top) {
     const registry = win.__pluginHookRegistry!
     if (msg.type === '__plugin_hook_register') {
       // iframe 上报：{ pluginId, method } —— fn 留在 iframe，主窗口登记"转发型"
-      // hook，触发时经桥转发回 iframe 执行。需 hook:register 权限。
-      const plugin = usePluginStore.getState().getPlugin(msg.pluginId)
-      if (!plugin || !plugin.manifest.permissions.includes('hook:register')) return
+      // hook，触发时经桥转发回 iframe 执行。需 hook:register 权限（可被用户关闭）。
+      if (!isPermissionGranted(msg.pluginId, 'hook:register')) return
       registry.register(msg.pluginId, msg.method, createFrameHookFn(msg.pluginId, msg.method, e.source as Window))
     } else if (msg.type === '__plugin_hook_unregister_all') {
       registry.unregisterAll(msg.pluginId)

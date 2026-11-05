@@ -3,16 +3,16 @@
 
 //! Plugin endpoints.
 //!
-//! All 25 routes live under `/api/plugins`:
-//!   list/get/rescan/install/delete/upload/state, static files, settings,
-//!   cache, cors proxy (SSE-capable), WASM gateway bridge, file read/write/
-//!   authorize/delete (FS_AUTHORIZATION_REQUIRED flow), download management
-//!   (tasks go to the shared DownloadManager so they surface in the download
-//!   center), and shell execution (win: pwsh 7 when installed, else the bundled
-//!   Windows PowerShell 5.1; other: /bin/sh).
+//! All routes live under `/api/plugins`: list/get/rescan/install/delete/upload/
+//! state/permissions, static files, settings, cache, cors proxy (SSE-capable),
+//! WASM gateway bridge, file read/write/authorize/delete, download management,
+//! shell, and process management.
 //!
 //! Permission gating is NOT done here: like the C# original, the backend only
-//! validates input; the frontend bridge enforces manifest permissions.
+//! validates input; the frontend bridge enforces manifest permissions minus the
+//! user's disabled set (`plugin-permissions.json`). The one exception is the
+//! cors proxy, which consults the same per-plugin file to decide whether the
+//! SSRF guard applies.
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -34,6 +34,7 @@ use tokio::io::AsyncReadExt;
 
 use crate::error::{ApiError, ApiResult};
 use crate::services::plugin::{install_from_package, FileAuthService, PluginInfo};
+use crate::services::plugin_permissions::{cors_target_allowed, PluginPermissionConfig};
 use crate::settings;
 use crate::state::SharedState;
 
@@ -63,6 +64,11 @@ struct SetPluginStateRequest {
 #[serde(rename_all = "camelCase")]
 struct CorsProxyRequest {
     url: String,
+    /// 由前端 bridge 注入的插件身份（决定该请求走哪套出网策略）。插件拿不到、
+    /// 也改不了这个字段；直连本端点的本地进程仍可冒充，与「后端不做权限边界」
+    /// 的既有模型一致。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    plugin_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     method: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -442,6 +448,10 @@ pub fn router() -> Router<SharedState> {
         .route("/plugins/log", post(plugin_log))
         .route("/plugins/{id}/state", put(set_state))
         .route("/plugins/{id}/rollback", post(rollback))
+        .route(
+            "/plugins/{id}/permissions",
+            get(get_permissions).put(set_permissions),
+        )
         .route("/plugins/{id}/files/{*path}", get(plugin_file))
         .route(
             "/plugins/settings/{id}",
@@ -532,6 +542,7 @@ async fn delete_plugin(
     AxumPath(id): AxumPath<String>,
 ) -> Response {
     state.plugin_store.uninstall(&id);
+    state.plugin_permissions.remove(&id);
     StatusCode::NO_CONTENT.into_response()
 }
 
@@ -712,6 +723,33 @@ async fn set_state(
     state.plugin_store.set_state(&id, &req.state);
     plugin.state = req.state;
     Ok(Json(plugin).into_response())
+}
+
+/// GET /api/plugins/{id}/permissions — 用户层权限覆盖；未配置时返回默认值
+/// （不 `404`），前端无需区分「没配过」和「配成默认」。
+async fn get_permissions(
+    State(state): State<SharedState>,
+    AxumPath(id): AxumPath<String>,
+) -> ApiResult<Json<PluginPermissionConfig>> {
+    ensure_plugin_exists(&state, &id)?;
+    Ok(Json(state.plugin_permissions.get(&id)))
+}
+
+/// PUT /api/plugins/{id}/permissions — 写入并返回规范化后的配置。
+async fn set_permissions(
+    State(state): State<SharedState>,
+    AxumPath(id): AxumPath<String>,
+    Json(config): Json<PluginPermissionConfig>,
+) -> ApiResult<Json<PluginPermissionConfig>> {
+    ensure_plugin_exists(&state, &id)?;
+    Ok(Json(state.plugin_permissions.set(&id, config)?))
+}
+
+fn ensure_plugin_exists(state: &SharedState, id: &str) -> ApiResult<()> {
+    if state.plugin_store.get_plugin(id).is_none() {
+        return Err(ApiError::not_found("PLUGIN_NOT_FOUND", "Plugin not found"));
+    }
+    Ok(())
 }
 
 /// POST /api/plugins/{id}/rollback — 用最新 `.bak-*` 升级快照恢复插件目录。
@@ -992,7 +1030,21 @@ async fn proxy(
         .ok_or_else(|| ApiError::bad_request("PROXY_INVALID_URL", "无效的代理 URL"))?
         .to_string();
     let port = parsed.port_or_known_default().unwrap_or(80);
-    validate_target(&host, port).await?;
+    let policy = state
+        .plugin_permissions
+        .cors_policy(req.plugin_id.as_deref());
+    if cors_target_allowed(&policy, &host, port) {
+        // 放宽内网访问时仍禁止打启动器自己的 API：后端不做权限校验，代理到这里
+        // 等于让插件绕过 network:fetch / shell:execute 等全部限制（自举提权）。
+        if targets_launcher_self(&host, port).await {
+            return Err(ApiError::forbidden(
+                "PROXY_SELF_TARGET",
+                "禁止通过代理访问启动器自身的 API",
+            ));
+        }
+    } else {
+        validate_target(&host, port).await?;
+    }
 
     let method_str = req.method.clone().unwrap_or_else(|| "GET".to_string());
     let method = reqwest::Method::from_bytes(method_str.to_uppercase().as_bytes())
@@ -1106,6 +1158,36 @@ async fn proxy(
         body_base64,
     })
     .into_response())
+}
+
+/// 启动器自身 API 的端口（与 `main.rs` 的解析顺序一致）。
+fn launcher_api_port() -> u16 {
+    std::env::var("QOMICEX_PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(crate::state::DEFAULT_PORT)
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    let h = host.trim_start_matches('[').trim_end_matches(']');
+    h.eq_ignore_ascii_case("localhost")
+        || h.parse::<IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
+}
+
+/// 目标是否为启动器自己的 API（含解析到回环地址的域名）。
+async fn targets_launcher_self(host: &str, port: u16) -> bool {
+    if port != launcher_api_port() {
+        return false;
+    }
+    if is_loopback_host(host) {
+        return true;
+    }
+    match tokio::net::lookup_host((host, port)).await {
+        Ok(addrs) => addrs.into_iter().any(|a| a.ip().is_loopback()),
+        Err(_) => false,
+    }
 }
 
 async fn validate_target(host: &str, port: u16) -> Result<(), ApiError> {
@@ -2858,6 +2940,17 @@ mod tests {
         assert!(is_private("100.64.0.1"));
         assert!(is_private("::1"));
         assert!(is_private("fc00::1"));
+    }
+
+    #[test]
+    fn loopback_hosts_are_recognized() {
+        assert!(is_loopback_host("localhost"));
+        assert!(is_loopback_host("LOCALHOST"));
+        assert!(is_loopback_host("127.0.0.1"));
+        assert!(is_loopback_host("::1"));
+        assert!(is_loopback_host("[::1]"));
+        assert!(!is_loopback_host("192.168.1.1"));
+        assert!(!is_loopback_host("example.com"));
     }
 
     /// 回归（#226）：`plugin_file` 的路径守卫原先用 `base.starts_with(&plugins_root)`，

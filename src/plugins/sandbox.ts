@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import type { PluginInfo } from './types.ts'
-import { usePluginStore } from '../stores/pluginStore.ts'
+import { isPermissionGranted } from './permissions.ts'
 import { createPluginBridge } from './plugin-api.ts'
 import { injectCss, registerThemeSync, unregisterThemeSync, getThemeVarsCss, themeBridgeScript } from './plugin-css.ts'
 import { API_BASE } from '../api/client.ts'
@@ -822,11 +822,8 @@ function getCurrentThemeColorHex(): string | null {
 
 async function executePluginMethod(pluginId: string, method: string, args: unknown[]): Promise<unknown> {
   const requiredPerm = METHOD_PERMISSIONS[method]
-  if (requiredPerm) {
-    const plugin = usePluginStore.getState().getPlugin(pluginId)
-    if (!plugin || !plugin.manifest.permissions.includes(requiredPerm))
-      throw new Error(`Permission denied: requires ${requiredPerm}`)
-  }
+  if (requiredPerm && !isPermissionGranted(pluginId, requiredPerm))
+    throw new Error(`Permission denied: requires ${requiredPerm}`)
   if (method === 'callBackend') {
     // 端点必须是字符串：非字符串（数组等）会被拼成任意后端路径，先拒掉。
     const endpoint = args[0]
@@ -836,11 +833,8 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     // 特权路由二次鉴权（规则表见 backend-guard.ts）：callBackend 只要求
     // network:fetch，但进程/文件系统/插件安装等路由需要更强权限。
     const extra = backendEndpointPermission(endpoint, resolveBackendMethod(args[1]), API_BASE)
-    if (extra) {
-      const plugin = usePluginStore.getState().getPlugin(pluginId)
-      if (!plugin || !plugin.manifest.permissions.includes(extra))
-        throw new Error(`Permission denied: ${endpoint} requires ${extra}`)
-    }
+    if (extra && !isPermissionGranted(pluginId, extra))
+      throw new Error(`Permission denied: ${endpoint} requires ${extra}`)
   }
   const bridge = createPluginBridge(pluginId)
   switch (method) {

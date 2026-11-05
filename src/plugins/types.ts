@@ -107,6 +107,25 @@ export interface PluginInfo {
 
 export type PluginState = 'installed' | 'active' | 'disabled'
 
+/** proxyFetch 对「内网/保留地址」的放行策略（后端 `plugin-permissions.json`）。 */
+export interface PluginCorsProxyPolicy {
+  /** 允许访问任意内网/保留地址（含解析后落在内网的域名）。 */
+  allowPrivate: boolean
+  /** 始终放行的主机：`host`、`host:port` 或 `*.suffix`（同时匹配 apex）。 */
+  allowlist: string[]
+}
+
+/** 用户对单个插件做的权限收窄。有效权限 = manifest.permissions − disabled。 */
+export interface PluginPermissionConfig {
+  disabled: string[]
+  corsProxy: PluginCorsProxyPolicy
+}
+
+export const DEFAULT_PLUGIN_PERMISSION_CONFIG: PluginPermissionConfig = {
+  disabled: [],
+  corsProxy: { allowPrivate: false, allowlist: [] },
+}
+
 // 权限目录（40 项）与 PermissionInfo 的唯一事实源在 `@qomicex/plugin-ui`（插件包与
 // 启动器共用同一份契约）。此前这里维护了一份逐项拷贝，两份已漂移到**顺序不同**
 // （内容仍一致），且任何新增权限都要记得改两处 —— 漏一处就是静默的行为分叉（#238）。

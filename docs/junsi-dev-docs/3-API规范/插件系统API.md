@@ -121,6 +121,15 @@ interface PluginBridge {
 | download.registerInstall | instance:write |
 | modpack.install | instance:write |
 
+### 用户层权限收窄
+
+表中的权限是 **manifest 声明**；用户可以在「设置 → 插件 → 详情 → 权限」里逐项关闭。有效权限 = manifest − 用户关闭项，**只降权不提权**：
+
+- 被关闭的权限调用返回 `Permission denied: requires <permission>`，与未声明时的报错一致，插件必须按「能力不可用」降级，不能假设声明过就一定能用。
+- 关闭 `ui:inject_sidebar` / `ui:inject_settings` / `ui:sub_window` 会同时隐藏 manifest 里对应的侧栏入口、设置页与悬浮窗入口；这几项变更后启动器会重新加载插件，其余权限即时生效。
+- 高危权限（risk = `danger`）关闭时启动器会二次确认。
+- 配置落盘在 `{数据目录}/plugin-permissions.json`，插件无法读写；卸载插件时一并删除。
+
 ### 插件缓存（setCache / getCache）
 
 插件可在自己的目录下读写缓存文件（`{插件目录}/cache.json`），用于缓存外部 API 响应等，避免重复请求。
@@ -189,6 +198,11 @@ Linux / macOS 使用 `/bin/sh -c`。
   - 仅允许 `http/https` 协议
   - 禁止内网/保留地址（localhost、127.x、10.x、172.16-31.x、192.168.x、169.254.x、0.0.0.0 等）
   - 不自动跟随重定向（3xx 原样返回）
+- 用户可在插件权限设置里为**单个插件**放宽内网限制（`plugin-permissions.json` → `corsProxy`）：
+  - `allowlist`：始终放行的 `host`、`host:port` 或 `*.example.com`（含 apex），优先于开关
+  - `allowPrivate`：允许访问任意内网/保留地址
+  - 策略由启动器按 `pluginId` 查表并注入请求体，插件无法在 `proxyFetch` 参数里覆盖；`/plugins/install-url` 始终走严格校验
+  - 无论策略如何，**启动器自身 API（回环地址 + 自身端口）始终禁止代理**（`PROXY_SELF_TARGET` 403），避免插件借代理绕过后端无鉴权的能力边界
 - 错误：无效 URL → `PROXY_INVALID_URL`(400)；协议不符 → `PROXY_SCHEME_NOT_ALLOWED`(400)；内网地址 → `PROXY_PRIVATE_ADDRESS`(400)；上游失败 → `PROXY_UPSTREAM_FAILED`(502)
 
 ### CORS 代理流式（proxyFetchStream）
