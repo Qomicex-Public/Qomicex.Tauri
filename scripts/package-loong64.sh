@@ -30,6 +30,15 @@ TRIPLE="loongarch64-unknown-linux-gnu"
 ARCH_DEB="loong64"
 ARCH_RPM="loongarch64"
 
+# rpm 的 %install 收尾会跑 brp-strip，它调 %__strip（默认宿主 /usr/bin/strip）
+# 处理 buildroot 里每个未 strip 的 ELF。宿主 binutils 不认 e_machine=0x0102，
+# 直接报 "Unable to recognise the format of the input file" 并以非 0 退出，
+# 整个 %install 被判 Bad exit status（run 41855512148）。改指向交叉工具链的
+# strip/objdump；工具链缺失时退回「不 strip」，rpm 只是体积大些，不阻断打包。
+TOOLS_DIR="${TOOLS_DIR:-/opt/x-tools}"
+CROSS_STRIP="$TOOLS_DIR/$TRIPLE/bin/$TRIPLE-strip"
+CROSS_OBJDUMP="$TOOLS_DIR/$TRIPLE/bin/$TRIPLE-objdump"
+
 APP_NAME="qomicex-launcher"
 PKG_NAME="qomicex-launcher"
 PRODUCT_NAME="Qomicex Launcher"
@@ -144,8 +153,23 @@ if command -v rpmbuild >/dev/null; then
   printf 'arch_canon: loongarch64: loongarch64 1\nbuildarch_compat: %s: loongarch64\n' \
     "$(uname -m)" > "$RPMRC_LOCAL"
 
+  # %__os_install_post 里的 brp-strip 用 %__strip 处理 buildroot 内未 strip 的
+  # ELF；默认指向宿主 /usr/bin/strip，它不认 e_machine=0x0102，会以非 0 退出，
+  # 整个 %install 被判 Bad exit status（run 41855512148）。容器里没有交叉
+  # strip 时退化为不 strip：产物只是带符号表，不阻断打包。
+  if [ -x "$CROSS_STRIP" ]; then
+    SPEC_STRIP="%define __strip $CROSS_STRIP"
+    SPEC_OBJDUMP="%define __objdump $CROSS_OBJDUMP"
+  else
+    log "  警告：未找到 $CROSS_STRIP，rpm 跳过 strip（产物未剥符号）"
+    SPEC_STRIP="%define __brp_strip %{nil}"
+    SPEC_OBJDUMP="%define __brp_strip_comment_note %{nil}"
+  fi
+
   cat > "$TOPDIR/SPECS/$PKG_NAME.spec" <<EOF
 %define debug_package %{nil}
+$SPEC_STRIP
+$SPEC_OBJDUMP
 Name:           $PKG_NAME
 Version:        $RPM_VERSION
 Release:        1
