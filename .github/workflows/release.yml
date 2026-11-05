@@ -512,7 +512,7 @@ jobs:
         with: { node-version: '22', cache: pnpm }
       - run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils libglib2.0-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm cpio xdg-utils libglib2.0-dev
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
       - name: Setup connector build
         id: connector
@@ -639,20 +639,28 @@ jobs:
             echo "::warning::No AppImage in bundle; skipping linux-x86_64-appimage self-update package"
           fi
 
-          # system 包（deb 布局为基线）：dpkg-deb -x 收集 / 相对布局。
-          # linuxBundles 可只选 appimage/rpm，无 deb 时跳过而不报错，否则该合法
-          # 选择会失败整个作业、连带丢掉已构建的 bundle 资产。
+          # system 包：安装后的 / 相对布局。deb 与 rpm 装到同一套路径（两者包内
+          # 路径一致），故 linuxBundles 只选 rpm 时从 rpm 负载解出同样布局，避免
+          # RPM 安装用户拿不到自更新包。两种格式都没有时跳过而不报错，否则该
+          # 合法选择会失败整个作业、连带丢掉已构建的 bundle 资产。
           DEB=$(find "$BUNDLE_DIR" -name '*.deb' | head -1)
+          RPM=$(find "$BUNDLE_DIR" -name '*.rpm' | head -1)
+          STAGING=""
           if [ -n "$DEB" ]; then
             STAGING=$(mktemp -d)
             dpkg-deb -x "$DEB" "$STAGING"
+          elif [ -n "$RPM" ]; then
+            STAGING=$(mktemp -d)
+            (cd "$STAGING" && rpm2cpio "$RPM" | cpio -idm --quiet)
+          fi
+          if [ -n "$STAGING" ]; then
             PKG_SYS="qomicex-update-linux-x86_64-system.zip"
             (cd "$STAGING" && zip -qr "$OLDPWD/$PKG_SYS" .)
             npx tauri signer sign "$PKG_SYS"
             rm -rf "$STAGING"
             echo "{\"linux-x86_64-system\":{\"url\":\"$URL_BASE/$PKG_SYS\",\"signature\":\"$(tr -d '\n' < "$PKG_SYS.sig")\",\"strategy\":\"system\"}}" > "update-package-fragment-linux-x86_64-system.json"
           else
-            echo "::warning::No deb in bundle; skipping linux-x86_64-system self-update package"
+            echo "::warning::No deb/rpm in bundle; skipping linux-x86_64-system self-update package"
           fi
           cat update-package-fragment-*.json 2>/dev/null || echo "::warning::no self-update package produced for this bundle selection"
       - uses: actions/upload-artifact@v7
@@ -701,7 +709,7 @@ jobs:
         with: { node-version: '22', cache: pnpm }
       - run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm xdg-utils libglib2.0-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm cpio xdg-utils libglib2.0-dev
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
       - name: Setup connector build
         id: connector
@@ -833,20 +841,28 @@ jobs:
             echo "::warning::No AppImage in bundle; skipping linux-aarch64-appimage self-update package"
           fi
 
-          # system 包（deb 布局为基线）：dpkg-deb -x 收集 / 相对布局。
-          # linuxBundles 可只选 appimage/rpm，无 deb 时跳过而不报错，否则该合法
-          # 选择会失败整个作业、连带丢掉已构建的 bundle 资产。
+          # system 包：安装后的 / 相对布局。deb 与 rpm 装到同一套路径（两者包内
+          # 路径一致），故 linuxBundles 只选 rpm 时从 rpm 负载解出同样布局，避免
+          # RPM 安装用户拿不到自更新包。两种格式都没有时跳过而不报错，否则该
+          # 合法选择会失败整个作业、连带丢掉已构建的 bundle 资产。
           DEB=$(find "$BUNDLE_DIR" -name '*.deb' | head -1)
+          RPM=$(find "$BUNDLE_DIR" -name '*.rpm' | head -1)
+          STAGING=""
           if [ -n "$DEB" ]; then
             STAGING=$(mktemp -d)
             dpkg-deb -x "$DEB" "$STAGING"
+          elif [ -n "$RPM" ]; then
+            STAGING=$(mktemp -d)
+            (cd "$STAGING" && rpm2cpio "$RPM" | cpio -idm --quiet)
+          fi
+          if [ -n "$STAGING" ]; then
             PKG_SYS="qomicex-update-linux-aarch64-system.zip"
             (cd "$STAGING" && zip -qr "$OLDPWD/$PKG_SYS" .)
             npx tauri signer sign "$PKG_SYS"
             rm -rf "$STAGING"
             echo "{\"linux-aarch64-system\":{\"url\":\"$URL_BASE/$PKG_SYS\",\"signature\":\"$(tr -d '\n' < "$PKG_SYS.sig")\",\"strategy\":\"system\"}}" > "update-package-fragment-linux-aarch64-system.json"
           else
-            echo "::warning::No deb in bundle; skipping linux-aarch64-system self-update package"
+            echo "::warning::No deb/rpm in bundle; skipping linux-aarch64-system self-update package"
           fi
           cat update-package-fragment-*.json 2>/dev/null || echo "::warning::no self-update package produced for this bundle selection"
       - uses: actions/upload-artifact@v7
