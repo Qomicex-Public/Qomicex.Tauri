@@ -158,18 +158,20 @@ if command -v rpmbuild >/dev/null; then
   # 整个 %install 被判 Bad exit status。容器里没有交叉 strip 时退化为不 strip：
   # 产物只是带符号表，不阻断打包。
   if [ -x "$CROSS_STRIP" ]; then
-    SPEC_STRIP="%define __strip $CROSS_STRIP"
-    SPEC_OBJDUMP="%define __objdump $CROSS_OBJDUMP"
+    SPEC_MACROS="%define __strip $CROSS_STRIP
+%define __objdump $CROSS_OBJDUMP"
   else
     log "  警告：未找到 $CROSS_STRIP，rpm 跳过 strip（产物未剥符号）"
-    SPEC_STRIP="%define __brp_strip %{nil}"
-    SPEC_OBJDUMP="%define __brp_strip_comment_note %{nil}"
+    # 置空整段 %__os_install_post：rpm 的 brp 钩子有 compress / strip /
+    # strip-static-archive / strip-comment-note / remove-la-files 五个，只关其中
+    # 两个仍会有钩子以宿主 %__strip 运行（如 brp-strip-static-archive）。
+    # 本包只有启动器、desktop 与图标，无需这些后处理。
+    SPEC_MACROS="%define __os_install_post %{nil}"
   fi
 
   cat > "$TOPDIR/SPECS/$PKG_NAME.spec" <<EOF
 %define debug_package %{nil}
-$SPEC_STRIP
-$SPEC_OBJDUMP
+$SPEC_MACROS
 Name:           $PKG_NAME
 Version:        $RPM_VERSION
 Release:        1
