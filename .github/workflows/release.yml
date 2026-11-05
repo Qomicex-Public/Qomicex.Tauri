@@ -630,24 +630,31 @@ jobs:
 
           # AppImage 包：zip 内放 AppImage 本体（updater appimage 策略整文件替换）
           APPIMAGE=$(find "$BUNDLE_DIR" -name '*.AppImage' | head -1)
-          if [ -z "$APPIMAGE" ]; then echo "ERROR: No AppImage found"; exit 1; fi
-          PKG_APP="qomicex-update-linux-x86_64-appimage.zip"
-          zip -j "$PKG_APP" "$APPIMAGE"
-          npx tauri signer sign "$PKG_APP"
+          if [ -n "$APPIMAGE" ]; then
+            PKG_APP="qomicex-update-linux-x86_64-appimage.zip"
+            zip -j "$PKG_APP" "$APPIMAGE"
+            npx tauri signer sign "$PKG_APP"
+            echo "{\"linux-x86_64-appimage\":{\"url\":\"$URL_BASE/$PKG_APP\",\"signature\":\"$(tr -d '\n' < "$PKG_APP.sig")\",\"strategy\":\"appimage\"}}" > "update-package-fragment-linux-x86_64-appimage.json"
+          else
+            echo "::warning::No AppImage in bundle; skipping linux-x86_64-appimage self-update package"
+          fi
 
-          # system 包（deb 布局为基线）：dpkg-deb -x 收集 / 相对布局
+          # system 包（deb 布局为基线）：dpkg-deb -x 收集 / 相对布局。
+          # linuxBundles 可只选 appimage/rpm，无 deb 时跳过而不报错，否则该合法
+          # 选择会失败整个作业、连带丢掉已构建的 bundle 资产。
           DEB=$(find "$BUNDLE_DIR" -name '*.deb' | head -1)
-          if [ -z "$DEB" ]; then echo "ERROR: No deb found"; exit 1; fi
-          STAGING=$(mktemp -d)
-          dpkg-deb -x "$DEB" "$STAGING"
-          PKG_SYS="qomicex-update-linux-x86_64-system.zip"
-          (cd "$STAGING" && zip -qr "$OLDPWD/$PKG_SYS" .)
-          npx tauri signer sign "$PKG_SYS"
-          rm -rf "$STAGING"
-
-          echo "{\"linux-x86_64-appimage\":{\"url\":\"$URL_BASE/$PKG_APP\",\"signature\":\"$(tr -d '\n' < "$PKG_APP.sig")\",\"strategy\":\"appimage\"}}" > "update-package-fragment-linux-x86_64-appimage.json"
-          echo "{\"linux-x86_64-system\":{\"url\":\"$URL_BASE/$PKG_SYS\",\"signature\":\"$(tr -d '\n' < "$PKG_SYS.sig")\",\"strategy\":\"system\"}}" > "update-package-fragment-linux-x86_64-system.json"
-          cat update-package-fragment-*.json
+          if [ -n "$DEB" ]; then
+            STAGING=$(mktemp -d)
+            dpkg-deb -x "$DEB" "$STAGING"
+            PKG_SYS="qomicex-update-linux-x86_64-system.zip"
+            (cd "$STAGING" && zip -qr "$OLDPWD/$PKG_SYS" .)
+            npx tauri signer sign "$PKG_SYS"
+            rm -rf "$STAGING"
+            echo "{\"linux-x86_64-system\":{\"url\":\"$URL_BASE/$PKG_SYS\",\"signature\":\"$(tr -d '\n' < "$PKG_SYS.sig")\",\"strategy\":\"system\"}}" > "update-package-fragment-linux-x86_64-system.json"
+          else
+            echo "::warning::No deb in bundle; skipping linux-x86_64-system self-update package"
+          fi
+          cat update-package-fragment-*.json 2>/dev/null || echo "::warning::no self-update package produced for this bundle selection"
       - uses: actions/upload-artifact@v7
         with:
           name: update-package-linux-x64
