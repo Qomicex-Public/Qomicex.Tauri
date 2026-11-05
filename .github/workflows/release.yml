@@ -631,8 +631,16 @@ jobs:
 
           # 选了却不存在的格式要报错，没选的才允许缺失：前者是构建异常，
           # 静默跳过会让该通道的用户收不到更新且没有失败信号。
+          # 输入经 step env 传入并按与 Build bundles 步骤一致的写法归一化：
+          # workflow_dispatch 可被 API 绕过 choices 白名单。
           BUNDLES="${LINUX_BUNDLES_INPUT:-appimage,deb,rpm}"
+          BUNDLES="${BUNDLES// /}"
+          BUNDLES="${BUNDLES,,}"
           has_bundle() { case ",$BUNDLES," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
+
+          # 上一轮残留的片段会被收尾的 cat 一并读出并上传，导致 updates.json 里
+          # 出现指向不存在的包的条目。先清掉，只保留本次生成的。
+          rm -f update-package-fragment-*.json
 
           # AppImage 包：zip 内放 AppImage 本体（updater appimage 策略整文件替换）
           APPIMAGE=$(find "$BUNDLE_DIR" -name '*.AppImage' | head -1)
@@ -663,9 +671,11 @@ jobs:
             (cd "$STAGING" && rpm2cpio "$RPM" | cpio -idm --quiet)
             # 默认 shell 是 bash -e 且没有 pipefail：rpm2cpio 失败时 cpio 读到空
             # 输入仍可能返回 0。空目录会被打成一个空的自更新包，客户端用它覆盖
-            # 安装会损坏程序，故断言关键文件存在。
-            if [ ! -f "$STAGING/usr/bin/qomicex-launcher" ]; then
-              echo "::error::从 rpm 解包后缺少 usr/bin/qomicex-launcher，拒绝生成自更新包"
+            # 安装会损坏程序，故断言解出了内容。
+            # 不写死文件名：tauri 按 mainBinaryName（"Qomicex Launcher"，含空格）
+            # 安装二进制，只有 loong64 的自行组包用 qomicex-launcher。
+            if [ -z "$(find "$STAGING/usr" -type f -print -quit 2>/dev/null)" ]; then
+              echo "::error::从 rpm 解包后 usr/ 为空，拒绝生成自更新包"
               exit 1
             fi
           fi
@@ -853,8 +863,16 @@ jobs:
 
           # 选了却不存在的格式要报错，没选的才允许缺失：前者是构建异常，
           # 静默跳过会让该通道的用户收不到更新且没有失败信号。
+          # 输入经 step env 传入并按与 Build bundles 步骤一致的写法归一化：
+          # workflow_dispatch 可被 API 绕过 choices 白名单。
           BUNDLES="${LINUX_BUNDLES_INPUT:-appimage,deb,rpm}"
+          BUNDLES="${BUNDLES// /}"
+          BUNDLES="${BUNDLES,,}"
           has_bundle() { case ",$BUNDLES," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
+
+          # 上一轮残留的片段会被收尾的 cat 一并读出并上传，导致 updates.json 里
+          # 出现指向不存在的包的条目。先清掉，只保留本次生成的。
+          rm -f update-package-fragment-*.json
 
           # AppImage 包：zip 内放 AppImage 本体（updater appimage 策略整文件替换）。
           APPIMAGE=$(find "$BUNDLE_DIR" -name '*.AppImage' | head -1)
@@ -885,9 +903,11 @@ jobs:
             (cd "$STAGING" && rpm2cpio "$RPM" | cpio -idm --quiet)
             # 默认 shell 是 bash -e 且没有 pipefail：rpm2cpio 失败时 cpio 读到空
             # 输入仍可能返回 0。空目录会被打成一个空的自更新包，客户端用它覆盖
-            # 安装会损坏程序，故断言关键文件存在。
-            if [ ! -f "$STAGING/usr/bin/qomicex-launcher" ]; then
-              echo "::error::从 rpm 解包后缺少 usr/bin/qomicex-launcher，拒绝生成自更新包"
+            # 安装会损坏程序，故断言解出了内容。
+            # 不写死文件名：tauri 按 mainBinaryName（"Qomicex Launcher"，含空格）
+            # 安装二进制，只有 loong64 的自行组包用 qomicex-launcher。
+            if [ -z "$(find "$STAGING/usr" -type f -print -quit 2>/dev/null)" ]; then
+              echo "::error::从 rpm 解包后 usr/ 为空，拒绝生成自更新包"
               exit 1
             fi
           fi
