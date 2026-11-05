@@ -3096,6 +3096,8 @@ export default function InstanceDetailPage() {
   const currentIdRef = useRef(id)
   /** 已发起的保存序号：只允许最新一次响应更新 UI/回滚。 */
   const saveSeqRef = useRef(0)
+  /** 自动内存请求序号：切换 custom/重置/换实例时作废尚未返回的推荐值。 */
+  const autoMemorySeqRef = useRef(0)
   /** 待提交的字段补丁：防抖期间连续修改多个字段也会合并，但每个字段仍是独立键。 */
   const pendingPatchRef = useRef<InstancePatch>({})
 
@@ -3104,6 +3106,7 @@ export default function InstanceDetailPage() {
     currentIdRef.current = id
     pendingPatchRef.current = {}
     saveSeqRef.current += 1
+    autoMemorySeqRef.current += 1
     setSaving(false)
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current)
@@ -3180,6 +3183,10 @@ export default function InstanceDetailPage() {
         }
         return next as unknown as GameInstance
       })
+      // memoryMode 不在 form 里：保存失败且用户没有再次修改模式时，同步回滚本地状态。
+      if (instance && !('memoryMode' in pendingPatchRef.current)) {
+        setMemoryMode(instance.memoryMode === 'custom' ? 'custom' : 'auto')
+      }
     } finally {
       if (currentIdRef.current === requestId && sequence === saveSeqRef.current) {
         setSaving(false)
@@ -3231,6 +3238,7 @@ export default function InstanceDetailPage() {
     }
   }, [id, instance, remarkValue, notify, t])
 
+  /** 把指定字段恢复为进入页面时的值，并且只提交这些字段。 */
   const handleResetSection = useCallback(async (fields: (keyof GameInstance)[]) => {
     const ok = await confirm(t('instanceDetail.settingsTab.resetConfirm'), t('instanceDetail.settingsTab.resetSection'))
     const initial = initialFormRef.current
@@ -3242,6 +3250,10 @@ export default function InstanceDetailPage() {
       for (const k of fields) next[k as string] = source[k as string]
       return next as unknown as GameInstance
     })
+    if (fields.includes('memoryMode')) {
+      autoMemorySeqRef.current += 1
+      setMemoryMode(initial.memoryMode === 'custom' ? 'custom' : 'auto')
+    }
     // 只把被重置的字段提交给后端；其它设置（例如 JVM 参数）完全不参与本次请求。
     const patch: InstancePatch = {}
     const source = initial as unknown as Record<string, unknown>
@@ -3458,12 +3470,13 @@ export default function InstanceDetailPage() {
   const handleAutoMemory = useCallback(async () => {
     if (!id) return
     const requestId = id
+    const sequence = ++autoMemorySeqRef.current
     setMemoryMode('auto')
     update('memoryMode', 'auto')
     try {
       const rec = await getMemoryRecommendation(requestId)
-      // 已切到别的实例：推荐值不能写进当前页面。
-      if (currentIdRef.current !== requestId) return
+      // 已切到别的实例或用户已改为 custom：推荐值不能覆盖当前页面。
+      if (currentIdRef.current !== requestId || sequence !== autoMemorySeqRef.current) return
       update('maxMemory', rec.recommendedMb)
     } catch (e) {
       // 推荐接口失败仍保留 auto：启动前后端会再算一次，避免设置页卡在旧值。
@@ -3830,6 +3843,7 @@ export default function InstanceDetailPage() {
                       <Bot className="h-3.5 w-3.5" />{t('instanceDetail.settingsTab.auto')}
                     </button>
                     <button onClick={() => {
+                      autoMemorySeqRef.current += 1
                       setMemoryMode('custom')
                       update('memoryMode', 'custom')
                     }} className={cn('inline-flex items-center gap-1.5 h-9 rounded-lg border px-3.5 text-sm transition-colors', memoryMode === 'custom' ? 'border-primary bg-primary/10 font-medium text-primary' : 'border-border hover:border-muted-foreground/30')}>

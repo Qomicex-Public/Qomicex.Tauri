@@ -447,6 +447,12 @@ async fn update_instance(
     // name 即 VersionDirName：先同步重命名磁盘版本目录，成功才更新记录；
     // 目录被占用/目标已存在/名称非法 → 拒绝改名并返回错误（记录保持原名不变）。
     let new_name = req.name.as_deref().map(str::trim);
+    // 先校验 memoryMode：非法值必须在任何目录改名之前返回，否则请求失败会留下
+    // 「目录已改名、记录未更新」的半完成状态。
+    let memory_mode_patch = match req.memory_mode.clone() {
+        Some(value) => Some(normalize_memory_mode(value)?),
+        None => None,
+    };
     // 改名成功但后续配置/镜像写入失败时，需要把目录名还原，避免记录与磁盘错位。
     let mut renamed_from: Option<(GameInstance, String)> = None;
     if let Some(name) = new_name {
@@ -479,10 +485,6 @@ async fn update_instance(
             renamed_from = Some((existing, name.to_string()));
         }
     }
-    let memory_mode_patch = match req.memory_mode.clone() {
-        Some(value) => Some(normalize_memory_mode(value)?),
-        None => None,
-    };
     // 补丁在实例锁内应用到**最新**记录：并发 PUT 不会用各自读到的旧快照
     // 互相覆盖未修改的字段。
     let update_result = state.instance.update_with(&id, |existing| {
@@ -709,7 +711,8 @@ async fn memory_recommendation(
     let modpack = auto_memory::is_modpack(&instance);
     let mod_count = tokio::task::spawn_blocking(move || auto_memory::count_mods(&instance))
         .await
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+        .map_err(|e| ApiError::internal(e.to_string()))?
+        .map_err(ApiError::internal)?;
     let recommended_mb =
         auto_memory::recommend_memory_mb(available_mb as f64, total_mb as f64, mod_count, modpack);
     Ok(Json(MemoryRecommendationDto {
@@ -764,26 +767,52 @@ async fn launch_instance(
         let (total_mb, available_mb) = crate::util::sysinfo::memory();
         let modpack = auto_memory::is_modpack(&instance);
         let snapshot = instance.clone();
-        let mod_count = tokio::task::spawn_blocking(move || auto_memory::count_mods(&snapshot))
-            .await
-            .map_err(|e| ApiError::internal(e.to_string()))?;
-        let recommended = auto_memory::recommend_memory_mb(
-            available_mb as f64,
-            total_mb as f64,
-            mod_count,
-            modpack,
-        );
-        if recommended != max_memory {
-            max_memory = recommended;
-            if let Err(e) = state
-                .instance
-                .update_with(&instance_id, |current| current.max_memory = recommended)
-            {
+        let scan = tokio::task::spawn_blocking(move || auto_memory::count_mods(&snapshot)).await;
+        let mod_count = match scan {
+            Ok(Ok(count)) => Some(count),
+            Ok(Err(error)) => {
                 tracing::warn!(
                     instance_id = %instance_id,
-                    error = %e,
-                    "自动内存落盘失败，本次启动仍使用推荐值"
+                    error = %error,
+                    "统计模组目录失败，跳过自动内存重算"
                 );
+                None
+            }
+            Err(error) => {
+                tracing::warn!(
+                    instance_id = %instance_id,
+                    error = %error,
+                    "统计模组目录任务失败，跳过自动内存重算"
+                );
+                None
+            }
+        };
+        if let Some(mod_count) = mod_count {
+            let recommended = auto_memory::recommend_memory_mb(
+                available_mb as f64,
+                total_mb as f64,
+                mod_count,
+                modpack,
+            );
+            // 等待期间用户可能已切到自定义：以锁内最新记录为准，
+            // 只有仍是 auto 才写入推荐值；custom 则用其当前 maxMemory 启动。
+            match state.instance.update_with(&instance_id, |current| {
+                if auto_memory::is_auto_mode(current) {
+                    current.max_memory = recommended;
+                }
+            }) {
+                Ok(Some(current)) => {
+                    max_memory = current.max_memory;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        instance_id = %instance_id,
+                        error = %error,
+                        "自动内存落盘失败，本次启动仍使用推荐值"
+                    );
+                    max_memory = recommended;
+                }
             }
         }
     }

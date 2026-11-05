@@ -12,7 +12,7 @@
 
 ## 决策
 
-GameInstance 增加 memoryMode（缺失/null=auto，写入 qomicex.json）；后端 auto_memory 统一公式：desired=1536+12*mods+(整合包?512:0)，cap=整合包?total*0.7:available*0.7，clamp 到 2048..cap 后按 256MiB 取整；auto 模式每次启动前重算并落盘；新增 GET /instance/{id}/memory-recommendation 供实例设置页“自动”按钮使用。模组计数含 .jar 与 .jar.disabled。
+GameInstance 增加 memoryMode（缺失/null=auto，写入 qomicex.json）；后端 auto_memory 统一公式：rawCap=floor((整合包?总内存:可用内存)*0.7)，cap=max(1024,rawCap)，desired=1536+12*mods+(整合包?512:0)，capped=min(max(desired,2048),cap)，result=max(min(round256(capped),floor(cap/256)*256),1024)；cap<2048 时结果允许低于 2048，但不会低于 1024。auto 模式每次启动前重算并落盘；新增 GET /instance/{id}/memory-recommendation 供实例设置页“自动”按钮使用。模组计数含 .jar 与 .jar.disabled。
 
 ## 备选方案
 

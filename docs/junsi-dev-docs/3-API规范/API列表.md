@@ -3110,9 +3110,12 @@ CurseForge 的作者可以关闭 Project Distribution Toggle。开关关闭后�
 
 计算规则：
 
+- `rawCap = floor((modpack ? 总内存 : 可用内存) * 0.7)`
+- `cap = max(1024, rawCap)`
 - `desired = 1536 + modCount * 12 + (modpack ? 512 : 0)`
-- `cap = modpack ? 总内存 * 0.7 : 可用内存 * 0.7`
-- 结果 clamp 到 `2048..cap`，再按 256 MiB 取整
+- `capped = min(max(desired, 2048), cap)`
+- `result = max(min(round256(capped), floor(cap / 256) * 256), 1024)`
+- `cap < 2048` 时结果允许低于 2048，但不会低于 1024
 
 实例字段新增 `memoryMode`：缺失/null 与 `"auto"` 表示启动前按上述规则重算；`"custom"` 表示使用用户填写的 `maxMemory`。该字段随实例写入 `qomicex.json`。
 

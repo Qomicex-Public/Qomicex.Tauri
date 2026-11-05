@@ -69,28 +69,32 @@ pub fn mods_dir(instance: &GameInstance) -> Option<std::path::PathBuf> {
     let base = if isolated {
         instance_config::version_dir(&instance.game_dir, &instance.name)?
     } else {
-        let dir = instance
-            .resolved_game_dir
-            .as_deref()
-            .unwrap_or(&instance.game_dir);
-        instance_config::resolve_game_root(dir)
+        // 启动链路只使用 game_dir + version_isolation 定位游戏根目录；
+        // resolved_game_dir 不参与启动，不能拿来决定要统计哪个 mods 目录。
+        instance_config::resolve_game_root(&instance.game_dir)
     };
     Some(base.join("mods"))
 }
 
 /// 统计 mods 目录下的模组文件数（`.jar` 与 `.jar.disabled`）。
-pub fn count_mods(instance: &GameInstance) -> usize {
+///
+/// 目录不存在视为空目录（新实例尚未创建 mods）；其它读取错误返回 `Err`，
+/// 避免把暂时不可读的目录误判为 0 个模组。
+pub fn count_mods(instance: &GameInstance) -> Result<usize, String> {
     let Some(dir) = mods_dir(instance) else {
-        return 0;
+        return Ok(0);
     };
     count_mod_files(&dir)
 }
 
-fn count_mod_files(dir: &Path) -> usize {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return 0;
+/// 统计目录中文件名以 `.jar` 或 `.jar.disabled` 结尾的文件（大小写不敏感）。
+fn count_mod_files(dir: &Path) -> Result<usize, String> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(format!("读取模组目录失败 {}: {error}", dir.display())),
     };
-    entries
+    Ok(entries
         .filter_map(Result::ok)
         .filter(|entry| {
             entry
@@ -99,13 +103,10 @@ fn count_mod_files(dir: &Path) -> usize {
                 .unwrap_or(false)
         })
         .filter(|entry| {
-            Path::new(&entry.file_name())
-                .extension()
-                .is_some_and(|ext| {
-                    ext.eq_ignore_ascii_case("jar") || ext.eq_ignore_ascii_case("disabled")
-                })
+            let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            name.ends_with(".jar") || name.ends_with(".jar.disabled")
         })
-        .count()
+        .count())
 }
 
 #[cfg(test)]
@@ -158,17 +159,33 @@ mod tests {
     fn count_mods_handles_isolated_and_shared_layouts() {
         let isolated = temp_instance("Pack", true);
         let mods = mods_dir(&isolated).unwrap();
+        assert_eq!(
+            mods,
+            std::path::Path::new(&isolated.game_dir)
+                .join("versions")
+                .join("Pack")
+                .join("mods")
+        );
         touch(&mods.join("a.jar"));
         touch(&mods.join("b.jar.disabled"));
         touch(&mods.join("readme.txt"));
-        assert_eq!(count_mods(&isolated), 2);
+        touch(&mods.join("readme.txt.disabled"));
+        assert_eq!(count_mods(&isolated).unwrap(), 2);
 
         let shared = temp_instance("Vanilla", false);
         let mods = mods_dir(&shared).unwrap();
+        assert_eq!(mods, std::path::Path::new(&shared.game_dir).join("mods"));
         touch(&mods.join("c.jar"));
-        assert_eq!(count_mods(&shared), 1);
+        assert_eq!(count_mods(&shared).unwrap(), 1);
 
         let _ = std::fs::remove_dir_all(&isolated.game_dir);
         let _ = std::fs::remove_dir_all(&shared.game_dir);
+    }
+
+    #[test]
+    fn missing_mods_dir_counts_as_empty() {
+        let instance = temp_instance("Empty", true);
+        assert_eq!(count_mods(&instance).unwrap(), 0);
+        let _ = std::fs::remove_dir_all(&instance.game_dir);
     }
 }
