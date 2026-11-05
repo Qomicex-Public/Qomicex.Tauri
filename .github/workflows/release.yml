@@ -55,7 +55,7 @@ on:
           - all
           - all+loongarch64
       linuxBundles:
-        description: 'Linux 打包格式（仅 linux/all 时有效）'
+        description: 'Linux 打包格式（仅 linux/all/all+loongarch64 时有效）'
         required: false
         default: 'appimage,deb,rpm'
         type: choice
@@ -68,7 +68,7 @@ on:
           - deb
           - rpm
       macosArch:
-        description: 'macOS 架构（仅 macos/all 时有效）'
+        description: 'macOS 架构（仅 macos/all/all+loongarch64 时有效）'
         required: false
         default: 'both'
         type: choice
@@ -77,7 +77,7 @@ on:
           - arm64
           - x64
       windowsArch:
-        description: 'Windows 架构（仅 windows/all 时有效）'
+        description: 'Windows 架构（仅 windows/all/all+loongarch64 时有效）'
         required: false
         default: 'both'
         type: choice
@@ -86,7 +86,7 @@ on:
           - arm64
           - x64
       linuxArch:
-        description: 'Linux 架构（仅 linux/all 时有效）'
+        description: 'Linux 架构（仅 linux/all/all+loongarch64 时有效）'
         required: false
         default: 'both'
         type: choice
