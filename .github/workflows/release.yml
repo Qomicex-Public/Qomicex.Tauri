@@ -623,26 +623,35 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          LINUX_BUNDLES_INPUT: ${{ github.event.inputs.linuxBundles }}
         run: |
           VERSION="${{ needs.setup.outputs.version }}"
           BUNDLE_DIR="src-tauri/target/release/bundle"
           URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$VERSION"
 
+          # 选了却不存在的格式要报错，没选的才允许缺失：前者是构建异常，
+          # 静默跳过会让该通道的用户收不到更新且没有失败信号。
+          BUNDLES="${LINUX_BUNDLES_INPUT:-appimage,deb,rpm}"
+          has_bundle() { case ",$BUNDLES," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
+
           # AppImage 包：zip 内放 AppImage 本体（updater appimage 策略整文件替换）
           APPIMAGE=$(find "$BUNDLE_DIR" -name '*.AppImage' | head -1)
           if [ -n "$APPIMAGE" ]; then
             PKG_APP="qomicex-update-linux-x86_64-appimage.zip"
+            rm -f "$PKG_APP" "$PKG_APP.sig"
             zip -j "$PKG_APP" "$APPIMAGE"
             npx tauri signer sign "$PKG_APP"
             echo "{\"linux-x86_64-appimage\":{\"url\":\"$URL_BASE/$PKG_APP\",\"signature\":\"$(tr -d '\n' < "$PKG_APP.sig")\",\"strategy\":\"appimage\"}}" > "update-package-fragment-linux-x86_64-appimage.json"
+          elif has_bundle appimage; then
+            echo "::error::linuxBundles 包含 appimage，但 bundle 目录里没有 AppImage"
+            exit 1
           else
-            echo "::warning::No AppImage in bundle; skipping linux-x86_64-appimage self-update package"
+            echo "::warning::AppImage 未在选择中，跳过 linux-x86_64-appimage 自更新包"
           fi
 
           # system 包：安装后的 / 相对布局。deb 与 rpm 装到同一套路径（两者包内
           # 路径一致），故 linuxBundles 只选 rpm 时从 rpm 负载解出同样布局，避免
-          # RPM 安装用户拿不到自更新包。两种格式都没有时跳过而不报错，否则该
-          # 合法选择会失败整个作业、连带丢掉已构建的 bundle 资产。
+          # RPM 安装用户拿不到自更新包。
           DEB=$(find "$BUNDLE_DIR" -name '*.deb' | head -1)
           RPM=$(find "$BUNDLE_DIR" -name '*.rpm' | head -1)
           STAGING=""
@@ -652,17 +661,28 @@ jobs:
           elif [ -n "$RPM" ]; then
             STAGING=$(mktemp -d)
             (cd "$STAGING" && rpm2cpio "$RPM" | cpio -idm --quiet)
+            # 默认 shell 是 bash -e 且没有 pipefail：rpm2cpio 失败时 cpio 读到空
+            # 输入仍可能返回 0。空目录会被打成一个空的自更新包，客户端用它覆盖
+            # 安装会损坏程序，故断言关键文件存在。
+            if [ ! -f "$STAGING/usr/bin/qomicex-launcher" ]; then
+              echo "::error::从 rpm 解包后缺少 usr/bin/qomicex-launcher，拒绝生成自更新包"
+              exit 1
+            fi
           fi
           if [ -n "$STAGING" ]; then
             PKG_SYS="qomicex-update-linux-x86_64-system.zip"
+            rm -f "$PKG_SYS" "$PKG_SYS.sig"
             (cd "$STAGING" && zip -qr "$OLDPWD/$PKG_SYS" .)
             npx tauri signer sign "$PKG_SYS"
             rm -rf "$STAGING"
             echo "{\"linux-x86_64-system\":{\"url\":\"$URL_BASE/$PKG_SYS\",\"signature\":\"$(tr -d '\n' < "$PKG_SYS.sig")\",\"strategy\":\"system\"}}" > "update-package-fragment-linux-x86_64-system.json"
+          elif has_bundle deb || has_bundle rpm; then
+            echo "::error::linuxBundles 包含 deb/rpm，但 bundle 目录里两者都没有"
+            exit 1
           else
-            echo "::warning::No deb/rpm in bundle; skipping linux-x86_64-system self-update package"
+            echo "::warning::deb/rpm 未在选择中，跳过 linux-x86_64-system 自更新包"
           fi
-          cat update-package-fragment-*.json 2>/dev/null || echo "::warning::no self-update package produced for this bundle selection"
+          cat update-package-fragment-*.json 2>/dev/null || echo "::warning::本次未产出自更新包"
       - uses: actions/upload-artifact@v7
         with:
           name: update-package-linux-x64
@@ -824,27 +844,36 @@ jobs:
           # needs.setup.outputs.version 流到这里，run 体里的 ${{ }} 是文本拼接，
           # 构造的版本文本会在持有签名私钥的步骤里被执行。
           RELEASE_TAG: ${{ needs.setup.outputs.displayVersion }}
+          LINUX_BUNDLES_INPUT: ${{ github.event.inputs.linuxBundles }}
         run: |
           BUNDLE_DIR="src-tauri/target/release/bundle"
           # 下载 URL 必须用带 v 前缀的 displayVersion：release 作业按
           # needs.setup.outputs.displayVersion 建 tag，用不带 v 的 version 会 404。
           URL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/$RELEASE_TAG"
 
+          # 选了却不存在的格式要报错，没选的才允许缺失：前者是构建异常，
+          # 静默跳过会让该通道的用户收不到更新且没有失败信号。
+          BUNDLES="${LINUX_BUNDLES_INPUT:-appimage,deb,rpm}"
+          has_bundle() { case ",$BUNDLES," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
+
           # AppImage 包：zip 内放 AppImage 本体（updater appimage 策略整文件替换）。
           APPIMAGE=$(find "$BUNDLE_DIR" -name '*.AppImage' | head -1)
           if [ -n "$APPIMAGE" ]; then
             PKG_APP="qomicex-update-linux-aarch64-appimage.zip"
+            rm -f "$PKG_APP" "$PKG_APP.sig"
             zip -j "$PKG_APP" "$APPIMAGE"
             npx tauri signer sign "$PKG_APP"
             echo "{\"linux-aarch64-appimage\":{\"url\":\"$URL_BASE/$PKG_APP\",\"signature\":\"$(tr -d '\n' < "$PKG_APP.sig")\",\"strategy\":\"appimage\"}}" > "update-package-fragment-linux-aarch64-appimage.json"
+          elif has_bundle appimage; then
+            echo "::error::linuxBundles 包含 appimage，但 bundle 目录里没有 AppImage"
+            exit 1
           else
-            echo "::warning::No AppImage in bundle; skipping linux-aarch64-appimage self-update package"
+            echo "::warning::AppImage 未在选择中，跳过 linux-aarch64-appimage 自更新包"
           fi
 
           # system 包：安装后的 / 相对布局。deb 与 rpm 装到同一套路径（两者包内
           # 路径一致），故 linuxBundles 只选 rpm 时从 rpm 负载解出同样布局，避免
-          # RPM 安装用户拿不到自更新包。两种格式都没有时跳过而不报错，否则该
-          # 合法选择会失败整个作业、连带丢掉已构建的 bundle 资产。
+          # RPM 安装用户拿不到自更新包。
           DEB=$(find "$BUNDLE_DIR" -name '*.deb' | head -1)
           RPM=$(find "$BUNDLE_DIR" -name '*.rpm' | head -1)
           STAGING=""
@@ -854,15 +883,26 @@ jobs:
           elif [ -n "$RPM" ]; then
             STAGING=$(mktemp -d)
             (cd "$STAGING" && rpm2cpio "$RPM" | cpio -idm --quiet)
+            # 默认 shell 是 bash -e 且没有 pipefail：rpm2cpio 失败时 cpio 读到空
+            # 输入仍可能返回 0。空目录会被打成一个空的自更新包，客户端用它覆盖
+            # 安装会损坏程序，故断言关键文件存在。
+            if [ ! -f "$STAGING/usr/bin/qomicex-launcher" ]; then
+              echo "::error::从 rpm 解包后缺少 usr/bin/qomicex-launcher，拒绝生成自更新包"
+              exit 1
+            fi
           fi
           if [ -n "$STAGING" ]; then
             PKG_SYS="qomicex-update-linux-aarch64-system.zip"
+            rm -f "$PKG_SYS" "$PKG_SYS.sig"
             (cd "$STAGING" && zip -qr "$OLDPWD/$PKG_SYS" .)
             npx tauri signer sign "$PKG_SYS"
             rm -rf "$STAGING"
             echo "{\"linux-aarch64-system\":{\"url\":\"$URL_BASE/$PKG_SYS\",\"signature\":\"$(tr -d '\n' < "$PKG_SYS.sig")\",\"strategy\":\"system\"}}" > "update-package-fragment-linux-aarch64-system.json"
+          elif has_bundle deb || has_bundle rpm; then
+            echo "::error::linuxBundles 包含 deb/rpm，但 bundle 目录里两者都没有"
+            exit 1
           else
-            echo "::warning::No deb/rpm in bundle; skipping linux-aarch64-system self-update package"
+            echo "::warning::deb/rpm 未在选择中，跳过 linux-aarch64-system 自更新包"
           fi
           cat update-package-fragment-*.json 2>/dev/null || echo "::warning::no self-update package produced for this bundle selection"
       - uses: actions/upload-artifact@v7
