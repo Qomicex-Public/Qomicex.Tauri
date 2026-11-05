@@ -43,7 +43,7 @@ on:
         default: false
         type: boolean
       buildPlatform:
-        description: '构建平台'
+        description: '构建平台（all=windows+linux+macos；all+loongarch64 额外构建龙芯）'
         required: true
         default: 'all'
         type: choice
@@ -53,6 +53,7 @@ on:
           - macos
           - loongarch64
           - all
+          - all+loongarch64
       linuxBundles:
         description: 'Linux 打包格式（仅 linux/all 时有效）'
         required: false
@@ -216,7 +217,8 @@ jobs:
     if: |
       github.event_name == 'release' ||
       (github.event_name == 'workflow_dispatch' &&
-        (github.event.inputs.buildPlatform == 'windows' || github.event.inputs.buildPlatform == 'all') &&
+        (github.event.inputs.buildPlatform == 'windows' || github.event.inputs.buildPlatform == 'all' ||
+         github.event.inputs.buildPlatform == 'all+loongarch64') &&
         (github.event.inputs.windowsArch == 'both' || github.event.inputs.windowsArch == 'x64'))
     # 与 quality-gate 并行：release 汇总时仍要求 gate 通过，坏产物不会发布
     needs: [setup]
@@ -352,7 +354,8 @@ jobs:
     if: |
       github.event_name == 'release' ||
       (github.event_name == 'workflow_dispatch' &&
-        (github.event.inputs.buildPlatform == 'windows' || github.event.inputs.buildPlatform == 'all') &&
+        (github.event.inputs.buildPlatform == 'windows' || github.event.inputs.buildPlatform == 'all' ||
+         github.event.inputs.buildPlatform == 'all+loongarch64') &&
         (github.event.inputs.windowsArch == 'both' || github.event.inputs.windowsArch == 'arm64'))
     # 与 quality-gate 并行：release 汇总时仍要求 gate 通过，坏产物不会发布
     needs: [setup]
@@ -490,7 +493,8 @@ jobs:
     if: |
       github.event_name == 'release' ||
       (github.event_name == 'workflow_dispatch' &&
-        (github.event.inputs.buildPlatform == 'linux' || github.event.inputs.buildPlatform == 'all') &&
+        (github.event.inputs.buildPlatform == 'linux' || github.event.inputs.buildPlatform == 'all' ||
+         github.event.inputs.buildPlatform == 'all+loongarch64') &&
         (github.event.inputs.linuxArch == 'both' || github.event.inputs.linuxArch == 'x64'))
     # 与 quality-gate 并行：release 汇总时仍要求 gate 通过，坏产物不会发布
     needs: [setup]
@@ -671,7 +675,8 @@ jobs:
     if: |
       github.event_name == 'release' ||
       (github.event_name == 'workflow_dispatch' &&
-        (github.event.inputs.buildPlatform == 'linux' || github.event.inputs.buildPlatform == 'all') &&
+        (github.event.inputs.buildPlatform == 'linux' || github.event.inputs.buildPlatform == 'all' ||
+         github.event.inputs.buildPlatform == 'all+loongarch64') &&
         (github.event.inputs.linuxArch == 'both' || github.event.inputs.linuxArch == 'arm64'))
     # 与 quality-gate 并行：release 汇总时仍要求 gate 通过，坏产物不会发布
     needs: [setup]
@@ -865,7 +870,7 @@ jobs:
       github.event_name == 'release' ||
       (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.buildPlatform == 'loongarch64' ||
-         github.event.inputs.buildPlatform == 'all'))
+         github.event.inputs.buildPlatform == 'all+loongarch64'))
     # 与 quality-gate 并行：release 汇总时仍要求 gate 通过，坏产物不会发布
     needs: [setup]
     runs-on: ubuntu-24.04
@@ -1175,7 +1180,8 @@ jobs:
     if: |
       github.event_name == 'release' ||
       (github.event_name == 'workflow_dispatch' &&
-        (github.event.inputs.buildPlatform == 'macos' || github.event.inputs.buildPlatform == 'all') &&
+        (github.event.inputs.buildPlatform == 'macos' || github.event.inputs.buildPlatform == 'all' ||
+         github.event.inputs.buildPlatform == 'all+loongarch64') &&
         (github.event.inputs.macosArch == 'both' || github.event.inputs.macosArch == 'arm64'))
     # 与 quality-gate 并行：release 汇总时仍要求 gate 通过，坏产物不会发布
     needs: [setup]
@@ -1314,7 +1320,8 @@ jobs:
     if: |
       github.event_name == 'release' ||
       (github.event_name == 'workflow_dispatch' &&
-        (github.event.inputs.buildPlatform == 'macos' || github.event.inputs.buildPlatform == 'all') &&
+        (github.event.inputs.buildPlatform == 'macos' || github.event.inputs.buildPlatform == 'all' ||
+         github.event.inputs.buildPlatform == 'all+loongarch64') &&
         (github.event.inputs.macosArch == 'both' || github.event.inputs.macosArch == 'x64'))
     # 与 quality-gate 并行：release 汇总时仍要求 gate 通过，坏产物不会发布
     needs: [setup]
