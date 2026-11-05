@@ -17,15 +17,15 @@ on:
 permissions:
   actions: write
 
-env:
-  MAX_ATTEMPT: 4
-
 jobs:
   retry:
     # 失败与取消都要看：macOS 被饿死的 run 是否被判 cancelled 取决于是不是
     # 还有其他失败作业，两种结论都出现过。人工取消的 run 也会进来，但下面的
     # 检测要求「所有阻塞项都是零步骤的 macOS 作业」，已启动的作业 steps 非空、
     # 会被排除，因此不会把人主动中止的发布重排回来。
+    #
+    # job 级 if 读不到 env 上下文，上限只能写成字面量，须与下面
+    # Re-run 步骤里的 MAX_ATTEMPT 保持一致。
     if: |
       (github.event.workflow_run.conclusion == 'failure' ||
        github.event.workflow_run.conclusion == 'cancelled') &&
@@ -97,7 +97,7 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.event.workflow_run.id }}
           JOB_ID: ${{ steps.detect.outputs.job_id }}
-          MAX_ATTEMPT: ${{ env.MAX_ATTEMPT }}
+          MAX_ATTEMPT: 4
         run: |
           gh_api_retry() {
             local n=1 out
