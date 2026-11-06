@@ -1,0 +1,55 @@
+name: Publish CLI
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'packages/qomicex-cli/**'
+      - '.github/workflows/cli-publish.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: cli-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # 不传 version：pnpm 版本由 package.json 的 packageManager 决定。
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: Install & build
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @qomicex/cli build
+      # bin 指向 dist/index.js，shebang 带 CRLF 会被 npm 从打包结果里剔除，
+      # build 里的 normalize-eol 就是为此存在；这里再确认一次。
+      - name: Check bin
+        run: head -c 3 packages/qomicex-cli/dist/index.js | grep -q '#!'
+      - name: Check version not yet published
+        id: version
+        working-directory: packages/qomicex-cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "@qomicex/cli@$VERSION" version >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "@qomicex/cli@$VERSION already published, skipping"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "@qomicex/cli@$VERSION is new"
+          fi
+      - name: Publish
+        if: steps.version.outputs.publish == 'true'
+        working-directory: packages/qomicex-cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+          npm publish --access public
