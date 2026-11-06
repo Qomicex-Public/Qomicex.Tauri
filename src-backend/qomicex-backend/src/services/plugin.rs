@@ -412,10 +412,16 @@ impl PluginStore {
         self.invalidate_cache();
     }
 
-    pub fn uninstall(&self, id: &str) {
+    pub fn uninstall(&self, id: &str) -> std::io::Result<()> {
         let dir = self.plugins_dir.join(id);
         if dir.is_dir() {
-            let _ = std::fs::remove_dir_all(&dir);
+            // 目录本就不存在是幂等删除；其余错误必须上报 —— 调用方据此保留权限
+            // 配置，避免「目录还在、配置已清」导致重装后沿用旧策略的错觉。
+            if let Err(e) = std::fs::remove_dir_all(&dir) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    return Err(e);
+                }
+            }
         }
         let mut states = {
             let mut g = match self.states_cache.lock() {
@@ -435,6 +441,7 @@ impl PluginStore {
             *g = Some(states);
         }
         self.invalidate_cache();
+        Ok(())
     }
 
     /// 把最新 `.bak-*` 升级快照替换回插件目录（回滚），返回回滚后的 PluginInfo。
@@ -1156,7 +1163,7 @@ mod tests {
         let info = install_from_package(&pkg, false, false).unwrap().unwrap();
         assert_eq!(info.manifest.id, "com.qomicex.demo");
         // 清理仅测试自己创建的产物
-        store.uninstall("com.qomicex.demo");
+        store.uninstall("com.qomicex.demo").unwrap();
     }
 
     /// 回归：升级快照 `{id}.bak-{version}` 必须被识别为内部目录，

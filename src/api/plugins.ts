@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import type { PluginInfo } from '../plugins/types.ts'
+import type { PluginInfo, PluginPermissionConfig } from '../plugins/types.ts'
 import { API_BASE, post } from './client.ts'
 
 // 惰性求值：API_BASE 是活绑定（IPC 探测后才切换），模块级常量会捕获旧值
@@ -31,6 +31,25 @@ export async function setPluginState(id: string, state: string): Promise<void> {
 
 export async function rescanPlugins(): Promise<{ scanned: number }> {
   const res = await fetch(`${base()}/rescan`, { method: 'POST' })
+  return res.json()
+}
+
+export async function fetchPluginPermissions(id: string): Promise<PluginPermissionConfig> {
+  const res = await fetch(`${base()}/${encodeURIComponent(id)}/permissions`)
+  if (!res.ok) throw new Error(`Failed to fetch plugin permissions: ${res.status}`)
+  return res.json()
+}
+
+export async function savePluginPermissions(
+  id: string,
+  config: PluginPermissionConfig,
+): Promise<PluginPermissionConfig> {
+  const res = await fetch(`${base()}/${encodeURIComponent(id)}/permissions`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  })
+  if (!res.ok) throw new Error(`Failed to save plugin permissions: ${res.status}`)
   return res.json()
 }
 

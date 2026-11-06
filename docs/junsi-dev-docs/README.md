@@ -127,6 +127,7 @@
 - [ADR-123：受限补全入口改用精确版本文件页，不写回 sidecar（issue #301）](1-决策记录/ADR-123-受限补全入口改用精确版本文件页-不写回-sidecar-issue-301.md)
 - [ADR-124：整合包安装失败保留已下载文件、重试续传，进度改按文件数计](1-决策记录/ADR-124-整合包安装失败保留已下载文件-重试续传-进度按文件数计.md)
 - [ADR-125：实例自动内存按模组数与整合包重算（issue #319）](1-决策记录/ADR-125-实例自动内存按模组数与整合包重算-issue--319-.md)
+- [ADR-126：插件权限用户层收窄与 proxyFetch 出网白名单](1-决策记录/ADR-126-插件权限用户层收窄与-proxyFetch-出网白名单.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 

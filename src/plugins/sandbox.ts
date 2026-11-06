@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import type { PluginInfo } from './types.ts'
-import { usePluginStore } from '../stores/pluginStore.ts'
+import { isPermissionGranted } from './permissions.ts'
 import { createPluginBridge } from './plugin-api.ts'
 import { injectCss, registerThemeSync, unregisterThemeSync, getThemeVarsCss, themeBridgeScript } from './plugin-css.ts'
 import { API_BASE } from '../api/client.ts'
@@ -13,6 +13,7 @@ import { getSettings as getAppSettings } from '../api/settings.ts'
 import type { PluginErrorType } from '../api/telemetry.ts'
 import { reportPluginError } from '../lib/telemetry.ts'
 import { createIframeHost, mountHost, trackMountTarget, unmountHost } from './sandbox-host.ts'
+import { registerPluginSource, pluginIdForSource } from './source-registry.ts'
 
 export interface SandboxInstance {
   iframe: HTMLIFrameElement
@@ -49,7 +50,6 @@ const inlineInstances = new Map<string, InlineInstance>()
 const webviewInstances = new Map<string, WebviewInstance>()
 /** UI 槽位沙箱：pluginId → 该插件挂载到各槽位的 iframe 列表（与主页面沙箱独立管理） */
 const slotSandboxes = new Map<string, SandboxInstance[]>()
-const sourceMap = new WeakMap<Window, string>()
 
 /// 已销毁的 iframe 集合（弱引用，不阻止回收）。
 ///
@@ -478,21 +478,21 @@ async function loadSandboxContent(plugin: PluginInfo, iframe: HTMLIFrameElement,
     html = buildPluginDoc(plugin, html, entry)
 
     // 提前登记来源：插件脚本在首次 load 事件之前就会调用 API，若等到 onload 才
-    // sourceMap.set，这段窗口期的调用会查不到 pluginId（表现为调用卡住/被拒）。
-    if (iframe.contentWindow) sourceMap.set(iframe.contentWindow, plugin.manifest.id)
+    // 登记，这段窗口期的调用会查不到 pluginId（表现为调用卡住/被拒）。
+    if (iframe.contentWindow) registerPluginSource(iframe.contentWindow, plugin.manifest.id)
 
     iframe.onload = () => {
       // destroy() 可能先于 onload 触发（见 destroyedIframes 注释），
       // 此时不得再注册主题同步，否则泄漏已卸载的 iframe（#236）。
       if (destroyedIframes.has(iframe)) return
       // srcdoc 首次导航后 contentWindow 可能换成新对象，这里再登记一次兜底
-      if (iframe.contentWindow) sourceMap.set(iframe.contentWindow, plugin.manifest.id)
+      if (iframe.contentWindow) registerPluginSource(iframe.contentWindow, plugin.manifest.id)
       registerThemeSync(iframe)
     }
     iframe.srcdoc = html
     // srcdoc 赋值后 contentWindow 已就位：此刻登记，覆盖「脚本已开始跑、onload 未到」
     // 的窗口期（插件常在 DOMContentLoaded 里就调 API）。
-    if (iframe.contentWindow) sourceMap.set(iframe.contentWindow, plugin.manifest.id)
+    if (iframe.contentWindow) registerPluginSource(iframe.contentWindow, plugin.manifest.id)
   } catch (e) {
     console.error('[sandbox] loadSandboxContent failed for', plugin.manifest.id, e)
     reportPluginError(plugin.manifest.id, plugin.manifest.version, 'plugin_load_failed')
@@ -555,7 +555,7 @@ async function loadInlineContent(plugin: PluginInfo, container: HTMLDivElement) 
       .replace(/<\/?(?:html|head|body)[^>]*>/gi, '')
       .replace(/id="root"/g, '')
 
-    sourceMap.set(window, plugin.manifest.id)
+    registerPluginSource(window, plugin.manifest.id)
 
     console.log('[sandbox] inline content loaded for', plugin.manifest.id, 'length:', inner.length)
     container.innerHTML = inner
@@ -679,13 +679,13 @@ export function destroyWebviewInstance(pluginId: string) {
 }
 
 export function registerOverlayIframe(contentWindow: Window, pluginId: string) {
-  sourceMap.set(contentWindow, pluginId)
+  registerPluginSource(contentWindow, pluginId)
 }
 
 window.addEventListener('message', (e) => {
   if (e.data?.type === '__plugin_api_call') {
     const { id, method, args } = e.data
-    const pluginId = sourceMap.get(e.source as Window)
+    const pluginId = pluginIdForSource(e.source as Window)
     if (pluginId) {
       handleApiCall(id, method, args, pluginId, e.source as Window)
     } else if (e.source) {
@@ -822,25 +822,38 @@ function getCurrentThemeColorHex(): string | null {
 
 async function executePluginMethod(pluginId: string, method: string, args: unknown[]): Promise<unknown> {
   const requiredPerm = METHOD_PERMISSIONS[method]
-  if (requiredPerm) {
-    const plugin = usePluginStore.getState().getPlugin(pluginId)
-    if (!plugin || !plugin.manifest.permissions.includes(requiredPerm))
-      throw new Error(`Permission denied: requires ${requiredPerm}`)
-  }
+  if (requiredPerm && !isPermissionGranted(pluginId, requiredPerm))
+    throw new Error(`Permission denied: requires ${requiredPerm}`)
   if (method === 'callBackend') {
     // 端点必须是字符串：非字符串（数组等）会被拼成任意后端路径，先拒掉。
     const endpoint = args[0]
     if (typeof endpoint !== 'string') {
       throw new Error('Permission denied: callBackend endpoint must be a string')
     }
+    // 代理与权限配置只能走专用通道：
+    // - /plugins/proxy 由 proxyFetch 调用，bridge 会注入不可覆盖的 pluginId；
+    //   放行 callBackend 会让插件带上别的 pluginId 借用其内网白名单。
+    // - /plugins/{id}/permissions 是启动器自身的设置入口，插件不得改写（否则
+    //   可自行解除刚被用户关闭的限制）。
+    // 用与 bridge 相同的拼接结果解析 pathname：裸字符串比较会被 `#fragment`、
+    // `..` 路径规范化绕过（fetch 会把它们折叠成受限端点）。
+    let endpointPath: string
+    try {
+      endpointPath = new URL(`${API_BASE}${endpoint}`).pathname.replace(/^\/api(?=\/)/, '').replace(/\/+$/, '')
+    } catch {
+      throw new Error('Permission denied: invalid callBackend endpoint')
+    }
+    if (endpointPath === '/plugins/proxy') {
+      throw new Error('Permission denied: use proxyFetch instead of callBackend(/plugins/proxy)')
+    }
+    if (/^\/plugins\/[^/]+\/permissions$/.test(endpointPath)) {
+      throw new Error('Permission denied: plugins cannot change permission settings')
+    }
     // 特权路由二次鉴权（规则表见 backend-guard.ts）：callBackend 只要求
     // network:fetch，但进程/文件系统/插件安装等路由需要更强权限。
     const extra = backendEndpointPermission(endpoint, resolveBackendMethod(args[1]), API_BASE)
-    if (extra) {
-      const plugin = usePluginStore.getState().getPlugin(pluginId)
-      if (!plugin || !plugin.manifest.permissions.includes(extra))
-        throw new Error(`Permission denied: ${endpoint} requires ${extra}`)
-    }
+    if (extra && !isPermissionGranted(pluginId, extra))
+      throw new Error(`Permission denied: ${endpoint} requires ${extra}`)
   }
   const bridge = createPluginBridge(pluginId)
   switch (method) {

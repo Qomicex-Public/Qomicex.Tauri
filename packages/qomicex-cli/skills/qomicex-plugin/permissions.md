@@ -99,6 +99,14 @@
 - 需要持久化自己的配置：加 `config:write`（配合 `getSettings`/`setSettings`）。
 - 需要文件读写：`filesystem:read`（读）或 `filesystem:write`（写/删，danger）。文件访问是**授权制**——首次访问用户弹窗确认，按路径前缀持久化。
 
+## 用户可能关闭权限
+
+权限不是「声明过就一定可用」。用户可在「设置 → 插件 → 详情 → 权限」逐项关闭（含 proxyFetch 的内网访问策略），有效权限 = manifest − 用户关闭项：
+
+- 被关闭的权限调用会抛 `Permission denied: requires <permission>`，必须按「能力不可用」降级，不要假设声明过就一定能用。
+- 关闭 `ui:inject_sidebar` / `ui:inject_settings` / `ui:sub_window` 会隐藏对应入口，插件是被重新加载而不是收到通知。
+- `proxyFetch` 默认拒绝本机/内网地址；依赖本地 API 的插件应在文档里说明需要用户开启白名单或「允许内网地址」。
+
 ## 模板默认 manifest
 
 ```json

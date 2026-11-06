@@ -8,6 +8,7 @@ import { normalizeResourceKind } from '../lib/downloadGroups.ts'
 import { RESOURCES } from '../../qomicex-tauri-i18n/src/index.ts'
 import { resolveLang } from '../i18n/lang.ts'
 import { getHookRegistry } from './hook-registry.ts'
+import { isPermissionGranted } from './permissions.ts'
 import { requestPluginSettings } from './pluginSettingsNav.ts'
 import type { HookContext } from './hook-registry.ts'
 
@@ -376,7 +377,9 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       const res = await fetch(`${API_BASE}/plugins/proxy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(req)
+        // pluginId 放在展开之后：出网策略由启动器按插件身份查表，插件传进来的
+        // 同名字段不能覆盖它。
+        body: JSON.stringify({ ...req, pluginId })
       })
       if (!res.ok) throw new Error(`Proxy failed: ${res.status}`)
       return res.json()
@@ -386,7 +389,7 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       const handle = openStream(
         '/plugins/proxy',
         parser.feed,
-        { method: 'POST', body: JSON.stringify({ ...req, stream: true }), signal },
+        { method: 'POST', body: JSON.stringify({ ...req, stream: true, pluginId }), signal },
       )
       await handle.done
       parser.flush()
@@ -399,7 +402,11 @@ export function createPluginBridge(pluginId: string): PluginBridge {
     },
     registerHook: (method, handler) => {
       // iframe/inline 插件的 registerHook 在桥脚本中直接处理；此实现供主窗口侧
-      // （l4 桥等）直接注册到主窗口 HookRegistry。
+      // （l4 桥等）直接注册到主窗口 HookRegistry。用户关掉 hook:register 后
+      // 这条路径同样要被拦住，否则「已禁用」只对 iframe 路径生效。
+      if (!isPermissionGranted(pluginId, 'hook:register')) {
+        throw new Error('Permission denied: requires hook:register')
+      }
       getHookRegistry().register(pluginId, method, handler)
     },
     callPlugin: async (targetId, method, ...args) => {

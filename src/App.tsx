@@ -450,6 +450,29 @@ function AppContent() {
     return () => window.removeEventListener('plugin:state-change', onPluginStateChange)
   }, [loadPlugins])
 
+  // 权限配置被外部（API / 另一个窗口）改成影响侧栏/设置页/hook 时，重载对应插件，
+  // 否则已注册的入口和 hook 会继续按旧权限存在。
+  useEffect(() => {
+    const onPermissionsChanged = async (event: Event) => {
+      const { ids } = (event as CustomEvent<{ ids: string[] }>).detail
+      for (const id of ids) {
+        const plugin = usePluginStore.getState().getPlugin(id)
+        if (!plugin || plugin.state !== 'active') continue
+        try {
+          deactivatePlugin(id)
+          await activatePlugin(plugin)
+        } catch (e) {
+          // 单个插件加载失败不应中断其余插件的权限重载；但也必须告知用户，
+          // 因为插件此时已被停用，入口会消失。
+          logWarn('plugins.permissionsReload', e)
+          notify(t('settings.plugins.permissionReloadFailed'), 'error')
+        }
+      }
+    }
+    window.addEventListener('plugin:permissions-changed', onPermissionsChanged)
+    return () => window.removeEventListener('plugin:permissions-changed', onPermissionsChanged)
+  }, [notify, t])
+
   return (
     <Provider value={closeWithGuard}>
       <BrowserRouter>

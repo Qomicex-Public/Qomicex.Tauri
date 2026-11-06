@@ -20,6 +20,8 @@ import { logError } from '../lib/frontendLog.ts'
 export default function PluginSettingsTab() {
   const { t } = useI18n()
   const plugins = usePluginStore((s) => s.plugins)
+  // 权限变化要触发重算：isContributionEnabled 读的是 store 快照，不订阅就拿不到更新
+  const permissionConfigs = usePluginStore((s) => s.permissionConfigs)
   // active 可为完整 tab key（`${pluginId}:${file}`）或插件 id（openPluginSettings 跳转），两段匹配
   const [active, setActive] = useState(() => consumePluginSettings() ?? '')
   const [, bump] = useState(0)
@@ -27,6 +29,13 @@ export default function PluginSettingsTab() {
 
   const entries = useMemo(() => plugins.flatMap((p) => {
     if (p.state !== 'active') return []
+    // 未声明 ui:inject_settings 的插件本就不该出现在设置页；先看声明再看用户禁用，
+    // 否则会把所有安装插件都列出来。
+    if (!p.manifest.permissions.includes('ui:inject_settings')) return []
+    // 直接读快照而不是走 isContributionEnabled：这里需要显式依赖 permissionConfigs
+    // 才能在其变化时重算（关掉 ui:inject_settings 后该设置页要立刻消失）。
+    const disabled = permissionConfigs[p.manifest.id]?.disabled ?? []
+    if (disabled.includes('ui:inject_settings')) return []
     const pages = p.manifest.contributes?.settingsPages ?? []
     return pages.map((file, i) => ({
       key: `${p.manifest.id}:${file}`,
@@ -34,7 +43,7 @@ export default function PluginSettingsTab() {
       plugin: p,
       file,
     }))
-  }), [plugins])
+  }), [plugins, permissionConfigs])
 
   const current = entries.find((e) => e.key === active)
     ?? entries.find((e) => e.key.startsWith(`${active}:`))

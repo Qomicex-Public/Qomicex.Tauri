@@ -27,6 +27,7 @@ use crate::services::instance::InstanceService;
 use crate::services::instance_group::InstanceGroupService;
 use crate::services::launch_tracker::LaunchTracker;
 use crate::services::plugin::{FileAuthService, PluginGatewayClient, PluginStore};
+use crate::services::plugin_permissions::PluginPermissionStore;
 use crate::services::plugin_process::PluginProcessService;
 use crate::services::resource_favorite::ResourceFavoriteService;
 use crate::services::resource_favorite_folder::ResourceFavoriteFolderService;
@@ -102,6 +103,8 @@ pub struct AppState {
     pub game_log: Arc<GameLogService>,
     /// 插件商店（对应 PluginStore）。
     pub plugin_store: Arc<PluginStore>,
+    /// 插件权限的用户层覆盖（禁用项 + proxyFetch 出网策略）。
+    pub plugin_permissions: Arc<PluginPermissionStore>,
     /// 插件文件授权（对应 FileAuthService）。
     pub plugin_auth: Arc<FileAuthService>,
     /// 插件常驻进程管理（spawn/stdin/kill/alive/logs，见 services/plugin_process.rs）。
@@ -275,6 +278,7 @@ impl AppState {
         let export_tasks = Arc::new(ExportTaskManager::new());
 
         let plugin_store = Arc::new(PluginStore::new());
+        let plugin_permissions = Arc::new(PluginPermissionStore::new());
         let plugin_auth = Arc::new(FileAuthService::new());
         let plugin_processes = Arc::new(PluginProcessService::new());
         let plugin_gateway = Arc::new(PluginGatewayClient::new(http_client.clone()));
@@ -308,6 +312,7 @@ impl AppState {
             game_log,
             export_tasks,
             plugin_store,
+            plugin_permissions,
             plugin_auth,
             plugin_processes,
             plugin_gateway,

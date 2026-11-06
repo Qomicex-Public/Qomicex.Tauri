@@ -5,6 +5,7 @@ import { Tooltip } from '../components/ui/index.ts'
 import type { PluginInfo, PluginMenuItem, PluginContributes } from './types.ts'
 import { usePluginStore } from '../stores/pluginStore.ts'
 import { createSandbox, renderInline, getInstance, getWebviewInstance, registerWebviewInstance, destroyWebviewInstance, convertCssLinks, getFileUrl, createSlotSandbox, destroySlotSandboxes } from './sandbox.ts'
+import { isContributionEnabled } from './permissions.ts'
 import { initL4Bridge } from './webview-bridge.ts'
 import { getL4HostBridge } from './l4-registry.ts'
 import { registerSlot, unregisterPluginSlots } from './slots.tsx'
@@ -235,9 +236,14 @@ export async function activatePlugin(plugin: PluginInfo) {
     }
 
     const { menuItems, overlay, slots } = plugin.manifest.contributes ?? {}
-    if (menuItems) {
+    // 用户关掉的权限也要管住 manifest 静态贡献：只拦方法调用的话，侧栏入口照旧
+    // 显示、点进去只看到一堆「Permission denied」。
+    const canInjectSidebar = isContributionEnabled(plugin.manifest.id, 'ui:inject_sidebar')
+    const canSubWindow = isContributionEnabled(plugin.manifest.id, 'ui:sub_window')
+    if (menuItems && canInjectSidebar) {
       for (const item of menuItems) {
         if (item.action === 'overlay' && overlay) {
+          if (!canSubWindow) continue
           registerSlot(
             plugin.manifest.id,
             'sidebar:bottom',
@@ -257,6 +263,9 @@ export async function activatePlugin(plugin: PluginInfo) {
     if (slots) {
       for (const slot of slots) {
         if (!slot.file) continue
+        // 侧栏槽位与 sidebar 菜单同属 ui:inject_sidebar：关掉权限后这段循环仍
+        // 注册的话，内容会绕过菜单过滤继续显示。
+        if (slot.slot === 'sidebar:bottom' && !canInjectSidebar) continue
         try {
           const sandbox = createSlotSandbox(plugin, slot.file)
           registerSlot(
