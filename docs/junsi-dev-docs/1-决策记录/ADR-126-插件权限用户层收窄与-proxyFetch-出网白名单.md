@@ -55,9 +55,11 @@ manifest 静态贡献不经过方法调用，只拦方法会出现「权限已�
 
 ### 4. 存储与校验边界
 
-`plugin_permissions.rs` 与 `plugin-states.json` 同目录、同生命周期，写入前规范化（权限 id 字符集/去重/上限 256；白名单条目解析/去重/上限 64）。
+`plugin_permissions.rs` 与 `plugin-states.json` 同目录、同生命周期，写入前规范化（权限 id 字符集/去重/上限 256；白名单条目解析/去重/上限 64）。`set` / `remove` 用独立写锁串行化 load-modify-persist，落盘先写 `json.tmp` 再 rename，避免并发覆盖与写中断留下半截 JSON；读取/解析失败返回错误而不是默认配置（默认配置会放行 manifest 全部权限）。
 
 明确写进注释与本文档的**已知边界**：后端仍不做身份认证，本地任意进程可以直接 `POST /plugins/proxy` 并伪造 `pluginId`。这与「权限校验不在后端」的既有模型一致——SSRF 策略保护的是启动器不被插件顺手当成内网跳板，不是防止本机进程访问本机网络。
+
+插件侧的 `callBackend` 额外拒绝两类端点：`/plugins/proxy`（必须走 `proxyFetch`，让 bridge 注入不可覆盖的 `pluginId`）与 `/plugins/{id}/permissions`（插件不得改写自己的权限配置）。
 
 ## 被否方案
 
@@ -78,8 +80,8 @@ manifest 静态贡献不经过方法调用，只拦方法会出现「权限已�
 
 ## 验证
 
-- `cargo test plugin_permissions`：8 个单测（默认策略、开关、精确/通配/端口匹配、大小写与尾点、规范化、上限、落盘往返）。
-- `cargo test endpoints::plugin::tests`：10 个通过（含新增 `loopback_hosts_are_recognized`）。
+- `cargo test plugin_permissions`：9 个单测（默认策略、开关、精确/通配/端口匹配、大小写与尾点、规范化、上限、落盘往返与删除落盘、损坏文件 fail-closed）。
+- `cargo test endpoints::plugin::tests`：11 个通过（含新增 `loopback_hosts_are_recognized` 与 `launcher_self_target_requires_matching_port`）。
 - `cargo check --tests`：通过；`cargo fmt --check`：通过。
 - `pnpm run typecheck`：通过。
 - `pnpm run lint`：0 error。
@@ -90,3 +92,4 @@ manifest 静态贡献不经过方法调用，只拦方法会出现「权限已�
   - 同一目标不带 `pluginId` → `400 PROXY_PRIVATE_ADDRESS`
   - 白名单放行 `localhost:5055` 后代理自身 API → `403 PROXY_SELF_TARGET`
   - `plugin-permissions.json` 落盘内容与回读一致
+- 前端：配置读取失败时该插件权限调用 fail-closed（`permissionUnavailable`），保存成功后解除；连续保存串行化，旧响应不覆盖新草稿。

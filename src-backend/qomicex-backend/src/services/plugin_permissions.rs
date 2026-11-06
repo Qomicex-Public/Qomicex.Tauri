@@ -51,6 +51,9 @@ pub struct CorsProxyPolicy {
 pub struct PluginPermissionStore {
     file: PathBuf,
     cache: Mutex<Option<HashMap<String, PluginPermissionConfig>>>,
+    /// 串行化 load-modify-persist。缓存锁只保护单次读取，写入需要跨步骤互斥，
+    /// 否则两个并发请求读到同一快照，后完成的写入会丢掉前一次修改。
+    write_lock: Mutex<()>,
 }
 
 impl PluginPermissionStore {
@@ -63,11 +66,16 @@ impl PluginPermissionStore {
         Self {
             file,
             cache: Mutex::new(None),
+            write_lock: Mutex::new(()),
         }
     }
 
-    pub fn get(&self, plugin_id: &str) -> PluginPermissionConfig {
-        self.load().get(plugin_id).cloned().unwrap_or_default()
+    /// 读取单个插件的配置。
+    ///
+    /// 文件不存在 = 从未配置，返回默认值；读取或解析失败返回错误而不是默认值 ——
+    /// 默认值会放行 manifest 里的全部权限，等于让损坏的配置静默提权。
+    pub fn get(&self, plugin_id: &str) -> Result<PluginPermissionConfig, ApiError> {
+        Ok(self.load()?.get(plugin_id).cloned().unwrap_or_default())
     }
 
     pub fn set(
@@ -75,47 +83,55 @@ impl PluginPermissionStore {
         plugin_id: &str,
         config: PluginPermissionConfig,
     ) -> Result<PluginPermissionConfig, ApiError> {
+        let _write = self.write_lock.lock().unwrap_or_else(|p| p.into_inner());
         let normalized = normalize(config);
-        let mut all = self.load();
+        let mut all = self.load()?;
         all.insert(plugin_id.to_string(), normalized.clone());
         self.persist(&all)?;
         Ok(normalized)
     }
 
-    pub fn remove(&self, plugin_id: &str) {
-        let mut all = self.load();
+    /// 删除插件时清理配置；持久化失败向上返回，调用方不能假装删除成功。
+    pub fn remove(&self, plugin_id: &str) -> Result<(), ApiError> {
+        let _write = self.write_lock.lock().unwrap_or_else(|p| p.into_inner());
+        let mut all = self.load()?;
         if all.remove(plugin_id).is_none() {
-            return;
+            return Ok(());
         }
-        let _ = self.persist(&all);
+        self.persist(&all)
     }
 
     /// 未登记策略（或请求未带 pluginId）→ 默认严格策略。
-    pub fn cors_policy(&self, plugin_id: Option<&str>) -> CorsProxyPolicy {
-        plugin_id
-            .map(|id| self.get(id).cors_proxy)
-            .unwrap_or_default()
+    pub fn cors_policy(&self, plugin_id: Option<&str>) -> Result<CorsProxyPolicy, ApiError> {
+        match plugin_id {
+            Some(id) => Ok(self.get(id)?.cors_proxy),
+            None => Ok(CorsProxyPolicy::default()),
+        }
     }
 
-    fn load(&self) -> HashMap<String, PluginPermissionConfig> {
+    fn load(&self) -> Result<HashMap<String, PluginPermissionConfig>, ApiError> {
         let mut guard = match self.cache.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
         if let Some(cached) = guard.as_ref() {
-            return cached.clone();
+            return Ok(cached.clone());
         }
-        let parsed = std::fs::read_to_string(&self.file)
-            .ok()
-            .and_then(|s| serde_json::from_str::<HashMap<String, PluginPermissionConfig>>(&s).ok())
-            .map(|raw| {
-                raw.into_iter()
+        let parsed = match std::fs::read_to_string(&self.file) {
+            Ok(raw) => {
+                let map = serde_json::from_str::<HashMap<String, PluginPermissionConfig>>(&raw)
+                    .map_err(|e| {
+                        ApiError::internal(format!("plugin-permissions.json 解析失败: {e}"))
+                    })?;
+                map.into_iter()
                     .map(|(id, cfg)| (id, normalize(cfg)))
                     .collect::<HashMap<String, PluginPermissionConfig>>()
-            })
-            .unwrap_or_default();
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
+            Err(e) => return Err(ApiError::from(e)),
+        };
         *guard = Some(parsed.clone());
-        parsed
+        Ok(parsed)
     }
 
     fn persist(&self, all: &HashMap<String, PluginPermissionConfig>) -> Result<(), ApiError> {
@@ -124,10 +140,20 @@ impl PluginPermissionStore {
         }
         let json =
             serde_json::to_string_pretty(all).map_err(|e| ApiError::internal(e.to_string()))?;
-        std::fs::write(&self.file, json).map_err(ApiError::from)?;
-        if let Ok(mut guard) = self.cache.lock() {
-            *guard = Some(all.clone());
-        }
+        let mut guard = match self.cache.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        // 先写临时文件再 rename：直接 write 会先截断目标文件，进程中途退出或磁盘
+        // 写满会留下不完整 JSON，下次启动解析失败 → 所有插件按默认配置全量放行。
+        let tmp = self.file.with_extension("json.tmp");
+        std::fs::write(&tmp, json)
+            .and_then(|()| std::fs::rename(&tmp, &self.file))
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&tmp);
+                ApiError::from(e)
+            })?;
+        *guard = Some(all.clone());
         Ok(())
     }
 }
@@ -211,6 +237,9 @@ fn normalize_entry(raw: &str) -> Option<String> {
         return None;
     }
     let (host, port) = parse_entry(raw)?;
+    // 请求侧匹配已忽略末尾点（`api.example.com.` 视同 `api.example.com`），写入侧
+    // 同样归一，否则用户粘贴 FQDN 的尾点会被 valid_host 当成空标签静默丢弃。
+    let host = host.strip_suffix('.').unwrap_or(&host).to_string();
     if !valid_host(&host) {
         return None;
     }
@@ -329,6 +358,7 @@ mod tests {
                     "[::1]".into(),
                     "*.lan".into(),
                     "http://x".into(),
+                    "api.example.com.:8080".into(),
                 ],
             },
         };
@@ -337,7 +367,11 @@ mod tests {
         assert!(out.cors_proxy.allow_private);
         assert_eq!(
             out.cors_proxy.allowlist,
-            vec!["localhost:8080".to_string(), "*.lan".to_string()]
+            vec![
+                "localhost:8080".to_string(),
+                "*.lan".to_string(),
+                "api.example.com:8080".to_string()
+            ]
         );
     }
 
@@ -364,7 +398,10 @@ mod tests {
         let file = dir.join("plugin-permissions.json");
         let store = PluginPermissionStore::with_file(file.clone());
 
-        assert_eq!(store.get("dev.test"), PluginPermissionConfig::default());
+        assert_eq!(
+            store.get("dev.test").unwrap(),
+            PluginPermissionConfig::default()
+        );
 
         let saved = store
             .set(
@@ -378,21 +415,51 @@ mod tests {
         assert_eq!(saved.disabled, vec!["shell:execute".to_string()]);
 
         // 新实例从磁盘读回，验证落盘格式
-        let reloaded = PluginPermissionStore::with_file(file);
-        assert_eq!(reloaded.get("dev.test"), saved);
+        let reloaded = PluginPermissionStore::with_file(file.clone());
+        assert_eq!(reloaded.get("dev.test").unwrap(), saved);
         assert!(cors_target_allowed(
-            &reloaded.cors_policy(Some("dev.test")),
+            &reloaded.cors_policy(Some("dev.test")).unwrap(),
             "localhost",
             8080
         ));
         assert!(!cors_target_allowed(
-            &reloaded.cors_policy(None),
+            &reloaded.cors_policy(None).unwrap(),
             "localhost",
             8080
         ));
 
-        reloaded.remove("dev.test");
-        assert_eq!(reloaded.get("dev.test"), PluginPermissionConfig::default());
+        reloaded.remove("dev.test").unwrap();
+        assert_eq!(
+            reloaded.get("dev.test").unwrap(),
+            PluginPermissionConfig::default()
+        );
+        // 删除必须落盘：新实例只能从磁盘读，缓存里看不到这次删除。
+        let fresh = PluginPermissionStore::with_file(file.clone());
+        assert_eq!(
+            fresh.get("dev.test").unwrap(),
+            PluginPermissionConfig::default()
+        );
+        assert!(!std::fs::read_to_string(&file).unwrap().contains("dev.test"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn corrupt_file_fails_closed_and_is_not_overwritten() {
+        let dir = std::env::temp_dir().join(format!(
+            "qomicex-plugin-permissions-corrupt-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("plugin-permissions.json");
+        std::fs::write(&file, "{ not json").unwrap();
+
+        let store = PluginPermissionStore::with_file(file.clone());
+        assert!(store.get("dev.test").is_err());
+        assert!(store
+            .set("dev.test", PluginPermissionConfig::default())
+            .is_err());
+        // 解析失败时不得用空配置覆盖原文件（否则其余插件的配置全部丢失）。
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "{ not json");
         let _ = std::fs::remove_dir_all(dir);
     }
 }

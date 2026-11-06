@@ -540,10 +540,14 @@ async fn install(
 async fn delete_plugin(
     State(state): State<SharedState>,
     AxumPath(id): AxumPath<String>,
-) -> Response {
+) -> ApiResult<Response> {
     state.plugin_store.uninstall(&id);
-    state.plugin_permissions.remove(&id);
-    StatusCode::NO_CONTENT.into_response()
+    // 目录删除失败时插件仍会被扫到：保留权限配置，避免重装同 id 后沿用旧策略
+    // 之前先把用户设置静默清空。
+    if state.plugin_store.get_plugin(&id).is_none() {
+        state.plugin_permissions.remove(&id)?;
+    }
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 /// POST /api/plugins/upload — multipart form, field name `plugin`.
@@ -732,7 +736,7 @@ async fn get_permissions(
     AxumPath(id): AxumPath<String>,
 ) -> ApiResult<Json<PluginPermissionConfig>> {
     ensure_plugin_exists(&state, &id)?;
-    Ok(Json(state.plugin_permissions.get(&id)))
+    Ok(Json(state.plugin_permissions.get(&id)?))
 }
 
 /// PUT /api/plugins/{id}/permissions — 写入并返回规范化后的配置。
@@ -1030,19 +1034,18 @@ async fn proxy(
         .ok_or_else(|| ApiError::bad_request("PROXY_INVALID_URL", "无效的代理 URL"))?
         .to_string();
     let port = parsed.port_or_known_default().unwrap_or(80);
+    // 启动器自身 API 一律拒绝，且先于策略判断：allowPrivate / 白名单只应放宽
+    // 「能不能访问内网」，不应把后端无鉴权的全部能力交给插件。
+    if targets_launcher_self(&host, port).await {
+        return Err(ApiError::forbidden(
+            "PROXY_SELF_TARGET",
+            "禁止通过代理访问启动器自身的 API",
+        ));
+    }
     let policy = state
         .plugin_permissions
-        .cors_policy(req.plugin_id.as_deref());
-    if cors_target_allowed(&policy, &host, port) {
-        // 放宽内网访问时仍禁止打启动器自己的 API：后端不做权限校验，代理到这里
-        // 等于让插件绕过 network:fetch / shell:execute 等全部限制（自举提权）。
-        if targets_launcher_self(&host, port).await {
-            return Err(ApiError::forbidden(
-                "PROXY_SELF_TARGET",
-                "禁止通过代理访问启动器自身的 API",
-            ));
-        }
-    } else {
+        .cors_policy(req.plugin_id.as_deref())?;
+    if !cors_target_allowed(&policy, &host, port) {
         validate_target(&host, port).await?;
     }
 
@@ -1168,24 +1171,34 @@ fn launcher_api_port() -> u16 {
         .unwrap_or(crate::state::DEFAULT_PORT)
 }
 
-fn is_loopback_host(host: &str) -> bool {
-    let h = host.trim_start_matches('[').trim_end_matches(']');
-    h.eq_ignore_ascii_case("localhost")
-        || h.parse::<IpAddr>()
-            .map(|ip| ip.is_loopback())
-            .unwrap_or(false)
+/// 回环或未指定地址统一视为「启动器自身」：`0.0.0.0` / `::` 在多数平台会落到本机
+/// 监听；IPv4-mapped IPv6（`::ffff:127.0.0.1`）需先规范化再判断。
+fn is_self_ip(ip: IpAddr) -> bool {
+    match ip.to_canonical() {
+        IpAddr::V4(v4) => v4.is_loopback() || v4.is_unspecified(),
+        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
+    }
 }
 
-/// 目标是否为启动器自己的 API（含解析到回环地址的域名）。
+fn is_loopback_host(host: &str) -> bool {
+    let h = host.trim_start_matches('[').trim_end_matches(']');
+    h.eq_ignore_ascii_case("localhost") || h.parse::<IpAddr>().map(is_self_ip).unwrap_or(false)
+}
+
+/// 目标是否为启动器自己的 API（含解析到本机地址的域名）。
 async fn targets_launcher_self(host: &str, port: u16) -> bool {
-    if port != launcher_api_port() {
+    targets_launcher_self_at(host, port, launcher_api_port()).await
+}
+
+async fn targets_launcher_self_at(host: &str, port: u16, launcher_port: u16) -> bool {
+    if port != launcher_port {
         return false;
     }
     if is_loopback_host(host) {
         return true;
     }
     match tokio::net::lookup_host((host, port)).await {
-        Ok(addrs) => addrs.into_iter().any(|a| a.ip().is_loopback()),
+        Ok(addrs) => addrs.into_iter().any(|a| is_self_ip(a.ip())),
         Err(_) => false,
     }
 }
@@ -2949,8 +2962,18 @@ mod tests {
         assert!(is_loopback_host("127.0.0.1"));
         assert!(is_loopback_host("::1"));
         assert!(is_loopback_host("[::1]"));
+        assert!(is_loopback_host("::ffff:127.0.0.1"));
+        assert!(is_loopback_host("0.0.0.0"));
         assert!(!is_loopback_host("192.168.1.1"));
         assert!(!is_loopback_host("example.com"));
+    }
+
+    #[tokio::test]
+    async fn launcher_self_target_requires_matching_port() {
+        assert!(targets_launcher_self_at("localhost", 5000, 5000).await);
+        assert!(targets_launcher_self_at("127.0.0.1", 5000, 5000).await);
+        assert!(!targets_launcher_self_at("localhost", 5001, 5000).await);
+        assert!(!targets_launcher_self_at("192.168.1.5", 5000, 5000).await);
     }
 
     /// 回归（#226）：`plugin_file` 的路径守卫原先用 `base.starts_with(&plugins_root)`，

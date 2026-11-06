@@ -3,10 +3,10 @@
 
 import { create } from 'zustand'
 import type { PluginInfo, PluginPermissionConfig, PluginState } from '../plugins/types.ts'
-import { DEFAULT_PLUGIN_PERMISSION_CONFIG } from '../plugins/types.ts'
 import { fetchPlugins, fetchPluginPermissions, rescanPlugins } from '../api/plugins.ts'
 import type { StoreUpdateEntry } from '../api/pluginStore.ts'
 import { resolveManifestL10n, invalidatePluginL10n } from '../plugins/l10n.ts'
+import { changedContributionPlugins } from '../plugins/permission-rules.ts'
 
 /** 一条可升级信息：slug 为 store 侧标识（install 用），latestVersion 用于 badge/确认提示 */
 export interface PluginUpdateEntry {
@@ -86,6 +86,8 @@ interface PluginStore {
   plugins: PluginInfo[]
   /** 用户层权限覆盖（pluginId → 配置）。缺项等价于默认（全部启用、严格出网）。 */
   permissionConfigs: Record<string, PluginPermissionConfig>
+  /** 权限读取失败的插件：读取成功前拒绝其权限调用（fail closed）。 */
+  permissionUnavailable: Record<string, true>
   loading: boolean
   error: string | null
 
@@ -113,6 +115,7 @@ interface PluginStore {
 export const usePluginStore = create<PluginStore>((set, get) => ({
   plugins: [],
   permissionConfigs: {},
+  permissionUnavailable: {},
   loading: false,
   error: null,
 
@@ -143,8 +146,17 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
       } catch { /* l10n 解析失败按原文案显示 */ }
       // 权限配置与插件列表同一生命周期加载：桥方法校验是同步读取，晚于激活就会
       // 在窗口期按 manifest 全量放行（用户关掉的权限短暂生效）。
-      const permissionConfigs = await loadPermissionConfigs(resolvedPlugins)
-      set({ plugins: resolvedPlugins, permissionConfigs, loading: false })
+      const previousConfigs = get().permissionConfigs
+      const { configs: permissionConfigs, unavailable } =
+        await loadPermissionConfigs(resolvedPlugins)
+      set({ plugins: resolvedPlugins, permissionConfigs, permissionUnavailable: unavailable, loading: false })
+      // 外部（API/另一个窗口）改了贡献类权限时，已激活插件的侧栏/设置页/hook
+      // 不会自动重注册：交给 App 按 id 停用并重新激活。
+      const changed = changedContributionPlugins(previousConfigs, permissionConfigs)
+        .filter((id) => get().getPlugin(id)?.state === 'active')
+      if (changed.length > 0) {
+        window.dispatchEvent(new CustomEvent('plugin:permissions-changed', { detail: { ids: changed } }))
+      }
     } catch (e) {
       set({ error: e instanceof Error ? e.message : 'Unknown error', loading: false })
     }
@@ -163,7 +175,15 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
   },
 
   setPermissionConfig: (id, config) => {
-    set(s => ({ permissionConfigs: { ...s.permissionConfigs, [id]: config } }))
+    set(s => {
+      // 保存成功说明配置已可读，解除 fail-closed 标记；否则插件会一直被拒绝。
+      const permissionUnavailable = { ...s.permissionUnavailable }
+      delete permissionUnavailable[id]
+      return {
+        permissionConfigs: { ...s.permissionConfigs, [id]: config },
+        permissionUnavailable,
+      }
+    })
   },
 
   rescan: async () => {
@@ -237,21 +257,27 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
 }))
 
 /**
- * 预载每个插件的权限配置。单个失败只退回默认配置——权限文件读不到不该让整个
- * 插件列表加载失败，而默认配置与「从未改过」等价。
+ * 预载每个插件的权限配置。单个失败不回退默认值：默认配置会放行 manifest 里的
+ * 全部权限，等于让一次读取失败静默提权。失败的插件记入 unavailable，由
+ * isPermissionGranted 统一拒绝，直到下一次加载成功。
  */
 async function loadPermissionConfigs(
   plugins: PluginInfo[]
-): Promise<Record<string, PluginPermissionConfig>> {
-  const entries = await Promise.all(
+): Promise<{
+  configs: Record<string, PluginPermissionConfig>
+  unavailable: Record<string, true>
+}> {
+  const configs: Record<string, PluginPermissionConfig> = {}
+  const unavailable: Record<string, true> = {}
+  await Promise.all(
     plugins.map(async (p) => {
       try {
-        return [p.manifest.id, await fetchPluginPermissions(p.manifest.id)] as const
+        configs[p.manifest.id] = await fetchPluginPermissions(p.manifest.id)
       } catch (e) {
-        console.warn(`[plugin] 读取权限配置失败 ${p.manifest.id}`, e)
-        return [p.manifest.id, DEFAULT_PLUGIN_PERMISSION_CONFIG] as const
+        console.warn(`[plugin] 读取权限配置失败，暂拒绝其权限调用 ${p.manifest.id}`, e)
+        unavailable[p.manifest.id] = true
       }
     })
   )
-  return Object.fromEntries(entries)
+  return { configs, unavailable }
 }

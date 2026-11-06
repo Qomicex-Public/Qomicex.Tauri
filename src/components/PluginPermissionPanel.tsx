@@ -1,23 +1,24 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Plus, X } from 'lucide-react'
 import { Button, Input, Separator, Switch, Tooltip, useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import { usePluginStore } from '../stores/pluginStore.ts'
 import { PERMISSION_CATALOG, DEFAULT_PLUGIN_PERMISSION_CONFIG } from '../plugins/types.ts'
 import type { PluginInfo, PluginPermissionConfig } from '../plugins/types.ts'
+import { contributionPermissionsChanged } from '../plugins/permission-rules.ts'
 import { savePluginPermissions } from '../api/plugins.ts'
 import { activatePlugin, deactivatePlugin } from '../plugins/plugin-loader.tsx'
 
-/** 改动这些权限会改变 manifest 静态贡献，必须重启插件才能重新注册/注销。 */
-const CONTRIBUTION_PERMISSIONS = new Set([
-  'ui:inject_sidebar',
-  'ui:inject_settings',
-  'ui:sub_window',
-  'hook:register',
-])
+// 保存队列按插件放在模块级：面板关闭/重开后组件实例重建，组件内的队列会丢，
+// 新的 PUT 就可能与尚未完成的旧 PUT 并发，旧响应晚到会把 store 覆盖回旧配置。
+const saveQueues = new Map<string, Promise<void>>()
+/** 每个插件最近一次保存的序号：只有最新请求的响应才能写回 store/draft。 */
+const saveSeqs = new Map<string, number>()
+/** 最近一次经后端确认的配置：保存失败时回滚到它，而不是回滚到某次乐观值。 */
+const confirmedConfigs = new Map<string, PluginPermissionConfig>()
 
 const RISK_CLASS: Record<string, string> = {
   normal: 'border-blue-500/30 text-blue-400',
@@ -38,48 +39,63 @@ export function PluginPermissionPanel({ plugin }: { plugin: PluginInfo }) {
     (s) => s.permissionConfigs[pluginId] ?? DEFAULT_PLUGIN_PERMISSION_CONFIG
   )
   const setPermissionConfig = usePluginStore((s) => s.setPermissionConfig)
-  // 用实时状态而不是打开弹窗时的快照：用户可能在弹窗打开期间把插件停用。
-  const isActive = usePluginStore((s) => s.getPlugin(pluginId)?.state === 'active')
   const [draft, setDraft] = useState<PluginPermissionConfig>(saved)
   const [allowInput, setAllowInput] = useState('')
   const [allowError, setAllowError] = useState(false)
-  // 连续拨动多个开关时串行保存：并发 PUT 的响应顺序不保证，后到的旧响应会把
-  // store 覆盖回少一项的状态。
-  const saveQueue = useRef<Promise<void>>(Promise.resolve())
 
   useEffect(() => {
     setDraft(saved)
+  }, [saved])
+
+  // 只在切换到另一个插件时清空输入框；保存响应更新 saved 时不应打断正在输入的白名单。
+  useEffect(() => {
     setAllowInput('')
     setAllowError(false)
-  }, [saved, pluginId])
+    confirmedConfigs.set(
+      pluginId,
+      usePluginStore.getState().permissionConfigs[pluginId] ?? DEFAULT_PLUGIN_PERMISSION_CONFIG,
+    )
+  }, [pluginId])
 
   const total = plugin.manifest.permissions.length
   const enabledCount = total - draft.disabled.filter((p) => plugin.manifest.permissions.includes(p)).length
 
   const persist = async (next: PluginPermissionConfig) => {
-    const previous = saved
+    const seq = (saveSeqs.get(pluginId) ?? 0) + 1
+    saveSeqs.set(pluginId, seq)
     // 乐观更新：闸门读的是 store，等到后端返回再更新会让开关回弹。
     setDraft(next)
     setPermissionConfig(pluginId, next)
     const job = async () => {
+      const before = confirmedConfigs.get(pluginId) ?? DEFAULT_PLUGIN_PERMISSION_CONFIG
       try {
         const normalized = await savePluginPermissions(pluginId, next)
-        setPermissionConfig(pluginId, normalized)
-        setDraft(normalized)
-        if (needsContributionReload(previous, normalized)) await reloadPlugin()
+        confirmedConfigs.set(pluginId, normalized)
+        // 更晚的编辑已经基于更新的草稿排队：旧响应不能回写，否则会丢改动。
+        if (saveSeqs.get(pluginId) === seq) {
+          setPermissionConfig(pluginId, normalized)
+          setDraft(normalized)
+        }
+        if (contributionPermissionsChanged(before, normalized)) await reloadPlugin()
       } catch (e) {
-        setPermissionConfig(pluginId, previous)
-        setDraft(previous)
+        if (saveSeqs.get(pluginId) === seq) {
+          const confirmed = confirmedConfigs.get(pluginId) ?? DEFAULT_PLUGIN_PERMISSION_CONFIG
+          setPermissionConfig(pluginId, confirmed)
+          setDraft(confirmed)
+        }
         notify(t('settings.plugins.permissionSaveFailed'), 'error')
         console.warn(`[plugin] 保存权限配置失败 ${pluginId}`, e)
       }
     }
-    saveQueue.current = saveQueue.current.then(job, job)
-    await saveQueue.current
+    const queue = saveQueues.get(pluginId) ?? Promise.resolve()
+    const queued = queue.then(job, job)
+    saveQueues.set(pluginId, queued)
+    await queued
   }
 
   const reloadPlugin = async () => {
-    if (!isActive) return
+    // 读 store 的实时状态而不是面板打开时的快照：保存请求返回前用户可能已停用插件。
+    if (usePluginStore.getState().getPlugin(pluginId)?.state !== 'active') return
     try {
       deactivatePlugin(pluginId)
       await activatePlugin(plugin)
@@ -266,9 +282,3 @@ export function PluginPermissionPanel({ plugin }: { plugin: PluginInfo }) {
   )
 }
 
-function needsContributionReload(before: PluginPermissionConfig, after: PluginPermissionConfig): boolean {
-  for (const permission of CONTRIBUTION_PERMISSIONS) {
-    if (before.disabled.includes(permission) !== after.disabled.includes(permission)) return true
-  }
-  return false
-}

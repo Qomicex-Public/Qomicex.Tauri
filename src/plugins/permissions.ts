@@ -12,7 +12,8 @@ import { usePluginStore } from '../stores/pluginStore.ts'
  */
 export function isPermissionGranted(pluginId: string, permission: string): boolean {
   if (!permission) return true
-  const { getPlugin, permissionConfigs } = usePluginStore.getState()
+  const { getPlugin, permissionConfigs, permissionUnavailable } = usePluginStore.getState()
+  if (permissionUnavailable[pluginId]) return false
   const plugin = getPlugin(pluginId)
   if (!plugin || !plugin.manifest.permissions.includes(permission)) return false
   return !(permissionConfigs[pluginId]?.disabled.includes(permission) ?? false)
