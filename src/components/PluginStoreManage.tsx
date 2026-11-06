@@ -267,6 +267,10 @@ export default function PluginStoreManage() {
                       setDetailTab('overview')
                       setPluginDetail(p)
                     }}
+                    onOpenPermissions={() => {
+                      setDetailTab('permissions')
+                      setPluginDetail(p)
+                    }}
                     upgradeTo={updateTo?.latestVersion}
                     upgrading={!!upgrading[p.manifest.id]}
                     onUpgrade={handlePluginUpgrade}

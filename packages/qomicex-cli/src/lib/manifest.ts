@@ -101,10 +101,26 @@ export function validateManifest(raw: unknown): ManifestCheck {
 
   if (m.contributes !== undefined) {
     const c = m.contributes as Record<string, unknown>
-    if (c.menuItems !== undefined && !Array.isArray(c.menuItems)) add('error', 'contributes.menuItems', 'menuItems 必须是数组')
+    const declared = new Set(Array.isArray(m.permissions) ? (m.permissions as string[]) : [])
+    // contributes.* 只是「想注入什么」，启动器按 permissions 决定是否注入；
+    // 漏声明不会报错，入口会在运行时静默消失。
+    const requirePermission = (permission: string, where: string, why: string) => {
+      if (!declared.has(permission)) add('error', where, `${why}需要声明 ${permission}`)
+    }
+    if (c.menuItems !== undefined && !Array.isArray(c.menuItems)) {
+      add('error', 'contributes.menuItems', 'menuItems 必须是数组')
+    } else if (Array.isArray(c.menuItems) && c.menuItems.length > 0) {
+      requirePermission('ui:inject_sidebar', 'contributes.menuItems', '注入侧栏菜单')
+      if (c.overlay && (c.menuItems as Record<string, unknown>[]).some((item) => item.action === 'overlay')) {
+        requirePermission('ui:sub_window', 'contributes.menuItems', '悬浮窗入口')
+      }
+    }
     if (c.overlay !== undefined) {
       const o = c.overlay as Record<string, unknown>
       if (typeof o.file !== 'string') add('error', 'contributes.overlay.file', 'overlay.file 必须指定 .html 文件')
+    }
+    if (Array.isArray(c.settingsPages) && c.settingsPages.length > 0) {
+      requirePermission('ui:inject_settings', 'contributes.settingsPages', '注入设置页')
     }
     if (c.slots !== undefined) {
       if (!Array.isArray(c.slots)) {
@@ -117,6 +133,9 @@ export function validateManifest(raw: unknown): ManifestCheck {
           }
           if (typeof s.file !== 'string' || !s.file.endsWith('.html')) {
             add('error', 'contributes.slots[].file', 'slot.file 必须指定 .html 文件')
+          }
+          if (slot === 'sidebar:bottom') {
+            requirePermission('ui:inject_sidebar', 'contributes.slots[].slot', '注入侧栏槽位')
           }
         }
       }

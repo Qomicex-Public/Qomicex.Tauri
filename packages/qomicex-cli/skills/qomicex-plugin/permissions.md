@@ -105,6 +105,7 @@
 
 - 被关闭的权限调用会抛 `Permission denied: requires <permission>`，必须按「能力不可用」降级，不要假设声明过就一定能用。
 - 关闭 `ui:inject_sidebar` / `ui:inject_settings` / `ui:sub_window` 会隐藏对应入口，插件是被重新加载而不是收到通知。
+- 静态入口必须同时声明权限：`contributes.menuItems` 要 `ui:inject_sidebar`，`contributes.settingsPages` 要 `ui:inject_settings`，`action: "overlay"` 另要 `ui:sub_window`。只写 `contributes.*` 不声明权限，启动器不会注入（`qomicex verify` 会报 error）。
 - `proxyFetch` 默认拒绝本机/内网地址；依赖本地 API 的插件应在文档里说明需要用户开启白名单或「允许内网地址」。
 
 ## 模板默认 manifest

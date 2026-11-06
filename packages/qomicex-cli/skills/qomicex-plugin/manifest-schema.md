@@ -100,10 +100,10 @@
 |------|------|------|
 | `downloadSources` | string[] | 保留（当前未使用，以代码为准） |
 | `commands` | string[] | 保留（当前未使用，以代码为准） |
-| `settingsPages` | string[] | 保留（当前未使用，以代码为准） |
-| `menuItems` | PluginMenuItem[] | 侧边栏入口列表 |
-| `overlay` | object | 悬浮窗配置 |
-| `slots` | PluginSlotContribution[] | UI 槽位注入（标题栏/主页卡片等） |
+| `settingsPages` | string[] | 设置页入口列表，需声明 `ui:inject_settings` |
+| `menuItems` | PluginMenuItem[] | 侧边栏入口列表，需声明 `ui:inject_sidebar` |
+| `overlay` | object | 悬浮窗配置，`menuItems[].action = "overlay"` 时另需 `ui:sub_window` |
+| `slots` | PluginSlotContribution[] | UI 槽位注入（标题栏/主页卡片等）；`sidebar:bottom` 需声明 `ui:inject_sidebar` |
 | `installModes` | PluginInstallModeDecl[] | 资源中心安装对话框的插件贡献安装方式（如「安装为服务端」） |
 
 ### menuItems 数组元素
@@ -162,5 +162,6 @@
 
 - manifest 合法性：id / name / version(semver) / minLauncherVersion / layers / permissions / entry / contributes。
 - 权限最小化：对比 `permissions` 与源码实际调用的桥方法（`METHOD_PERMISSIONS` 表），**声明未用 / 用了未声明都会报错**。
+- 静态贡献需要对应权限：`menuItems` → `ui:inject_sidebar`，`settingsPages` → `ui:inject_settings`，`action: "overlay"` → 另加 `ui:sub_window`，`slots[].slot = "sidebar:bottom"` → `ui:inject_sidebar`。**漏声明是 error**：启动器只按 `permissions` 注入，漏声明的入口会被静默隐藏。
 - 长循环告警：`while(true)`、`for(;;)`、无界 `setInterval`。
 - 校验通过标准：**0 error**（warning 可接受但建议消除）。
