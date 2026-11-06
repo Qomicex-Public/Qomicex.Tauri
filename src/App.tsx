@@ -458,8 +458,13 @@ function AppContent() {
       for (const id of ids) {
         const plugin = usePluginStore.getState().getPlugin(id)
         if (!plugin || plugin.state !== 'active') continue
-        deactivatePlugin(id)
-        await activatePlugin(plugin)
+        try {
+          deactivatePlugin(id)
+          await activatePlugin(plugin)
+        } catch (e) {
+          // 单个插件加载失败不应中断其余插件的权限重载。
+          logWarn('plugins.permissionsReload', e)
+        }
       }
     }
     window.addEventListener('plugin:permissions-changed', onPermissionsChanged)

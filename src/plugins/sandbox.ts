@@ -835,7 +835,14 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     //   放行 callBackend 会让插件带上别的 pluginId 借用其内网白名单。
     // - /plugins/{id}/permissions 是启动器自身的设置入口，插件不得改写（否则
     //   可自行解除刚被用户关闭的限制）。
-    const endpointPath = endpoint.split('?')[0].replace(/^\/api(?=\/)/, '')
+    // 用与 bridge 相同的拼接结果解析 pathname：裸字符串比较会被 `#fragment`、
+    // `..` 路径规范化绕过（fetch 会把它们折叠成受限端点）。
+    let endpointPath: string
+    try {
+      endpointPath = new URL(`${API_BASE}${endpoint}`).pathname.replace(/^\/api(?=\/)/, '').replace(/\/+$/, '')
+    } catch {
+      throw new Error('Permission denied: invalid callBackend endpoint')
+    }
     if (endpointPath === '/plugins/proxy') {
       throw new Error('Permission denied: use proxyFetch instead of callBackend(/plugins/proxy)')
     }

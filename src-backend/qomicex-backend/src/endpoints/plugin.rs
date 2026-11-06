@@ -541,12 +541,9 @@ async fn delete_plugin(
     State(state): State<SharedState>,
     AxumPath(id): AxumPath<String>,
 ) -> ApiResult<Response> {
-    state.plugin_store.uninstall(&id);
-    // 目录删除失败时插件仍会被扫到：保留权限配置，避免重装同 id 后沿用旧策略
-    // 之前先把用户设置静默清空。
-    if state.plugin_store.get_plugin(&id).is_none() {
-        state.plugin_permissions.remove(&id)?;
-    }
+    // 目录删除失败时不清理权限配置：否则插件目录仍在、用户设置却已消失。
+    state.plugin_store.uninstall(&id).map_err(ApiError::from)?;
+    state.plugin_permissions.remove(&id)?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
