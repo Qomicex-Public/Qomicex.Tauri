@@ -20,10 +20,11 @@ export function isPermissionGranted(pluginId: string, permission: string): boole
 }
 
 /**
- * manifest 静态贡献（侧栏菜单/设置页/悬浮窗）是否应随权限隐藏。
+ * manifest 静态贡献（侧栏菜单/设置页/悬浮窗）是否应显示。
  *
- * 方法与贡献项共用同一套权限 id：关掉 `ui:inject_sidebar` 却仍能点开插件页，
- * 会让「已禁用」看起来没生效。
+ * 与桥方法同一条规则：没声明的权限不能生效。`contributes.*` 只是声明「想注入
+ * 什么」，真正允许注入的仍然是 `permissions`；否则插件可以绕开安装时的授权
+ * 清单往界面里塞入口。
  */
 export function isContributionEnabled(pluginId: string, permission: string): boolean {
   return isPermissionGranted(pluginId, permission)

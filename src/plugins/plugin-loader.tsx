@@ -235,11 +235,26 @@ export async function activatePlugin(plugin: PluginInfo) {
       throw e
     }
 
-    const { menuItems, overlay, slots } = plugin.manifest.contributes ?? {}
+    const { menuItems, overlay, slots, settingsPages } = plugin.manifest.contributes ?? {}
     // 用户关掉的权限也要管住 manifest 静态贡献：只拦方法调用的话，侧栏入口照旧
     // 显示、点进去只看到一堆「Permission denied」。
     const canInjectSidebar = isContributionEnabled(plugin.manifest.id, 'ui:inject_sidebar')
     const canSubWindow = isContributionEnabled(plugin.manifest.id, 'ui:sub_window')
+
+    // contributes.* 只是「想注入什么」，授权以 permissions 为准。没声明就被隐藏时
+    // 必须留一条日志，否则插件作者只看到入口消失、查不到原因。
+    const declared = new Set(plugin.manifest.permissions)
+    const needed = new Set<string>()
+    if (menuItems?.length) {
+      needed.add('ui:inject_sidebar')
+      if (overlay && menuItems.some((item) => item.action === 'overlay')) needed.add('ui:sub_window')
+    }
+    if (slots?.some((slot) => slot.slot === 'sidebar:bottom')) needed.add('ui:inject_sidebar')
+    if (settingsPages?.length) needed.add('ui:inject_settings')
+    const missing = [...needed].filter((permission) => !declared.has(permission))
+    if (missing.length > 0) {
+      console.warn(`[plugin] ${plugin.manifest.id} 的 manifest 未声明 ${missing.join(' / ')}，对应静态入口已隐藏`)
+    }
     if (menuItems && canInjectSidebar) {
       for (const item of menuItems) {
         if (item.action === 'overlay' && overlay) {

@@ -6,6 +6,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { METHOD_PERMISSIONS } from './permissions.ts'
+import { contributionPermissions } from './manifest.ts'
 
 export interface ScanFinding {
   severity: 'error' | 'warning'
@@ -104,21 +105,32 @@ export function checkPermissions(root: string, declared: string[]): PermCheck {
       /* skip */
     }
   }
-  const required = new Set<string>()
+  const required = new Map<string, string>()
   for (const method of used) {
     const perm = METHOD_PERMISSIONS[method]
-    if (perm) required.add(perm)
+    if (perm && !required.has(perm)) required.set(perm, `源码调用了桥方法 ${method}`)
   }
-  const missing = [...required].filter((p) => !declared.includes(p))
+  // 静态贡献（menuItems / settingsPages / slots）在运行时由启动器按权限决定是否注入，
+  // 不经过任何桥方法，只看 usedMethods 会把它们全判成「声明了但未使用」，
+  // 逼作者删掉声明 → 入口运行时消失。这里按 manifest 计入实际用途。
+  try {
+    const manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8')) as Record<string, unknown>
+    for (const need of contributionPermissions(manifest)) {
+      if (!required.has(need.permission)) required.set(need.permission, `manifest ${need.path} 需要它`)
+    }
+  } catch {
+    /* manifest 缺失或非法由 validateManifest 报错 */
+  }
+  const missing = [...required].filter(([p]) => !declared.includes(p))
   const unused = declared.filter((p) => !required.has(p))
 
-  for (const p of missing) {
-    findings.push({ severity: 'error', message: `源码调用了桥方法，但未声明所需权限 ${p}（运行时会被启动器拒绝）` })
+  for (const [p, why] of missing) {
+    findings.push({ severity: 'error', message: `${why}，但未声明权限 ${p}（运行时会被启动器拒绝）` })
   }
   for (const p of unused) {
     findings.push({ severity: 'error', message: `声明了权限 ${p} 但源码未使用（最小权限原则，建议移除）` })
   }
-  return { findings, unused, missing }
+  return { findings, unused, missing: missing.map(([p]) => p) }
 }
 
 /** 长循环 / 无界定时器启发式：命中即告警（不阻断），提示放到 Worker/WASM/后端。 */

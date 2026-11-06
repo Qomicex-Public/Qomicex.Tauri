@@ -12,6 +12,8 @@ interface PluginCardProps {
   onToggle: (id: string, active: boolean) => void
   onUninstall: (id: string) => void
   onClick: () => void
+  /** 打开详情弹窗的「权限」tab（卡片上的快捷入口） */
+  onOpenPermissions?: () => void
   /** 有可升级版本时显示升级按钮 */
   upgradeTo?: string
   upgrading?: boolean
@@ -21,13 +23,16 @@ interface PluginCardProps {
   onRollback?: (id: string) => void
 }
 
-export function PluginCard({ plugin, onToggle, onUninstall, onClick, upgradeTo, upgrading, onUpgrade, rollingBack, onRollback }: PluginCardProps) {
+export function PluginCard({ plugin, onToggle, onUninstall, onClick, onOpenPermissions, upgradeTo, upgrading, onUpgrade, rollingBack, onRollback }: PluginCardProps) {
   const { t } = useI18n()
   const { manifest, state } = plugin
   const isActive = state === 'active'
 
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3">
+    <div
+      className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-card px-4 py-3"
+      onClick={onClick}
+    >
       <div
         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-sm font-semibold text-primary cursor-pointer select-none"
         onClick={onClick}
@@ -60,6 +65,15 @@ export function PluginCard({ plugin, onToggle, onUninstall, onClick, upgradeTo, 
           className="shrink-0 rounded-md border border-primary/40 px-2 py-1 text-xs text-primary transition-colors hover:bg-primary/10 disabled:opacity-60"
         >
           {upgrading ? t('settings.plugins.store.installing') : t('settings.plugins.store.updateBtn')}
+        </button>
+      )}
+      {onOpenPermissions && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onOpenPermissions() }}
+          className="shrink-0 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary"
+        >
+          {t('settings.plugins.detailPermissions')}
         </button>
       )}
       <button

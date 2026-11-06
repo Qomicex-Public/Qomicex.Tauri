@@ -48,8 +48,15 @@ manifest 静态贡献不经过方法调用，只拦方法会出现「权限已�
 | 贡献 | 权限 |
 |:---|:---|
 | `contributes.menuItems` | `ui:inject_sidebar` |
+| `contributes.slots[].slot = "sidebar:bottom"` | `ui:inject_sidebar` |
 | `menuItems[].action = "overlay"` + `contributes.overlay` | 额外要求 `ui:sub_window` |
 | `contributes.settingsPages` | `ui:inject_settings` |
+
+**`contributes.*` 只表达「想注入什么」，是否注入仍由 `permissions` 决定**：没声明的贡献一律不注入，用户关闭的贡献也不注入。这与方法调用的判定同源（`isPermissionGranted`），不存在「静态贡献可以绕过授权清单」的口子。CLI 在 `validateManifest` 里把漏声明判为 error，运行时对漏声明打 warning 日志（入口消失时能查到原因）。
+
+存量插件（`top.qomicex.assistant`、`top.qomicex.server-manager` 等）此前只写 `contributes.*` 未声明权限，升级后会失去对应入口，必须补齐 manifest 并重新发布；这是声明式授权的预期代价，不用「未声明也放行」换兼容。
+
+CLI 的「声明未用」检查同时修正：这三个权限不经过桥方法，原先只扫源码 `usedMethods`，会把它们判成「声明了但未使用」并让作者删掉声明，删完入口就在运行时消失。现在 `checkPermissions` 把 manifest 静态贡献计入 `required`（映射在 `contributionPermissions()`，manifest 校验与权限扫描共用）。
 
 改动这些权限后需要重挂载插件，UI 保存成功后对 active 插件执行 `deactivatePlugin()` + `activatePlugin()`；其余权限即时生效，不重启插件。
 
