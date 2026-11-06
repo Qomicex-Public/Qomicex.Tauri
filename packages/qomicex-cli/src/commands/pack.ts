@@ -134,6 +134,18 @@ export async function packCommand(opts: PackOptions = {}): Promise<PackResult> {
   if (!id) fail('manifest.json 缺少 id')
 
   let entries = buildPackageEntries(root, manifest)
+  // 声明了 l10n 却一个语言包都没打进包：manifest 的 %key% 与运行时文案全会退化成
+  // 模板原文（商店列表 / 启动器侧边栏都是）。这类静默缺失排查成本极高（实测踩过），
+  // 打包时直接失败。
+  if (typeof manifest.l10n === 'string' && manifest.l10n.trim()) {
+    const l10nDirName = manifest.l10n.trim().replace(/^\/+|\/+$/g, '')
+    if (!Object.keys(entries).some((n) => n.startsWith(`${l10nDirName}/`))) {
+      fail(
+        `manifest.l10n 声明了 "${l10nDirName}"，但包内没有任何该目录下的文件。` +
+          `请确认目录存在且已提交（缺失会导致插件界面与商店列表显示 %key% 原文）。`,
+      )
+    }
+  }
 
   // 可选签名（signature.json + signature.cert.json；无商店证书时生成自签证书）
   if (opts.key) {
