@@ -148,7 +148,7 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
       // 在窗口期按 manifest 全量放行（用户关掉的权限短暂生效）。
       const previousConfigs = get().permissionConfigs
       const { configs: permissionConfigs, unavailable } =
-        await loadPermissionConfigs(resolvedPlugins)
+        await loadPermissionConfigs(resolvedPlugins, previousConfigs)
       set({ plugins: resolvedPlugins, permissionConfigs, permissionUnavailable: unavailable, loading: false })
       // 外部（API/另一个窗口）改了贡献类权限时，已激活插件的侧栏/设置页/hook
       // 不会自动重注册：交给 App 按 id 停用并重新激活。
@@ -257,12 +257,13 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
 }))
 
 /**
- * 预载每个插件的权限配置。单个失败不回退默认值：默认配置会放行 manifest 里的
- * 全部权限，等于让一次读取失败静默提权。失败的插件记入 unavailable，由
- * isPermissionGranted 统一拒绝，直到下一次加载成功。
+ * 预载每个插件的权限配置。读取失败时优先保留上一次成功读到的配置；从未成功
+ * 读到的插件才进入 unavailable，由 isPermissionGranted 统一拒绝。默认配置会
+ * 放行 manifest 里的全部权限，不能作为读取失败的回退值。
  */
 async function loadPermissionConfigs(
-  plugins: PluginInfo[]
+  plugins: PluginInfo[],
+  previous: Record<string, PluginPermissionConfig>
 ): Promise<{
   configs: Record<string, PluginPermissionConfig>
   unavailable: Record<string, true>
@@ -274,8 +275,13 @@ async function loadPermissionConfigs(
       try {
         configs[p.manifest.id] = await fetchPluginPermissions(p.manifest.id)
       } catch (e) {
-        console.warn(`[plugin] 读取权限配置失败，暂拒绝其权限调用 ${p.manifest.id}`, e)
-        unavailable[p.manifest.id] = true
+        const fallback = previous[p.manifest.id]
+        if (fallback) {
+          configs[p.manifest.id] = fallback
+        } else {
+          unavailable[p.manifest.id] = true
+        }
+        console.warn(`[plugin] 读取权限配置失败 ${p.manifest.id}`, e)
       }
     })
   )

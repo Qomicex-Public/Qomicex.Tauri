@@ -299,7 +299,9 @@ export default function PluginStoreManage() {
               <Tabs
                 className="w-fit"
                 activeTab={detailTab}
-                onChange={(id) => setDetailTab(id as 'overview' | 'permissions')}
+                onChange={(id) => {
+                  if (id === 'overview' || id === 'permissions') setDetailTab(id)
+                }}
                 tabs={[
                   { id: 'overview', label: t('settings.plugins.detailOverview') },
                   { id: 'permissions', label: t('settings.plugins.detailPermissions'), count: pluginDetail.manifest.permissions.length },

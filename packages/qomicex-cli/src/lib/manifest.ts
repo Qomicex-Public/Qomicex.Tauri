@@ -112,8 +112,8 @@ export function validateManifest(raw: unknown): ManifestCheck {
       } else {
         for (const s of c.slots as Record<string, unknown>[]) {
           const slot = s.slot as string
-          if (slot !== 'header:right' && slot !== 'dashboard:widgets') {
-            add('warning', 'contributes.slots[].slot', `未知槽位: ${String(slot)}（可用 header:right / dashboard:widgets）`)
+          if (slot !== 'header:right' && slot !== 'dashboard:widgets' && slot !== 'sidebar:bottom') {
+            add('warning', 'contributes.slots[].slot', `未知槽位: ${String(slot)}（可用 header:right / dashboard:widgets / sidebar:bottom）`)
           }
           if (typeof s.file !== 'string' || !s.file.endsWith('.html')) {
             add('error', 'contributes.slots[].file', 'slot.file 必须指定 .html 文件')

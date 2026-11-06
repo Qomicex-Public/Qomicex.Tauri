@@ -131,11 +131,11 @@
 ### slots 数组元素
 
 ```ts
-{ slot: 'header:right' | 'dashboard:widgets'; file: string; width?: number; height?: number }
+{ slot: 'header:right' | 'dashboard:widgets' | 'sidebar:bottom'; file: string; width?: number; height?: number }
 ```
 
 - 轻量 UI 注入到主界面指定位置，激活时以独立 iframe 沙箱渲染（与主界面隔离，`__PLUGIN_API__` 桥可用）。
-- `slot`：`header:right`（标题栏右侧、控制按钮左侧）/ `dashboard:widgets`（主页右侧卡片区）。
+- `slot`：`header:right`（标题栏右侧、控制按钮左侧）/ `dashboard:widgets`（主页右侧卡片区）/ `sidebar:bottom`（侧栏底部，跟随 `ui:inject_sidebar` 权限）。
 - `file`：slot HTML 文件路径（必填，指向 `.html`，如 `dist/weather.html`）。
 - `width` / `height`：iframe 固定尺寸（px，可选；缺省 100% 填充父容器）。
 - 主题自动跟随（CSS 变量注入）；插件停用时自动注销并销毁。

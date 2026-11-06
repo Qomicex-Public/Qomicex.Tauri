@@ -74,10 +74,10 @@ export interface PluginHookDecl {
 }
 
 /** 主界面槽位。 */
-export type PluginSlotId = 'header:right' | 'dashboard:widgets'
+export type PluginSlotId = 'header:right' | 'dashboard:widgets' | 'sidebar:bottom'
 
 export interface PluginSlotContribution {
-  /** 目标槽位：标题栏右侧（控制钮左侧）/ 主页右侧卡片区 */
+  /** 目标槽位：标题栏右侧（控制钮左侧）/ 主页右侧卡片区 / 侧栏底部 */
   slot: PluginSlotId
   /** 槽位 HTML 文件（`.qplugin` 内相对路径，如 `dist/weather.html`） */
   file: string

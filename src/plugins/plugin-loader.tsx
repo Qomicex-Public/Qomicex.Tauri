@@ -265,7 +265,7 @@ export async function activatePlugin(plugin: PluginInfo) {
         if (!slot.file) continue
         // 侧栏槽位与 sidebar 菜单同属 ui:inject_sidebar：关掉权限后这段循环仍
         // 注册的话，内容会绕过菜单过滤继续显示。
-        if ((slot.slot as string) === 'sidebar:bottom' && !canInjectSidebar) continue
+        if (slot.slot === 'sidebar:bottom' && !canInjectSidebar) continue
         try {
           const sandbox = createSlotSandbox(plugin, slot.file)
           registerSlot(

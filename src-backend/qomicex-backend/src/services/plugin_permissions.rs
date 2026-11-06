@@ -110,13 +110,17 @@ impl PluginPermissionStore {
     }
 
     fn load(&self) -> Result<HashMap<String, PluginPermissionConfig>, ApiError> {
-        let mut guard = match self.cache.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-        if let Some(cached) = guard.as_ref() {
-            return Ok(cached.clone());
+        {
+            let guard = match self.cache.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            if let Some(cached) = guard.as_ref() {
+                return Ok(cached.clone());
+            }
         }
+        // 文件 I/O 放在缓存锁外：proxy 热路径会调用 cors_policy，持锁读盘会让
+        // 所有插件请求排队等磁盘。
         let parsed = match std::fs::read_to_string(&self.file) {
             Ok(raw) => {
                 let map = serde_json::from_str::<HashMap<String, PluginPermissionConfig>>(&raw)
@@ -130,6 +134,14 @@ impl PluginPermissionStore {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
             Err(e) => return Err(ApiError::from(e)),
         };
+        let mut guard = match self.cache.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        // 并发首读：以先写入缓存的结果为准，避免两次读盘结果互相覆盖。
+        if let Some(cached) = guard.as_ref() {
+            return Ok(cached.clone());
+        }
         *guard = Some(parsed.clone());
         Ok(parsed)
     }
@@ -140,19 +152,22 @@ impl PluginPermissionStore {
         }
         let json =
             serde_json::to_string_pretty(all).map_err(|e| ApiError::internal(e.to_string()))?;
+        // 先写临时文件再 rename：直接 write 会先截断目标文件，进程中途退出或磁盘
+        // 写满会留下不完整 JSON，下次启动解析失败 → 所有插件按默认配置全量放行。
+        // set/remove 已持 write_lock，tmp 文件不会被并发写；写盘本身不占 cache 锁。
+        let tmp = self.file.with_extension("json.tmp");
+        std::fs::write(&tmp, json).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            ApiError::from(e)
+        })?;
         let mut guard = match self.cache.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
-        // 先写临时文件再 rename：直接 write 会先截断目标文件，进程中途退出或磁盘
-        // 写满会留下不完整 JSON，下次启动解析失败 → 所有插件按默认配置全量放行。
-        let tmp = self.file.with_extension("json.tmp");
-        std::fs::write(&tmp, json)
-            .and_then(|()| std::fs::rename(&tmp, &self.file))
-            .map_err(|e| {
-                let _ = std::fs::remove_file(&tmp);
-                ApiError::from(e)
-            })?;
+        std::fs::rename(&tmp, &self.file).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            ApiError::from(e)
+        })?;
         *guard = Some(all.clone());
         Ok(())
     }

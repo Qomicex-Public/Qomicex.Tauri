@@ -102,8 +102,14 @@ export function PluginPermissionPanel({ plugin }: { plugin: PluginInfo }) {
       notify(t('settings.plugins.permissionReloaded'), 'success')
     } catch (e) {
       console.warn(`[plugin] 权限变更后重启插件失败 ${pluginId}`, e)
+      // 插件已被 deactivate，失败后入口会消失；必须告知用户，否则看起来像设置把插件弄丢了。
+      notify(t('settings.plugins.permissionReloadFailed'), 'error')
     }
   }
+
+  /** 以 store 实时快照为基准：快速连续切换时，本次渲染的 draft 可能还没跟上。 */
+  const currentConfig = () =>
+    usePluginStore.getState().permissionConfigs[pluginId] ?? DEFAULT_PLUGIN_PERMISSION_CONFIG
 
   const toggle = async (permission: string, enabled: boolean) => {
     if (!enabled && PERMISSION_CATALOG[permission]?.risk === 'danger') {
@@ -112,10 +118,11 @@ export function PluginPermissionPanel({ plugin }: { plugin: PluginInfo }) {
         : permission
       if (!(await confirm(t('settings.plugins.permissionDangerConfirm', { permission: label })))) return
     }
+    const base = currentConfig()
     const disabled = enabled
-      ? draft.disabled.filter((p) => p !== permission)
-      : [...draft.disabled, permission]
-    await persist({ ...draft, disabled })
+      ? base.disabled.filter((p) => p !== permission)
+      : [...base.disabled, permission]
+    await persist({ ...base, disabled })
   }
 
   const handleReset = async () => {
@@ -132,19 +139,21 @@ export function PluginPermissionPanel({ plugin }: { plugin: PluginInfo }) {
     }
     setAllowError(false)
     setAllowInput('')
-    if (draft.corsProxy.allowlist.includes(entry)) return
+    const base = currentConfig()
+    if (base.corsProxy.allowlist.includes(entry)) return
     await persist({
-      ...draft,
-      corsProxy: { ...draft.corsProxy, allowlist: [...draft.corsProxy.allowlist, entry] },
+      ...base,
+      corsProxy: { ...base.corsProxy, allowlist: [...base.corsProxy.allowlist, entry] },
     })
   }
 
   const removeAllowEntry = async (entry: string) => {
+    const base = currentConfig()
     await persist({
-      ...draft,
+      ...base,
       corsProxy: {
-        ...draft.corsProxy,
-        allowlist: draft.corsProxy.allowlist.filter((e) => e !== entry),
+        ...base.corsProxy,
+        allowlist: base.corsProxy.allowlist.filter((e) => e !== entry),
       },
     })
   }

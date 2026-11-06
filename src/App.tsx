@@ -462,14 +462,16 @@ function AppContent() {
           deactivatePlugin(id)
           await activatePlugin(plugin)
         } catch (e) {
-          // 单个插件加载失败不应中断其余插件的权限重载。
+          // 单个插件加载失败不应中断其余插件的权限重载；但也必须告知用户，
+          // 因为插件此时已被停用，入口会消失。
           logWarn('plugins.permissionsReload', e)
+          notify(t('settings.plugins.permissionReloadFailed'), 'error')
         }
       }
     }
     window.addEventListener('plugin:permissions-changed', onPermissionsChanged)
     return () => window.removeEventListener('plugin:permissions-changed', onPermissionsChanged)
-  }, [])
+  }, [notify, t])
 
   return (
     <Provider value={closeWithGuard}>
