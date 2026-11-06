@@ -161,7 +161,7 @@
 ## CLI 校验行为（`qomicex verify` 目录模式）
 
 - manifest 合法性：id / name / version(semver) / minLauncherVersion / layers / permissions / entry / contributes。
-- 权限最小化：对比 `permissions` 与源码实际调用的桥方法（`METHOD_PERMISSIONS` 表），**声明未用 / 用了未声明都会报错**。
+- 权限最小化：对比 `permissions` 与源码实际调用的桥方法（`METHOD_PERMISSIONS` 表），**声明未用 / 用了未声明都会报错**。manifest 静态贡献所需的权限（见下条）视为「已使用」，不会因为源码里没有对应桥调用被误判成未用。
 - 静态贡献需要对应权限：`menuItems` → `ui:inject_sidebar`，`settingsPages` → `ui:inject_settings`，`action: "overlay"` → 另加 `ui:sub_window`，`slots[].slot = "sidebar:bottom"` → `ui:inject_sidebar`。**漏声明是 error**：启动器只按 `permissions` 注入，漏声明的入口会被静默隐藏。
 - 长循环告警：`while(true)`、`for(;;)`、无界 `setInterval`。
 - 校验通过标准：**0 error**（warning 可接受但建议消除）。

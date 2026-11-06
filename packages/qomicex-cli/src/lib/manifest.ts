@@ -20,6 +20,30 @@ export interface ManifestCheck {
   issues: ManifestIssue[]
 }
 
+/** 静态贡献消费的权限（唯一来源：manifest 校验与 CLI 权限最小化扫描共用）。 */
+export function contributionPermissions(
+  manifest: Record<string, unknown>,
+): Array<{ permission: string; path: string; why: string }> {
+  const c = manifest.contributes as Record<string, unknown> | undefined
+  if (!c) return []
+  const out: Array<{ permission: string; path: string; why: string }> = []
+  const menuItems = Array.isArray(c.menuItems) ? (c.menuItems as Record<string, unknown>[]) : []
+  if (menuItems.length > 0) {
+    out.push({ permission: 'ui:inject_sidebar', path: 'contributes.menuItems', why: '注入侧栏菜单' })
+    if (c.overlay && menuItems.some((item) => item.action === 'overlay')) {
+      out.push({ permission: 'ui:sub_window', path: 'contributes.menuItems', why: '悬浮窗入口' })
+    }
+  }
+  if (Array.isArray(c.settingsPages) && c.settingsPages.length > 0) {
+    out.push({ permission: 'ui:inject_settings', path: 'contributes.settingsPages', why: '注入设置页' })
+  }
+  const slots = Array.isArray(c.slots) ? (c.slots as Record<string, unknown>[]) : []
+  if (slots.some((slot) => slot.slot === 'sidebar:bottom')) {
+    out.push({ permission: 'ui:inject_sidebar', path: 'contributes.slots[].slot', why: '注入侧栏槽位' })
+  }
+  return out
+}
+
 export function checkId(id: unknown): string[] {
   const errs: string[] = []
   if (typeof id !== 'string') return ['id 必须是字符串']
@@ -104,23 +128,17 @@ export function validateManifest(raw: unknown): ManifestCheck {
     const declared = new Set(Array.isArray(m.permissions) ? (m.permissions as string[]) : [])
     // contributes.* 只是「想注入什么」，启动器按 permissions 决定是否注入；
     // 漏声明不会报错，入口会在运行时静默消失。
-    const requirePermission = (permission: string, where: string, why: string) => {
-      if (!declared.has(permission)) add('error', where, `${why}需要声明 ${permission}`)
+    for (const need of contributionPermissions(m)) {
+      if (!declared.has(need.permission)) {
+        add('error', need.path, `${need.why}需要声明 ${need.permission}`)
+      }
     }
     if (c.menuItems !== undefined && !Array.isArray(c.menuItems)) {
       add('error', 'contributes.menuItems', 'menuItems 必须是数组')
-    } else if (Array.isArray(c.menuItems) && c.menuItems.length > 0) {
-      requirePermission('ui:inject_sidebar', 'contributes.menuItems', '注入侧栏菜单')
-      if (c.overlay && (c.menuItems as Record<string, unknown>[]).some((item) => item.action === 'overlay')) {
-        requirePermission('ui:sub_window', 'contributes.menuItems', '悬浮窗入口')
-      }
     }
     if (c.overlay !== undefined) {
       const o = c.overlay as Record<string, unknown>
       if (typeof o.file !== 'string') add('error', 'contributes.overlay.file', 'overlay.file 必须指定 .html 文件')
-    }
-    if (Array.isArray(c.settingsPages) && c.settingsPages.length > 0) {
-      requirePermission('ui:inject_settings', 'contributes.settingsPages', '注入设置页')
     }
     if (c.slots !== undefined) {
       if (!Array.isArray(c.slots)) {
@@ -133,9 +151,6 @@ export function validateManifest(raw: unknown): ManifestCheck {
           }
           if (typeof s.file !== 'string' || !s.file.endsWith('.html')) {
             add('error', 'contributes.slots[].file', 'slot.file 必须指定 .html 文件')
-          }
-          if (slot === 'sidebar:bottom') {
-            requirePermission('ui:inject_sidebar', 'contributes.slots[].slot', '注入侧栏槽位')
           }
         }
       }

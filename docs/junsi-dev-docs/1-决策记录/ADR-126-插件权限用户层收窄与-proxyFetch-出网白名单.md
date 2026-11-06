@@ -56,6 +56,8 @@ manifest 静态贡献不经过方法调用，只拦方法会出现「权限已�
 
 存量插件（`top.qomicex.assistant`、`top.qomicex.server-manager` 等）此前只写 `contributes.*` 未声明权限，升级后会失去对应入口，必须补齐 manifest 并重新发布；这是声明式授权的预期代价，不用「未声明也放行」换兼容。
 
+CLI 的「声明未用」检查同时修正：这三个权限不经过桥方法，原先只扫源码 `usedMethods`，会把它们判成「声明了但未使用」并让作者删掉声明，删完入口就在运行时消失。现在 `checkPermissions` 把 manifest 静态贡献计入 `required`（映射在 `contributionPermissions()`，manifest 校验与权限扫描共用）。
+
 改动这些权限后需要重挂载插件，UI 保存成功后对 active 插件执行 `deactivatePlugin()` + `activatePlugin()`；其余权限即时生效，不重启插件。
 
 ### 4. 存储与校验边界
