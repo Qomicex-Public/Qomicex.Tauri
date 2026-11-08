@@ -271,6 +271,24 @@ struct PluginFileEntry {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct PluginDirDeleteRequest {
+    path: String,
+    /// 递归删除目录内容。为 false 时只接受空目录（等价 rmdir），
+    /// 非空目录返回 400 —— 避免调用方在不知情的情况下整目录抹掉。
+    #[serde(default)]
+    recursive: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginDirDeleteResponse {
+    path: String,
+    /// 递归模式下实际删除的条目数（文件 + 子目录），非递归恒为 0。
+    removed: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PluginDownloadStartRequest {
     url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -466,6 +484,7 @@ pub fn router() -> Router<SharedState> {
         .route("/plugins/files/{id}/write", post(file_write))
         .route("/plugins/files/{id}/authorize", post(file_authorize))
         .route("/plugins/files/{id}/delete", post(file_delete))
+        .route("/plugins/files/{id}/delete-dir", post(file_delete_dir))
         .route("/plugins/files/{id}/rename", post(file_rename))
         .route("/plugins/files/{id}/extract", post(file_extract))
         .route("/plugins/files/{id}/list", post(file_list))
@@ -1485,6 +1504,107 @@ async fn file_delete(
         content_base64: None,
         is_binary: false,
     }))
+}
+
+/// 删除目录时的危险根判定：自身没有父目录、或父目录等于自身（部分平台对根的表示）。
+/// 抽成纯函数便于单测——这是「递归删除」唯一的安全底线，必须能独立验证。
+fn is_protected_root(path: &Path) -> bool {
+    match path.parent() {
+        None => true,
+        Some(parent) => parent == path,
+    }
+}
+
+/// POST /api/plugins/files/{id}/delete-dir — 删除目录（可递归）。
+///
+/// 为什么需要：`file_delete` 只删文件（`is_file()` → `remove_file`），插件没有任何
+/// 办法删掉一个目录。想在插件里实现「删除服务端」就只能递归删文件、把空壳目录改名
+/// 挪开，结果磁盘上留下 `.qsm-deleted-*` 垃圾目录，用户无法清理。
+///
+/// 安全边界（三重）：
+/// 1. 授权：路径必须在已授权前缀内（与其它 files 端点一致，`find_grant`）；
+/// 2. 拒绝危险根：盘符根 / 文件系统根 / 无父目录的路径一律拒绝——授权是按前缀
+///    覆盖的，误把整个盘授权给插件后一个递归删除就是灾难；
+/// 3. 非递归模式只接受空目录，非空必须显式传 `recursive: true`。
+async fn file_delete_dir(
+    State(state): State<SharedState>,
+    AxumPath(plugin_id): AxumPath<String>,
+    Json(req): Json<PluginDirDeleteRequest>,
+) -> ApiResult<Json<PluginDirDeleteResponse>> {
+    let normalized = FileAuthService::normalize_path(&req.path)
+        .ok_or_else(|| ApiError::bad_request("FS_INVALID_PATH", "无效路径"))?;
+
+    // 守卫 2：拒绝危险根（盘符根 / 文件系统根）。授权是按前缀覆盖的，
+    // 误把整个盘授权给插件后，一次递归删除就是灾难。
+    if is_protected_root(&normalized) {
+        return Err(ApiError::forbidden(
+            "FS_REFUSE_ROOT",
+            "拒绝删除文件系统根目录",
+        ));
+    }
+
+    if !normalized.is_dir() {
+        return Err(ApiError::not_found("FS_DIR_NOT_FOUND", "目录不存在"));
+    }
+    if state
+        .plugin_auth
+        .find_grant(&plugin_id, &req.path)
+        .is_none()
+    {
+        return Err(ApiError::forbidden(
+            "FS_AUTHORIZATION_REQUIRED",
+            "未授权访问该路径",
+        ));
+    }
+
+    // 守卫 3：非递归模式必须为空目录
+    if !req.recursive {
+        let empty = std::fs::read_dir(&normalized)
+            .map(|mut it| it.next().is_none())
+            .unwrap_or(false);
+        if !empty {
+            return Err(ApiError::bad_request(
+                "FS_DIR_NOT_EMPTY",
+                "目录非空；递归删除需显式传 recursive: true",
+            ));
+        }
+        std::fs::remove_dir(&normalized)?;
+        return Ok(Json(PluginDirDeleteResponse {
+            path: normalized.to_string_lossy().into_owned(),
+            removed: 0,
+        }));
+    }
+
+    // 递归删除放到阻塞线程池：大目录（数万文件）会长时间占住 async worker
+    let target = normalized.clone();
+    let removed = tokio::task::spawn_blocking(move || -> std::io::Result<u64> {
+        let count = count_entries(&target);
+        std::fs::remove_dir_all(&target)?;
+        Ok(count)
+    })
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))??;
+
+    Ok(Json(PluginDirDeleteResponse {
+        path: normalized.to_string_lossy().into_owned(),
+        removed,
+    }))
+}
+
+/// 统计目录下条目数（删除前调用，用于回报删了多少）。失败按 0 处理，仅作信息用途。
+fn count_entries(root: &Path) -> u64 {
+    let mut n = 0u64;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for entry in rd.flatten() {
+            n += 1;
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                stack.push(entry.path());
+            }
+        }
+    }
+    n
 }
 
 #[derive(Deserialize)]
@@ -2936,6 +3056,59 @@ mod tests {
     fn is_private(s: &str) -> bool {
         let ip: IpAddr = s.parse().unwrap();
         is_private_address(ip)
+    }
+
+    // ---- 目录删除的安全底线（issue #300 配套：插件需要能真删目录）----
+
+    #[test]
+    fn protected_root_rejects_filesystem_roots() {
+        // 盘符根与 Unix 根都必须拒绝：授权按前缀覆盖，误授权 + 递归删除 = 灾难
+        assert!(is_protected_root(Path::new("/")));
+        #[cfg(windows)]
+        {
+            assert!(is_protected_root(Path::new("C:\\")));
+            assert!(is_protected_root(Path::new("D:")));
+        }
+    }
+
+    #[test]
+    fn protected_root_allows_normal_directories() {
+        assert!(!is_protected_root(Path::new("/home/user/server")));
+        #[cfg(windows)]
+        {
+            assert!(!is_protected_root(Path::new("D:\\Servers\\survival")));
+            // 层级浅但不是根：授权范围内允许（插件侧再做业务层校验）
+            assert!(!is_protected_root(Path::new("D:\\Servers")));
+        }
+    }
+
+    #[test]
+    fn count_entries_counts_files_and_nested_dirs() {
+        let root = std::env::temp_dir().join(format!("qml-cnt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("world/region")).unwrap();
+        std::fs::write(root.join("server.jar"), b"x").unwrap();
+        std::fs::write(root.join("eula.txt"), b"eula=true").unwrap();
+        std::fs::write(root.join("world/level.dat"), b"x").unwrap();
+        std::fs::write(root.join("world/region/r.0.0.mca"), b"x").unwrap();
+
+        // server.jar + eula.txt + world(dir) + level.dat + region(dir) + r.0.0.mca
+        assert_eq!(count_entries(&root), 6);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn remove_dir_all_clears_deep_tree() {
+        // 端到端：递归删除应清空整棵树（这是插件「删除服务端」依赖的能力）
+        let root = std::env::temp_dir().join(format!("qml-del-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("a/b/c")).unwrap();
+        std::fs::write(root.join("a/b/c/deep.dat"), b"x").unwrap();
+        std::fs::write(root.join("top.jar"), b"x").unwrap();
+
+        assert!(count_entries(&root) >= 3);
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(!root.exists());
     }
 
     #[test]

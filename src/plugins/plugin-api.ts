@@ -241,6 +241,13 @@ export interface PluginBridge {
   writeText: (path: string, content: string) => Promise<{ path: string }>
   writeBytes: (path: string, bytes: Uint8Array) => Promise<{ path: string }>
   deleteFile: (path: string) => Promise<{ path: string }>
+  /** 删除目录。`recursive: false` 只接受空目录（非空报错）；`recursive: true` 递归删除
+   * 全部内容与目录本身，返回 `removed`（删掉的条目数）。
+   *
+   * 危险根（盘符根 / 文件系统根）永远拒绝；路径必须在已授权前缀内。
+   * 典型用法：插件「删除实例/服务端目录」——此前只能递归 deleteFile 再把空壳目录
+   * rename 挪开，磁盘上留下无法清理的垃圾目录。 */
+  deleteDir: (path: string, options?: { recursive?: boolean }) => Promise<{ path: string; removed: number }>
   execCommand: (command: string, timeoutMs?: number) => Promise<{ exitCode: number; stdout: string; stderr: string }>
   navigate: (path: string) => void
   /** 打开启动器「设置 → 插件 → 插件设置」并定位到指定插件（缺省定位到本插件第一个设置页）。
@@ -485,6 +492,14 @@ export function createPluginBridge(pluginId: string): PluginBridge {
         body: JSON.stringify({ path })
       }))
       return res as { path: string }
+    },
+    deleteDir: async (path, opts) => {
+      const res = await fileOpWithAuth(pluginId, path, () => fetch(`${API_BASE}/plugins/files/${encodeURIComponent(pluginId)}/delete-dir`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, recursive: opts?.recursive === true })
+      }))
+      return res as { path: string; removed: number }
     },
     execCommand: async (command, timeoutMs) => {
       const res = await fetch(`${API_BASE}/plugins/shell/${encodeURIComponent(pluginId)}`, {

@@ -768,7 +768,7 @@ export async function handleApiCall(callId: string, method: string, args: unknow
 const METHOD_PERMISSIONS: Record<string, string> = {
   getSettings: 'config:read', setSettings: 'config:write', setCache: 'cache:access', getCache: 'cache:access', callBackend: 'network:fetch', uploadPlugin: 'plugin:install', proxyFetch: 'network:cors_proxy', proxyFetchStream: 'network:cors_proxy',
   registerMethod: 'config:write', callPlugin: 'network:fetch', callWasm: 'wasm:execute', listWasmPlugins: 'wasm:execute',
-  readText: 'filesystem:read', readBytes: 'filesystem:read', writeText: 'filesystem:write', writeBytes: 'filesystem:write', deleteFile: 'filesystem:write', execCommand: 'shell:execute',
+  readText: 'filesystem:read', readBytes: 'filesystem:read', writeText: 'filesystem:write', writeBytes: 'filesystem:write', deleteFile: 'filesystem:write', deleteDir: 'filesystem:write', execCommand: 'shell:execute',
   navigate: 'config:read', openPluginSettings: 'config:read', showToast: 'ui:toast', log: 'plugin:log', getSystemInfo: 'system:info', openUrl: 'system:notification', listPlugins: 'plugin:list',
   addMenuItem: 'ui:inject_sidebar',
   getThemeColor: 'config:read', applyThemeOverride: 'config:write', clearThemeOverride: 'config:write',
@@ -874,6 +874,7 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     case 'writeText': return bridge.writeText(args[0] as string, args[1] as string)
     case 'writeBytes': return bridge.writeBytes(args[0] as string, args[1] as Uint8Array)
     case 'deleteFile': return bridge.deleteFile(args[0] as string)
+    case 'deleteDir': return bridge.deleteDir(args[0] as string, args[1] as { recursive?: boolean } | undefined)
     case 'execCommand': return bridge.execCommand(args[0] as string, args[1] as number | undefined)
     case 'getSystemInfo': return bridge.getSystemInfo()
     case 'openUrl': return bridge.openUrl(args[0] as string)
