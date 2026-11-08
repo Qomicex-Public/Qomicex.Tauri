@@ -1001,7 +1001,13 @@ async function fileOpWithAuth(
   }
   if (!res.ok) {
     const err = await res.json().catch(() => null)
-    throw new Error(err?.message ?? `File operation failed: ${res.status}`)
+    // 把后端错误码挂到 Error 上：插件的 catch 里可以据此分支处理
+    // （FS_DIR_NOT_EMPTY 提示用户勾选递归、FS_REFUSE_ROOT 直接拒绝等）。
+    // 只保留 message 会逼插件去匹配本地化文案，换语言就失效。
+    const e = new Error(err?.message ?? `File operation failed: ${res.status}`) as Error & { code?: string; status?: number }
+    if (typeof err?.code === 'string') e.code = err.code
+    e.status = res.status
+    throw e
   }
   return res.json()
 }

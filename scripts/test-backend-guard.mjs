@@ -54,6 +54,14 @@ check('files authorize 需 filesystem:write', backendEndpointPermission('/plugin
 check('files write 需 filesystem:write', backendEndpointPermission('/plugins/files/x/write', 'POST', BASE), 'filesystem:write')
 check('files read 需 filesystem:write', backendEndpointPermission('/plugins/files/x/read', 'POST', BASE), 'filesystem:write')
 check('files extract 需 filesystem:write', backendEndpointPermission('/plugins/files/x/extract', 'POST', BASE), 'filesystem:write')
+// 漏登记 = 只有 network:fetch 的插件能绕过 filesystem:write。
+// delete-dir 尤甚：一次递归删除整个目录；rename 能把目录挪出授权区；
+// archive-entry 能读压缩包内任意条目。
+check('files delete 需 filesystem:write', backendEndpointPermission('/plugins/files/x/delete', 'POST', BASE), 'filesystem:write')
+check('files delete-dir 需 filesystem:write', backendEndpointPermission('/plugins/files/x/delete-dir', 'POST', BASE), 'filesystem:write')
+check('files list 需 filesystem:write', backendEndpointPermission('/plugins/files/x/list', 'POST', BASE), 'filesystem:write')
+check('files rename 需 filesystem:write', backendEndpointPermission('/plugins/files/x/rename', 'POST', BASE), 'filesystem:write')
+check('files archive-entry 需 filesystem:write', backendEndpointPermission('/plugins/files/x/archive-entry', 'POST', BASE), 'filesystem:write')
 check('install 需 plugin:install', backendEndpointPermission('/plugins/install', 'POST', BASE), 'plugin:install')
 check('install-url 需 plugin:install', backendEndpointPermission('/plugins/install-url', 'POST', BASE), 'plugin:install')
 check('upload 需 plugin:install', backendEndpointPermission('/plugins/upload', 'POST', BASE), 'plugin:install')

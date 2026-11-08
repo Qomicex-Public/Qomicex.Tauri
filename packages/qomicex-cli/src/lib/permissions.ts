@@ -56,7 +56,7 @@ export const PERMISSION_CATALOG: Record<string, PermissionInfo> = {
 export const METHOD_PERMISSIONS: Record<string, string> = {
   getSettings: 'config:read', setSettings: 'config:write', setCache: 'cache:access', getCache: 'cache:access', callBackend: 'network:fetch', uploadPlugin: 'plugin:install', proxyFetch: 'network:cors_proxy', proxyFetchStream: 'network:cors_proxy',
   registerMethod: 'config:write', callPlugin: 'network:fetch', callWasm: 'wasm:execute', listWasmPlugins: 'wasm:execute',
-  readText: 'filesystem:read', readBytes: 'filesystem:read', writeText: 'filesystem:write', writeBytes: 'filesystem:write', deleteFile: 'filesystem:write', renamePath: 'filesystem:write', execCommand: 'shell:execute',
+  readText: 'filesystem:read', readBytes: 'filesystem:read', writeText: 'filesystem:write', writeBytes: 'filesystem:write', deleteFile: 'filesystem:write', deleteDir: 'filesystem:write', renamePath: 'filesystem:write', execCommand: 'shell:execute',
   navigate: 'config:read', openPluginSettings: 'config:read', addMenuItem: 'ui:inject_sidebar', showToast: 'ui:toast', getSystemInfo: 'system:info', openUrl: 'system:notification', listPlugins: 'plugin:list',
   log: 'plugin:log', registerHook: 'hook:register',
   getThemeColor: 'config:read', applyThemeOverride: 'config:write', clearThemeOverride: 'config:write',

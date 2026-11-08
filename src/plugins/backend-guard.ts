@@ -28,7 +28,7 @@ export const BACKEND_ROUTE_RULES: readonly BackendRouteRule[] = [
   // 唯一闸门——只登记 read/write 而漏掉 authorize 等于没有权限控制。
   {
     method: 'POST',
-    pattern: /^\/plugins\/files\/[^/]+\/(authorize|read|write|delete|extract|list)$/,
+    pattern: /^\/plugins\/files\/[^/]+\/(authorize|read|write|delete|delete-dir|extract|list|rename|archive-entry)$/,
     permission: 'filesystem:write',
   },
   // 插件安装 / 卸载 / 回滚 / 启停
