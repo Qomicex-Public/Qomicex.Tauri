@@ -63,7 +63,9 @@ issue #255 报告：Forge 实例（刀剑异闻录整合包，Forge 1.20.1）的
 24. **嵌套元数据逐个读、命中即返回**（PR #9 第五轮评审 sourcery 指出）：`nested_jar_id` 原先把三个条目都读成字符串再选，单个嵌套 jar 最坏占三份上限的内存，并发扫描下放大成内存压力。现按侧优先顺序逐个读取，每轮只持有一份，命中即返回。
 25. **整合包解压的其余加固拆到 issue #12**（PR #9 第四、五轮评审 sourcery）：解压大小/磁盘配额、符号链接防护、越界条目的处理策略、`extract_zip` 同类问题——四项都落在**本 PR 未触碰**的既有解压路径，需先定口径（配额按什么算、越界是整包失败还是记日志继续），不适合夹带在解析选侧 PR 里。
 26. **盘符相对段与目录条目判定**（PR #9 第五轮评审 sourcery 指出）：原判定只拒 `len == 2` 的 `C:`，`C:payload` 这类盘符相对段会通过（`PathBuf::push` 会整条替换）；目录条目判定只认 `/`，`subdir\` 会被当文件创建。现抽出 `has_drive_prefix` 与 `is_directory_entry`，两个 `extract_prefixed` 共用。
-27. **前端不改**：修复后 Forge 实例不再看到 fabric 侧依赖，`PLATFORM_PROVIDED_IDS` 维持 ADR-101 v1.2 的口径（`fabric`/`quilt` 不得入列）。
+27. **进度按已处理任务数计数**（PR #9 第六轮评审 sourcery 指出，属本轮改动引入的缺陷）：第 20 条的「解析期间 jar 被替换则丢弃该条」让 `Ok(Ok(None))` 既不重试也不计数，进度回调因此停在 `total_count` 之下，前端进度条卡住。现进度按**已处理任务数**递增，与是否采纳结果无关。丢弃本身保留——返回旧文件的元数据比少一条结论更糟；也不在任务内重试，下一次扫描自然会读到新文件。
+28. **Windows 段归一化后再判父目录段**（PR #9 第六轮评审 sourcery 指出）：只比对字面量 `..` 会漏——Win32 的段规范化剥掉尾部点与空格，`..junk` / `...` / `..  ` 都会被当成父目录段，词法 `starts_with` 拦不住。现先归一（剥尾部点与空格），归一后以 `..` 开头即拒绝；纯点/空格段（不含连续两点）仍按空段折叠。
+29. **前端不改**：修复后 Forge 实例不再看到 fabric 侧依赖，`PLATFORM_PROVIDED_IDS` 维持 ADR-101 v1.2 的口径（`fabric`/`quilt` 不得入列）。
 
 ## 备选方案
 
@@ -112,7 +114,7 @@ issue #255 报告：Forge 实例（刀剑异闻录整合包，Forge 1.20.1）的
     - 把 `safe_join_under` 的 `..` 判定改成 `continue` → `safe_join_under_rejects_traversal` FAILED：`"../escape.jar" 属越界路径，应被拒绝`。
     - 把 `read_zip_entry_bytes` 退回无界 `read_to_end` 并去掉头部检查 → `oversized_zip_entry_stops_reading_at_limit` FAILED（计数 reader 抓到读取量越界）。
   ⚠️ 该验证踩过一次坑并已规避：用 `Copy-Item` 还原文件会保留源文件 mtime，cargo 据此判定「未变更」而跳过重编，跑的是陈旧的「已抽掉修复」二进制，会得出「还原后仍 FAILED」的假结论。还原后必须显式刷新 mtime。
-- **全量**：core `cargo test --lib` → `146 passed; 0 failed; 2 ignored`（第五轮评审后；第四轮 143、第三轮 141、第二轮 138、首轮 134）；另有 `12 + 11 + 0`（integration/其它 target）全绿；`cargo fmt --check` 通过；新增代码无 clippy 告警（仅存量告警）。backend `cargo test --manifest-path src-backend/qomicex-backend/Cargo.toml` → `478 passed; 0 failed; 2 ignored`；`cargo clippy --no-deps` 无 error；`cargo fmt --check` 通过。CI：主仓 PR #258 的 `backend-check` / `frontend-check` / `frontend-lint` / `plugin-ui-check` / triage 全部 pass。
+- **全量**：core `cargo test --lib` → `148 passed; 0 failed; 2 ignored`（第六轮评审后；第五轮 146、第四轮 143、第三轮 141、第二轮 138、首轮 134）；另有 `12 + 11 + 0`（integration/其它 target）全绿；`cargo fmt --check` 通过；新增代码无 clippy 告警（仅存量告警）。backend `cargo test --manifest-path src-backend/qomicex-backend/Cargo.toml` → `478 passed; 0 failed; 2 ignored`；`cargo clippy --no-deps` 无 error；`cargo fmt --check` 通过。CI：主仓 PR #258 的 `backend-check` / `frontend-check` / `frontend-lint` / `plugin-ui-check` / triage 全部 pass。
 - **真实数据取证**（下载真实 jar 解包，非构造样本）：见「背景」表格，`collective-1.20.1-8.53.jar` 的 fabric 侧 `depends` 含 `fabric` 而 mods.toml 侧只依赖 `minecraft`；`Towns-and-Towers-1.12-Fabric+Forge.jar` 的文件名即证明「单 jar 分发双端」是厂商的实际做法。
 - **未做**：未启动后端做 HTTP 端到端复测（用户选择以单元/集成测试覆盖接线），故 `resolve()` → `create_mods` 的字段透传由类型系统（`Resolved.loader` 为必填字段，缺失即编译失败）与 code review 保证；前端 UI 未做浏览器实机复验（本次前端零改动）。
 
@@ -137,3 +139,4 @@ issue #255 报告：Forge 实例（刀剑异闻录整合包，Forge 1.20.1）的
 | 2026-11-08 | v1.5 | PR #9 第三轮评审 sourcery 8 项逐条核对：6 项采纳——单条目读取失败不再中止整份解析（推翻 v1.4 第③条的结论）、zip 条目解压上限 8 MiB（头 size 与实读双校验）、临时文件名加进程内序号并用 `create_new` 防符号链接、缓存命中后复核 jar 身份、隔离测试增加缓存命中数断言；2 项举证不采纳——Windows `fs::rename` 覆盖语义与标准库文档相反、缓存身份改内容指纹会让命中收益归零。补 4 项测试并逐项验证「抽掉即失败」；ADR 决策项增至 19 条 | AI Agent |
 | 2026-11-08 | v1.6 | PR #9 第四轮评审 sourcery 6 项逐条核对：5 项采纳——解压上限覆盖嵌套 jar 与 `.class` 扫描（抽出 `read_zip_entry_bytes` 四处共用）、创建时间取纳秒、缓存未命中路径也复核文件身份、计数器验证读取确实停在上限、整合包 `safe_join_under` 拒绝越界条目；1 项单列 issue #11（JNI `instanceFilesMetadata` 缺 loader，需两仓同步发版）。测试 141→143；ADR 决策项增至 23 条 | AI Agent |
 | 2026-11-08 | v1.7 | PR #9 第五轮评审 sourcery 8 项逐条核对：4 项采纳——上限按内容性质分级（文本 8 MiB / 二进制 64 MiB，避免误伤大号嵌套 jar）、`nested_jar_id` 逐个读命中即返回、`has_drive_prefix` 覆盖盘符相对段、`is_directory_entry` 两种分隔符；4 项不采纳并说明理由，其中三项整合包解压加固拆到 issue #12（本 PR 未触碰的既有路径）。测试 143→146；ADR 决策项增至 27 条 | AI Agent |
+| 2026-11-08 | v1.8 | PR #9 第六轮评审 sourcery 5 项逐条核对：2 项为本 PR 改动引入的缺陷并已修复——`Ok(Ok(None))` 丢弃结论时不计进度（改为按已处理任务数计数）、只比对字面量 `..`（改为按 Win32 口径归一再判父目录段）；3 项不采纳，其中两项整合包解压项并入 issue #12。测试 146→148；ADR 决策项增至 29 条 | AI Agent |
