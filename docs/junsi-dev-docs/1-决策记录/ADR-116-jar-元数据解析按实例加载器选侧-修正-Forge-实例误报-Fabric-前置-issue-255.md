@@ -41,7 +41,15 @@ issue #255 报告：Forge 实例（刀剑异闻录整合包，Forge 1.20.1）的
 7. **嵌套 Jar-in-Jar 的 id 采集也要按侧**（PR #9 评审 sourcery 指出）：嵌套 jar 同样可能是双端 jar，`collect_nested_ids` / `nested_jar_id` 原先固定读 Fabric 侧，Forge 实例会把另一端的 id 记进 `provides_ids`，掩盖真实的 Forge 侧依赖。现按侧优先、另一侧兜底。
 8. **解析「未填充」不再等同于「命中」**（PR #9 评审 sourcery 指出）：原实现只要条目存在就停止（`parse_*` 返回 `()`，结构不符时静默不填充），会让有效的备用元数据被跳过。现 `parse_fabric_json` / `parse_forge_toml` 返回是否成功填充，`try_parse_mod_metadata` 据此区分三态：`Parsed`（停止）/ `NotPresent`（回退下一格式或 `mcmod.info`）/ `ReadError`（条目存在但读取失败 → 同源 `catch{}` 语义，放弃本 jar）。
 9. **「是对象/有表」不等于「可用」**（PR #258 评审 CodeRabbit 指出）：第 8 条首版只判定 JSON 是对象、TOML 含 `[[mods]]` 首元素，于是 `fabric.mod.json` 为 `{}`、或 `[[mods]]` 全空时仍返回成功，解析提前停止，`mod_id`/`dependencies` 恒空而同 jar 的有效备用元数据不被采纳。现判定改为「实际提取到可用字段」：fabric 侧要求 `id`/`name`/`version` 任一非空或 `depends` 为对象，Forge 侧要求 `modId`/`displayName`/`version`/`description` 任一非空；否则视为未填充并回退下一格式。
-10. **前端不改**：修复后 Forge 实例不再看到 fabric 侧依赖，`PLATFORM_PROVIDED_IDS` 维持 ADR-101 v1.2 的口径（`fabric`/`quilt` 不得入列）。
+10. **可用性必须以身份字段为准，展示字段不算**（PR #9 第二轮评审 sourcery 指出）：第 9 条的「任一字段非空」仍不够——`{"schemaVersion":1,"name":"X","depends":{...}}` 这类**缺 `id`** 的 `fabric.mod.json`、以及只有 `displayName` 而**缺 `modId`** 的 `[[mods]]`，都会被判为已填充使解析提前停止。此时 `mod_id` 恒空、Forge 侧连依赖都取不到（`parse_forge_toml` 不敢猜依赖归属），而同 jar 另一侧其实结构完整。现收紧为：`fabric_json_is_usable` 要求 `id` 非空、`forge_toml_is_usable` 要求 `modId` 非空——两者在各自规范里都是必填，且是「模组是谁」的唯一来源；展示字段单独存在不再算可用。
+11. **per-jar 缓存的身份必须是文件身份，不是 size+mtime**（PR #9 第二轮评审 sourcery 指出）：同名替换的 jar 只要体积与毫秒 mtime 不变，旧的 size+mtime 校验就会采信旧条目，调用方拿到的是**旧 jar 的依赖**。且并发扫描（列表页与后台刷新重叠）会写同一个缓存文件，先开始、后完成的旧扫描可覆盖较新的条目。现：
+    - 缓存条目追加 `fileKey` = `jar_file_key()`（创建时间秒 + mtime 纳秒的哈希），命中要求 size / mtime / fileKey 三者全同；
+    - 写入改为**同目录临时文件 + `rename`** 原子替换，避免半截 JSON 与旧内容截断；
+    - 写前按 jar 当前身份复核（`jar_identity`），解析期间 jar 被替换则**不写**，交由下次扫描重扫；
+    - `MOD_META_CACHE_VERSION` 4 → 5 使旧条目失效（缺 `fileKey` 的旧条目 `serde(default)` 读作 0，与任何真实身份都不等，等价未命中）。
+    不采用「内容哈希」作身份：缓存的意义就是不读文件内容，为此读一遍即抵消全部收益。
+12. **回退语义在注释里必须分两类写清**（PR #9 第二轮评审 sourcery 指出）：`parse_metadata` 原注释称「任一环节失败静默跳过且不尝试后续格式」，但实现里语法错/结构不符是会回退下一格式的，只有 `read_zip_entry` 返回 `Err` 才放弃整块。注释已改为明确区分：**条目缺失/内容不可解析 → 回退下一格式；条目读取失败 → 放弃本 jar（同源 `catch{}`）**。
+13. **前端不改**：修复后 Forge 实例不再看到 fabric 侧依赖，`PLATFORM_PROVIDED_IDS` 维持 ADR-101 v1.2 的口径（`fabric`/`quilt` 不得入列）。
 
 ## 备选方案
 
@@ -77,15 +85,20 @@ issue #255 报告：Forge 实例（刀剑异闻录整合包，Forge 1.20.1）的
   - 抽掉 Forge 优先分支 → `e2e_forge_instance_reads_forge_side_of_dual_jar` FAILED：`Forge 实例不得采用 fabric.mod.json 侧的 'fabric' 依赖（issue #255）: ["fabric", "fabriclib", "fabricloader", "java", "minecraft"]`；`factory_passes_loader_through_to_metadata_parsing` FAILED：`Forge 实例经工厂扫描后不应含 fabric 依赖: ["fabric", "fabricloader", "minecraft"]` —— 与 issue 截图症状一致。
   - 抽掉 NeoForge 分派（`LoaderSide::from_loader` 把 neoforge 归为 Forge）→ `e2e_neoforge_instance_prefers_neoforge_metadata` 与 `loader_family_classification` FAILED：`NeoForge 实例应取 neoforge 侧展示字段`。
   - 抽掉「结构不符回退」（`if filled` → `if true`，即修复前「命中即算成功」）→ `e2e_structurally_invalid_metadata_falls_back_to_other_side` FAILED：`应从 mods.toml 回退解析出 mod id`。
+  - 第二轮评审后追加（逐项抽掉 → 失败 → 还原全绿）：
+    - 抽掉「身份字段」判定（`fabric_json_is_usable` / `forge_toml_is_usable` 回到「任一字段非空」）→ `e2e_metadata_without_identity_field_falls_back_to_other_side` FAILED：`缺 id 的 fabric 侧不得阻止回退`。
+    - 抽掉缓存 key 的侧别（`{path_hash}-{tag}.json` → `{path_hash}.json`）→ `e2e_cache_isolates_metadata_between_loader_sides` FAILED：`Fabric 实例不得复用 Forge 侧缓存: ["minecraft", "forgelib"]`。
+    - 抽掉文件身份校验（命中条件回到 size+mtime）→ `cache_entry_requires_matching_file_identity` FAILED：`size 与 mtime 相同但文件身份变了 → 必须重扫（同名替换）`。
+    - 抽掉写入前身份复核 → `stale_scan_does_not_write_cache_entry` FAILED：`过期扫描不得写入缓存条目（否则旧结论会冒充当前 jar）`。
   ⚠️ 该验证踩过一次坑并已规避：用 `Copy-Item` 还原文件会保留源文件 mtime，cargo 据此判定「未变更」而跳过重编，跑的是陈旧的「已抽掉修复」二进制，会得出「还原后仍 FAILED」的假结论。还原后必须显式刷新 mtime。
-- **全量**：core `cargo test --lib` → `134 passed; 0 failed; 2 ignored`；core 仅剩 1 条存量 `base64::decode` 弃用警告（非本次引入）；`cargo fmt --check` 通过。backend `cargo test --manifest-path src-backend/qomicex-backend/Cargo.toml` → `478 passed; 0 failed; 2 ignored`；`cargo clippy --no-deps` 无 error；`cargo fmt --check` 通过。CI：主仓 PR #258 的 `backend-check` / `frontend-check` / `frontend-lint` / `plugin-ui-check` / triage 全部 pass。
+- **全量**：core `cargo test --lib` → `138 passed; 0 failed; 2 ignored`（第二轮评审后）；另有 `12 + 11 + 0`（integration/其它 target）全绿；`cargo fmt --check` 通过；新增代码无 clippy 告警（仅存量告警）。首轮评审时为 `134 passed`。backend `cargo test --manifest-path src-backend/qomicex-backend/Cargo.toml` → `478 passed; 0 failed; 2 ignored`；`cargo clippy --no-deps` 无 error；`cargo fmt --check` 通过。CI：主仓 PR #258 的 `backend-check` / `frontend-check` / `frontend-lint` / `plugin-ui-check` / triage 全部 pass。
 - **真实数据取证**（下载真实 jar 解包，非构造样本）：见「背景」表格，`collective-1.20.1-8.53.jar` 的 fabric 侧 `depends` 含 `fabric` 而 mods.toml 侧只依赖 `minecraft`；`Towns-and-Towers-1.12-Fabric+Forge.jar` 的文件名即证明「单 jar 分发双端」是厂商的实际做法。
 - **未做**：未启动后端做 HTTP 端到端复测（用户选择以单元/集成测试覆盖接线），故 `resolve()` → `create_mods` 的字段透传由类型系统（`Resolved.loader` 为必填字段，缺失即编译失败）与 code review 保证；前端 UI 未做浏览器实机复验（本次前端零改动）。
 
 ## 影响
 - qomicex-core-rust/src/api/local.rs（create_mods 增 loader 参数）
 - qomicex-core-rust/src/services/local/factory.rs（透传 loader + 接线测试）
-- qomicex-core-rust/src/services/local/mods.rs（LoaderSide 三侧判定 / parse_metadata 按侧分派 / try_parse_mod_metadata 三态 / 嵌套 id 按侧 / 缓存 key 含侧别 / MOD_META_CACHE_VERSION 3→4）
+- qomicex-core-rust/src/services/local/mods.rs（LoaderSide 三侧判定 / parse_metadata 按侧分派 / try_parse_mod_metadata 三态 / 嵌套 id 按侧 / 缓存 key 含侧别 / MOD_META_CACHE_VERSION 3→4→5 / 可用性判定要求身份字段 / 缓存按文件身份校验与原子写入）
 - qomicex-core-rust/src/jni.rs（唯一另一处 create_mods 调用，传 None）
 - src-backend/qomicex-backend/src/endpoints/instance_files.rs（Resolved 增 loader，6 处调用点；ModsCacheEntry 与 UpdateCacheEntry 均增 loader 并校验；MODS_CACHE_SCHEMA 4→5）
 - src-backend/qomicex-backend/src/endpoints/connector.rs（scan_mods_to_entries / scan_host_mods_from_game_dir 增 loader，2 处调用点；新增 ConnectorGameInfo.scan_loader 与 pick_game_loader）
@@ -98,3 +111,4 @@ issue #255 报告：Forge 实例（刀剑异闻录整合包，Forge 1.20.1）的
 | 2026-10-17 | v1.1 | PR 评审（sourcery/CodeRabbit）后补 4 项：NeoForge 与 Forge 分侧、嵌套 Jar-in-Jar id 按侧、解析未填充不再等同命中、backend 缓存校验 loader 与 host_port 改用实际游戏加载器；测试增至 7 项，逐项验证「抽掉即失败」 | AI Agent |
 | 2026-10-17 | v1.3 | 二轮评审 CodeRabbit 补第三处同类遗漏：更新检查缓存 `UpdateCacheEntry` 同样不校验 loader，而它的产物会被 `batch_update_mods` 用于删装模组文件；两套缓存的 loader 校验口径统一到 `loader_matches` | AI Agent |
 | 2026-10-17 | v1.2 | 二轮评审 CodeRabbit 指出「是对象/有表」不等于「可用」：`fabric.mod.json` 为 `{}`、`[[mods]]` 全空时仍算解析成功，会吞掉同 jar 的有效备用元数据。改为按实际提取到的字段判定可用性；补 2 项双向回退测试（含一个必须用 Forge 实例否则假通过的用例）；ADR 决策项增至 10 条 | AI Agent |
+| 2026-11-04 | v1.4 | PR #9 第二轮评审 sourcery 补 3 项：① 可用性收紧为「身份字段」——`fabric.mod.json` 必须有 `id`、`[[mods]]` 必须有 `modId`，展示字段单独存在不算可用；② per-jar 缓存改用文件身份（`fileKey` = 创建时间+mtime）校验并以临时文件 + `rename` 原子写入，写前复核 jar 身份，`MOD_META_CACHE_VERSION` 4→5；③ 纠正 `parse_metadata` 回退语义注释（不可解析→回退，读取失败→放弃）。补 4 项测试并逐项验证「抽掉即失败」；ADR 决策项增至 13 条 | AI Agent |
