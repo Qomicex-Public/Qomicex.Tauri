@@ -59,7 +59,11 @@ issue #255 报告：Forge 实例（刀剑异闻录整合包，Forge 1.20.1）的
 20. **缓存未命中路径也要复核文件身份**（PR #9 第四轮评审 sourcery 指出）：第 15 条只在命中路径复核，未命中路径解析完就直接返回；若解析期间 jar 被替换，返回的是旧文件的元数据。现解析后再次比对身份，不一致则丢弃该条（既不返回也不写缓存），由下次扫描读到新文件。
 21. **整合包 overrides 必须拒绝越界路径**（PR #9 第四轮评审 sourcery 指出）：`extract_prefixed` 去掉前缀后直接 `Path::join`，条目名 `overrides/../../x` 会写到安装目录之外——条目名来自不可信 zip。现新增 `safe_join_under`，逐段拒绝 `..` 与盘符段并复核结果仍在版本目录内（源实现直接 `Path::Combine`，记作有意偏离）。
 22. **JNI 入口的 loader 透传单列 issue #11**（PR #9 第四轮评审 sourcery 提出）：`instanceFilesMetadata` 传 `None` 确会让 Forge 系实例按 Fabric 侧解析，但该问题在本 PR 之前即存在，且 Java 侧签名由外部 core 仓库持有，在此扩参会让现有调用方链接失败，需两仓同步发版。父仓 backend 的 6 处调用点已传真实 loader；JNI 路径在 #11 落地前与改动前行为一致，不构成回归，故不阻塞本 PR。
-23. **前端不改**：修复后 Forge 实例不再看到 fabric 侧依赖，`PLATFORM_PROVIDED_IDS` 维持 ADR-101 v1.2 的口径（`fabric`/`quilt` 不得入列）。
+23. **上限要按内容性质分级**（PR #9 第五轮评审 sourcery 指出）：把 8 MiB 同时用于文本元数据与嵌套 jar / `.class`，会把**合法**的大号嵌套 jar 判为损坏，其声明的 id 与注解依赖一起丢失——反而制造「缺少前置」误报。现拆两级：文本 `MAX_ZIP_ENTRY_BYTES = 8 MiB`、二进制 `MAX_ZIP_BINARY_ENTRY_BYTES = 64 MiB`，`read_zip_entry_bytes` 显式收 `limit` 参数。
+24. **嵌套元数据逐个读、命中即返回**（PR #9 第五轮评审 sourcery 指出）：`nested_jar_id` 原先把三个条目都读成字符串再选，单个嵌套 jar 最坏占三份上限的内存，并发扫描下放大成内存压力。现按侧优先顺序逐个读取，每轮只持有一份，命中即返回。
+25. **整合包解压的其余加固拆到 issue #12**（PR #9 第四、五轮评审 sourcery）：解压大小/磁盘配额、符号链接防护、越界条目的处理策略、`extract_zip` 同类问题——四项都落在**本 PR 未触碰**的既有解压路径，需先定口径（配额按什么算、越界是整包失败还是记日志继续），不适合夹带在解析选侧 PR 里。
+26. **盘符相对段与目录条目判定**（PR #9 第五轮评审 sourcery 指出）：原判定只拒 `len == 2` 的 `C:`，`C:payload` 这类盘符相对段会通过（`PathBuf::push` 会整条替换）；目录条目判定只认 `/`，`subdir\` 会被当文件创建。现抽出 `has_drive_prefix` 与 `is_directory_entry`，两个 `extract_prefixed` 共用。
+27. **前端不改**：修复后 Forge 实例不再看到 fabric 侧依赖，`PLATFORM_PROVIDED_IDS` 维持 ADR-101 v1.2 的口径（`fabric`/`quilt` 不得入列）。
 
 ## 备选方案
 
@@ -108,7 +112,7 @@ issue #255 报告：Forge 实例（刀剑异闻录整合包，Forge 1.20.1）的
     - 把 `safe_join_under` 的 `..` 判定改成 `continue` → `safe_join_under_rejects_traversal` FAILED：`"../escape.jar" 属越界路径，应被拒绝`。
     - 把 `read_zip_entry_bytes` 退回无界 `read_to_end` 并去掉头部检查 → `oversized_zip_entry_stops_reading_at_limit` FAILED（计数 reader 抓到读取量越界）。
   ⚠️ 该验证踩过一次坑并已规避：用 `Copy-Item` 还原文件会保留源文件 mtime，cargo 据此判定「未变更」而跳过重编，跑的是陈旧的「已抽掉修复」二进制，会得出「还原后仍 FAILED」的假结论。还原后必须显式刷新 mtime。
-- **全量**：core `cargo test --lib` → `143 passed; 0 failed; 2 ignored`（第四轮评审后；第三轮 141、第二轮 138、首轮 134）；另有 `12 + 11 + 0`（integration/其它 target）全绿；`cargo fmt --check` 通过；新增代码无 clippy 告警（仅存量告警）。backend `cargo test --manifest-path src-backend/qomicex-backend/Cargo.toml` → `478 passed; 0 failed; 2 ignored`；`cargo clippy --no-deps` 无 error；`cargo fmt --check` 通过。CI：主仓 PR #258 的 `backend-check` / `frontend-check` / `frontend-lint` / `plugin-ui-check` / triage 全部 pass。
+- **全量**：core `cargo test --lib` → `146 passed; 0 failed; 2 ignored`（第五轮评审后；第四轮 143、第三轮 141、第二轮 138、首轮 134）；另有 `12 + 11 + 0`（integration/其它 target）全绿；`cargo fmt --check` 通过；新增代码无 clippy 告警（仅存量告警）。backend `cargo test --manifest-path src-backend/qomicex-backend/Cargo.toml` → `478 passed; 0 failed; 2 ignored`；`cargo clippy --no-deps` 无 error；`cargo fmt --check` 通过。CI：主仓 PR #258 的 `backend-check` / `frontend-check` / `frontend-lint` / `plugin-ui-check` / triage 全部 pass。
 - **真实数据取证**（下载真实 jar 解包，非构造样本）：见「背景」表格，`collective-1.20.1-8.53.jar` 的 fabric 侧 `depends` 含 `fabric` 而 mods.toml 侧只依赖 `minecraft`；`Towns-and-Towers-1.12-Fabric+Forge.jar` 的文件名即证明「单 jar 分发双端」是厂商的实际做法。
 - **未做**：未启动后端做 HTTP 端到端复测（用户选择以单元/集成测试覆盖接线），故 `resolve()` → `create_mods` 的字段透传由类型系统（`Resolved.loader` 为必填字段，缺失即编译失败）与 code review 保证；前端 UI 未做浏览器实机复验（本次前端零改动）。
 
@@ -119,7 +123,7 @@ issue #255 报告：Forge 实例（刀剑异闻录整合包，Forge 1.20.1）的
 - qomicex-core-rust/src/jni.rs（唯一另一处 create_mods 调用，传 None；该入口的 loader 透传见 issue #11）
 - src-backend/qomicex-backend/src/endpoints/instance_files.rs（Resolved 增 loader，6 处调用点；ModsCacheEntry 与 UpdateCacheEntry 均增 loader 并校验；MODS_CACHE_SCHEMA 4→5）
 - src-backend/qomicex-backend/src/endpoints/connector.rs（scan_mods_to_entries / scan_host_mods_from_game_dir 增 loader，2 处调用点；新增 ConnectorGameInfo.scan_loader 与 pick_game_loader）
-- qomicex-core-rust/src/services/installers/modpacks/{mod,curseforge,modrinth}.rs（`safe_join_under` 拒绝越界条目）
+- qomicex-core-rust/src/services/installers/modpacks/{mod,curseforge,modrinth}.rs（`safe_join_under` 拒绝越界条目 / `has_drive_prefix` / `is_directory_entry`；其余解压加固见 issue #12）
 - 父仓需 bump qomicex-core-rust 子模块指针
 
 ## 修订记录
@@ -132,3 +136,4 @@ issue #255 报告：Forge 实例（刀剑异闻录整合包，Forge 1.20.1）的
 | 2026-11-04 | v1.4 | PR #9 第二轮评审 sourcery 补 3 项：① 可用性收紧为「身份字段」——`fabric.mod.json` 必须有 `id`、`[[mods]]` 必须有 `modId`，展示字段单独存在不算可用；② per-jar 缓存改用文件身份（`fileKey` = 创建时间+mtime）校验并以临时文件 + `rename` 原子写入，写前复核 jar 身份，`MOD_META_CACHE_VERSION` 4→5；③ 纠正 `parse_metadata` 回退语义注释（不可解析→回退，读取失败→放弃）。补 4 项测试并逐项验证「抽掉即失败」；ADR 决策项增至 13 条 | AI Agent |
 | 2026-11-08 | v1.5 | PR #9 第三轮评审 sourcery 8 项逐条核对：6 项采纳——单条目读取失败不再中止整份解析（推翻 v1.4 第③条的结论）、zip 条目解压上限 8 MiB（头 size 与实读双校验）、临时文件名加进程内序号并用 `create_new` 防符号链接、缓存命中后复核 jar 身份、隔离测试增加缓存命中数断言；2 项举证不采纳——Windows `fs::rename` 覆盖语义与标准库文档相反、缓存身份改内容指纹会让命中收益归零。补 4 项测试并逐项验证「抽掉即失败」；ADR 决策项增至 19 条 | AI Agent |
 | 2026-11-08 | v1.6 | PR #9 第四轮评审 sourcery 6 项逐条核对：5 项采纳——解压上限覆盖嵌套 jar 与 `.class` 扫描（抽出 `read_zip_entry_bytes` 四处共用）、创建时间取纳秒、缓存未命中路径也复核文件身份、计数器验证读取确实停在上限、整合包 `safe_join_under` 拒绝越界条目；1 项单列 issue #11（JNI `instanceFilesMetadata` 缺 loader，需两仓同步发版）。测试 141→143；ADR 决策项增至 23 条 | AI Agent |
+| 2026-11-08 | v1.7 | PR #9 第五轮评审 sourcery 8 项逐条核对：4 项采纳——上限按内容性质分级（文本 8 MiB / 二进制 64 MiB，避免误伤大号嵌套 jar）、`nested_jar_id` 逐个读命中即返回、`has_drive_prefix` 覆盖盘符相对段、`is_directory_entry` 两种分隔符；4 项不采纳并说明理由，其中三项整合包解压加固拆到 issue #12（本 PR 未触碰的既有路径）。测试 143→146；ADR 决策项增至 27 条 | AI Agent |
