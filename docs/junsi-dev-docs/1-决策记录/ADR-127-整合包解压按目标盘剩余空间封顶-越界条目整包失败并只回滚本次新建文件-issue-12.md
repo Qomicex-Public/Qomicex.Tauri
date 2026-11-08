@@ -20,7 +20,7 @@ issue #12 记录四项加固：解压无大小上限、跟随符号链接、越�
 
 ## 决策
 
-1. **解压上限以目标盘剩余空间为准**：ExtractBudget::for_target 探测安装目标目录所在盘的可用字节数（Windows GetDiskFreeSpaceExW / Unix statvfs），扣掉 EXTRACT_RESERVED_HEADROOM = 256 MiB 作为安装过程自身的余量。每条条目按 zip 头声明的解压大小 reserve。另设 MAX_SINGLE_ENTRY_BYTES = 512 MiB 挡住「剩余空间很大但单条目异常巨大」的情形。
+1. **解压上限以目标盘剩余空间为准**：ExtractBudget::for_target 探测安装目标目录所在盘的可用字节数（Windows GetDiskFreeSpaceExW；Unix 用**稀疏文件二分探测**，见第 7 条），扣掉 EXTRACT_RESERVED_HEADROOM = 256 MiB 作为安装过程自身的余量。每条条目按 zip 头声明的解压大小 reserve。另设 MAX_SINGLE_ENTRY_BYTES = 512 MiB 挡住「剩余空间很大但单条目异常巨大」的情形。
    - 探测失败 → 安装直接失败（ExtractBudget::for_target 返回 None → OverrideExtractor::new 报错）：未知余量下写盘正是要防的事。
    - 实写量按声明量 +1 字节封顶再校验一次，防止 zip 头撒谎。
    - 不采用「固定常量总量」：盘快满时会误报可用，大号良性整合包又会误拒；不采用「只限单条目」：挡不住很多条目累加到写满。
@@ -36,6 +36,13 @@ issue #12 记录四项加固：解压无大小上限、跟随符号链接、越�
 5. **file_helper::extract_zip 同步加固**：同样接入 ExtractBudget 与 resolves_within_root。此处预算探测失败时退化为「只靠单条目上限」而不阻断——它的调用方是 natives 解压等既有流程，失败会直接导致启动失败，取舍与整合包安装不同。
 
 6. **两个安装器共用 OverrideExtractor**：CurseForge 与 Modrinth 的 overrides 释放逻辑同构（差异只在哪些前缀算覆盖目录），循环体收在 mod.rs，避免两份实现各自漂移。
+7. **Unix 的空间探测不手写 statvfs ABI**（PR #13 评审 sourcery 指出，属初版引入的真实缺陷）：初版按「5 个 u64 + 11 个 u64 兜底」= 128 字节自造 `struct statvfs` 并 extern "C" 调用。macOS 的 `statvfs` 含 `f_fstypename[16]` / `f_mntonname[1024]` / `f_mntfromname[1024]` 等，**≥ 2144 字节**——每次探测越界写约 2 KB 栈内存；32 位 Unix 上字段宽度也不同。项目无 `libc` 直接依赖。
+   现改为**不依赖平台 ABI 的稀疏文件二分探测**：建探针文件，seek 到目标偏移写 1 字节，二分找「可写/不可写」边界（上限 1 TiB）。代价是 `log2(容量)` 次单字节写，三平台同一份代码。
+8. **覆盖前备份原文件，失败时还原内容**（PR #13 评审 sourcery 指出）：初版回滚只「不删」被覆盖文件，但其内容已被整合包替换——用户配置实际已丢。现覆盖前把原文件备份到同目录 `.qml-bak`，回滚时写回原内容、成功后 `commit()` 删备份。
+9. **符号链接校验不能以 `exists()` 为条件**（PR #13 评审 sourcery 指出）：叶子不存在、父目录是指向根外的链接时 `exists()` 为 false，跳过校验后 `create_dir_all` 仍会跟着写出去。现改为无条件校验。
+10. **单条目上限必须独立于剩余空间探测**（PR #13 评审 sourcery 指出）：探测失败时原实现让 `budget` 为 None，`reserve` 整个被跳过，连单条目上限也没了。现抽出 `check_single_entry_limit` 单独生效。
+11. **其他收敛**：临时文件名加进程内自增序号（并发不撞名）；`replace_file` 处理 Windows 上目标被占用时的替换（旧文件改名再换，失败放回）；`create_dirs_tracked` 记录每一层新建目录供逐层回滚；`extract_zip` 校验实写量超过声明量时报错。
+12. **不采纳 TOCTOU/并发协调类意见**：彻底消除 TOCTOU 需目录相对的 `openat`/`O_NOFOLLOW`（标准库无跨平台支持，需 `cap-std`）；并发安装的预算超订与跨安装回滚需按卷/按目录的全局协调。当前整合包安装是单实例串行触发，后者属理论场景，引入全局锁会扩大改动面并带来死锁风险。前者已在 CLARIFY 阶段与用户确认为取舍。
 
 ## 备选方案
 
@@ -61,7 +68,7 @@ issue #12 记录四项加固：解压无大小上限、跟随符号链接、越�
 
 ## 验证
 
-基线：`cargo test --lib` → 148 passed。改动后 → **156 passed / 0 failed / 2 ignored**；`cargo fmt --check` 通过；新增代码无 clippy 告警（`modpacks/*.rs` 与 `file_helper.rs` 的 6 条为存量，`git stash` 前后计数与内容一致，仅行号偏移）。
+基线：`cargo test --lib` → 148 passed。改动后 → **157 passed / 0 failed / 2 ignored**；`cargo fmt --check` 通过；新增代码无 clippy 告警（`modpacks/*.rs` 与 `file_helper.rs` 的 6 条为存量，`git stash` 前后计数与内容一致，仅行号偏移）。
 
 新增 8 项测试，逐项验证「抽掉修复即失败」：
 
@@ -87,3 +94,4 @@ issue #12 记录四项加固：解压无大小上限、跟随符号链接、越�
 | 日期 | 版本 | 修改内容 | 修改人 |
 |---|---|---|---|
 | 2026-11-08 | v1.0 | 初版创建 | AI Agent |
+| 2026-11-08 | v1.1 | PR #13 评审后补 6 项：Unix 空间探测改稀疏文件二分（初版手写 statvfs 在 macOS 越界写约 2 KB 栈，属真实缺陷）、覆盖前备份并在回滚时还原原内容、符号链接校验改为无条件、单条目上限独立于探测、临时文件唯一名、Windows 替换兼容；决策项增至 12 条，测试 156→157 | AI Agent |
