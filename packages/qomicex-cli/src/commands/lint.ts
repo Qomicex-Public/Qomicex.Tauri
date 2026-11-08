@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // qomicex lint — 增强静态检查（比 verify 更严的发布前门禁）：manifest 合法性 +
-// 权限最小化 + 长循环告警 + 相对 import 扩展名 + 资源引用存在性。支持 --json 供 CI。
+// 权限最小化 + 长循环告警 + 相对 import 扩展名 + 资源引用存在性 + 图标名合法性。
+// 支持 --json 供 CI。
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { validateManifest } from '../lib/manifest.ts'
 import { checkImportExtensions, checkRefFiles, type LintFinding } from '../lib/lint.ts'
+import { checkIcons } from '../lib/icons.ts'
 import { checkLongLoops, checkPermissions } from '../lib/scan.ts'
 import { fail, info } from '../lib/io.ts'
 
@@ -42,6 +44,10 @@ export async function lintCommand(opts: LintOptions = {}): Promise<void> {
   findings.push(...refs)
   errors += refs.filter((f) => f.severity === 'error').length
 
+  const icons = checkIcons(root, { manifest })
+  findings.push(...icons)
+  errors += icons.filter((f) => f.severity === 'error').length
+
   const warnings = findings.length - errors
 
   if (opts.json) {
@@ -53,7 +59,7 @@ export async function lintCommand(opts: LintOptions = {}): Promise<void> {
       if (f.severity === 'error') console.error(`${tag} ${f.message}${loc}`)
       else console.warn(`${tag} ${f.message}${loc}`)
     }
-    info(`\nlint 完成：${errors} 错误 / ${warnings} 警告（manifest ${mCheck.issues.length} 项、权限 ${permissions.length} 项）`)
+    info(`\nlint 完成：${errors} 错误 / ${warnings} 警告（manifest ${mCheck.issues.length} 项、权限 ${permissions.length} 项、图标 ${icons.length} 项）`)
     if (errors > 0) {
       console.error('发现错误，请修复后重试')
       process.exit(1)

@@ -33,7 +33,9 @@
     "test:download-name-pool": "node scripts/test-download-name-pool.mjs",
     "test:download-format": "node scripts/test-download-format.mjs",
     "license:check": "node scripts/add-license-headers.mjs --check",
-    "license:apply": "node scripts/add-license-headers.mjs"
+    "license:apply": "node scripts/add-license-headers.mjs",
+    "gen:icons": "node scripts/gen-icon-catalog.mjs",
+    "test:icon-catalog": "node scripts/test-icon-catalog.mjs"
   },
   "dependencies": {
     "@fortawesome/free-brands-svg-icons": "^7.3.1",

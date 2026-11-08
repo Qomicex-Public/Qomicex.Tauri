@@ -1,0 +1,11 @@
+// Copyright (C) 2026 Qomicex Launcher Contributors
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// ⚠️ 自动生成，请勿手改。改图标请编辑 src/components/BuiltinIcons.tsx
+//    然后运行：node scripts/gen-icon-catalog.mjs
+//    产物与源不一致时 CI 会失败（--check 模式）。
+
+import type { IconGlyph } from '../catalog.js'
+
+/** `fa-solid fa-file-lines` — 从 `@qomicex/plugin-ui/icons/file-lines` 导入。 */
+export const FileLinesIcon: IconGlyph = [384, 512, "M0 64C0 28.7 28.7 0 64 0L213.5 0c17 0 33.3 6.7 45.3 18.7L365.3 125.3c12 12 18.7 28.3 18.7 45.3L384 448c0 35.3-28.7 64-64 64L64 512c-35.3 0-64-28.7-64-64L0 64zm208-5.5l0 93.5c0 13.3 10.7 24 24 24L325.5 176 208 58.5zM120 256c-13.3 0-24 10.7-24 24s10.7 24 24 24l144 0c13.3 0 24-10.7 24-24s-10.7-24-24-24l-144 0zm0 96c-13.3 0-24 10.7-24 24s10.7 24 24 24l144 0c13.3 0 24-10.7 24-24s-10.7-24-24-24l-144 0z"]

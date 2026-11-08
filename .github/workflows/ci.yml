@@ -193,6 +193,10 @@ jobs:
       # 插件 API 面（issue #264）：白名单/switch/权限目录/桥具名方法四份清单若漂移，
       # 插件侧只会看到「方法不存在」或调用挂起，人工测试极难覆盖。
       - run: pnpm run test:plugin-api-surface
+      # 图标目录一致性（issue #300）：图标表在启动器、消费方在 plugin-ui 与
+      # qomicex-cli 两个包。不同步时插件 <Icon> 渲染 null、CLI lint 又放过表外
+      # 图标名，两边都静默，只能等用户截图才发现。
+      - run: pnpm run test:icon-catalog
       # 快捷安装前置计划的护栏（issue #249）：已安装的前置不得进入删除名单。
       # 该判定此前用本地文件名与上游文件名比较，两域必然不等 → 已装前置被删且不补下载。
       - run: pnpm run test:dependency-install-plan
