@@ -1633,7 +1633,9 @@ fn count_entries(root: &Path) -> u64 {
     let mut n = 0u64;
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in rd.flatten() {
             n += 1;
             if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
@@ -3182,9 +3184,7 @@ mod tests {
         #[cfg(windows)]
         let made = std::os::windows::fs::symlink_dir(&real, &link).is_ok();
         #[cfg(unix)]
-        let made = {
-            std::os::unix::fs::symlink(&real, &link).is_ok()
-        };
+        let made = { std::os::unix::fs::symlink(&real, &link).is_ok() };
 
         if made {
             // 经链接的路径必须被识别出来（否则会删到链接目标）
