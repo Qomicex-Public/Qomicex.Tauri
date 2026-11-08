@@ -783,9 +783,9 @@ const METHOD_PERMISSIONS: Record<string, string> = {
   pickFile: 'dialog:open', pickDirectory: 'dialog:open',
   extractArchive: 'filesystem:write', renamePath: 'filesystem:write', listDir: 'filesystem:read',
   sendNotification: 'system:notification',
-  // 插件读取自己的 l10n 包/当前 locale/内置图标 SVG：自持有或公共只读数据，
+  // 插件读取自己的 l10n 包/当前 locale/图标目录：自持有或公共只读数据，
   // 无需权限（空权限串 = 免检）
-  getPluginStrings: '', getLocale: '', getIconSvg: '',
+  getPluginStrings: '', getLocale: '', getIconSvg: '', listIcons: '',
 }
 
 /** "H S% L%" → #rrggbb。非法返回 null。 */
@@ -921,6 +921,7 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     case 'getPluginStrings': return bridge.getPluginStrings()
     case 'getLocale': return bridge.getLocale()
     case 'getIconSvg': return bridge.getIconSvg(args[0] as string)
+    case 'listIcons': return bridge.listIcons()
     default: throw new Error(`Unknown method: ${method}`)
   }
 }

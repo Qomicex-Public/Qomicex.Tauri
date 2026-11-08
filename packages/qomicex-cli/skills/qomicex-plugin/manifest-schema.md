@@ -114,9 +114,10 @@
 
 - `path`：入口目标路由（如 `/plugins/p/:id`）。
 - `icon`：**图标规范（按优先级）**——
-  1. **Font Awesome 类名（推荐）**：`"fa-solid fa-server"`。零资产、跟随主题色（currentColor）、启动器内置解析（侧栏/对话框统一渲染）；可用类名 = 启动器 `src/components/BuiltinIcons.tsx` 内置集（约 280 个）。插件运行时 UI 经 `call('getIconSvg', cls)` 取 SVG path 内联渲染，同一套类名。
+  1. **Font Awesome 类名（推荐）**：`"fa-solid fa-server"`。零资产、跟随主题色（currentColor）、启动器内置解析（侧栏/对话框统一渲染）。可用类名**不要硬编码**——内置表随启动器演进；运行时取全量用 `await __PLUGIN_API__.call('listIcons')`，离线查表见 `packages/plugin-ui/src/icons/names.ts` 的 `ICON_NAMES`。**表外类名会渲染为空白**，`qomicex verify` / `lint` 会报 error。插件页面内的图标不要走桥，用 `@qomicex/plugin-ui` 的 `<Glyph>` + 单图标子路径（见 plugin-api.md「图标」）。
   2. 包内相对路径：`dist/icon.svg`（自动解析为 `http://localhost:5000/api/plugins/{id}/files/dist/icon.svg`）。
-  3. 绝对 URL / emoji（仅过渡兼容；emoji 不跟随主题色，`qomicex verify` 会提示建议替换）。
+  3. 绝对 URL / emoji / 纯文本（如 `"🏆"`、`"A"`）。emoji 不跟随主题色，建议优先用 1 或 2。
+  4. 私有图标：`contributes.iconTheme` 指向包内 `icon-theme.json`（`{ "schemaVersion": 1, "icons": { "<键>": { "type": "svg", "path": "…" } } }`）。这些键会出现在 `listIcons()` 中，`getIconSvg` 优先解析。
 - `action`：`"page"`（跳转页面，默认）或 `"overlay"`（打开悬浮窗，需配合 `contributes.overlay`）。
 
 ### overlay 对象

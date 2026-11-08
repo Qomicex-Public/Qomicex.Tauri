@@ -133,8 +133,10 @@ await api.proxyFetchStream(req, { onChunk, onError })   // 流式请求
 | **getPluginStrings** | `call('getPluginStrings') → Record<string, string>` | 无需权限（自持有数据） |
 | | 插件自持 i18n：返回 `l10n/` 目录合并后的字符串包（`bundle.json` 打底、当前 locale 覆盖）。插件运行时 UI 用它渲染自己的文案，不依赖启动器 i18n | |
 | **getLocale** | `call('getLocale') → string`（如 `'zh-CN'`） | 无需权限 |
-| **getIconSvg** | `call('getIconSvg', 'fa-solid fa-server') → { width, height, path } \| null` | 无需权限 |
-| | 内置图标（Font Awesome 类名，与 manifest icon 同一体系）→ SVG path，插件内联 `<svg><path/></svg>` 渲染（currentColor 跟随主题色），不引入图标字体。可用类名 = 启动器 `src/components/BuiltinIcons.tsx` 内置集 | |
+| **getIconSvg** | `call('getIconSvg', 'fa-solid fa-server') → { width, height, path, source } \| null` | 无需权限 |
+| | 图标 → SVG path。查找顺序：本插件 `contributes.iconTheme` → 当前颜色主题映射 → 启动器内置表；`source` 标出命中来源。未命中返回 `null` 并 `console.warn`（不再静默）。**插件页面优先用 `<Glyph>`（见下「图标」）**，只有图标名来自运行期数据（配置里存的、`listIcons()` 结果）时才调它 | |
+| **listIcons** | `call('listIcons') → string[]` | 无需权限 |
+| | 全部可用图标键（内置表 + 当前主题映射 + 本插件 iconTheme），按字典序。图标选择器/自检以此为准，不要硬编码清单 | |
 | **（事件）plugin:locale-changed** | `window.addEventListener('plugin:locale-changed', e => …)` | 无需权限（被动事件） |
 | | 启动器切换语言时向所有插件沙箱广播；插件收到后重拉 `getPluginStrings` 重渲染（与主题跟随对齐）。`e.detail.locale` 为新 locale | |
 | **addMenuItem** | `addMenuItem(item: PluginMenuItem)` | `ui:inject_sidebar` |
@@ -157,6 +159,35 @@ await api.proxyFetchStream(req, { onChunk, onError })   // 流式请求
 用对应方法调这些路由时，manifest 必须同时声明 `network:fetch` 与上表的权限，否则抛 `Permission denied: <endpoint> requires <perm>`。**优先使用专用桥方法**（`process.spawn`、`writeText`、`uploadPlugin`）而不是 `callBackend` —— 专用方法的权限语义更清晰，也不受路由表变动影响。
 
 > 新增特权后端路由时必须同步登记到 `backend-guard.ts` 的 `BACKEND_ROUTE_RULES`，否则该路由对任何持有 `network:fetch` 的插件都是敞开的。`pnpm run test:backend-guard` 会校验规则表。
+
+## 图标（推荐用法）
+
+插件 UI 里的图标**不要调桥**，用组件库的 `<Glyph>` + 单图标子路径静态导入：
+同步渲染、零 IPC、不背包内其它图标（打包器 tree-shake）。
+
+```tsx
+import { Glyph } from '@qomicex/plugin-ui'
+import { ServerIcon } from '@qomicex/plugin-ui/icons/server'
+import { PlayIcon } from '@qomicex/plugin-ui/icons/play'
+
+<Glyph icon={ServerIcon} className="h-4 w-4" />
+```
+
+子路径是类名去掉 `fa-solid fa-` 前缀（`fa-solid fa-folder-open` →
+`@qomicex/plugin-ui/icons/folder-open`，品牌图标带 `brand-` 前缀：
+`@qomicex/plugin-ui/icons/brand-github`）。导出名是 PascalCase + `Icon`。
+
+| 场景 | 用法 |
+| --- | --- |
+| 图标名编译期已知（绝大多数） | `<Glyph icon={XxxIcon} />` + 子路径导入 |
+| 图标名来自运行期数据（配置、`listIcons()`） | `<Icon name={dynamicName} />`；整张表（约 160KB）会作为独立 chunk 懒加载 |
+| manifest 的 `icon` 字段 | 字符串类名，启动器侧渲染 |
+
+**表外类名会渲染为空白**：`<Glyph>` 的图标来自子路径模块，写错子路径在打包时就报错；
+`<Icon>` 与 manifest 字段的类名由 `qomicex verify` / `lint` 静态校验（含相近图标建议）。
+
+需要内置表里没有的图标时，用 `contributes.iconTheme` 声明私有图标（见
+manifest-schema.md 的 `icon` 规范第 4 条），或直接随包附一个 `.svg` 用 `<img>`。
 
 ## error 处理
 

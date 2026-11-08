@@ -40,6 +40,13 @@ AI agent 生成/修改插件时必须逐条遵守。违反任何一条都可能�
 19. **禁止硬编码密钥**：插件源码 / manifest / package.json 不得包含 API key、token、密码。用户配置经 `setSettings`/`getSettings` 存取。
 20. **不滥用 `shell:execute`**：系统命令调用有 15s 超时（范围 1-120s），仅用于纯本地工具链，不传用户输入到 shell。
 21. **文件读写经授权制**：`filesystem:read`/`write` 首次访问未授权路径时用户弹窗确认，按路径前缀持久化。插件不能假设用户一定会授权。
+21a. **图标用 `<Glyph>` + 单图标子路径，不要调 `getIconSvg`**：图标名编译期已知时用
+   `import { ServerIcon } from '@qomicex/plugin-ui/icons/server'` + `<Glyph icon={ServerIcon} />`
+   —— 同步渲染、零 IPC、可 tree-shake。图标名来自运行期数据才用 `<Icon name>`（整表懒加载 chunk）。
+   切勿自建"拉 SVG path 再内联"的桥封装：那是已废弃的旧写法，且表外类名会静默渲染为空。
+21b. **图标名必须在启动器内置表内**：`fa-solid fa-*` / `fa-brands fa-*` 写错会渲染空白。
+   `qomicex verify` / `lint` 会静态校验并给出相近建议（error）。需要表外图标时用
+   `contributes.iconTheme` 声明私有图标，或随包附 `.svg` 用 `<img>`。
 
 ## 开发流程
 

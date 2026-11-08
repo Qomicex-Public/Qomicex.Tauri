@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { validateManifest, type ManifestIssue } from '../lib/manifest.ts'
 import { checkPermissions, checkLongLoops, type ScanFinding } from '../lib/scan.ts'
+import { checkIcons } from '../lib/icons.ts'
 import { zipRead } from '../lib/zip.ts'
 import { verifyPackageSignature, STORE_ROOT_PUBLIC_KEY_B64 } from '../lib/signature.ts'
 import { fail, info, warn } from '../lib/io.ts'
@@ -39,6 +40,11 @@ export async function verifyCommand(opts: VerifyOptions = {}): Promise<void> {
   const loops = checkLongLoops(root)
   findings.push(...loops)
 
+  // 图标名校验：内置表外的 fa-* 在 UI 里渲染为空且无报错，只能静态拦截（issue #300）
+  const icons = checkIcons(root, { manifest })
+  findings.push(...icons)
+  errors += icons.filter((f) => f.severity === 'error').length
+
   for (const f of findings) {
     const tag = f.severity === 'error' ? '✗' : '⚠'
     const loc = 'file' in f && f.file ? ` (${f.file})` : ''
@@ -46,7 +52,7 @@ export async function verifyCommand(opts: VerifyOptions = {}): Promise<void> {
     else console.warn(`${tag} ${f.message}${loc}`)
   }
 
-  info(`\n校验完成：${mCheck.issues.length} manifest 项，权限 ${permissions.length} 项（未用 ${permCheck.unused.length}，缺声明 ${permCheck.missing.length}），长循环告警 ${loops.length}`)
+  info(`\n校验完成：${mCheck.issues.length} manifest 项，权限 ${permissions.length} 项（未用 ${permCheck.unused.length}，缺声明 ${permCheck.missing.length}），长循环告警 ${loops.length}，图标 ${icons.length} 项`)
   if (errors > 0) {
     console.error(`发现 ${errors} 个错误，请修复后重试`)
     process.exit(1)

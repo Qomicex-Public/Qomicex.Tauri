@@ -210,6 +210,15 @@ export interface PluginDialogOptions {
   filters?: { name: string; extensions: string[] }[]
 }
 
+/** 图标绘制数据。`source` 说明命中来源：plugin = 本插件 iconTheme，
+ * theme = 当前颜色主题的图标映射，builtin = 启动器内置表。 */
+export interface PluginIconGlyph {
+  width: number
+  height: number
+  path: string
+  source: 'plugin' | 'theme' | 'builtin'
+}
+
 export interface PluginBridge {
   getSettings: () => Promise<Record<string, unknown>>
   setSettings: (key: string, value: unknown) => Promise<void>
@@ -305,10 +314,18 @@ export interface PluginBridge {
   getPluginStrings: () => Promise<Record<string, string>>
   /** 启动器当前 locale（如 'zh-CN'），与 getPluginStrings 的覆盖层一致。 */
   getLocale: () => Promise<string>
-  /** 内置图标 SVG 数据（Font Awesome 类名，如 'fa-solid fa-server'）→
-   * { width, height, path }。插件用内联 <svg><path/></svg> 渲染（currentColor
-   * 跟随主题色），不引入图标字体。未知类名返回 null。 */
-  getIconSvg: (cls: string) => Promise<{ width: number; height: number; path: string } | null>
+  /** 图标 SVG 数据（Font Awesome 类名，如 'fa-solid fa-server'）→ { width, height, path, source }。
+   * 插件用内联 <svg><path/></svg> 渲染（currentColor 跟随主题色），不引入图标字体。
+   *
+   * 查找顺序：插件自己的 `contributes.iconTheme` → 当前颜色主题的图标映射 → 启动器内置表。
+   * 因此插件可以用 `iconTheme` 声明私有图标，不必依赖内置表。
+   *
+   * 未命中返回 null 并 `console.warn`：旧版静默返回 null，表外图标在 UI 里无声消失，
+   * 问题一路漏到用户侧才被发现（issue #300）。`source` 标明命中来源，便于排障。 */
+  getIconSvg: (cls: string) => Promise<PluginIconGlyph | null>
+  /** 全部可解析的图标键（内置表 + 当前主题映射 + 本插件 iconTheme），按字典序。
+   * 图标选择器/自检以此为准，不要硬编码清单（内置表随启动器演进）。 */
+  listIcons: () => Promise<string[]>
 }
 
 export function createPluginBridge(pluginId: string): PluginBridge {
@@ -853,18 +870,57 @@ export function createPluginBridge(pluginId: string): PluginBridge {
       return currentLocale()
     },
     getIconSvg: async (cls) => {
-      const { resolveFaIcon } = await import('../components/BuiltinIcons.tsx')
-      const def = resolveFaIcon(cls)
-      if (!def) return null
-      // FA IconDefinition.icon = [width, height, ligatures[], unicode, svgPathData]：
-      // 路径在索引 4（可能是字符串或字符串数组，数组需 join）。索引 2 是 ligatures
-      // （如 ["add"]），取错会渲染出 "10133 61543 add" 这类非法 d。
-      const icon = def.icon as unknown as [number, number, string[], string, string | string[]]
-      const raw = icon[4]
-      const path = Array.isArray(raw) ? raw.join(' ') : raw
-      return { width: icon[0], height: icon[1], path }
+      const glyph = await resolvePluginIconGlyph(pluginId, cls)
+      if (!glyph) {
+        // 静默失败是 issue #300 的成因：表外图标在 UI 里无声消失，一路漏到用户侧。
+        console.warn(
+          `[plugin:${pluginId}] getIconSvg 未命中图标 ${JSON.stringify(cls)}；` +
+            `可用 listIcons() 取合法名称，或在 contributes.iconTheme 里声明私有图标。`,
+        )
+        return null
+      }
+      return glyph
+    },
+    listIcons: async () => {
+      const { ICON_NAMES } = await import('@qomicex/plugin-ui')
+      const { getPluginIconTheme, getActiveIconTheme } = await import('../theme/index.ts')
+      const names = new Set<string>(ICON_NAMES)
+      for (const key of Object.keys(getActiveIconTheme()?.icons ?? {})) names.add(key)
+      for (const key of Object.keys(getPluginIconTheme(pluginId)?.icons ?? {})) names.add(key)
+      return [...names].sort()
     },
   }
+}
+
+/**
+ * 图标查找链：插件 iconTheme → 当前主题 iconTheme → 启动器内置目录。
+ *
+ * 前三者的条目形状不同（图标主题的 entry 是 svg.path / char.codepoint / url），
+ * 这里统一折算成 `{ width, height, path }` 供插件内联渲染：
+ * - `svg` 条目：定 512×512（FA 体系 viewBox，与 icon-theme 的约定一致）；
+ * - `char` 条目无法转成 path（需要字体），跳过让内置表兜底；
+ * - `url` 条目是位图/外部 SVG，内联渲染无法表达，同样跳过。
+ * 因此 `iconTheme` 里请用 `type: "svg"` 声明插件私有图标。
+ */
+async function resolvePluginIconGlyph(pluginId: string, cls: string): Promise<PluginIconGlyph | null> {
+  if (typeof cls !== 'string' || !cls.trim()) return null
+
+  const { getPluginIconTheme, getActiveIconTheme } = await import('../theme/index.ts')
+  for (const [def, source] of [
+    [getPluginIconTheme(pluginId), 'plugin'],
+    [getActiveIconTheme(), 'theme'],
+  ] as const) {
+    const entry = def?.icons?.[cls]
+    if (entry?.type === 'svg' && entry.path) {
+      return { width: 512, height: 512, path: entry.path, source }
+    }
+  }
+
+  // 完整图标目录在子路径（主入口只导出名字清单，避免把 160KB 拖进消费方）
+  const { resolveIconGlyph } = await import('@qomicex/plugin-ui/icons')
+  const glyph = resolveIconGlyph(cls)
+  if (!glyph) return null
+  return { width: glyph[0], height: glyph[1], path: glyph[2], source: 'builtin' }
 }
 
 /** extractArchive 的授权流：涉及读压缩包 + 写目标目录两条路径，

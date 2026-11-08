@@ -240,7 +240,7 @@ export default function ModpackInstallDialog({
                         title={m.description}
                         className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${selectedMode === key ? 'border-primary bg-primary/5 text-foreground' : 'border-border text-muted-foreground hover:bg-accent'}`}
                       >
-                        <PluginIcon pluginId={m.pluginId} icon={m.icon || 'fa-solid fa-puzzle-piece'} fallback="🧩" className="h-4 w-4 shrink-0" />
+                        <PluginIcon pluginId={m.pluginId} icon={m.icon || 'fa-solid fa-plug'} fallback="🧩" className="h-4 w-4 shrink-0" />
                         <span className="flex-1">
                           {m.label}
                           <span className="ml-1.5 text-xs opacity-60">{m.pluginName}</span>
