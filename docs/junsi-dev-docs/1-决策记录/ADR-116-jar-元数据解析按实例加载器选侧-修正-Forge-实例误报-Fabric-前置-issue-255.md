@@ -55,7 +55,11 @@ issue #255 报告：Forge 实例（刀剑异闻录整合包，Forge 1.20.1）的
 16. **「结果正确」不等于「缓存被复用」**（PR #9 第三轮评审 sourcery 指出）：隔离测试原先断言「两侧结果不同 + 两个缓存文件存在」，但 `load_cached_mod` 恒返回 `None` 时同样满足——因为每次都重新解析也得到正确结果。现 `Mods` 记录本次扫描的缓存命中数（`cache_hits`，仅测试读），用例断言二次扫描必须命中 1 条。
 17. **不采纳：Windows `fs::rename` 不能覆盖**（PR #9 第三轮评审 sourcery 提出）：`std::fs::rename` 的约定即覆盖已存在目标，Windows 经 `MoveFileExW` + `MOVEFILE_REPLACE_EXISTING` 实现，与该意见的前提相反。
 18. **不采纳：缓存身份改用内容指纹**（PR #9 第三轮评审 sourcery 提出）：命中缓存的收益就是「不读 jar 内容」，为校验身份而在命中路径读一遍并哈希会让收益归零。现有 `size + mtime(纳秒) + 创建时间(秒)` 覆盖「同名替换」；残余窗口需构造性操作，后果是「元数据滞后一次扫描」且条目可重算。若确需强一致，方向是在下载/替换模组的入口失效对应缓存条目，而不是把内容哈希塞进命中路径。
-19. **前端不改**：修复后 Forge 实例不再看到 fabric 侧依赖，`PLATFORM_PROVIDED_IDS` 维持 ADR-101 v1.2 的口径（`fabric`/`quilt` 不得入列）。
+19. **解压上限必须覆盖所有读取 zip 条目的地方**（PR #9 第四轮评审 sourcery 指出）：第 14 条只覆盖了元数据与图标，`collect_nested_ids`（嵌套 jar 整体读入）与 `@Mod` 注解的 `.class` 扫描仍走无界 `read_to_end`，照样能绕过。现抽出 `read_zip_entry_bytes(entry, declared_size)` 四处共用，头部 `size()` 与实读量双校验——只看头部会被「报小实际大」绕过，只看实读则峰值内存已越界。
+20. **缓存未命中路径也要复核文件身份**（PR #9 第四轮评审 sourcery 指出）：第 15 条只在命中路径复核，未命中路径解析完就直接返回；若解析期间 jar 被替换，返回的是旧文件的元数据。现解析后再次比对身份，不一致则丢弃该条（既不返回也不写缓存），由下次扫描读到新文件。
+21. **整合包 overrides 必须拒绝越界路径**（PR #9 第四轮评审 sourcery 指出）：`extract_prefixed` 去掉前缀后直接 `Path::join`，条目名 `overrides/../../x` 会写到安装目录之外——条目名来自不可信 zip。现新增 `safe_join_under`，逐段拒绝 `..` 与盘符段并复核结果仍在版本目录内（源实现直接 `Path::Combine`，记作有意偏离）。
+22. **JNI 入口的 loader 透传单列 issue #11**（PR #9 第四轮评审 sourcery 提出）：`instanceFilesMetadata` 传 `None` 确会让 Forge 系实例按 Fabric 侧解析，但该问题在本 PR 之前即存在，且 Java 侧签名由外部 core 仓库持有，在此扩参会让现有调用方链接失败，需两仓同步发版。父仓 backend 的 6 处调用点已传真实 loader；JNI 路径在 #11 落地前与改动前行为一致，不构成回归，故不阻塞本 PR。
+23. **前端不改**：修复后 Forge 实例不再看到 fabric 侧依赖，`PLATFORM_PROVIDED_IDS` 维持 ADR-101 v1.2 的口径（`fabric`/`quilt` 不得入列）。
 
 ## 备选方案
 
@@ -100,8 +104,11 @@ issue #255 报告：Forge 实例（刀剑异闻录整合包，Forge 1.20.1）的
     - 抽掉「条目读取失败继续下一格式」（`Err(_) => continue` → 直接返回 NotPresent）→ `unreadable_entry_falls_back_to_next_format` 与 `oversized_entry_does_not_drop_other_side_metadata` FAILED：`首选侧条目读取失败不应中止整个解析，应回退下一格式` / `超限的 fabric 侧不应连带丢掉 mods.toml`。
     - 抽掉解压上限 → `oversized_zip_entry_is_rejected_not_buffered` FAILED：`超过上限的条目应判为读取失败，不得整体读入内存`。
     - 令 `load_cached_mod` 恒返回 `None` → `e2e_cache_isolates_metadata_between_loader_sides` FAILED：`Forge 二次扫描应命中 1 条缓存（命中为 0 说明缓存没被复用，本用例证明不了隔离）`——这正是第三轮意见 8 指出的假通过路径，现已堵住。
+  - 第四轮评审后追加：
+    - 把 `safe_join_under` 的 `..` 判定改成 `continue` → `safe_join_under_rejects_traversal` FAILED：`"../escape.jar" 属越界路径，应被拒绝`。
+    - 把 `read_zip_entry_bytes` 退回无界 `read_to_end` 并去掉头部检查 → `oversized_zip_entry_stops_reading_at_limit` FAILED（计数 reader 抓到读取量越界）。
   ⚠️ 该验证踩过一次坑并已规避：用 `Copy-Item` 还原文件会保留源文件 mtime，cargo 据此判定「未变更」而跳过重编，跑的是陈旧的「已抽掉修复」二进制，会得出「还原后仍 FAILED」的假结论。还原后必须显式刷新 mtime。
-- **全量**：core `cargo test --lib` → `141 passed; 0 failed; 2 ignored`（第三轮评审后；第二轮为 138、首轮为 134）；另有 `12 + 11 + 0`（integration/其它 target）全绿；`cargo fmt --check` 通过；新增代码无 clippy 告警（仅存量告警）。backend `cargo test --manifest-path src-backend/qomicex-backend/Cargo.toml` → `478 passed; 0 failed; 2 ignored`；`cargo clippy --no-deps` 无 error；`cargo fmt --check` 通过。CI：主仓 PR #258 的 `backend-check` / `frontend-check` / `frontend-lint` / `plugin-ui-check` / triage 全部 pass。
+- **全量**：core `cargo test --lib` → `143 passed; 0 failed; 2 ignored`（第四轮评审后；第三轮 141、第二轮 138、首轮 134）；另有 `12 + 11 + 0`（integration/其它 target）全绿；`cargo fmt --check` 通过；新增代码无 clippy 告警（仅存量告警）。backend `cargo test --manifest-path src-backend/qomicex-backend/Cargo.toml` → `478 passed; 0 failed; 2 ignored`；`cargo clippy --no-deps` 无 error；`cargo fmt --check` 通过。CI：主仓 PR #258 的 `backend-check` / `frontend-check` / `frontend-lint` / `plugin-ui-check` / triage 全部 pass。
 - **真实数据取证**（下载真实 jar 解包，非构造样本）：见「背景」表格，`collective-1.20.1-8.53.jar` 的 fabric 侧 `depends` 含 `fabric` 而 mods.toml 侧只依赖 `minecraft`；`Towns-and-Towers-1.12-Fabric+Forge.jar` 的文件名即证明「单 jar 分发双端」是厂商的实际做法。
 - **未做**：未启动后端做 HTTP 端到端复测（用户选择以单元/集成测试覆盖接线），故 `resolve()` → `create_mods` 的字段透传由类型系统（`Resolved.loader` 为必填字段，缺失即编译失败）与 code review 保证；前端 UI 未做浏览器实机复验（本次前端零改动）。
 
@@ -109,9 +116,10 @@ issue #255 报告：Forge 实例（刀剑异闻录整合包，Forge 1.20.1）的
 - qomicex-core-rust/src/api/local.rs（create_mods 增 loader 参数）
 - qomicex-core-rust/src/services/local/factory.rs（透传 loader + 接线测试）
 - qomicex-core-rust/src/services/local/mods.rs（LoaderSide 三侧判定 / parse_metadata 按侧分派 / try_parse_mod_metadata 两态 / 嵌套 id 按侧 / 缓存 key 含侧别 / MOD_META_CACHE_VERSION 3→4→5 / 可用性判定要求身份字段 / 缓存按文件身份校验与原子写入 / zip 条目解压上限 / 缓存命中计数）
-- qomicex-core-rust/src/jni.rs（唯一另一处 create_mods 调用，传 None）
+- qomicex-core-rust/src/jni.rs（唯一另一处 create_mods 调用，传 None；该入口的 loader 透传见 issue #11）
 - src-backend/qomicex-backend/src/endpoints/instance_files.rs（Resolved 增 loader，6 处调用点；ModsCacheEntry 与 UpdateCacheEntry 均增 loader 并校验；MODS_CACHE_SCHEMA 4→5）
 - src-backend/qomicex-backend/src/endpoints/connector.rs（scan_mods_to_entries / scan_host_mods_from_game_dir 增 loader，2 处调用点；新增 ConnectorGameInfo.scan_loader 与 pick_game_loader）
+- qomicex-core-rust/src/services/installers/modpacks/{mod,curseforge,modrinth}.rs（`safe_join_under` 拒绝越界条目）
 - 父仓需 bump qomicex-core-rust 子模块指针
 
 ## 修订记录
@@ -123,3 +131,4 @@ issue #255 报告：Forge 实例（刀剑异闻录整合包，Forge 1.20.1）的
 | 2026-10-17 | v1.2 | 二轮评审 CodeRabbit 指出「是对象/有表」不等于「可用」：`fabric.mod.json` 为 `{}`、`[[mods]]` 全空时仍算解析成功，会吞掉同 jar 的有效备用元数据。改为按实际提取到的字段判定可用性；补 2 项双向回退测试（含一个必须用 Forge 实例否则假通过的用例）；ADR 决策项增至 10 条 | AI Agent |
 | 2026-11-04 | v1.4 | PR #9 第二轮评审 sourcery 补 3 项：① 可用性收紧为「身份字段」——`fabric.mod.json` 必须有 `id`、`[[mods]]` 必须有 `modId`，展示字段单独存在不算可用；② per-jar 缓存改用文件身份（`fileKey` = 创建时间+mtime）校验并以临时文件 + `rename` 原子写入，写前复核 jar 身份，`MOD_META_CACHE_VERSION` 4→5；③ 纠正 `parse_metadata` 回退语义注释（不可解析→回退，读取失败→放弃）。补 4 项测试并逐项验证「抽掉即失败」；ADR 决策项增至 13 条 | AI Agent |
 | 2026-11-08 | v1.5 | PR #9 第三轮评审 sourcery 8 项逐条核对：6 项采纳——单条目读取失败不再中止整份解析（推翻 v1.4 第③条的结论）、zip 条目解压上限 8 MiB（头 size 与实读双校验）、临时文件名加进程内序号并用 `create_new` 防符号链接、缓存命中后复核 jar 身份、隔离测试增加缓存命中数断言；2 项举证不采纳——Windows `fs::rename` 覆盖语义与标准库文档相反、缓存身份改内容指纹会让命中收益归零。补 4 项测试并逐项验证「抽掉即失败」；ADR 决策项增至 19 条 | AI Agent |
+| 2026-11-08 | v1.6 | PR #9 第四轮评审 sourcery 6 项逐条核对：5 项采纳——解压上限覆盖嵌套 jar 与 `.class` 扫描（抽出 `read_zip_entry_bytes` 四处共用）、创建时间取纳秒、缓存未命中路径也复核文件身份、计数器验证读取确实停在上限、整合包 `safe_join_under` 拒绝越界条目；1 项单列 issue #11（JNI `instanceFilesMetadata` 缺 loader，需两仓同步发版）。测试 141→143；ADR 决策项增至 23 条 | AI Agent |
