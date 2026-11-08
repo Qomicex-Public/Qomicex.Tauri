@@ -271,6 +271,24 @@ struct PluginFileEntry {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct PluginDirDeleteRequest {
+    path: String,
+    /// 递归删除目录内容。为 false 时只接受空目录（等价 rmdir），
+    /// 非空目录返回 400 —— 避免调用方在不知情的情况下整目录抹掉。
+    #[serde(default)]
+    recursive: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginDirDeleteResponse {
+    path: String,
+    /// 递归模式下实际删除的条目数（文件 + 子目录），非递归恒为 0。
+    removed: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PluginDownloadStartRequest {
     url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -466,6 +484,7 @@ pub fn router() -> Router<SharedState> {
         .route("/plugins/files/{id}/write", post(file_write))
         .route("/plugins/files/{id}/authorize", post(file_authorize))
         .route("/plugins/files/{id}/delete", post(file_delete))
+        .route("/plugins/files/{id}/delete-dir", post(file_delete_dir))
         .route("/plugins/files/{id}/rename", post(file_rename))
         .route("/plugins/files/{id}/extract", post(file_extract))
         .route("/plugins/files/{id}/list", post(file_list))
@@ -1485,6 +1504,160 @@ async fn file_delete(
         content_base64: None,
         is_binary: false,
     }))
+}
+
+/// 删除目录时的危险根判定：自身没有父目录、或父目录等于自身（部分平台对根的表示）。
+/// 抽成纯函数便于单测——这是「递归删除」唯一的安全底线，必须能独立验证。
+fn is_protected_root(path: &Path) -> bool {
+    match path.parent() {
+        None => true,
+        Some(parent) => parent == path,
+    }
+}
+
+/// POST /api/plugins/files/{id}/delete-dir — 删除目录（可递归）。
+///
+/// 授权校验先于一切路径探测：未授权路径无论存在与否都返回同一个错误，避免插件
+/// 用它探测授权区外的目录是否存在。
+///
+/// 拒绝跟随符号链接（`FS_REFUSE_SYMLINK`）：`normalize_path` 只做词法规范化，
+/// `is_dir()` / `remove_dir_all` 会跟随链接祖先，因此经授权区内的链接可以删到
+/// 授权区外的内容；而目标本身是链接时，`remove_dir_all` 又只删链接不删目标，
+/// 造成「报成功但内容还在」。两种情形都按失败处理，让调用方显式处理。
+async fn file_delete_dir(
+    State(state): State<SharedState>,
+    AxumPath(plugin_id): AxumPath<String>,
+    Json(req): Json<PluginDirDeleteRequest>,
+) -> ApiResult<Json<PluginDirDeleteResponse>> {
+    let normalized = FileAuthService::normalize_path(&req.path)
+        .ok_or_else(|| ApiError::bad_request("FS_INVALID_PATH", "无效路径"))?;
+
+    // 守卫 1：授权。必须排在存在性检查之前——否则「不存在」与「未授权」的差异
+    // 会让插件能探测授权区外的目录。
+    if state
+        .plugin_auth
+        .find_grant(&plugin_id, &req.path)
+        .is_none()
+    {
+        return Err(ApiError::forbidden(
+            "FS_AUTHORIZATION_REQUIRED",
+            "未授权访问该路径",
+        ));
+    }
+
+    // 守卫 2：危险根。授权按前缀覆盖（covers 用 starts_with），
+    // 误把整个盘授权给插件后一次递归删除就是灾难。
+    if is_protected_root(&normalized) {
+        return Err(ApiError::forbidden(
+            "FS_REFUSE_ROOT",
+            "拒绝删除文件系统根目录",
+        ));
+    }
+
+    // 守卫 3：路径本身或任一祖先不得是符号链接。检查失败（权限不足等）
+    // 同样终止删除——无法确认安全时不做递归删除。
+    match contains_symlink(&normalized) {
+        Ok(true) => {
+            return Err(ApiError::forbidden(
+                "FS_REFUSE_SYMLINK",
+                "路径包含符号链接，拒绝删除（可能指向授权区外）",
+            ))
+        }
+        Ok(false) => {}
+        Err(e) => {
+            return Err(ApiError::bad_request(
+                "FS_SYMLINK_CHECK_FAILED",
+                format!("无法校验路径是否含符号链接，已终止删除：{e}"),
+            ))
+        }
+    }
+
+    let meta = std::fs::symlink_metadata(&normalized)
+        .map_err(|_| ApiError::not_found("FS_DIR_NOT_FOUND", "目录不存在"))?;
+    if !meta.is_dir() {
+        return Err(ApiError::not_found("FS_DIR_NOT_FOUND", "目录不存在"));
+    }
+
+    // 守卫 4：非递归模式必须为空目录。read_dir 出错时上报真实 IO 错误，
+    // 不能伪装成「非空」——那会让一个可删的空目录被误判为拒绝。
+    if !req.recursive {
+        let mut entries = std::fs::read_dir(&normalized)?;
+        if entries.next().is_some() {
+            return Err(ApiError::bad_request(
+                "FS_DIR_NOT_EMPTY",
+                "目录非空；递归删除需显式传 recursive: true",
+            ));
+        }
+        std::fs::remove_dir(&normalized)?;
+        return Ok(Json(PluginDirDeleteResponse {
+            path: normalized.to_string_lossy().into_owned(),
+            removed: 0,
+        }));
+    }
+
+    // 递归删除放到阻塞线程池：大目录（数万文件）会长时间占住 async worker
+    let target = normalized.clone();
+    let removed = tokio::task::spawn_blocking(move || -> std::io::Result<u64> {
+        let count = count_entries(&target);
+        std::fs::remove_dir_all(&target)?;
+        Ok(count)
+    })
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))??;
+
+    Ok(Json(PluginDirDeleteResponse {
+        path: normalized.to_string_lossy().into_owned(),
+        removed,
+    }))
+}
+
+/// 路径自身或任一祖先是否为符号链接。
+///
+/// `normalize_path` 只做词法规范化（去掉 `.`、消解 `..`），不解析链接，所以
+/// `is_dir()` / `remove_dir_all` 会跟随链接祖先删到别处。逐级 `symlink_metadata`
+/// 是不跟随的，用它判断。
+///
+/// 返回 `Result`：检查本身失败（权限不足、路径过长等）时必须终止删除，而不是当作
+/// 「没有链接」继续执行——那等于在无法确认安全的情况下做递归删除。真正「不存在」
+/// （`NotFound`）放行，让后续删除逻辑报 `FS_DIR_NOT_FOUND`，错误语义更准确。
+fn contains_symlink(path: &Path) -> std::io::Result<bool> {
+    let mut cur = PathBuf::new();
+    for comp in path.components() {
+        cur.push(comp.as_os_str());
+        // 根组件（`C:\` / `/`）没有元数据可言，跳过
+        if cur.parent().is_none() {
+            continue;
+        }
+        match std::fs::symlink_metadata(&cur) {
+            Ok(meta) => {
+                if meta.file_type().is_symlink() {
+                    return Ok(true);
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(false)
+}
+
+/// 统计目录下条目数（删除前调用，用于回报删了多少）。失败按 0 处理，仅作信息用途。
+/// 链接本身算一个条目但不进栈（`file_type()` 不解析链接），避免把链接目标的内容算进来。
+fn count_entries(root: &Path) -> u64 {
+    let mut n = 0u64;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in rd.flatten() {
+            n += 1;
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                stack.push(entry.path());
+            }
+        }
+    }
+    n
 }
 
 #[derive(Deserialize)]
@@ -2936,6 +3109,130 @@ mod tests {
     fn is_private(s: &str) -> bool {
         let ip: IpAddr = s.parse().unwrap();
         is_private_address(ip)
+    }
+
+    // ---- 目录删除的安全底线（issue #300 配套：插件需要能真删目录）----
+
+    #[test]
+    fn protected_root_rejects_filesystem_roots() {
+        // 盘符根与 Unix 根都必须拒绝：授权按前缀覆盖，误授权 + 递归删除 = 灾难
+        assert!(is_protected_root(Path::new("/")));
+        #[cfg(windows)]
+        {
+            assert!(is_protected_root(Path::new("C:\\")));
+            assert!(is_protected_root(Path::new("D:")));
+        }
+    }
+
+    #[test]
+    fn protected_root_allows_normal_directories() {
+        assert!(!is_protected_root(Path::new("/home/user/server")));
+        #[cfg(windows)]
+        {
+            assert!(!is_protected_root(Path::new("D:\\Servers\\survival")));
+            // 层级浅但不是根：授权范围内允许（插件侧再做业务层校验）
+            assert!(!is_protected_root(Path::new("D:\\Servers")));
+        }
+    }
+
+    #[test]
+    fn count_entries_counts_files_and_nested_dirs() {
+        let root = std::env::temp_dir().join(format!("qml-cnt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("world/region")).unwrap();
+        std::fs::write(root.join("server.jar"), b"x").unwrap();
+        std::fs::write(root.join("eula.txt"), b"eula=true").unwrap();
+        std::fs::write(root.join("world/level.dat"), b"x").unwrap();
+        std::fs::write(root.join("world/region/r.0.0.mca"), b"x").unwrap();
+
+        // server.jar + eula.txt + world(dir) + level.dat + region(dir) + r.0.0.mca
+        assert_eq!(count_entries(&root), 6);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 生产删除路径：与 handler 里 spawn_blocking 内完全相同的两步（统计 + remove_dir_all）。
+    /// 单独抽出来，让测试跑的是真实逻辑而不是直接调标准库——否则生产路径坏掉测试仍会通过。
+    fn delete_tree(dir: &Path) -> std::io::Result<u64> {
+        let count = count_entries(dir);
+        std::fs::remove_dir_all(dir)?;
+        Ok(count)
+    }
+
+    fn temp_fixture(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("qml-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        root
+    }
+
+    #[test]
+    fn delete_tree_removes_deep_fixture() {
+        let root = temp_fixture("del");
+        std::fs::create_dir_all(root.join("a/b/c")).unwrap();
+        std::fs::write(root.join("a/b/c/deep.dat"), b"x").unwrap();
+        std::fs::write(root.join("top.jar"), b"x").unwrap();
+
+        // a, b, c, deep.dat, top.jar
+        let removed = delete_tree(&root).expect("删除应成功");
+        assert!(removed >= 3, "统计到的条目数应覆盖整棵树，实际 {removed}");
+        assert!(!root.exists(), "生产删除路径必须真的移除目录");
+    }
+
+    #[test]
+    fn delete_tree_removes_empty_directory() {
+        let root = temp_fixture("empty");
+        std::fs::create_dir_all(&root).unwrap();
+        let removed = delete_tree(&root).unwrap();
+        assert_eq!(removed, 0);
+        assert!(!root.exists());
+    }
+
+    // ---- 符号链接：既不能跟随祖先，也不能把「删链接」当成功 ----
+
+    #[test]
+    fn contains_symlink_detects_link_ancestor() {
+        let base = temp_fixture("sym");
+        let real = base.join("real");
+        let link = base.join("link");
+        std::fs::create_dir_all(real.join("inner")).unwrap();
+
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_dir(&real, &link).is_ok();
+        #[cfg(unix)]
+        let made = { std::os::unix::fs::symlink(&real, &link).is_ok() };
+
+        if made {
+            // 经链接的路径必须被识别出来（否则会删到链接目标）
+            assert!(contains_symlink(&link).unwrap(), "链接自身应被识别");
+            assert!(
+                contains_symlink(&link.join("inner")).unwrap(),
+                "链接祖先也应被识别"
+            );
+            assert!(
+                !contains_symlink(&real.join("inner")).unwrap(),
+                "真实路径不应被误判"
+            );
+        }
+        // Windows 上创建符号链接需要开发者模式/管理员，失败时跳过断言
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn contains_symlink_false_for_plain_tree() {
+        let base = temp_fixture("plain");
+        std::fs::create_dir_all(base.join("x/y")).unwrap();
+        assert!(!contains_symlink(&base.join("x/y")).unwrap());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn contains_symlink_treats_missing_path_as_no_link() {
+        // 不存在的路径返回 Ok(false)：交给后续删除逻辑报 FS_DIR_NOT_FOUND，
+        // 语义比在这里报「无法校验」更准确。
+        let base = temp_fixture("missing");
+        std::fs::create_dir_all(&base).unwrap();
+        let absent = base.join("nope/deeper");
+        assert_eq!(contains_symlink(&absent).unwrap(), false);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

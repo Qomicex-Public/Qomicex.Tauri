@@ -70,7 +70,7 @@
 | `uploadPlugin` | `plugin:install` |
 | `callWasm` / `listWasmPlugins` | `wasm:execute` |
 | `readText` / `readBytes` | `filesystem:read` |
-| `writeText` / `writeBytes` / `deleteFile` | `filesystem:write` |
+| `writeText` / `writeBytes` / `deleteFile` / `deleteDir` | `filesystem:write` |
 | `execCommand` | `shell:execute` |
 | `navigate` | `config:read` |
 | `showToast` | `ui:toast` |

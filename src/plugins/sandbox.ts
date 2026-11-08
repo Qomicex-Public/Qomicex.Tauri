@@ -245,8 +245,12 @@ window.__PLUGIN_API__ = {
       const handler = (e) => {
         if (e.data.type === '__plugin_api_response' && e.data.id === id) {
           window.removeEventListener('message', handler)
-          if (e.data.error) reject(new Error(e.data.error))
-          else resolve(e.data.result)
+          if (e.data.error) {
+            // 错误码随响应送回（详见 handleApiCall 的 errorCode），插件可据此分支
+            const err = new Error(e.data.error)
+            if (e.data.errorCode) err.code = e.data.errorCode
+            reject(err)
+          } else resolve(e.data.result)
         }
       }
       window.addEventListener('message', handler)
@@ -569,8 +573,11 @@ window.__PLUGIN_API__ = {
       var handler = function (e) {
         if (e.data.type === '__plugin_api_response' && e.data.id === id) {
           window.removeEventListener('message', handler)
-          if (e.data.error) reject(new Error(e.data.error))
-          else resolve(e.data.result)
+          if (e.data.error) {
+            var apiErr = new Error(e.data.error)
+            if (e.data.errorCode) apiErr.code = e.data.errorCode
+            reject(apiErr)
+          } else resolve(e.data.result)
         }
       }
       window.addEventListener('message', handler)
@@ -757,18 +764,23 @@ export async function handleApiCall(callId: string, method: string, args: unknow
   }
   let result: unknown
   let error: string | undefined
+  let errorCode: string | undefined
   try {
     result = await executePluginMethod(pluginId, method, args)
   } catch (e) {
     error = e instanceof Error ? e.message : String(e)
+    // 后端错误码随响应一起送回插件：插件可以据此分支（FS_DIR_NOT_EMPTY /
+    // FS_REFUSE_ROOT 等），不必匹配本地化文案
+    const code = (e as { code?: unknown })?.code
+    if (typeof code === 'string') errorCode = code
   }
-  source.postMessage({ type: '__plugin_api_response', id: callId, result, error }, '*')
+  source.postMessage({ type: '__plugin_api_response', id: callId, result, error, errorCode }, '*')
 }
 
 const METHOD_PERMISSIONS: Record<string, string> = {
   getSettings: 'config:read', setSettings: 'config:write', setCache: 'cache:access', getCache: 'cache:access', callBackend: 'network:fetch', uploadPlugin: 'plugin:install', proxyFetch: 'network:cors_proxy', proxyFetchStream: 'network:cors_proxy',
   registerMethod: 'config:write', callPlugin: 'network:fetch', callWasm: 'wasm:execute', listWasmPlugins: 'wasm:execute',
-  readText: 'filesystem:read', readBytes: 'filesystem:read', writeText: 'filesystem:write', writeBytes: 'filesystem:write', deleteFile: 'filesystem:write', execCommand: 'shell:execute',
+  readText: 'filesystem:read', readBytes: 'filesystem:read', writeText: 'filesystem:write', writeBytes: 'filesystem:write', deleteFile: 'filesystem:write', deleteDir: 'filesystem:write', execCommand: 'shell:execute',
   navigate: 'config:read', openPluginSettings: 'config:read', showToast: 'ui:toast', log: 'plugin:log', getSystemInfo: 'system:info', openUrl: 'system:notification', listPlugins: 'plugin:list',
   addMenuItem: 'ui:inject_sidebar',
   getThemeColor: 'config:read', applyThemeOverride: 'config:write', clearThemeOverride: 'config:write',
@@ -874,6 +886,7 @@ async function executePluginMethod(pluginId: string, method: string, args: unkno
     case 'writeText': return bridge.writeText(args[0] as string, args[1] as string)
     case 'writeBytes': return bridge.writeBytes(args[0] as string, args[1] as Uint8Array)
     case 'deleteFile': return bridge.deleteFile(args[0] as string)
+    case 'deleteDir': return bridge.deleteDir(args[0] as string, args[1] as { recursive?: boolean } | undefined)
     case 'execCommand': return bridge.execCommand(args[0] as string, args[1] as number | undefined)
     case 'getSystemInfo': return bridge.getSystemInfo()
     case 'openUrl': return bridge.openUrl(args[0] as string)

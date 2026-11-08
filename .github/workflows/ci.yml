@@ -197,6 +197,10 @@ jobs:
       # qomicex-cli 两个包。不同步时插件 <Icon> 渲染 null、CLI lint 又放过表外
       # 图标名，两边都静默，只能等用户截图才发现。
       - run: pnpm run test:icon-catalog
+      # 权限表一致性（PR #325 review）：桥方法→权限有两份（运行时 sandbox 与
+      # CLI）。只在运行时登记会让 CLI 把权限判成「声明未使用」并阻断发布——
+      # deleteDir 就是这么漏的。
+      - run: pnpm run test:plugin-permission-parity
       # 快捷安装前置计划的护栏（issue #249）：已安装的前置不得进入删除名单。
       # 该判定此前用本地文件名与上游文件名比较，两域必然不等 → 已装前置被删且不补下载。
       - run: pnpm run test:dependency-install-plan

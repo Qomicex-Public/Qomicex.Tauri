@@ -57,7 +57,9 @@ await api.proxyFetchStream(req, { onChunk, onError })   // 流式请求
 | **writeBytes** | `call('writeBytes', path, bytes: Uint8Array) → { path }` | `filesystem:write` |
 | | 授权制，自动创建父目录 | |
 | **deleteFile** | `call('deleteFile', path) → { path }` | `filesystem:write` |
-| | 仅文件不支持目录；授权制 | |
+| | 仅文件；目录请用 `deleteDir`。授权制 | |
+| **deleteDir** | `call('deleteDir', path, { recursive? }) → { path, removed }` | `filesystem:write` |
+| | 删目录。`recursive: false` 只接受空目录（非空报 `FS_DIR_NOT_EMPTY`）；`true` 连内容一起删。盘符根/文件系统根恒拒绝（`FS_REFUSE_ROOT`）。授权制 | |
 | **execCommand** | `call('execCommand', command, timeoutMs?) → { exitCode, stdout, stderr }` | `shell:execute` |
 | | Windows → powershell，Unix → /bin/sh。默认超时 15s，范围 1-120s | |
 | **getSystemInfo** | `call('getSystemInfo') → { Os, Architecture, LauncherVersion, dataDir, ... }` | `system:info` |
