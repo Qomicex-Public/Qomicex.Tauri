@@ -1554,12 +1554,22 @@ async fn file_delete_dir(
         ));
     }
 
-    // 守卫 3：路径本身或任一祖先不得是符号链接。
-    if contains_symlink(&normalized) {
-        return Err(ApiError::forbidden(
-            "FS_REFUSE_SYMLINK",
-            "路径包含符号链接，拒绝删除（可能指向授权区外）",
-        ));
+    // 守卫 3：路径本身或任一祖先不得是符号链接。检查失败（权限不足等）
+    // 同样终止删除——无法确认安全时不做递归删除。
+    match contains_symlink(&normalized) {
+        Ok(true) => {
+            return Err(ApiError::forbidden(
+                "FS_REFUSE_SYMLINK",
+                "路径包含符号链接，拒绝删除（可能指向授权区外）",
+            ))
+        }
+        Ok(false) => {}
+        Err(e) => {
+            return Err(ApiError::bad_request(
+                "FS_SYMLINK_CHECK_FAILED",
+                format!("无法校验路径是否含符号链接，已终止删除：{e}"),
+            ))
+        }
     }
 
     let meta = std::fs::symlink_metadata(&normalized)
@@ -1606,7 +1616,11 @@ async fn file_delete_dir(
 /// `normalize_path` 只做词法规范化（去掉 `.`、消解 `..`），不解析链接，所以
 /// `is_dir()` / `remove_dir_all` 会跟随链接祖先删到别处。逐级 `symlink_metadata`
 /// 是不跟随的，用它判断。
-fn contains_symlink(path: &Path) -> bool {
+///
+/// 返回 `Result`：检查本身失败（权限不足、路径过长等）时必须终止删除，而不是当作
+/// 「没有链接」继续执行——那等于在无法确认安全的情况下做递归删除。真正「不存在」
+/// （`NotFound`）放行，让后续删除逻辑报 `FS_DIR_NOT_FOUND`，错误语义更准确。
+fn contains_symlink(path: &Path) -> std::io::Result<bool> {
     let mut cur = PathBuf::new();
     for comp in path.components() {
         cur.push(comp.as_os_str());
@@ -1617,14 +1631,14 @@ fn contains_symlink(path: &Path) -> bool {
         match std::fs::symlink_metadata(&cur) {
             Ok(meta) => {
                 if meta.file_type().is_symlink() {
-                    return true;
+                    return Ok(true);
                 }
             }
-            // 中间层不存在：后续 remove_dir_all 会自己报 not found，这里不拦
-            Err(_) => return false,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(e),
         }
     }
-    false
+    Ok(false)
 }
 
 /// 统计目录下条目数（删除前调用，用于回报删了多少）。失败按 0 处理，仅作信息用途。
@@ -3188,9 +3202,15 @@ mod tests {
 
         if made {
             // 经链接的路径必须被识别出来（否则会删到链接目标）
-            assert!(contains_symlink(&link), "链接自身应被识别");
-            assert!(contains_symlink(&link.join("inner")), "链接祖先也应被识别");
-            assert!(!contains_symlink(&real.join("inner")), "真实路径不应被误判");
+            assert!(contains_symlink(&link).unwrap(), "链接自身应被识别");
+            assert!(
+                contains_symlink(&link.join("inner")).unwrap(),
+                "链接祖先也应被识别"
+            );
+            assert!(
+                !contains_symlink(&real.join("inner")).unwrap(),
+                "真实路径不应被误判"
+            );
         }
         // Windows 上创建符号链接需要开发者模式/管理员，失败时跳过断言
         let _ = std::fs::remove_dir_all(&base);
@@ -3200,7 +3220,18 @@ mod tests {
     fn contains_symlink_false_for_plain_tree() {
         let base = temp_fixture("plain");
         std::fs::create_dir_all(base.join("x/y")).unwrap();
-        assert!(!contains_symlink(&base.join("x/y")));
+        assert!(!contains_symlink(&base.join("x/y")).unwrap());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn contains_symlink_treats_missing_path_as_no_link() {
+        // 不存在的路径返回 Ok(false)：交给后续删除逻辑报 FS_DIR_NOT_FOUND，
+        // 语义比在这里报「无法校验」更准确。
+        let base = temp_fixture("missing");
+        std::fs::create_dir_all(&base).unwrap();
+        let absent = base.join("nope/deeper");
+        assert_eq!(contains_symlink(&absent).unwrap(), false);
         let _ = std::fs::remove_dir_all(&base);
     }
 

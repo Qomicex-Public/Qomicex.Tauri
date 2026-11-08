@@ -44,10 +44,12 @@ assert.ok(cliMap.size > 50, `CLI 权限表解析异常（只有 ${cliMap.size} �
 
 // 运行时表里「免权限」的方法（空串）不需要登记到 CLI：
 // CLI 只需要知道「这个调用会要求某个权限」。
-const freeInRuntime = [...runtimeMap].filter(([, p]) => p === '').map(([m]) => m)
+const freeInRuntime = new Set([...runtimeMap].filter(([, p]) => p === '').map(([m]) => m))
 
-const missingInCli = [...runtimeMap.keys()].filter(m => !cliMap.has(m) && !runtimeMap.get(m))
-const missingInRuntime = [...cliMap.keys()].filter(m => !runtimeMap.has(m) && !runtimeMap.get(m) === false)
+// 两侧的原始差集。免权限方法与已知豁免在后一步统一过滤——
+// 不要在这里就按权限值排除，否则差集本身不可读、也无从复核。
+const missingInCli = [...runtimeMap.keys()].filter(m => !cliMap.has(m))
+const missingInRuntime = [...cliMap.keys()].filter(m => !runtimeMap.has(m))
 
 // registerHook 是桥上的具名方法，不走 call() 的权限表；CLI 收录它是为了扫描
 // `.call('registerHook')` 这种写法。属既有设计，单独豁免。
@@ -60,7 +62,7 @@ for (const [method, perm] of runtimeMap) {
   if (cliPerm !== undefined && cliPerm !== perm) valueMismatch.push(`${method}: 运行时 ${perm} / CLI ${cliPerm}`)
 }
 
-const unexpectedRuntimeOnly = missingInCli.filter(m => !freeInRuntime.includes(m))
+const unexpectedRuntimeOnly = missingInCli.filter(m => !freeInRuntime.has(m))
 const unexpectedCliOnly = missingInRuntime.filter(m => !KNOWN_CLI_ONLY.has(m))
 
 assert.deepEqual(
@@ -77,5 +79,5 @@ assert.deepEqual(valueMismatch, [], `同一方法两表权限不一致：${value
 
 console.log(
   `\n[test-plugin-permission-parity] OK — 运行时 ${runtimeMap.size} 项 / CLI ${cliMap.size} 项一致` +
-    `（免权限 ${freeInRuntime.length} 项不进 CLI）`,
+    `（免权限 ${freeInRuntime.size} 项不进 CLI）`,
 )
