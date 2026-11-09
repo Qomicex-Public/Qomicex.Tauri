@@ -3410,7 +3410,13 @@ async fn export_resource_favorites(
         req.keys.as_deref(),
     );
     let (favorites, folders) = (export.favorites.len(), export.folders.len());
-    write_export_file(&req.path, &export).map_err(map_transfer_error)?;
+    let path = req.path.trim().to_string();
+    // 序列化 + 写盘是同步 IO：用户可能选网络盘/机械盘，放到阻塞线程池，
+    // 不占 tokio worker。
+    tokio::task::spawn_blocking(move || write_export_file(&path, &export))
+        .await
+        .map_err(|e| ApiError::internal(format!("导出任务失败: {e}")))?
+        .map_err(map_transfer_error)?;
     Ok(Json(serde_json::json!({
         "path": req.path.trim(),
         "favorites": favorites,
@@ -3423,7 +3429,11 @@ async fn import_resource_favorites(
     State(state): State<SharedState>,
     req: Json<FavoriteImportRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let export = read_export_file(&req.path).map_err(map_transfer_error)?;
+    let path = req.path.trim().to_string();
+    let export = tokio::task::spawn_blocking(move || read_export_file(&path))
+        .await
+        .map_err(|e| ApiError::internal(format!("导入任务失败: {e}")))?
+        .map_err(map_transfer_error)?;
     match req.mode {
         ImportMode::Merge => import_merge(&state, export),
         ImportMode::Overwrite => import_overwrite(&state, export),
@@ -3535,20 +3545,24 @@ fn apply_overwrite(state: &SharedState, export: FavoriteExport) -> ApiResult<(us
 }
 
 /// 用导入前快照恢复收藏夹与收藏（尽力而为；先夹子后收藏，顺序与写入一致）。
+/// 任一恢复失败都不提前返回，保证另一侧也有机会恢复。
 fn rollback_overwrite(
     state: &SharedState,
     folders: Vec<FavoriteFolder>,
     favorites: Vec<ResourceFavorite>,
 ) -> Result<(), String> {
-    state
-        .resource_favorite_folders
-        .restore_all(folders)
-        .map_err(|e| e.message())?;
-    state
-        .resource_favorites
-        .replace_all(favorites)
-        .map_err(|e| format!("恢复收藏失败: {e}"))?;
-    Ok(())
+    let mut errors: Vec<String> = Vec::new();
+    if let Err(e) = state.resource_favorite_folders.restore_all(folders) {
+        errors.push(format!("恢复收藏夹失败: {}", e.message()));
+    }
+    if let Err(e) = state.resource_favorites.replace_all(favorites) {
+        errors.push(format!("恢复收藏失败: {e}"));
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 // =====================================================================

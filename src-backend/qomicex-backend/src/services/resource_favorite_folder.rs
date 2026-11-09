@@ -12,6 +12,7 @@
 //! 若第二步失败，最坏是「收藏已解关联、夹子空着」这种无害残留；反序会留下指向已删夹子的
 //! 悬空 `folderId`。注意这里**不再删除收藏条目** —— 多归属下删除会连带毁掉别的夹子的成员。
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -194,16 +195,18 @@ impl ResourceFavoriteFolderService {
 
     /// 覆盖导入：按给定名称一次性重建全部收藏夹（单次原子写，id 重新生成）。
     ///
-    /// 调用方（导入端点）已校验并去重名称；这里再防御一次：空名/超长/重名跳过。
-    /// 返回实际的夹子列表（顺序与输入有效项一致），调用方据此按名称映射 id。
+    /// 调用方（导入端点）已校验并去重名称；这里再防御一次：空名/超长/重名（ASCII
+    /// 大小写不敏感）跳过。返回实际的夹子列表（顺序与输入有效项一致），调用方
+    /// 据此按名称映射 id。
     pub fn replace_all_named(&self, names: &[String]) -> Result<Vec<FavoriteFolder>, FolderError> {
         let created_at = chrono::Utc::now().to_rfc3339();
         let mut next: Vec<FavoriteFolder> = Vec::with_capacity(names.len());
+        let mut seen_names: HashSet<String> = HashSet::new();
         for raw in names {
             let name = raw.trim();
             if name.is_empty()
                 || name.chars().count() > MAX_FOLDER_NAME_CHARS
-                || next.iter().any(|f| f.name.eq_ignore_ascii_case(name))
+                || !seen_names.insert(name.to_ascii_lowercase())
             {
                 continue;
             }
@@ -221,8 +224,9 @@ impl ResourceFavoriteFolderService {
     }
 
     /// 回滚/恢复：用给定记录整体替换（保留 id 与 createdAt，不重命名/不去重）。
-    /// 仅供导入失败后的回滚使用。
-    pub fn restore_all(&self, folders: Vec<FavoriteFolder>) -> Result<(), FolderError> {
+    ///
+    /// 仅供导入失败后的回滚使用：只接受 `get_all()` 的快照，不校验字段。
+    pub(crate) fn restore_all(&self, folders: Vec<FavoriteFolder>) -> Result<(), FolderError> {
         let mut guard = self.lock();
         self.save_locked(&folders).map_err(FolderError::Save)?;
         *guard = folders;

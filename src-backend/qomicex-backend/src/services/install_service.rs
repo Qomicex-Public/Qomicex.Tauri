@@ -280,8 +280,9 @@ pub async fn run_install_pipeline(
         .collect();
     let base_dest_keys: HashSet<String> = base_miss
         .iter()
-        .map(|f| dedup_key(&normalize_sep(game_root.join(&f.path))))
+        .map(|f| miss_file_key(&f.path, &game_root))
         .collect();
+    check_cancel(handle)?;
 
     // === 并行段 ================================================================
     // [A] installer 下载 ──► (forge 系) loader-libs 扫描+下载（同分支链式；
@@ -1752,10 +1753,9 @@ fn retain_unclaimed_libraries(
     if claimed.is_empty() {
         return files;
     }
-    let root = normalize_sep(root.to_path_buf());
     files
         .into_iter()
-        .filter(|f| !claimed.contains(&dedup_key(&root.join(&f.path))))
+        .filter(|f| !claimed.contains(&miss_file_key(&f.path, root)))
         .collect()
 }
 
@@ -3050,9 +3050,7 @@ mod tests {
             sha1: String::new(),
         };
         let shared = "libraries/org/ow2/asm/asm/9.10.1/asm-9.10.1.jar";
-        let claimed: HashSet<String> = [dedup_key(&normalize_sep(root.join(shared)))]
-            .into_iter()
-            .collect();
+        let claimed: HashSet<String> = [miss_file_key(shared, &root)].into_iter().collect();
 
         let kept = retain_unclaimed_libraries(
             vec![

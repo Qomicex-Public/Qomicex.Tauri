@@ -1330,8 +1330,7 @@ export default function ResourceCenter() {
     if (scope.length === 0) {
       notify(t('resource.favorites.transfer.empty'), 'info')
       return
-    }
-    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
+    }    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
       notify(t('resource.favorites.transfer.desktopOnly'), 'error')
       return
     }
@@ -1349,8 +1348,7 @@ export default function ResourceCenter() {
       return
     }
     try {
-      // 空 keys 数组代表「筛选后一条都没有」，导出全部时不能传空数组（否则导出 0 条）。
-      const result = await exportResourceFavorites(target, keys && keys.length > 0 ? keys : undefined)
+      const result = await exportResourceFavorites(target, keys)
       notify(t('resource.favorites.transfer.exported', { count: result.favorites }), 'success')
     } catch (e) {
       notify(e instanceof Error ? e.message : t('resource.favorites.failed'), 'error')
@@ -1375,9 +1373,18 @@ export default function ResourceCenter() {
   /** 导入完成：刷新收藏/收藏夹（覆盖导入会整体换掉），再提示计数。 */
   const handleFavoriteImported = async (result: FavoriteImportResult) => {
     setFavImportPath(null)
-    // 覆盖导入会重新生成收藏夹 id，继续用旧 id 过滤会导致列表空白。
-    if (result.mode === 'overwrite') setFavFolder('all')
-    await reloadFavorites()
+    // 覆盖导入会重新生成收藏夹 id / 换掉整批数据：旧的夹子、标签、搜索词都可能
+    // 指向不存在的内容，继续沿用会显示为空列表，像是导入失败。
+    if (result.mode === 'overwrite') {
+      setFavFolder('all')
+      setFavTags([])
+      setFavQuery('')
+    }
+    try {
+      await reloadFavorites()
+    } catch (e) {
+      notify(e instanceof Error ? e.message : t('resource.favorites.loadFailed'), 'error')
+    }
     notify(t('resource.favorites.transfer.done', { imported: result.imported, skipped: result.skipped }), 'success')
   }
 

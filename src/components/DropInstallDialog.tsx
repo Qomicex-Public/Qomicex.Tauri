@@ -71,11 +71,19 @@ export default function DropInstallDialog({ group, onClose, preferredInstanceId 
   const modpackFile = group?.files[0]
   // 对话框打开期间路由可能变化（深链/外部唤起）：首选实例必须固定在打开那一刻，
   // 否则 effect 重跑会把用户已经改过的选择/实例名重置掉。
-  const preferredIdRef = useRef<string | null>(preferredInstanceId ?? null)
-  preferredIdRef.current = preferredInstanceId ?? null
+  const preferredIdRef = useRef<string | null>(null)
+  const initializedGroupRef = useRef<DropGroup | null>(null)
 
   useEffect(() => {
-    if (!open || !group) return
+    if (!open || !group) {
+      initializedGroupRef.current = null
+      return
+    }
+    // 只有「新打开/换了文件」才初始化；route 变化导致的 effect 重跑直接跳过。
+    if (initializedGroupRef.current === group) return
+    initializedGroupRef.current = group
+    preferredIdRef.current = preferredInstanceId ?? null
+
     setError('')
     setSearchQuery('')
     setInstalling(false)
@@ -112,7 +120,7 @@ export default function DropInstallDialog({ group, onClose, preferredInstanceId 
       }
       setLoadingInstances(false)
     })()
-  }, [open, group, isModpack, notify, t])
+  }, [open, group, isModpack, notify, t, preferredInstanceId])
 
   const filteredInstances = useMemo(() => {
     if (!searchQuery) return instances

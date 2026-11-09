@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use axum::body::to_bytes;
 use axum::extract::Request;
-use axum::http::header::CONTENT_TYPE;
+use axum::http::header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING};
 use axum::http::HeaderMap;
 use axum::middleware::Next;
 use axum::response::Response;
@@ -85,7 +85,7 @@ pub async fn log_api_errors(req: Request, next: Next) -> Response {
         return response;
     }
 
-    let (parts, body) = response.into_parts();
+    let (mut parts, body) = response.into_parts();
     match to_bytes(body, MAX_ERROR_BODY_BYTES).await {
         Ok(bytes) => {
             let excerpt = body_excerpt(&String::from_utf8_lossy(&bytes));
@@ -101,8 +101,11 @@ pub async fn log_api_errors(req: Request, next: Next) -> Response {
         }
         Err(_) => {
             // 只有在 size_hint 与实际长度不一致（上游 bug）时才会走到这里；
-            // body 已被消费且无法还原，保留状态码，日志注明原因。
+            // body 已被消费且无法还原：清掉长度/编码头，避免它们与空 body 冲突。
             log_framework_error(&method, uri.path(), status.as_u16(), None, latency_ms);
+            parts.headers.remove(CONTENT_LENGTH);
+            parts.headers.remove(CONTENT_ENCODING);
+            parts.headers.remove(TRANSFER_ENCODING);
             Response::from_parts(parts, axum::body::Body::empty())
         }
     }
@@ -147,9 +150,9 @@ fn is_loggable_error_body(headers: &HeaderMap, exact_len: Option<u64>) -> bool {
         .get(CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    content_type.starts_with("application/json")
-        || content_type.starts_with("text/")
-        || content_type.ends_with("+json")
+    // `application/problem+json; charset=utf-8` 这类带参数的 MIME：先去掉参数再判断。
+    let mime = content_type.split(';').next().unwrap_or("").trim();
+    mime.starts_with("application/json") || mime.starts_with("text/") || mime.ends_with("+json")
 }
 
 /// 压成一行、脱敏 URL、按字符截断。JSON 里的换行/缩进进日志只会让一行变十行。
@@ -201,8 +204,8 @@ mod tests {
         // 二进制不读。
         let bin = headers_with_content_type("application/octet-stream");
         assert!(!is_loggable_error_body(&bin, Some(32)));
-        // problem+json 也算 JSON。
-        let problem = headers_with_content_type("application/problem+json");
+        // problem+json 也算 JSON（带 charset 参数也要识别）。
+        let problem = headers_with_content_type("application/problem+json; charset=utf-8");
         assert!(is_loggable_error_body(&problem, Some(32)));
     }
 

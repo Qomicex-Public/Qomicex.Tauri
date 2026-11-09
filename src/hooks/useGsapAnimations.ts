@@ -204,6 +204,9 @@ export function useAnimatedList<T extends HTMLElement>(
 ): RefObject<T | null> {
   const ref = useRef<T>(null)
   const tlRef = useRef<gsap.core.Timeline | null>(null)
+  // 每个被动画元素动画前的内联 transform（通常是空串）：结束时原样还原，
+  // 只清 GSAP 写入的值，不碰 Tailwind/调用方自己的 transform。
+  const originalsRef = useRef<Map<HTMLElement, string>>(new Map())
   const prevChildrenRef = useRef<HTMLElement[]>([])
   // 上一批 children 每个 data-key 的视口坐标（旧节点卸载后 getBoundingClientRect 归零，
   // 必须在挂载时提前记录，退出克隆才能定位到原位置而不是左上角）
@@ -214,7 +217,15 @@ export function useAnimatedList<T extends HTMLElement>(
     if (!el) return
 
     const settings = getSettings()
-    if (!settings.animationsEnabled) return
+    if (!settings.animationsEnabled) {
+      // 关闭动画时旧 timeline 可能仍在跑：终止并还原它写入的 transform，
+      // 否则残留合成层会让毛玻璃不重绘（issue #327）。
+      tlRef.current?.kill()
+      tlRef.current = null
+      for (const [node, value] of originalsRef.current) node.style.transform = value
+      originalsRef.current.clear()
+      return
+    }
 
     const speed = settings.animationSpeed ?? 1
     const allChildren = Array.from(el.children) as HTMLElement[]
@@ -297,18 +308,26 @@ export function useAnimatedList<T extends HTMLElement>(
     }
     to.stagger = Math.min(options?.stagger ?? 0.05, 0.5 / children.length) / speed
 
+    // 结束上一轮动画并还原它写入的 transform，再记录这批元素的原始值。
+    // 顺序不能反：先快照会把上一轮的 translate3d(0,0,0) 当成「原始值」。
     tlRef.current?.kill()
+    for (const [node, value] of originalsRef.current) node.style.transform = value
+    originalsRef.current.clear()
+    const originals = new Map<HTMLElement, string>()
+    for (const child of children) originals.set(child, child.style.transform)
+    originalsRef.current = originals
+
     const timeline = gsap.timeline()
     tlRef.current = timeline
     timeline.fromTo(children, from, to)
-    // 入场 tween 结束后清掉 GSAP 写入的内联 transform（force3D 会留下
+    // 入场 tween 结束后把内联 transform 还原（force3D 会留下
     // translate3d(0,0,0)）。这些残留会把卡片固定在独立合成层里，WebView2 下
     // `.glass-surface` 的 backdrop-filter 首帧不重绘：列表项看不到毛玻璃，
     // 鼠标移入触发别的重绘后才恢复（issue #327）。
-    // 列表更新会重建 timeline：旧回调不得清掉新动画仍在用的 transform。
+    // 列表更新会重建 timeline：旧回调不得还原成上一轮的残留值。
     timeline.eventCallback('onComplete', () => {
       if (tlRef.current !== timeline) return
-      gsap.set(children, { clearProps: 'transform' })
+      for (const [node, value] of originals) node.style.transform = value
     })
 
     // 记录本批 children 及其视口坐标（在挂载期间记录，供下次退出克隆定位）

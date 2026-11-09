@@ -30,7 +30,8 @@ export default function FavoriteImportDialog({ path, onClose, onImported }: Prop
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!path) return
+    // path 变化（含关闭置 null）都复位：重新选中同一个文件也要清掉上次的
+    // 错误/模式残留，否则 path 不变时旧状态会留在界面上。
     setMode('merge')
     setImporting(false)
     setError('')

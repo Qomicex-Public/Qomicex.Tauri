@@ -101,7 +101,7 @@ pub fn build_export(
                 .collect();
             favorites
                 .into_iter()
-                .filter(|f| wanted.contains(&favorite_key(&f.source, &f.id, &f.category)))
+                .filter(|f| wanted.contains(&f.unique_key()))
                 .collect()
         }
         None => favorites,
@@ -204,7 +204,7 @@ pub struct FolderPlan {
 }
 
 /// 计算每个导入收藏夹与本地夹子的对应关系：同 id 优先，其次同名（ASCII
-/// 大小写不敏感）；都没有则 `existing_id = None`（调用方新建）。
+/// 大小写不敏感，避免 `Ä`/`ä` 被合并）；都没有则 `existing_id = None`（调用方新建）。
 pub fn plan_folders(local: &[FavoriteFolder], imported: &[FavoriteFolder]) -> Vec<FolderPlan> {
     imported
         .iter()
@@ -237,7 +237,7 @@ pub fn merge_candidates(
     let mut out: Vec<ResourceFavorite> = Vec::with_capacity(imported.len());
     let mut skipped = 0usize;
     for item in imported {
-        let key = favorite_key(&item.source, &item.id, &item.category);
+        let key = item.unique_key();
         if !seen.insert(key) {
             skipped += 1;
             continue;
@@ -278,8 +278,14 @@ pub fn validate_json_path(raw: &str) -> Result<PathBuf, TransferError> {
 /// 读取并解析导入文件（大小上限 + UTF-8）。
 pub fn read_export_file(raw_path: &str) -> Result<FavoriteExport, TransferError> {
     let path = validate_json_path(raw_path)?;
-    let meta = std::fs::metadata(&path)
-        .map_err(|e| TransferError::Invalid(format!("无法读取文件: {e}")))?;
+    // 文件不存在属于用户选错路径（400）；权限不足/被占用是 IO 故障（500）。
+    let meta = std::fs::metadata(&path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            TransferError::Invalid(format!("无法读取文件: {e}"))
+        } else {
+            TransferError::Io(format!("无法读取文件: {e}"))
+        }
+    })?;
     if !meta.is_file() {
         return Err(TransferError::Invalid("不是文件".to_string()));
     }
@@ -289,8 +295,14 @@ pub fn read_export_file(raw_path: &str) -> Result<FavoriteExport, TransferError>
             meta.len()
         )));
     }
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| TransferError::Invalid(format!("文件不是 UTF-8 或读取失败: {e}")))?;
+    // 非 UTF-8 是文件内容问题（400）；其余读失败（占用/权限）按 IO（500）。
+    let content = std::fs::read_to_string(&path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::InvalidData {
+            TransferError::Invalid(format!("文件不是 UTF-8: {e}"))
+        } else {
+            TransferError::Io(format!("读取文件失败: {e}"))
+        }
+    })?;
     parse_export(&content)
 }
 
@@ -337,24 +349,27 @@ fn is_protected_favorite_db(path: &Path) -> bool {
 
 /// `is_protected_favorite_db` 的目录可注入版本（测试用）。
 fn is_protected_db_in(data_dir: &Path, path: &Path) -> bool {
-    let Ok(dir) = data_dir.canonicalize() else {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
         return false;
     };
+    if !(name.eq_ignore_ascii_case("resource_favorites.json")
+        || name.eq_ignore_ascii_case("resource_favorite_folders.json"))
+    {
+        return false;
+    }
     let Some(parent) = path.parent() else {
         return false;
     };
-    let Ok(parent) = parent.canonicalize() else {
-        return false;
-    };
-    if parent != dir {
-        return false;
-    }
-    path.file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|name| {
-            name.eq_ignore_ascii_case("resource_favorites.json")
-                || name.eq_ignore_ascii_case("resource_favorite_folders.json")
-        })
+    // canonicalize 失败（data 目录尚未创建）时退回绝对路径比较：不能因为
+    // 目录不存在就判定「不受保护」，否则首次运行可能把数据库覆盖成导出包。
+    absolutize(parent) == absolutize(data_dir)
+}
+
+/// 尽量解析真实路径；路径不存在时退回到绝对化结果。
+fn absolutize(path: &Path) -> PathBuf {
+    path.canonicalize()
+        .or_else(|_| std::path::absolute(path))
+        .unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// 覆盖导入前把现有收藏/收藏夹 JSON 备份为带时间戳的 `.bak`。

@@ -42,9 +42,6 @@ pub fn redact_urls_in_text(text: &str) -> String {
                 .unwrap_or(rest.len());
             let (url_part, suffix) = rest.split_at(end);
             let (url, trailing) = split_trailing_punct(url_part);
-            if url.len() < "http://".len() {
-                return token.to_string();
-            }
             format!("{prefix}{}{trailing}{suffix}", redact_url(url))
         })
         .collect::<Vec<_>>()
