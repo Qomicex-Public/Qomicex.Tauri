@@ -366,7 +366,13 @@ pub fn backup_favorite_files() -> Result<usize, TransferError> {
 }
 
 fn backup_files_in(dir: &Path) -> Result<usize, TransferError> {
-    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%.3f");
+    // 时间戳只有毫秒精度：连续两次导入（含测试）可能落在同一毫秒，必须再加
+    // 随机后缀，否则第二次会把第一次的备份覆盖掉。
+    let stamp = format!(
+        "{}-{}",
+        chrono::Utc::now().format("%Y%m%dT%H%M%S%.3f"),
+        &uuid::Uuid::new_v4().to_string()[..8]
+    );
     let mut backed_up = 0usize;
     for name in ["resource_favorites.json", "resource_favorite_folders.json"] {
         let src = dir.join(name);
