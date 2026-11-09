@@ -3413,11 +3413,16 @@ async fn export_resource_favorites(
     // 读取内存快照 + 序列化 + 写盘都是同步/CPU/IO：整体放进阻塞线程池，
     // 不占 tokio worker（用户可能选网络盘/机械盘）。
     tokio::task::spawn_blocking(move || -> ApiResult<Json<serde_json::Value>> {
-        let export = build_export(
-            state.resource_favorites.get_all(),
-            state.resource_favorite_folders.get_all(),
-            keys.as_deref(),
-        );
+        // 收藏与收藏夹是两次独立读取：与导入共用锁，避免导出拿到
+        // 「新收藏 + 旧收藏夹」的错位快照。
+        let export = {
+            let _import_guard = IMPORT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            build_export(
+                state.resource_favorites.get_all(),
+                state.resource_favorite_folders.get_all(),
+                keys.as_deref(),
+            )
+        };
         let (favorites, folders) = (export.favorites.len(), export.folders.len());
         write_export_file(&path, &export).map_err(map_transfer_error)?;
         Ok(Json(serde_json::json!({

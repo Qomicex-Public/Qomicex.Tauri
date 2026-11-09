@@ -167,18 +167,40 @@ fn body_excerpt(raw: &str) -> String {
     out
 }
 
-/// 把双引号内的内容替换为 `*`：axum/serde 的部分错误会回显请求值
-/// （如类型错误里的 `"token"`），不能原样写进日志。保留引号与其余原因文本。
+/// 把双引号/反引号内的内容替换为 `*`：axum/serde 的部分错误会回显请求值
+/// （类型错误里的 `"token"`、数字回显的 `` `123456` ``），不能原样写进日志。
+/// 双引号内处理反斜杠转义（`\"` 不算结束）；保留引号与其余原因文本。
 fn redact_quoted_values(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    let mut in_quote = false;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
     for ch in text.chars() {
-        if ch == '"' {
-            out.push(ch);
-            in_quote = !in_quote;
+        if let Some(opening) = quote {
+            if escaped {
+                out.push('*');
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                out.push('*');
+                escaped = true;
+                continue;
+            }
+            if ch == opening {
+                out.push(ch);
+                quote = None;
+                continue;
+            }
+            out.push('*');
             continue;
         }
-        out.push(if in_quote { '*' } else { ch });
+        match ch {
+            '"' | '`' => {
+                out.push(ch);
+                quote = Some(ch);
+            }
+            _ => out.push(ch),
+        }
     }
     out
 }
@@ -251,6 +273,16 @@ mod tests {
         assert!(!out.contains("s3cr3t"), "实际: {out}");
         assert!(out.contains("invalid type"), "实际: {out}");
         assert!(out.contains("expected a map"), "实际: {out}");
+
+        // 转义引号不能提前结束遮蔽段。
+        let escaped = r#"invalid "a\"b secret" tail"#;
+        let out = body_excerpt(escaped);
+        assert!(!out.contains("b secret"), "实际: {out}");
+        // 数字回显使用反引号。
+        let numeric = "invalid type: integer `123456`, expected a string";
+        let out = body_excerpt(numeric);
+        assert!(!out.contains("123456"), "实际: {out}");
+        assert!(out.contains("expected a string"), "实际: {out}");
     }
 
     /// 真实的 `Json` extractor 拒绝也要走同一条日志路径，且响应体保持可读。
