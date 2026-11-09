@@ -36,7 +36,8 @@
     "license:apply": "node scripts/add-license-headers.mjs",
     "gen:icons": "node scripts/gen-icon-catalog.mjs",
     "test:icon-catalog": "node scripts/test-icon-catalog.mjs",
-    "test:plugin-permission-parity": "node scripts/test-plugin-permission-parity.mjs"
+    "test:plugin-permission-parity": "node scripts/test-plugin-permission-parity.mjs",
+    "test:drop-instance-route": "node scripts/test-drop-instance-route.mjs"
   },
   "dependencies": {
     "@fortawesome/free-brands-svg-icons": "^7.3.1",

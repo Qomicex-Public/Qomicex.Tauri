@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useI18n } from '../i18n/index.tsx'
-import { Box, ChevronDown, Download, Folder, FolderPlus, Heart, Info, Pencil, RotateCw, Search, Tag, Trash2, User, X } from 'lucide-react'
+import { Box, ChevronDown, Download, Folder, FolderPlus, Heart, Info, Pencil, RotateCw, Search, Tag, Trash2, Upload, User, X } from 'lucide-react'
 import { RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { Input } from '../components/ui'
@@ -16,7 +16,7 @@ import { Badge } from '../components/ui'
 import { Select, SelectOption } from '../components/ui'
 import { Combobox } from '../components/ui'
 import { cn } from '../components/ui'
-import { searchResources, getResourceCategories, getResourceLoaders, toResourceItem, type ResourceCategory } from '../api/resource.ts'
+import { searchResources, getResourceCategories, getResourceLoaders, toResourceItem, exportResourceFavorites, type ResourceCategory, type FavoriteKey, type FavoriteImportResult } from '../api/resource.ts'
 import { batchLookupChineseNames } from '../api/mcmod.ts'
 import { getInstance } from '../api/instance.ts'
 import { installedResourceKey, loadInstalledMods, subscribeInstalledMods, type InstalledModEntry, type InstalledModMap } from '../lib/installedResources.ts'
@@ -33,6 +33,7 @@ import { useMessageBox } from '../components/ui'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 import { useFavoritesStore, useFavoriteKeys, useFolderMap, favoriteKey } from '../stores/favoritesStore.ts'
 import FavoriteEditDialog from '../components/FavoriteEditDialog.tsx'
+import FavoriteImportDialog from '../components/FavoriteImportDialog.tsx'
 
 interface PageCache {
   items: ResourceItem[]
@@ -670,6 +671,7 @@ export default function ResourceCenter() {
   const favoritesLoading = useFavoritesStore((s) => s.loading)
   const favoritesError = useFavoritesStore((s) => s.error)
   const loadFavorites = useFavoritesStore((s) => s.load)
+  const reloadFavorites = useFavoritesStore((s) => s.reloadAfterExternalChange)
   const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite)
   const favoriteKeys = useFavoriteKeys()
   // 正在切换的键集合（防同键连点）。用 Set 而非单值：单值时请求 A 完成会把状态
@@ -695,6 +697,10 @@ export default function ResourceCenter() {
   const [favFolderMenuOpen, setFavFolderMenuOpen] = useState(false)
   /** 收藏夹一键安装对话框是否打开（issue #223）。 */
   const [favInstallOpen, setFavInstallOpen] = useState(false)
+  /** 导出菜单（全部 / 当前筛选）是否展开。 */
+  const [favExportMenuOpen, setFavExportMenuOpen] = useState(false)
+  /** 待导入的文件绝对路径；null = 对话框关闭。 */
+  const [favImportPath, setFavImportPath] = useState<string | null>(null)
   /** 收藏视图的本地搜索（标题 / 作者 / 标签，纯前端过滤，不发请求）。 */
   const [favQuery, setFavQuery] = useState('')
   /** 顶部筛选区（来源 / 分类 / 排序 / 版本 / 加载器 / 标签）是否收起。默认收起，只留最顶搜索行。 */
@@ -1317,6 +1323,74 @@ export default function ResourceCenter() {
   const toggleFavTag = (tag: string) =>
     setFavTags((prev) => (prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]))
 
+  /** 收藏导出（issue #293）：`keys` 缺省 = 全部收藏，给定 = 当前筛选结果。 */
+  const handleExportFavorites = async (keys?: FavoriteKey[]) => {
+    setFavExportMenuOpen(false)
+    const scope = keys ?? favorites
+    if (scope.length === 0) {
+      notify(t('resource.favorites.transfer.empty'), 'info')
+      return
+    }
+    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
+      notify(t('resource.favorites.transfer.desktopOnly'), 'error')
+      return
+    }
+    let target: string
+    try {
+      const { save } = await import('@tauri-apps/plugin-dialog')
+      const picked = await save({
+        defaultPath: `qomicex-favorites-${new Date().toISOString().slice(0, 10)}.json`,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      })
+      if (!picked) return
+      target = picked
+    } catch {
+      notify(t('resource.favorites.transfer.desktopOnly'), 'error')
+      return
+    }
+    try {
+      // 空数组已在上方按「无可导出」拦截：undefined = 全部，非空 = 当前筛选。
+      const result = await exportResourceFavorites(target, keys)
+      notify(t('resource.favorites.transfer.exported', { count: result.favorites }), 'success')
+    } catch (e) {
+      notify(e instanceof Error ? e.message : t('resource.favorites.failed'), 'error')
+    }
+  }
+
+  /** 选文件 → 弹出合并/覆盖对话框（覆盖前服务端会备份 .bak）。 */
+  const handlePickFavoriteImport = async () => {
+    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
+      notify(t('resource.favorites.transfer.desktopOnly'), 'error')
+      return
+    }
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog')
+      const picked = await open({ multiple: false, directory: false, filters: [{ name: 'JSON', extensions: ['json'] }] })
+      if (typeof picked === 'string') setFavImportPath(picked)
+    } catch (e) {
+      notify(e instanceof Error ? e.message : t('resource.favorites.failed'), 'error')
+    }
+  }
+
+  /** 导入完成：刷新收藏/收藏夹（覆盖导入会整体换掉），再提示计数。 */
+  const handleFavoriteImported = async (result: FavoriteImportResult) => {
+    setFavImportPath(null)
+    // 覆盖导入会重新生成收藏夹 id / 换掉整批数据：旧的夹子、标签、搜索词都可能
+    // 指向不存在的内容，继续沿用会显示为空列表，像是导入失败。
+    if (result.mode === 'overwrite') {
+      setFavFolder('all')
+      setFavTags([])
+      setFavQuery('')
+    }
+    notify(t('resource.favorites.transfer.done', { imported: result.imported, skipped: result.skipped }), 'success')
+    try {
+      await reloadFavorites()
+    } catch (e) {
+      // 导入本身已成功；刷新失败单独提示，避免用户以为条数没写进去。
+      notify(e instanceof Error ? e.message : t('resource.favorites.loadFailed'), 'error')
+    }
+  }
+
   /** 打开「编辑收藏」弹窗：需要条目本身（含 folderIds/note/tags），故从 store 原始列表取。 */
   const handleEditFavorite = (item: ResourceItem) => {
     const realCat = realCategory(item, category)
@@ -1531,6 +1605,58 @@ export default function ResourceCenter() {
                 <Download className="h-4 w-4" />
                 {t('resource.favorites.installFolder.button')}
               </Button>
+            )}
+
+            {/* 收藏导入导出（issue #293）：导出全部 / 当前筛选；导入走系统文件选择器。 */}
+            {view === 'favorites' && (
+              <>
+                <Popover
+                  open={favExportMenuOpen}
+                  onOpenChange={setFavExportMenuOpen}
+                  className="min-w-[232px]"
+                  trigger={
+                    <Button
+                      variant="outline"
+                      className="h-10 shrink-0 gap-1.5"
+                      aria-label={t('resource.favorites.transfer.export')}
+                    >
+                      <Download className="h-4 w-4" />
+                      {t('resource.favorites.transfer.export')}
+                    </Button>
+                  }
+                >
+                  <div className="p-1">
+                    <button
+                      type="button"
+                      onClick={() => void handleExportFavorites()}
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      {t('resource.favorites.transfer.exportAll')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void handleExportFavorites(
+                          favoriteItems.map((f) => ({ source: f.source, id: f.id, category: f.category ?? category })),
+                        )
+                      }
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      {t('resource.favorites.transfer.exportFiltered', { count: favoriteItems.length })}
+                    </button>
+                  </div>
+                </Popover>
+                <Button
+                  variant="outline"
+                  className="h-10 shrink-0 gap-1.5"
+                  onClick={() => void handlePickFavoriteImport()}
+                >
+                  <Upload className="h-4 w-4" />
+                  {t('resource.favorites.transfer.import')}
+                </Button>
+              </>
             )}
 
             {/* 搜索框：两模式共用同一位置。收藏模式本地过滤；搜索模式回车或点「搜索」检索。 */}
@@ -1941,6 +2067,12 @@ export default function ResourceCenter() {
           members={folderMembers}
         />
       )}
+
+      <FavoriteImportDialog
+        path={favImportPath}
+        onClose={() => setFavImportPath(null)}
+        onImported={(result) => void handleFavoriteImported(result)}
+      />
     </PageShell>
   )
 }

@@ -153,6 +153,37 @@ export function deleteFavoriteFolder(id: string): Promise<{ removed: boolean; de
   return del<{ removed: boolean; detachedFavorites: number }>(`/resource-favorite-folders/${encodeURIComponent(id)}`)
 }
 
+// ---- 导入导出（issue #293）：本地 JSON 文件，路径由系统保存/打开对话框给出 ----
+
+/** 导出范围：缺省 `keys` = 全部收藏；给定 = 当前筛选命中的条目。 */
+export interface FavoriteKey {
+  source: string
+  id: string
+  category: string
+}
+
+export interface FavoriteExportResult {
+  path: string
+  favorites: number
+  folders: number
+}
+
+export function exportResourceFavorites(path: string, keys?: FavoriteKey[]): Promise<FavoriteExportResult> {
+  return post<FavoriteExportResult>('/resource-favorites/export', keys ? { path, keys } : { path })
+}
+
+export interface FavoriteImportResult {
+  mode: 'merge' | 'overwrite'
+  imported: number
+  skipped: number
+  foldersCreated: number
+  backupFiles?: number
+}
+
+export function importResourceFavorites(path: string, mode: 'merge' | 'overwrite'): Promise<FavoriteImportResult> {
+  return post<FavoriteImportResult>('/resource-favorites/import', { path, mode })
+}
+
 /**
  * `ResourceItem` + 当前页面分类 → 收藏条目（资源快照）。
  *

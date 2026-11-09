@@ -72,6 +72,7 @@ flate2 = "1"
 lz4_flex = "0.14"
 
 md-5 = "0.10"
+http-body = "1"
 
 # --- 整合包导出（CurseForge fingerprint = MurmurHash2-32；Modrinth sha1 反查）---
 sha1 = "0.10"
@@ -95,6 +96,8 @@ libc = "0.2"
 
 [dev-dependencies]
 async-trait = "0.1"
+# `ServiceExt::oneshot` 只在测试里用；主依赖不需要 util 特性。
+tower = { version = "0.5", features = ["util"] }
 
 [profile.release]
 lto = true

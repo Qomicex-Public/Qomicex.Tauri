@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Image, Layers, PackageOpen, Puzzle, RotateCw, Search, WandSparkles } from 'lucide-react'
 import { Download as DownloadData, RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from './MorphActionIcon.tsx'
@@ -20,6 +20,7 @@ import { importLocalFile, modpackRequestTimeout } from '../api/drop-install.ts'
 import type { ClassifyFileResult } from '../api/drop-install.ts'
 import type { GameInstance } from '../types/index.ts'
 import { addTask } from '../stores/downloadStore.ts'
+import { orderInstancesByPreferred } from '../lib/drop-routing.ts'
 import { useI18n } from '../i18n/index.tsx'
 
 export interface DropFileItem extends ClassifyFileResult {
@@ -48,9 +49,11 @@ const KIND_CACHE_KEY: Record<Exclude<DropGroupKind, 'modpack'>, string> = {
 interface Props {
   group: DropGroup | null
   onClose: () => void
+  /** 当前打开的实例 id（`/instances/:id`）：置顶并预选，其他页面为空。 */
+  preferredInstanceId?: string | null
 }
 
-export default function DropInstallDialog({ group, onClose }: Props) {
+export default function DropInstallDialog({ group, onClose, preferredInstanceId }: Props) {
   const { t } = useI18n()
   const { notify } = useMessageBox()
   const [instances, setInstances] = useState<GameInstance[]>([])
@@ -66,12 +69,66 @@ export default function DropInstallDialog({ group, onClose }: Props) {
   const open = !!group
   const isModpack = group?.kind === 'modpack'
   const modpackFile = group?.files[0]
+  // 对话框打开期间路由可能变化（深链/外部唤起）：首选实例必须固定在打开那一刻，
+  // 否则 effect 重跑会把用户已经改过的选择/实例名重置掉。
+  const preferredIdRef = useRef<string | null>(null)
+  const initializedGroupRef = useRef<DropGroup | null>(null)
+  const requestIdRef = useRef(0)
+
+  /** 拉取可选实例；`requestId` 保护旧请求不覆盖新组/新重试的结果。 */
+  const loadInstances = useCallback(
+    async (targetGroup: DropGroup, requestId: number) => {
+      setLoadingInstances(true)
+      try {
+        const settings = await loadSettings()
+        const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+        const raw = (await getInstances()).filter(i => norm(i.gameDir) === norm(settings.gameDir))
+        if (requestId !== requestIdRef.current) return
+        const all = [...new Map(raw.map(i => [i.id, i])).values()]
+          .filter(i => targetGroup.kind !== 'mod' || i.loader)
+        // 当前实例置顶并预选（issue #326）：用户在看哪个实例，拖入的资源就默认装到
+        // 哪个实例。它被过滤掉（如无 loader 装 mod）或不在当前 gameDir 时退回固定实例。
+        const preferredId = preferredIdRef.current
+        const ordered = orderInstancesByPreferred(all, preferredId)
+        const preferred = preferredId ? ordered.find(i => i.id === preferredId) : undefined
+        setInstances(ordered)
+        setSelectedInstance(ordered.length > 0 ? (preferred ?? ordered.find(i => i.isDefault) ?? ordered[0]) : null)
+      } catch {
+        if (requestId === requestIdRef.current) {
+          notify(t('dialogs.resourceInstall.instancesLoadFailed'), 'error')
+        }
+      } finally {
+        if (requestId === requestIdRef.current) setLoadingInstances(false)
+      }
+    },
+    [notify, t],
+  )
+
+  /** 实例列表加载失败后允许重试（同一文件组不会重跑初始化 effect）。 */
+  const retryLoadInstances = () => {
+    if (!group || isModpack) return
+    void loadInstances(group, ++requestIdRef.current)
+  }
 
   useEffect(() => {
-    if (!open || !group) return
+    if (!open || !group) {
+      initializedGroupRef.current = null
+      // 关闭时让在途请求作废，避免它回来覆盖下一次打开的状态。
+      requestIdRef.current += 1
+      return
+    }
+    // 只有「新打开/换了文件」才初始化；route 变化导致的 effect 重跑直接跳过。
+    if (initializedGroupRef.current === group) return
+    initializedGroupRef.current = group
+    const requestId = ++requestIdRef.current
+    preferredIdRef.current = preferredInstanceId ?? null
+
     setError('')
     setSearchQuery('')
     setInstalling(false)
+    // 旧文件组的实例选择不能在新列表加载完成前继续可用，否则可能装错实例。
+    setInstances([])
+    setSelectedInstance(null)
     if (isModpack) {
       const first = group.files[0]
       const fallbackName = first?.fileName.replace(/\.[^.]+$/, '') || ''
@@ -79,28 +136,15 @@ export default function DropInstallDialog({ group, onClose }: Props) {
       ;(async () => {
         try {
           const settings = await loadSettings()
+          if (requestId !== requestIdRef.current) return
           setGameDir(settings.gameDir)
           setVersionIsolation(settings.versionIsolation ?? true)
         } catch { /* keep defaults */ }
       })()
       return
     }
-    ;(async () => {
-      setLoadingInstances(true)
-      try {
-        const settings = await loadSettings()
-        const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
-        const raw = (await getInstances()).filter(i => norm(i.gameDir) === norm(settings.gameDir))
-        const all = [...new Map(raw.map(i => [i.id, i])).values()]
-          .filter(i => group.kind !== 'mod' || i.loader)
-        setInstances(all)
-        setSelectedInstance(all.length > 0 ? (all.find(i => i.isDefault) ?? all[0]) : null)
-      } catch {
-        notify(t('dialogs.resourceInstall.instancesLoadFailed'), 'error')
-      }
-      setLoadingInstances(false)
-    })()
-  }, [open, group, isModpack, notify, t])
+    void loadInstances(group, requestId)
+  }, [open, group, isModpack, notify, t, preferredInstanceId, loadInstances])
 
   const filteredInstances = useMemo(() => {
     if (!searchQuery) return instances
@@ -243,7 +287,14 @@ export default function DropInstallDialog({ group, onClose }: Props) {
               </div>
             ) : instances.length === 0 ? (
               <div className="rounded-lg border border-dashed border-border/60 p-3 text-center text-xs text-muted-foreground">
-                {t('dialogs.resourceInstall.noInstances')}
+                <p>{t('dialogs.resourceInstall.noInstances')}</p>
+                <button
+                  type="button"
+                  onClick={retryLoadInstances}
+                  className="mt-1 text-primary hover:underline"
+                >
+                  {t('resource.retry')}
+                </button>
               </div>
             ) : (
               <div className="space-y-1.5">

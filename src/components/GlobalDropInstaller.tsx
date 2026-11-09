@@ -3,6 +3,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
+import { useLocation } from 'react-router-dom'
 import { FileDown } from 'lucide-react'
 import { useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
@@ -10,13 +11,16 @@ import { classifyFile } from '../api/drop-install.ts'
 import type { ClassifyFileResult } from '../api/drop-install.ts'
 import DropInstallDialog from './DropInstallDialog.tsx'
 import type { DropFileItem, DropGroup } from './DropInstallDialog.tsx'
-import { importDialogActive } from '../lib/drop-routing.ts'
+import { importDialogActive, instanceIdFromPath } from '../lib/drop-routing.ts'
 
 const INSTALLABLE: ReadonlySet<string> = new Set(['modpack', 'mod', 'resourcepack', 'shaderpack'])
 
 export default function GlobalDropInstaller() {
   const { t } = useI18n()
   const { notify } = useMessageBox()
+  const location = useLocation()
+  // 拖入时优先选用户正在查看的实例（/instances/:id），其他页面回退固定实例。
+  const preferredInstanceId = instanceIdFromPath(location.pathname)
   const [hover, setHover] = useState(false)
   const [group, setGroup] = useState<DropGroup | null>(null)
   const busyRef = useRef(false)
@@ -109,7 +113,7 @@ export default function GlobalDropInstaller() {
           </div>
         </div>
       )}
-      <DropInstallDialog group={group} onClose={closeGroup} />
+      <DropInstallDialog group={group} onClose={closeGroup} preferredInstanceId={preferredInstanceId} />
     </>
   )
 }

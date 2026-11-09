@@ -30,6 +30,10 @@ use std::time::{Duration, Instant};
 use crate::error::{ApiError, ApiResult};
 use crate::services::resource_favorite::ResourceFavorite;
 use crate::services::resource_favorite_folder::{FavoriteFolder, FolderError};
+use crate::services::resource_favorite_transfer::{
+    backup_favorite_files, build_export, merge_candidates, plan_folders, read_export_file,
+    remap_folder_ids, write_export_file, FavoriteExport, FavoriteKey, ImportMode, TransferError,
+};
 use crate::state::SharedState;
 
 // =====================================================================
@@ -303,6 +307,14 @@ pub fn router() -> Router<SharedState> {
             get(list_resource_favorites)
                 .post(add_resource_favorite)
                 .delete(remove_resource_favorite),
+        )
+        .route(
+            "/resource-favorites/export",
+            post(export_resource_favorites),
+        )
+        .route(
+            "/resource-favorites/import",
+            post(import_resource_favorites),
         )
         .route(
             "/resource-favorite-folders",
@@ -3356,6 +3368,236 @@ async fn remove_resource_favorite(
         .remove(&source, &id, &category)
         .map_err(|e| ApiError::internal(format!("删除收藏失败: {e}")))?;
     Ok(Json(serde_json::json!({ "removed": removed })))
+}
+
+// =====================================================================
+// Handlers: 收藏导入导出（本地 JSON 文件，issue #293）
+// =====================================================================
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FavoriteExportRequest {
+    path: String,
+    /// 缺省 = 全部收藏；给定则只导出「当前筛选结果」命中的条目。
+    #[serde(default)]
+    keys: Option<Vec<FavoriteKey>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FavoriteImportRequest {
+    path: String,
+    mode: ImportMode,
+}
+
+fn map_transfer_error(e: TransferError) -> ApiError {
+    if e.is_client_error() {
+        ApiError::bad_request("FAVORITE_TRANSFER_INVALID", e.message().to_string())
+    } else {
+        ApiError::internal(e.message().to_string())
+    }
+}
+
+/// 导入串行锁：覆盖导入会整体替换两个库，两个导入并发会把数据交叉写入。
+/// 只覆盖导入流程本身；常规单条写由前端弹窗串行化（见 `FavoriteImportDialog`）。
+static IMPORT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 导出收藏到用户选择的 JSON 文件；`keys` 缺省导出全部，否则只导出命中的条目。
+async fn export_resource_favorites(
+    State(state): State<SharedState>,
+    req: Json<FavoriteExportRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let path = req.path.trim().to_string();
+    let keys = req.keys.clone();
+    let state = state.clone();
+    // 读取内存快照 + 序列化 + 写盘都是同步/CPU/IO：整体放进阻塞线程池，
+    // 不占 tokio worker（用户可能选网络盘/机械盘）。
+    tokio::task::spawn_blocking(move || -> ApiResult<Json<serde_json::Value>> {
+        // 收藏与收藏夹是两次独立读取：与导入共用锁，避免导出拿到
+        // 「新收藏 + 旧收藏夹」的错位快照。
+        let export = {
+            let _import_guard = IMPORT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            build_export(
+                state.resource_favorites.get_all(),
+                state.resource_favorite_folders.get_all(),
+                keys.as_deref(),
+            )
+        };
+        let (favorites, folders) = (export.favorites.len(), export.folders.len());
+        write_export_file(&path, &export).map_err(map_transfer_error)?;
+        Ok(Json(serde_json::json!({
+            "path": path,
+            "favorites": favorites,
+            "folders": folders,
+        })))
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("导出任务失败: {e}")))?
+}
+
+/// 从本地 JSON 文件导入收藏；`mode` 决定合并（保留本地）或覆盖（先备份）。
+async fn import_resource_favorites(
+    State(state): State<SharedState>,
+    req: Json<FavoriteImportRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let path = req.path.trim().to_string();
+    let mode = req.mode;
+    let state = state.clone();
+    // 读文件、备份、批量落盘（合并导入逐夹写盘）一并放进阻塞线程池。
+    tokio::task::spawn_blocking(move || -> ApiResult<Json<serde_json::Value>> {
+        let _import_guard = IMPORT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let export = read_export_file(&path).map_err(map_transfer_error)?;
+        match mode {
+            ImportMode::Merge => import_merge(&state, export),
+            ImportMode::Overwrite => import_overwrite(&state, export),
+        }
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("导入任务失败: {e}")))?
+}
+
+/// 合并导入：夹子按 id/名称复用，收藏同键保留本地。可重复导入，不破坏本地数据。
+///
+/// 中途失败（例如收藏落盘失败）时，把本次新建的收藏夹回滚掉，避免留下空夹子；
+/// 已存在的夹子与收藏保持不变。
+fn import_merge(state: &SharedState, export: FavoriteExport) -> ApiResult<Json<serde_json::Value>> {
+    let snapshot_folders = state.resource_favorite_folders.get_all();
+    match apply_merge(state, export) {
+        Ok(result) => Ok(result),
+        Err(err) => {
+            if let Err(rollback) = state
+                .resource_favorite_folders
+                .restore_all(snapshot_folders)
+            {
+                tracing::error!(error = %rollback.message(), "合并导入失败且回滚收藏夹失败");
+            }
+            Err(err)
+        }
+    }
+}
+
+fn apply_merge(
+    state: &SharedState,
+    mut export: FavoriteExport,
+) -> ApiResult<Json<serde_json::Value>> {
+    let local_folders = state.resource_favorite_folders.get_all();
+    let mut remap: HashMap<String, String> = HashMap::new();
+    let mut folders_created = 0usize;
+    for plan in plan_folders(&local_folders, &export.folders) {
+        let target = match plan.existing_id {
+            Some(id) => id,
+            None => {
+                let created = state
+                    .resource_favorite_folders
+                    .create(&plan.name)
+                    .map_err(map_folder_error)?;
+                folders_created += 1;
+                created.id
+            }
+        };
+        remap.insert(plan.imported_id, target);
+    }
+    remap_folder_ids(&mut export.favorites, &remap);
+
+    let local_keys: HashSet<String> = state
+        .resource_favorites
+        .get_all()
+        .iter()
+        .map(|f| f.unique_key())
+        .collect();
+    let (candidates, skipped) = merge_candidates(&local_keys, &export.favorites);
+    let (imported, raced) = state
+        .resource_favorites
+        .merge_in(candidates)
+        .map_err(|e| ApiError::internal(format!("保存收藏失败: {e}")))?;
+    Ok(Json(serde_json::json!({
+        "mode": "merge",
+        "imported": imported,
+        "skipped": skipped + raced,
+        "foldersCreated": folders_created,
+    })))
+}
+
+/// 覆盖导入：先备份（带时间戳的 `.bak`），再整体替换；任一步失败都回滚两项数据。
+///
+/// 收藏夹与收藏分属两个 JSON，无法真正事务化：任一侧先落盘都可能出现悬空
+/// `folderId`。这里在失败时用导入前快照恢复两侧（含内存），把窗口压到最小；
+/// 备份文件名带时间戳，重试不会覆盖上一次的原始备份。
+fn import_overwrite(
+    state: &SharedState,
+    export: FavoriteExport,
+) -> ApiResult<Json<serde_json::Value>> {
+    let total = export.favorites.len();
+    let snapshot_folders = state.resource_favorite_folders.get_all();
+    let snapshot_favorites = state.resource_favorites.get_all();
+    let backup_files = backup_favorite_files().map_err(map_transfer_error)?;
+
+    match apply_overwrite(state, export) {
+        Ok((imported, folders_created)) => Ok(Json(serde_json::json!({
+            "mode": "overwrite",
+            "imported": imported,
+            "skipped": total.saturating_sub(imported),
+            "foldersCreated": folders_created,
+            "backupFiles": backup_files,
+        }))),
+        Err(err) => {
+            if let Err(rollback) = rollback_overwrite(state, snapshot_folders, snapshot_favorites) {
+                tracing::error!(error = %rollback, "覆盖导入失败且回滚失败，需要手动用 .bak 恢复");
+            }
+            Err(err)
+        }
+    }
+}
+
+/// 执行覆盖替换，返回 `(导入的收藏数, 新建收藏夹数)`。
+fn apply_overwrite(state: &SharedState, export: FavoriteExport) -> ApiResult<(usize, usize)> {
+    let names: Vec<String> = export.folders.iter().map(|f| f.name.clone()).collect();
+    let created = state
+        .resource_favorite_folders
+        .replace_all_named(&names)
+        .map_err(map_folder_error)?;
+    let by_name: HashMap<String, String> = created
+        .iter()
+        .map(|f| (f.name.to_ascii_lowercase(), f.id.clone()))
+        .collect();
+    let remap: HashMap<String, String> = export
+        .folders
+        .iter()
+        .filter_map(|f| {
+            by_name
+                .get(&f.name.to_ascii_lowercase())
+                .map(|id| (f.id.clone(), id.clone()))
+        })
+        .collect();
+    let mut favorites = export.favorites;
+    remap_folder_ids(&mut favorites, &remap);
+
+    let imported = state
+        .resource_favorites
+        .replace_all(favorites)
+        .map_err(|e| ApiError::internal(format!("保存收藏失败: {e}")))?;
+    Ok((imported, created.len()))
+}
+
+/// 用导入前快照恢复收藏夹与收藏（尽力而为；先夹子后收藏，顺序与写入一致）。
+/// 任一恢复失败都不提前返回，保证另一侧也有机会恢复。
+fn rollback_overwrite(
+    state: &SharedState,
+    folders: Vec<FavoriteFolder>,
+    favorites: Vec<ResourceFavorite>,
+) -> Result<(), String> {
+    let mut errors: Vec<String> = Vec::new();
+    if let Err(e) = state.resource_favorite_folders.restore_all(folders) {
+        errors.push(format!("恢复收藏夹失败: {}", e.message()));
+    }
+    if let Err(e) = state.resource_favorites.replace_all(favorites) {
+        errors.push(format!("恢复收藏失败: {e}"));
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 // =====================================================================

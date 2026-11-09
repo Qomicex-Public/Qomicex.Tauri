@@ -22,7 +22,8 @@ import {
  * 分类必须参与键构造。
  */
 export function favoriteKey(source: string, id: string, category: string): string {
-  return `${source}|${id}|${category}`
+  // JSON 编码避免 `|` 等分隔符出现在段内时两个三元组撞键（导入允许自由 id）。
+  return JSON.stringify([source, id, category])
 }
 
 /** `createdAt` 降序（服务端已排好，本地乐观插入后重排保持同一口径）。 */
@@ -73,6 +74,15 @@ function maybeReload(): void {
 function discardStaleList(kind: 'favorites' | 'folders'): void {
   pendingReload[kind] = true
   maybeReload()
+}
+
+/** 等收藏与收藏夹的加载（含丢弃后触发的重拉）都结束，最多 5 秒。 */
+async function waitForLoadsIdle(): Promise<void> {
+  for (let i = 0; i < 100; i++) {
+    const { loading, foldersLoading } = useFavoritesStore.getState()
+    if (!loading && !foldersLoading) return
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
 }
 
 /**
@@ -153,6 +163,8 @@ interface FavoritesState {
 
   load: (force?: boolean) => Promise<void>
   loadFolders: (force?: boolean) => Promise<void>
+  /** 导入等外部批量变更后强制刷新：作废在途 GET，并在其结束后重拉。 */
+  reloadAfterExternalChange: () => Promise<void>
   isFavorite: (source: string, id: string, category: string) => boolean
   /** 切换收藏；返回切换后的状态（true = 已收藏）。失败时回滚并抛出。 */
   toggleFavorite: (item: ResourceItem, category: string) => Promise<boolean>
@@ -193,7 +205,14 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
       }
       set({ favorites: sortByCreatedAtDesc(favorites ?? []), loaded: true, loading: false, error: null })
     } catch (e) {
-      set({ loading: false, error: e instanceof Error ? e.message : String(e) })
+      // 请求失败时若期间发生过 mutation/导入（世代号已变），这份失败也不能
+      // 当作最终状态：登记重拉，稍后用新世代再取一次。
+      if (inFlightMutations > 0 || mutationEpoch !== epochAtStart) {
+        set({ loading: false })
+        discardStaleList('favorites')
+      } else {
+        set({ loading: false, error: e instanceof Error ? e.message : String(e) })
+      }
     }
   },
 
@@ -212,8 +231,27 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
       }
       set({ folders: folders ?? [], foldersLoaded: true, foldersLoading: false, foldersError: null })
     } catch (e) {
-      set({ foldersLoading: false, foldersError: e instanceof Error ? e.message : String(e) })
+      if (inFlightMutations > 0 || mutationEpoch !== epochAtStart) {
+        set({ foldersLoading: false })
+        discardStaleList('folders')
+      } else {
+        set({ foldersLoading: false, foldersError: e instanceof Error ? e.message : String(e) })
+      }
     }
+  },
+
+  reloadAfterExternalChange: async () => {
+    // 导入不经过 store 的 mutation 队列，手动推进世代号：在途 GET 的响应会被
+    // load() 判为旧快照并丢弃（随后自动重拉），避免旧列表覆盖导入结果。
+    mutationEpoch += 1
+    await Promise.all([get().load(true), get().loadFolders(true)])
+    // 命中在途请求时 load() 会立即返回；它的响应被判过期后会登记重拉。
+    // 等到真正空闲再读错误，避免把「还没刷完」当成成功。
+    await waitForLoadsIdle()
+    const { error, foldersError } = get()
+    // 调用方要能区分「导入成功」与「导入成功但刷新失败」。
+    if (error) throw new Error(error)
+    if (foldersError) throw new Error(foldersError)
   },
 
   isFavorite: (source, id, category) => {

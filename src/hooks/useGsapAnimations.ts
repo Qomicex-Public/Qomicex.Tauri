@@ -191,6 +191,28 @@ const MAX_ANIMATE_ITEMS = 35
  *
  * 调用方必须给子元素加 `data-key` 才能启用退出动画。
  */
+/** 中断/结束动画前每个元素的内联样式快照（只覆盖 GSAP 会写的两个属性）。 */
+interface OriginalStyle {
+  transform: string
+  opacity: string
+}
+
+/** 终止入场 timeline 并把元素内联样式还原到动画前（幂等）。 */
+function stopAnimation(
+  tlRef: { current: gsap.core.Timeline | null },
+  originalsRef: { current: Map<HTMLElement, OriginalStyle> },
+): void {
+  // 先摘掉完成回调，避免 kill 后悬挂回调继续引用将被卸载的节点。
+  tlRef.current?.eventCallback('onComplete', null)
+  tlRef.current?.kill()
+  tlRef.current = null
+  for (const [node, original] of originalsRef.current) {
+    node.style.transform = original.transform
+    node.style.opacity = original.opacity
+  }
+  originalsRef.current.clear()
+}
+
 export function useAnimatedList<T extends HTMLElement>(
   deps: unknown[] = [],
   options?: {
@@ -204,6 +226,9 @@ export function useAnimatedList<T extends HTMLElement>(
 ): RefObject<T | null> {
   const ref = useRef<T>(null)
   const tlRef = useRef<gsap.core.Timeline | null>(null)
+  // 每个被动画元素动画前的内联 transform/opacity：结束时原样还原，
+  // 只清 GSAP 写入的值，不碰 Tailwind/调用方自己的样式。
+  const originalsRef = useRef<Map<HTMLElement, OriginalStyle>>(new Map())
   const prevChildrenRef = useRef<HTMLElement[]>([])
   // 上一批 children 每个 data-key 的视口坐标（旧节点卸载后 getBoundingClientRect 归零，
   // 必须在挂载时提前记录，退出克隆才能定位到原位置而不是左上角）
@@ -211,10 +236,18 @@ export function useAnimatedList<T extends HTMLElement>(
 
   useLayoutEffect(() => {
     const el = ref.current
-    if (!el) return
+    if (!el) {
+      stopAnimation(tlRef, originalsRef)
+      return
+    }
 
     const settings = getSettings()
-    if (!settings.animationsEnabled) return
+    if (!settings.animationsEnabled) {
+      // 关闭动画时旧 timeline 可能仍在跑：终止并还原它写入的 transform，
+      // 否则残留合成层会让毛玻璃不重绘（issue #327）。
+      stopAnimation(tlRef, originalsRef)
+      return
+    }
 
     const speed = settings.animationSpeed ?? 1
     const allChildren = Array.from(el.children) as HTMLElement[]
@@ -297,8 +330,30 @@ export function useAnimatedList<T extends HTMLElement>(
     }
     to.stagger = Math.min(options?.stagger ?? 0.05, 0.5 / children.length) / speed
 
-    tlRef.current = gsap.timeline()
-    tlRef.current.fromTo(children, from, to)
+    // 结束上一轮动画并还原它写入的 transform，再记录这批元素的原始值。
+    // 顺序不能反：先快照会把上一轮的 translate3d(0,0,0) 当成「原始值」。
+    stopAnimation(tlRef, originalsRef)
+    const originals = new Map<HTMLElement, OriginalStyle>()
+    for (const child of children) {
+      originals.set(child, { transform: child.style.transform, opacity: child.style.opacity })
+    }
+    originalsRef.current = originals
+
+    const timeline = gsap.timeline()
+    tlRef.current = timeline
+    timeline.fromTo(children, from, to)
+    // 入场 tween 结束后把内联 transform 还原（force3D 会留下
+    // translate3d(0,0,0)）。这些残留会把卡片固定在独立合成层里，WebView2 下
+    // `.glass-surface` 的 backdrop-filter 首帧不重绘：列表项看不到毛玻璃，
+    // 鼠标移入触发别的重绘后才恢复（issue #327）。
+    // 列表更新会重建 timeline：旧回调不得还原成上一轮的残留值。
+    timeline.eventCallback('onComplete', () => {
+      if (tlRef.current !== timeline) return
+      for (const [node, original] of originals) {
+        node.style.transform = original.transform
+        node.style.opacity = original.opacity
+      }
+    })
 
     // 记录本批 children 及其视口坐标（在挂载期间记录，供下次退出克隆定位）
     prevChildrenRef.current = allChildren
@@ -311,6 +366,10 @@ export function useAnimatedList<T extends HTMLElement>(
     })
     prevRectsRef.current = rects
   }, deps)
+
+  // 卸载时终止动画并还原内联 transform（列表在入场动画途中切换页面时，
+  // 避免旧 timeline 继续跑、节点残留合成层）。
+  useLayoutEffect(() => () => stopAnimation(tlRef, originalsRef), [])
 
   // 滚动期间暂停本列表自身的动画 timeline，停止后恢复
   // 自动向上查找最近的滚动祖先，无需页面单独传滚动容器 ref
