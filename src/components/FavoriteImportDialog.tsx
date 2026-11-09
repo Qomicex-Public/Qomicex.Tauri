@@ -58,7 +58,12 @@ export default function FavoriteImportDialog({ path, onClose, onImported }: Prop
   ]
 
   return (
-    <Dialog open={!!path} onClose={importing ? () => {} : onClose}>
+    <Dialog
+      open={!!path}
+      onClose={onClose}
+      closeOnBackdrop={!importing}
+      closeOnEsc={!importing}
+    >
       <DialogHeader onClose={importing ? undefined : onClose}>
         <DialogTitle className="flex items-center gap-2">
           <Upload className="h-4 w-4 text-muted-foreground" />
