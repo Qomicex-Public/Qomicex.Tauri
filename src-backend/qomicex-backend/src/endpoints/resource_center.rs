@@ -3398,29 +3398,36 @@ fn map_transfer_error(e: TransferError) -> ApiError {
     }
 }
 
+/// 导入串行锁：覆盖导入会整体替换两个库，两个导入并发会把数据交叉写入。
+/// 只覆盖导入流程本身；常规单条写由前端弹窗串行化（见 `FavoriteImportDialog`）。
+static IMPORT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// 导出收藏到用户选择的 JSON 文件；`keys` 缺省导出全部，否则只导出命中的条目。
 async fn export_resource_favorites(
     State(state): State<SharedState>,
     req: Json<FavoriteExportRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let export = build_export(
-        state.resource_favorites.get_all(),
-        state.resource_favorite_folders.get_all(),
-        req.keys.as_deref(),
-    );
-    let (favorites, folders) = (export.favorites.len(), export.folders.len());
     let path = req.path.trim().to_string();
-    // 序列化 + 写盘是同步 IO：用户可能选网络盘/机械盘，放到阻塞线程池，
-    // 不占 tokio worker。
-    tokio::task::spawn_blocking(move || write_export_file(&path, &export))
-        .await
-        .map_err(|e| ApiError::internal(format!("导出任务失败: {e}")))?
-        .map_err(map_transfer_error)?;
-    Ok(Json(serde_json::json!({
-        "path": req.path.trim(),
-        "favorites": favorites,
-        "folders": folders,
-    })))
+    let keys = req.keys.clone();
+    let state = state.clone();
+    // 读取内存快照 + 序列化 + 写盘都是同步/CPU/IO：整体放进阻塞线程池，
+    // 不占 tokio worker（用户可能选网络盘/机械盘）。
+    tokio::task::spawn_blocking(move || -> ApiResult<Json<serde_json::Value>> {
+        let export = build_export(
+            state.resource_favorites.get_all(),
+            state.resource_favorite_folders.get_all(),
+            keys.as_deref(),
+        );
+        let (favorites, folders) = (export.favorites.len(), export.folders.len());
+        write_export_file(&path, &export).map_err(map_transfer_error)?;
+        Ok(Json(serde_json::json!({
+            "path": path,
+            "favorites": favorites,
+            "folders": folders,
+        })))
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("导出任务失败: {e}")))?
 }
 
 /// 从本地 JSON 文件导入收藏；`mode` 决定合并（保留本地）或覆盖（先备份）。
@@ -3429,18 +3436,42 @@ async fn import_resource_favorites(
     req: Json<FavoriteImportRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let path = req.path.trim().to_string();
-    let export = tokio::task::spawn_blocking(move || read_export_file(&path))
-        .await
-        .map_err(|e| ApiError::internal(format!("导入任务失败: {e}")))?
-        .map_err(map_transfer_error)?;
-    match req.mode {
-        ImportMode::Merge => import_merge(&state, export),
-        ImportMode::Overwrite => import_overwrite(&state, export),
-    }
+    let mode = req.mode;
+    let state = state.clone();
+    // 读文件、备份、批量落盘（合并导入逐夹写盘）一并放进阻塞线程池。
+    tokio::task::spawn_blocking(move || -> ApiResult<Json<serde_json::Value>> {
+        let _import_guard = IMPORT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let export = read_export_file(&path).map_err(map_transfer_error)?;
+        match mode {
+            ImportMode::Merge => import_merge(&state, export),
+            ImportMode::Overwrite => import_overwrite(&state, export),
+        }
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("导入任务失败: {e}")))?
 }
 
 /// 合并导入：夹子按 id/名称复用，收藏同键保留本地。可重复导入，不破坏本地数据。
-fn import_merge(
+///
+/// 中途失败（例如收藏落盘失败）时，把本次新建的收藏夹回滚掉，避免留下空夹子；
+/// 已存在的夹子与收藏保持不变。
+fn import_merge(state: &SharedState, export: FavoriteExport) -> ApiResult<Json<serde_json::Value>> {
+    let snapshot_folders = state.resource_favorite_folders.get_all();
+    match apply_merge(state, export) {
+        Ok(result) => Ok(result),
+        Err(err) => {
+            if let Err(rollback) = state
+                .resource_favorite_folders
+                .restore_all(snapshot_folders)
+            {
+                tracing::error!(error = %rollback.message(), "合并导入失败且回滚收藏夹失败");
+            }
+            Err(err)
+        }
+    }
+}
+
+fn apply_merge(
     state: &SharedState,
     mut export: FavoriteExport,
 ) -> ApiResult<Json<serde_json::Value>> {

@@ -158,12 +158,28 @@ fn is_loggable_error_body(headers: &HeaderMap, exact_len: Option<u64>) -> bool {
 /// 压成一行、脱敏 URL、按字符截断。JSON 里的换行/缩进进日志只会让一行变十行。
 fn body_excerpt(raw: &str) -> String {
     let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-    let cleaned = crate::util::url::redact_urls_in_text(&collapsed);
+    let cleaned = redact_quoted_values(&crate::util::url::redact_urls_in_text(&collapsed));
     if cleaned.chars().count() <= MAX_ERROR_BODY_CHARS {
         return cleaned;
     }
     let mut out: String = cleaned.chars().take(MAX_ERROR_BODY_CHARS).collect();
     out.push('…');
+    out
+}
+
+/// 把双引号内的内容替换为 `*`：axum/serde 的部分错误会回显请求值
+/// （如类型错误里的 `"token"`），不能原样写进日志。保留引号与其余原因文本。
+fn redact_quoted_values(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_quote = false;
+    for ch in text.chars() {
+        if ch == '"' {
+            out.push(ch);
+            in_quote = !in_quote;
+            continue;
+        }
+        out.push(if in_quote { '*' } else { ch });
+    }
     out
 }
 
@@ -212,13 +228,29 @@ mod tests {
     #[test]
     fn excerpt_collapses_lines_and_truncates_on_char_boundary() {
         let raw = "{\n  \"error\": \"invalid JSON\"\n}";
-        assert_eq!(body_excerpt(raw), "{ \"error\": \"invalid JSON\" }");
+        let out = body_excerpt(raw);
+        assert!(!out.contains('\n'), "必须压成一行: {out}");
+        assert!(!out.contains("invalid JSON"), "引号内值必须打码: {out}");
+        assert!(
+            out.starts_with('{') && out.ends_with('}'),
+            "整体结构保留: {out}"
+        );
 
         // 中文按字符截断，不能切出半个字符（切字节会产出非法 UTF-8）。
         let long = "错".repeat(MAX_ERROR_BODY_CHARS + 10);
         let out = body_excerpt(&long);
         assert_eq!(out.chars().count(), MAX_ERROR_BODY_CHARS + 1);
         assert!(out.ends_with('…'));
+    }
+
+    /// serde 的类型错误会回显请求值，日志里必须打码，只留结构原因。
+    #[test]
+    fn excerpt_masks_quoted_request_values() {
+        let raw = r#"invalid type: string "s3cr3t", expected a map at line 1 column 2"#;
+        let out = body_excerpt(raw);
+        assert!(!out.contains("s3cr3t"), "实际: {out}");
+        assert!(out.contains("invalid type"), "实际: {out}");
+        assert!(out.contains("expected a map"), "实际: {out}");
     }
 
     /// 真实的 `Json` extractor 拒绝也要走同一条日志路径，且响应体保持可读。

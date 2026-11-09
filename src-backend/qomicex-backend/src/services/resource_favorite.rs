@@ -170,14 +170,10 @@ impl ResourceFavorite {
     }
 }
 
-/// 收藏唯一键（分隔符用 \u{1f}，避免 source/id/category 拼接撞键；键段先 trim）。
+/// 收藏唯一键：每段带长度前缀，键段里出现分隔符（含 `\u{1f}`）也不会撞键。
 pub fn favorite_key(source: &str, id: &str, category: &str) -> String {
-    format!(
-        "{}\u{1f}{}\u{1f}{}",
-        source.trim(),
-        id.trim(),
-        category.trim()
-    )
+    let (s, i, c) = (source.trim(), id.trim(), category.trim());
+    format!("{}|{s}|{}|{i}|{}|{c}", s.len(), i.len(), c.len())
 }
 
 /// 资源收藏服务（独立 resource_favorites.json）。
@@ -841,6 +837,20 @@ mod tests {
         assert_eq!(svc.detach_from_folder("nope").unwrap(), 0);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 键段含分隔符/冒号时也不能与其他三元组撞键。
+    #[test]
+    fn unique_key_is_collision_free() {
+        assert_ne!(favorite_key("a|b", "c", "d"), favorite_key("a", "b|c", "d"));
+        assert_ne!(
+            favorite_key("a\u{1f}b", "c", "d"),
+            favorite_key("a", "b\u{1f}c", "d")
+        );
+        assert_eq!(
+            favorite_key(" modrinth ", " id ", " mod "),
+            favorite_key("modrinth", "id", "mod")
+        );
     }
 
     /// 合并导入：同键保留本地版本，新键追加；返回 (新增, 跳过)。
