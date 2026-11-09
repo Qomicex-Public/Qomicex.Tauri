@@ -196,6 +196,8 @@ function stopAnimation(
   tlRef: { current: gsap.core.Timeline | null },
   originalsRef: { current: Map<HTMLElement, string> },
 ): void {
+  // 先摘掉完成回调，避免 kill 后悬挂回调继续引用将被卸载的节点。
+  tlRef.current?.eventCallback('onComplete', null)
   tlRef.current?.kill()
   tlRef.current = null
   for (const [node, value] of originalsRef.current) node.style.transform = value

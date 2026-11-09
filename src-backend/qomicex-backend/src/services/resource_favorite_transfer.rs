@@ -203,9 +203,9 @@ pub struct FolderPlan {
     pub existing_id: Option<String>,
 }
 
-/// 计算每个导入收藏夹与本地夹子的对应关系：同 id 优先，其次同名（仅 ASCII
-/// 大小写不敏感，避免 `Foo`/`foo` 互相覆盖；`Ä`/`ä` 视为不同名）；
-/// 都没有则 `existing_id = None`（调用方新建）。
+/// 计算每个导入收藏夹与本地夹子的对应关系：同 id 优先，其次精确同名，最后
+/// ASCII 大小写不敏感同名（`Foo`/`foo` 视为同名；多个变体时取第一个命中，
+/// `Ä`/`ä` 不折叠）；都没有则 `existing_id = None`（调用方新建）。
 pub fn plan_folders(local: &[FavoriteFolder], imported: &[FavoriteFolder]) -> Vec<FolderPlan> {
     imported
         .iter()
@@ -213,6 +213,7 @@ pub fn plan_folders(local: &[FavoriteFolder], imported: &[FavoriteFolder]) -> Ve
             let existing = local
                 .iter()
                 .find(|l| l.id == folder.id)
+                .or_else(|| local.iter().find(|l| l.name == folder.name))
                 .or_else(|| {
                     local
                         .iter()
@@ -516,6 +517,11 @@ mod tests {
         assert_eq!(plans[0].existing_id.as_deref(), Some("l1"));
         assert_eq!(plans[1].existing_id.as_deref(), Some("l2"));
         assert_eq!(plans[2].existing_id, None);
+
+        // 本地同时存在大小写变体时，精确同名优先于「第一个 ASCII 匹配」。
+        let ambiguous = vec![folder("a", "Foo"), folder("b", "foo")];
+        let plans = plan_folders(&ambiguous, &[folder("i", "foo")]);
+        assert_eq!(plans[0].existing_id.as_deref(), Some("b"));
     }
 
     #[test]
