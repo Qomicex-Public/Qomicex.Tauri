@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Image, Layers, PackageOpen, Puzzle, RotateCw, Search, WandSparkles } from 'lucide-react'
 import { Download as DownloadData, RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from './MorphActionIcon.tsx'
@@ -75,6 +75,41 @@ export default function DropInstallDialog({ group, onClose, preferredInstanceId 
   const initializedGroupRef = useRef<DropGroup | null>(null)
   const requestIdRef = useRef(0)
 
+  /** 拉取可选实例；`requestId` 保护旧请求不覆盖新组/新重试的结果。 */
+  const loadInstances = useCallback(
+    async (targetGroup: DropGroup, requestId: number) => {
+      setLoadingInstances(true)
+      try {
+        const settings = await loadSettings()
+        const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+        const raw = (await getInstances()).filter(i => norm(i.gameDir) === norm(settings.gameDir))
+        if (requestId !== requestIdRef.current) return
+        const all = [...new Map(raw.map(i => [i.id, i])).values()]
+          .filter(i => targetGroup.kind !== 'mod' || i.loader)
+        // 当前实例置顶并预选（issue #326）：用户在看哪个实例，拖入的资源就默认装到
+        // 哪个实例。它被过滤掉（如无 loader 装 mod）或不在当前 gameDir 时退回固定实例。
+        const preferredId = preferredIdRef.current
+        const ordered = orderInstancesByPreferred(all, preferredId)
+        const preferred = preferredId ? ordered.find(i => i.id === preferredId) : undefined
+        setInstances(ordered)
+        setSelectedInstance(ordered.length > 0 ? (preferred ?? ordered.find(i => i.isDefault) ?? ordered[0]) : null)
+      } catch {
+        if (requestId === requestIdRef.current) {
+          notify(t('dialogs.resourceInstall.instancesLoadFailed'), 'error')
+        }
+      } finally {
+        if (requestId === requestIdRef.current) setLoadingInstances(false)
+      }
+    },
+    [notify, t],
+  )
+
+  /** 实例列表加载失败后允许重试（同一文件组不会重跑初始化 effect）。 */
+  const retryLoadInstances = () => {
+    if (!group || isModpack) return
+    void loadInstances(group, ++requestIdRef.current)
+  }
+
   useEffect(() => {
     if (!open || !group) {
       initializedGroupRef.current = null
@@ -108,31 +143,8 @@ export default function DropInstallDialog({ group, onClose, preferredInstanceId 
       })()
       return
     }
-    ;(async () => {
-      setLoadingInstances(true)
-      try {
-        const settings = await loadSettings()
-        const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
-        const raw = (await getInstances()).filter(i => norm(i.gameDir) === norm(settings.gameDir))
-        if (requestId !== requestIdRef.current) return
-        const all = [...new Map(raw.map(i => [i.id, i])).values()]
-          .filter(i => group.kind !== 'mod' || i.loader)
-        // 当前实例置顶并预选（issue #326）：用户在看哪个实例，拖入的资源就默认装到
-        // 哪个实例。它被过滤掉（如无 loader 装 mod）或不在当前 gameDir 时退回固定实例。
-        const preferredId = preferredIdRef.current
-        const ordered = orderInstancesByPreferred(all, preferredId)
-        const preferred = preferredId ? ordered.find(i => i.id === preferredId) : undefined
-        setInstances(ordered)
-        setSelectedInstance(ordered.length > 0 ? (preferred ?? ordered.find(i => i.isDefault) ?? ordered[0]) : null)
-      } catch {
-        if (requestId === requestIdRef.current) {
-          notify(t('dialogs.resourceInstall.instancesLoadFailed'), 'error')
-        }
-      } finally {
-        if (requestId === requestIdRef.current) setLoadingInstances(false)
-      }
-    })()
-  }, [open, group, isModpack, notify, t, preferredInstanceId])
+    void loadInstances(group, requestId)
+  }, [open, group, isModpack, notify, t, preferredInstanceId, loadInstances])
 
   const filteredInstances = useMemo(() => {
     if (!searchQuery) return instances
@@ -275,7 +287,14 @@ export default function DropInstallDialog({ group, onClose, preferredInstanceId 
               </div>
             ) : instances.length === 0 ? (
               <div className="rounded-lg border border-dashed border-border/60 p-3 text-center text-xs text-muted-foreground">
-                {t('dialogs.resourceInstall.noInstances')}
+                <p>{t('dialogs.resourceInstall.noInstances')}</p>
+                <button
+                  type="button"
+                  onClick={retryLoadInstances}
+                  className="mt-1 text-primary hover:underline"
+                >
+                  {t('resource.retry')}
+                </button>
               </div>
             ) : (
               <div className="space-y-1.5">

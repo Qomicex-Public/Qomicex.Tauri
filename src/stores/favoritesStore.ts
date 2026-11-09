@@ -22,7 +22,8 @@ import {
  * 分类必须参与键构造。
  */
 export function favoriteKey(source: string, id: string, category: string): string {
-  return `${source}|${id}|${category}`
+  // JSON 编码避免 `|` 等分隔符出现在段内时两个三元组撞键（导入允许自由 id）。
+  return JSON.stringify([source, id, category])
 }
 
 /** `createdAt` 降序（服务端已排好，本地乐观插入后重排保持同一口径）。 */
@@ -73,6 +74,15 @@ function maybeReload(): void {
 function discardStaleList(kind: 'favorites' | 'folders'): void {
   pendingReload[kind] = true
   maybeReload()
+}
+
+/** 等收藏与收藏夹的加载（含丢弃后触发的重拉）都结束，最多 5 秒。 */
+async function waitForLoadsIdle(): Promise<void> {
+  for (let i = 0; i < 100; i++) {
+    const { loading, foldersLoading } = useFavoritesStore.getState()
+    if (!loading && !foldersLoading) return
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
 }
 
 /**
@@ -235,6 +245,9 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
     // load() 判为旧快照并丢弃（随后自动重拉），避免旧列表覆盖导入结果。
     mutationEpoch += 1
     await Promise.all([get().load(true), get().loadFolders(true)])
+    // 命中在途请求时 load() 会立即返回；它的响应被判过期后会登记重拉。
+    // 等到真正空闲再读错误，避免把「还没刷完」当成成功。
+    await waitForLoadsIdle()
     const { error, foldersError } = get()
     // 调用方要能区分「导入成功」与「导入成功但刷新失败」。
     if (error) throw new Error(error)
