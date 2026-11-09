@@ -297,13 +297,17 @@ export function useAnimatedList<T extends HTMLElement>(
     }
     to.stagger = Math.min(options?.stagger ?? 0.05, 0.5 / children.length) / speed
 
-    tlRef.current = gsap.timeline()
-    tlRef.current.fromTo(children, from, to)
+    tlRef.current?.kill()
+    const timeline = gsap.timeline()
+    tlRef.current = timeline
+    timeline.fromTo(children, from, to)
     // 入场 tween 结束后清掉 GSAP 写入的内联 transform（force3D 会留下
     // translate3d(0,0,0)）。这些残留会把卡片固定在独立合成层里，WebView2 下
     // `.glass-surface` 的 backdrop-filter 首帧不重绘：列表项看不到毛玻璃，
     // 鼠标移入触发别的重绘后才恢复（issue #327）。
-    tlRef.current.eventCallback('onComplete', () => {
+    // 列表更新会重建 timeline：旧回调不得清掉新动画仍在用的 transform。
+    timeline.eventCallback('onComplete', () => {
+      if (tlRef.current !== timeline) return
       gsap.set(children, { clearProps: 'transform' })
     })
 

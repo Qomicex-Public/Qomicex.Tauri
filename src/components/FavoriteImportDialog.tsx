@@ -38,6 +38,7 @@ export default function FavoriteImportDialog({ path, onClose, onImported }: Prop
 
   const fileName = path ? (path.split(/[\\/]/).pop() ?? path) : ''
 
+  /** 执行导入：成功后交给调用方刷新数据并关闭对话框。 */
   async function handleImport() {
     if (!path || importing) return
     setImporting(true)
@@ -57,7 +58,7 @@ export default function FavoriteImportDialog({ path, onClose, onImported }: Prop
 
   return (
     <Dialog open={!!path} onClose={importing ? () => {} : onClose}>
-      <DialogHeader onClose={onClose}>
+      <DialogHeader onClose={importing ? undefined : onClose}>
         <DialogTitle className="flex items-center gap-2">
           <Upload className="h-4 w-4 text-muted-foreground" />
           {t('resource.favorites.transfer.importTitle')}

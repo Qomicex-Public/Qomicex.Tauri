@@ -23,3 +23,17 @@ export function instanceIdFromPath(pathname: string): string | null {
     return null
   }
 }
+
+/**
+ * 拖放安装对话框的实例排序：当前实例置顶，其余保持原序。
+ * 找不到 preferred 时原样返回（回退固定实例的逻辑由调用方处理）。
+ */
+export function orderInstancesByPreferred<T extends { id: string }>(
+  instances: T[],
+  preferredId?: string | null,
+): T[] {
+  if (!preferredId) return instances
+  const preferred = instances.find((i) => i.id === preferredId)
+  if (!preferred) return instances
+  return [preferred, ...instances.filter((i) => i.id !== preferred.id)]
+}

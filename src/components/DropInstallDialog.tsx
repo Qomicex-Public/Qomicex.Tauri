@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Image, Layers, PackageOpen, Puzzle, RotateCw, Search, WandSparkles } from 'lucide-react'
 import { Download as DownloadData, RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from './MorphActionIcon.tsx'
@@ -20,6 +20,7 @@ import { importLocalFile, modpackRequestTimeout } from '../api/drop-install.ts'
 import type { ClassifyFileResult } from '../api/drop-install.ts'
 import type { GameInstance } from '../types/index.ts'
 import { addTask } from '../stores/downloadStore.ts'
+import { orderInstancesByPreferred } from '../lib/drop-routing.ts'
 import { useI18n } from '../i18n/index.tsx'
 
 export interface DropFileItem extends ClassifyFileResult {
@@ -68,6 +69,10 @@ export default function DropInstallDialog({ group, onClose, preferredInstanceId 
   const open = !!group
   const isModpack = group?.kind === 'modpack'
   const modpackFile = group?.files[0]
+  // 对话框打开期间路由可能变化（深链/外部唤起）：首选实例必须固定在打开那一刻，
+  // 否则 effect 重跑会把用户已经改过的选择/实例名重置掉。
+  const preferredIdRef = useRef<string | null>(preferredInstanceId ?? null)
+  preferredIdRef.current = preferredInstanceId ?? null
 
   useEffect(() => {
     if (!open || !group) return
@@ -97,8 +102,9 @@ export default function DropInstallDialog({ group, onClose, preferredInstanceId 
           .filter(i => group.kind !== 'mod' || i.loader)
         // 当前实例置顶并预选（issue #326）：用户在看哪个实例，拖入的资源就默认装到
         // 哪个实例。它被过滤掉（如无 loader 装 mod）或不在当前 gameDir 时退回固定实例。
-        const preferred = preferredInstanceId ? all.find(i => i.id === preferredInstanceId) : undefined
-        const ordered = preferred ? [preferred, ...all.filter(i => i.id !== preferred.id)] : all
+        const preferredId = preferredIdRef.current
+        const ordered = orderInstancesByPreferred(all, preferredId)
+        const preferred = preferredId ? ordered.find(i => i.id === preferredId) : undefined
         setInstances(ordered)
         setSelectedInstance(ordered.length > 0 ? (preferred ?? ordered.find(i => i.isDefault) ?? ordered[0]) : null)
       } catch {
@@ -106,7 +112,7 @@ export default function DropInstallDialog({ group, onClose, preferredInstanceId 
       }
       setLoadingInstances(false)
     })()
-  }, [open, group, isModpack, notify, t, preferredInstanceId])
+  }, [open, group, isModpack, notify, t])
 
   const filteredInstances = useMemo(() => {
     if (!searchQuery) return instances

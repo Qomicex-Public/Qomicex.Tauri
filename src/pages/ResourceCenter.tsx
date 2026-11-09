@@ -671,6 +671,7 @@ export default function ResourceCenter() {
   const favoritesLoading = useFavoritesStore((s) => s.loading)
   const favoritesError = useFavoritesStore((s) => s.error)
   const loadFavorites = useFavoritesStore((s) => s.load)
+  const reloadFavorites = useFavoritesStore((s) => s.reloadAfterExternalChange)
   const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite)
   const favoriteKeys = useFavoriteKeys()
   // 正在切换的键集合（防同键连点）。用 Set 而非单值：单值时请求 A 完成会把状态
@@ -1374,7 +1375,9 @@ export default function ResourceCenter() {
   /** 导入完成：刷新收藏/收藏夹（覆盖导入会整体换掉），再提示计数。 */
   const handleFavoriteImported = async (result: FavoriteImportResult) => {
     setFavImportPath(null)
-    await Promise.all([loadFavorites(true), loadFolders(true)])
+    // 覆盖导入会重新生成收藏夹 id，继续用旧 id 过滤会导致列表空白。
+    if (result.mode === 'overwrite') setFavFolder('all')
+    await reloadFavorites()
     notify(t('resource.favorites.transfer.done', { imported: result.imported, skipped: result.skipped }), 'success')
   }
 

@@ -153,6 +153,8 @@ interface FavoritesState {
 
   load: (force?: boolean) => Promise<void>
   loadFolders: (force?: boolean) => Promise<void>
+  /** 导入等外部批量变更后强制刷新：作废在途 GET，并在其结束后重拉。 */
+  reloadAfterExternalChange: () => Promise<void>
   isFavorite: (source: string, id: string, category: string) => boolean
   /** 切换收藏；返回切换后的状态（true = 已收藏）。失败时回滚并抛出。 */
   toggleFavorite: (item: ResourceItem, category: string) => Promise<boolean>
@@ -214,6 +216,13 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
     } catch (e) {
       set({ foldersLoading: false, foldersError: e instanceof Error ? e.message : String(e) })
     }
+  },
+
+  reloadAfterExternalChange: async () => {
+    // 导入不经过 store 的 mutation 队列，手动推进世代号：在途 GET 的响应会被
+    // load() 判为旧快照并丢弃（随后自动重拉），避免旧列表覆盖导入结果。
+    mutationEpoch += 1
+    await Promise.all([get().load(true), get().loadFolders(true)])
   },
 
   isFavorite: (source, id, category) => {
