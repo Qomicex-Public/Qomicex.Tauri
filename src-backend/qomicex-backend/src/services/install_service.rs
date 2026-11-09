@@ -260,10 +260,33 @@ pub async fn run_install_pipeline(
         }
     }
 
+    // === base 扫描（提前到并行段之前）===
+    // installer 分支的 loader libs 与 base 分支的 miss 列表可能命中同一个
+    // `libraries/*` 目标；两批并发下载会争用同一个 `.part`（DestGuard 直接失败，
+    // 只能靠重试兜底，issue #316）。先拿到 base 的完整 dest 键集，installer 分支
+    // 扫描后即可剔除重复项，保证同一文件只进一个批次。
+    // 扫描只做本地文件存在性检查，不占下载带宽；放在 installer 下载之前也不会
+    // 拖慢整体（下载才是耗时大头）。
+    handle.mark_step("game-files", "active");
+    handle.set_stage("scanning-base");
+    check_cancel(handle)?;
+    let base_miss: Vec<MissFileInfo> = install_core
+        .locator()
+        .get_miss_files_from_json(&base_json_content)
+        .await
+        .map_err(|e| format!("扫描缺失文件失败: {e}"))?
+        .into_iter()
+        .filter(|f| !f.path.is_empty() && !f.url.is_empty())
+        .collect();
+    let base_dest_keys: HashSet<String> = base_miss
+        .iter()
+        .map(|f| dedup_key(&normalize_sep(game_root.join(&f.path))))
+        .collect();
+
     // === 并行段 ================================================================
     // [A] installer 下载 ──► (forge 系) loader-libs 扫描+下载（同分支链式；
     //     Fabric/Quilt 等无安装器加载器的 loader-libs 无前置依赖，直接在此执行）
-    // [B] base 扫描+下载（vanilla 含版本 JSON 写盘）
+    // [B] base 下载（扫描已在上方完成；vanilla 含版本 JSON 写盘）
     // [C] addons 解析 + additional-files 下载
     // tokio::join! 并发推进全部分支；任一分支失败 → request_cancel 让其余分支在
     // download_batch 轮询点自行退出，整体返回首个真实错误（快速失败）。
@@ -276,6 +299,7 @@ pub async fn run_install_pipeline(
     let lv_a = loader_version.clone();
     let gv_a = game_version.clone();
     let vdn_a = version_dir_name.clone();
+    let base_keys_a = base_dest_keys.clone();
     let branch_installer = async move {
         let mut installer_path: Option<PathBuf> = None;
         if is_forge_like {
@@ -424,6 +448,8 @@ pub async fn run_install_pipeline(
                 download_source_id,
             )
             .await?;
+            // base 批次已覆盖的同一 dest 不再由本批次下载（issue #316）。
+            let miss_libs = retain_unclaimed_libraries(miss_libs, &root_a, &base_keys_a);
 
             if !miss_libs.is_empty() {
                 h_a.set_stage("downloading-loader-libs");
@@ -449,29 +475,15 @@ pub async fn run_install_pipeline(
 
     let h_b = handle.clone();
     let mgr_b = download_manager.clone();
-    let core_b = install_core.clone();
     let root_b = game_root.clone();
     let hdrs_b = cf_headers.clone();
     let vdn_b = version_dir_name.clone();
     let json_b = json_content.clone();
-    let bjc_b = base_json_content.clone();
     let branch_base = async move {
-        h_b.mark_step("game-files", "active");
-        h_b.set_stage("scanning-base");
         check_cancel(&h_b)?;
-        let miss_files = core_b
-            .locator()
-            .get_miss_files_from_json(&bjc_b)
-            .await
-            .map_err(|e| format!("扫描缺失文件失败: {e}"))?;
-        let miss_files: Vec<MissFileInfo> = miss_files
-            .into_iter()
-            .filter(|f| !f.path.is_empty() && !f.url.is_empty())
-            .collect();
-
-        if !miss_files.is_empty() {
+        if !base_miss.is_empty() {
             h_b.set_stage("downloading-base");
-            let files: Vec<_> = miss_files
+            let files: Vec<_> = base_miss
                 .iter()
                 .map(|f| {
                     let headers = if is_cf_domain(&f.url) {
@@ -1726,6 +1738,24 @@ pub(crate) fn dedup_miss_files(
     (kept, dropped)
 }
 
+/// 跨批次去重（issue #316）：installer 分支的 loader libs 与 base 分支可能命中
+/// 同一个 `libraries/*` 目标。`claimed` 是 base 批次已经要下载的 dest 键集，
+/// 命中即从本批次剔除 —— 同一文件只下一次，也不再有 DestGuard 目标占用失败。
+fn retain_unclaimed_libraries(
+    files: Vec<MissFileData>,
+    root: &Path,
+    claimed: &HashSet<String>,
+) -> Vec<MissFileData> {
+    if claimed.is_empty() {
+        return files;
+    }
+    let root = normalize_sep(root.to_path_buf());
+    files
+        .into_iter()
+        .filter(|f| !claimed.contains(&dedup_key(&root.join(&f.path))))
+        .collect()
+}
+
 /// 批量下载。进度按已下载字节比例写入 `step_id` 指定步骤的 percent，
 /// 并由 tracker 重算合成总进度（并行管线中多个批次各自驱动自己的步骤）。
 /// pause/cancel 由事件循环协作转发给 `DownloadManager`。
@@ -1821,12 +1851,10 @@ pub(crate) async fn download_batch_with_mirrors(
     // create_dir_all/rename 需要一个平台分隔符形式（Windows 的 verbatim 路径不允许 `/`，
     // core 拼出的 maven 路径却带 `/`，混用时报 ERROR_INVALID_NAME）。
     //
-    // 注意：去重只覆盖**本批次**。并发批次（`run_install_pipeline` 的
-    // installer/base/addons 三分支、`run_modpack_pipeline` 的 game/files/overrides
-    // 三分支）各自调 download_batch，当前扫描的目录互不相交（libraries/ vs
-    // assets/+versions/ vs mods/overrides 内容），因此不会出现同一 dest；若将来某个
-    // 合并后的版本 JSON 让两个分支扫描到同一路径，需要在 DownloadManager 层按 dest
-    // 串行化/登记（子模块级改动），此处注释即该前提。
+    // 注意：去重只覆盖**本批次**。`run_install_pipeline` 的 installer/base 两批
+    // 在下载前已按 dest 键集跨批次合并（`retain_unclaimed_libraries`）；addons 与
+    // 其余管线（modpack 的 game/files/overrides）扫描的目录互不相交。新增批次若
+    // 再次重叠，仍会回到同 dest 争用 `.part` 的老问题。
     // 判重（含大小写敏感性探测）依赖目标父目录存在，而父目录平时要到下面的任务构建循环里
     // 才 create_dir_all。先统一建好，探测才不会落到"目录不存在"的保守分支——在不区分大小写
     // 的游戏目录上，两个仅大小写不同的目标若探测不到就会被判为敏感而漏合并，重新争用同一个
@@ -3001,6 +3029,48 @@ mod tests {
         assert_eq!(dropped.len(), 1);
         assert_eq!(dropped[0].name, "org.lwjgl3:lwjgl:3.3.3");
         // 探测会在 root 内留下 .__qmx_case_probe__ 残留，测完清理避免堆积。
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 跨批次去重（#316）：base 批次已覆盖的 dest 从 loader 批次剔除，避免两批
+    /// 争用同一个 `.part`；未命中的目标保持不动，空键集时原样返回。
+    #[test]
+    fn retain_unclaimed_libraries_drops_dests_covered_by_base() {
+        let root = std::env::temp_dir().join(format!("qomicex-cross-batch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let mk = |path: &str| MissFileData {
+            name: "x".to_string(),
+            path: path.to_string(),
+            url: "https://cdn/x.jar".to_string(),
+            sha1: String::new(),
+        };
+        let shared = "libraries/org/ow2/asm/asm/9.10.1/asm-9.10.1.jar";
+        let claimed: HashSet<String> = [dedup_key(&normalize_sep(root.join(shared)))]
+            .into_iter()
+            .collect();
+
+        let kept = retain_unclaimed_libraries(
+            vec![
+                mk(shared),
+                mk("libraries/net/minecraftforge/forge/1.20.1/forge.jar"),
+            ],
+            &root,
+            &claimed,
+        );
+        assert_eq!(kept.len(), 1);
+        assert_eq!(
+            kept[0].path,
+            "libraries/net/minecraftforge/forge/1.20.1/forge.jar"
+        );
+
+        assert_eq!(
+            retain_unclaimed_libraries(vec![mk(shared)], &root, &HashSet::new()).len(),
+            1,
+            "base 没有缺失文件时不能丢任何 loader 条目"
+        );
+
         let _ = std::fs::remove_dir_all(&root);
     }
 
