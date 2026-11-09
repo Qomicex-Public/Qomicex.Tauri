@@ -65,6 +65,14 @@ try {
   check('首选在首位保持不变', orderInstancesByPreferred(list, 'a').map((i) => i.id), ['a', 'b', 'c'])
   check('未知实例保持原序', orderInstancesByPreferred(list, 'missing'), list)
   check('无首选保持原序', orderInstancesByPreferred(list, null), list)
+  // 重复 ID：只置顶第一个命中，其余同 ID 条目保留原序。
+  const dupes = [{ id: 'a' }, { id: 'b' }, { id: 'b' }, { id: 'c' }]
+  check('重复 ID 不丢条目', orderInstancesByPreferred(dupes, 'b'), [
+    { id: 'b' },
+    { id: 'a' },
+    { id: 'b' },
+    { id: 'c' },
+  ])
 
   console.log(`drop-instance-route: ${checks} checks passed`)
 } finally {

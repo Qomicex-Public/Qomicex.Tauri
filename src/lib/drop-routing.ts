@@ -35,5 +35,7 @@ export function orderInstancesByPreferred<T extends { id: string }>(
   if (!preferredId) return instances
   const preferred = instances.find((i) => i.id === preferredId)
   if (!preferred) return instances
-  return [preferred, ...instances.filter((i) => i.id !== preferred.id)]
+  // 只移除被置顶的那一个；重复 ID 的其他条目保持原序，不能被一并过滤。
+  const preferredIndex = instances.indexOf(preferred)
+  return [preferred, ...instances.slice(0, preferredIndex), ...instances.slice(preferredIndex + 1)]
 }

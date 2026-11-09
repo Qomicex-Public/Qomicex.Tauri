@@ -195,7 +195,14 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
       }
       set({ favorites: sortByCreatedAtDesc(favorites ?? []), loaded: true, loading: false, error: null })
     } catch (e) {
-      set({ loading: false, error: e instanceof Error ? e.message : String(e) })
+      // 请求失败时若期间发生过 mutation/导入（世代号已变），这份失败也不能
+      // 当作最终状态：登记重拉，稍后用新世代再取一次。
+      if (inFlightMutations > 0 || mutationEpoch !== epochAtStart) {
+        set({ loading: false })
+        discardStaleList('favorites')
+      } else {
+        set({ loading: false, error: e instanceof Error ? e.message : String(e) })
+      }
     }
   },
 
@@ -214,7 +221,12 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
       }
       set({ folders: folders ?? [], foldersLoaded: true, foldersLoading: false, foldersError: null })
     } catch (e) {
-      set({ foldersLoading: false, foldersError: e instanceof Error ? e.message : String(e) })
+      if (inFlightMutations > 0 || mutationEpoch !== epochAtStart) {
+        set({ foldersLoading: false })
+        discardStaleList('folders')
+      } else {
+        set({ foldersLoading: false, foldersError: e instanceof Error ? e.message : String(e) })
+      }
     }
   },
 
@@ -223,6 +235,10 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
     // load() 判为旧快照并丢弃（随后自动重拉），避免旧列表覆盖导入结果。
     mutationEpoch += 1
     await Promise.all([get().load(true), get().loadFolders(true)])
+    const { error, foldersError } = get()
+    // 调用方要能区分「导入成功」与「导入成功但刷新失败」。
+    if (error) throw new Error(error)
+    if (foldersError) throw new Error(foldersError)
   },
 
   isFavorite: (source, id, category) => {

@@ -1382,12 +1382,13 @@ export default function ResourceCenter() {
       setFavTags([])
       setFavQuery('')
     }
+    notify(t('resource.favorites.transfer.done', { imported: result.imported, skipped: result.skipped }), 'success')
     try {
       await reloadFavorites()
     } catch (e) {
+      // 导入本身已成功；刷新失败单独提示，避免用户以为条数没写进去。
       notify(e instanceof Error ? e.message : t('resource.favorites.loadFailed'), 'error')
     }
-    notify(t('resource.favorites.transfer.done', { imported: result.imported, skipped: result.skipped }), 'success')
   }
 
   /** 打开「编辑收藏」弹窗：需要条目本身（含 folderIds/note/tags），故从 store 原始列表取。 */

@@ -73,20 +73,27 @@ export default function DropInstallDialog({ group, onClose, preferredInstanceId 
   // 否则 effect 重跑会把用户已经改过的选择/实例名重置掉。
   const preferredIdRef = useRef<string | null>(null)
   const initializedGroupRef = useRef<DropGroup | null>(null)
+  const requestIdRef = useRef(0)
 
   useEffect(() => {
     if (!open || !group) {
       initializedGroupRef.current = null
+      // 关闭时让在途请求作废，避免它回来覆盖下一次打开的状态。
+      requestIdRef.current += 1
       return
     }
     // 只有「新打开/换了文件」才初始化；route 变化导致的 effect 重跑直接跳过。
     if (initializedGroupRef.current === group) return
     initializedGroupRef.current = group
+    const requestId = ++requestIdRef.current
     preferredIdRef.current = preferredInstanceId ?? null
 
     setError('')
     setSearchQuery('')
     setInstalling(false)
+    // 旧文件组的实例选择不能在新列表加载完成前继续可用，否则可能装错实例。
+    setInstances([])
+    setSelectedInstance(null)
     if (isModpack) {
       const first = group.files[0]
       const fallbackName = first?.fileName.replace(/\.[^.]+$/, '') || ''
@@ -94,6 +101,7 @@ export default function DropInstallDialog({ group, onClose, preferredInstanceId 
       ;(async () => {
         try {
           const settings = await loadSettings()
+          if (requestId !== requestIdRef.current) return
           setGameDir(settings.gameDir)
           setVersionIsolation(settings.versionIsolation ?? true)
         } catch { /* keep defaults */ }
@@ -106,6 +114,7 @@ export default function DropInstallDialog({ group, onClose, preferredInstanceId 
         const settings = await loadSettings()
         const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
         const raw = (await getInstances()).filter(i => norm(i.gameDir) === norm(settings.gameDir))
+        if (requestId !== requestIdRef.current) return
         const all = [...new Map(raw.map(i => [i.id, i])).values()]
           .filter(i => group.kind !== 'mod' || i.loader)
         // 当前实例置顶并预选（issue #326）：用户在看哪个实例，拖入的资源就默认装到
@@ -116,9 +125,12 @@ export default function DropInstallDialog({ group, onClose, preferredInstanceId 
         setInstances(ordered)
         setSelectedInstance(ordered.length > 0 ? (preferred ?? ordered.find(i => i.isDefault) ?? ordered[0]) : null)
       } catch {
-        notify(t('dialogs.resourceInstall.instancesLoadFailed'), 'error')
+        if (requestId === requestIdRef.current) {
+          notify(t('dialogs.resourceInstall.instancesLoadFailed'), 'error')
+        }
+      } finally {
+        if (requestId === requestIdRef.current) setLoadingInstances(false)
       }
-      setLoadingInstances(false)
     })()
   }, [open, group, isModpack, notify, t, preferredInstanceId])
 
