@@ -48,9 +48,11 @@ const KIND_CACHE_KEY: Record<Exclude<DropGroupKind, 'modpack'>, string> = {
 interface Props {
   group: DropGroup | null
   onClose: () => void
+  /** 当前打开的实例 id（`/instances/:id`）：置顶并预选，其他页面为空。 */
+  preferredInstanceId?: string | null
 }
 
-export default function DropInstallDialog({ group, onClose }: Props) {
+export default function DropInstallDialog({ group, onClose, preferredInstanceId }: Props) {
   const { t } = useI18n()
   const { notify } = useMessageBox()
   const [instances, setInstances] = useState<GameInstance[]>([])
@@ -93,14 +95,18 @@ export default function DropInstallDialog({ group, onClose }: Props) {
         const raw = (await getInstances()).filter(i => norm(i.gameDir) === norm(settings.gameDir))
         const all = [...new Map(raw.map(i => [i.id, i])).values()]
           .filter(i => group.kind !== 'mod' || i.loader)
-        setInstances(all)
-        setSelectedInstance(all.length > 0 ? (all.find(i => i.isDefault) ?? all[0]) : null)
+        // 当前实例置顶并预选（issue #326）：用户在看哪个实例，拖入的资源就默认装到
+        // 哪个实例。它被过滤掉（如无 loader 装 mod）或不在当前 gameDir 时退回固定实例。
+        const preferred = preferredInstanceId ? all.find(i => i.id === preferredInstanceId) : undefined
+        const ordered = preferred ? [preferred, ...all.filter(i => i.id !== preferred.id)] : all
+        setInstances(ordered)
+        setSelectedInstance(ordered.length > 0 ? (preferred ?? ordered.find(i => i.isDefault) ?? ordered[0]) : null)
       } catch {
         notify(t('dialogs.resourceInstall.instancesLoadFailed'), 'error')
       }
       setLoadingInstances(false)
     })()
-  }, [open, group, isModpack, notify, t])
+  }, [open, group, isModpack, notify, t, preferredInstanceId])
 
   const filteredInstances = useMemo(() => {
     if (!searchQuery) return instances
