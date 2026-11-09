@@ -282,6 +282,72 @@ impl ResourceFavoriteService {
         *guard = next;
         Ok(hits)
     }
+
+    /// 覆盖导入：一次性替换全部收藏（单次原子写）。
+    ///
+    /// 调用方（导入端点）已按唯一键去重并规范化，这里只做防御性去重：
+    /// 后出现的重复键覆盖先出现的条目，避免落盘出同一键两条。
+    pub fn replace_all(&self, items: Vec<ResourceFavorite>) -> Result<usize, String> {
+        let mut next: Vec<ResourceFavorite> = Vec::with_capacity(items.len());
+        for mut item in items {
+            item.normalize_key();
+            item.normalize_meta();
+            if item.source.is_empty() || item.id.is_empty() || item.category.is_empty() {
+                continue;
+            }
+            if item.created_at.trim().is_empty() {
+                item.created_at = chrono::Utc::now().to_rfc3339();
+            }
+            if let Some(existing) = next
+                .iter_mut()
+                .find(|x| x.matches(&item.source, &item.id, &item.category))
+            {
+                *existing = item;
+            } else {
+                next.push(item);
+            }
+        }
+        let mut guard = self.lock();
+        self.save_locked(&next)?;
+        let count = next.len();
+        *guard = next;
+        Ok(count)
+    }
+
+    /// 合并导入：只追加本地不存在的键，已存在的保留本地版本（不覆盖快照/元数据）。
+    ///
+    /// 返回 `(新增数, 跳过数)`。单次落盘；`createdAt` 缺省时补当前时间。
+    pub fn merge_in(&self, items: Vec<ResourceFavorite>) -> Result<(usize, usize), String> {
+        let mut guard = self.lock();
+        let mut next = guard.clone();
+        let mut added = 0usize;
+        let mut skipped = 0usize;
+        for mut item in items {
+            item.normalize_key();
+            item.normalize_meta();
+            if item.source.is_empty() || item.id.is_empty() || item.category.is_empty() {
+                skipped += 1;
+                continue;
+            }
+            if next
+                .iter()
+                .any(|x| x.matches(&item.source, &item.id, &item.category))
+            {
+                skipped += 1;
+                continue;
+            }
+            if item.created_at.trim().is_empty() {
+                item.created_at = chrono::Utc::now().to_rfc3339();
+            }
+            next.push(item);
+            added += 1;
+        }
+        if added > 0 {
+            self.save_locked(&next)?;
+            *guard = next;
+        }
+        Ok((added, skipped))
+    }
 }
 
 fn load_from_file(file_path: &PathBuf) -> Vec<ResourceFavorite> {
@@ -758,6 +824,66 @@ mod tests {
         // 再摘同一个（已无关）夹子：0 条，且不触碰磁盘。
         assert_eq!(svc.detach_from_folder("f1").unwrap(), 0);
         assert_eq!(svc.detach_from_folder("nope").unwrap(), 0);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 合并导入：同键保留本地版本，新键追加；返回 (新增, 跳过)。
+    #[test]
+    fn merge_in_keeps_local_and_appends_missing() {
+        let dir = std::env::temp_dir().join(format!("qmx-fav-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let svc = ResourceFavoriteService {
+            file_path: dir.join("resource_favorites.json"),
+            items: Mutex::new(Vec::new()),
+        };
+        svc.upsert(item("A", "mod", "本地")).unwrap();
+
+        let (added, skipped) = svc
+            .merge_in(vec![item("A", "mod", "导入覆盖"), item("B", "mod", "新增")])
+            .unwrap();
+        assert_eq!((added, skipped), (1, 1));
+
+        let all = svc.get_all();
+        assert_eq!(all.len(), 2);
+        let local = all.iter().find(|f| f.id == "A").unwrap();
+        assert_eq!(local.title, "本地", "合并导入不得覆盖本地条目");
+        let added_item = all.iter().find(|f| f.id == "B").unwrap();
+        assert!(
+            !added_item.created_at.is_empty(),
+            "新增条目必须补 createdAt"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 覆盖导入：整体替换、同键后者覆盖、空键丢弃。
+    #[test]
+    fn replace_all_replaces_dedups_and_drops_invalid_keys() {
+        let dir = std::env::temp_dir().join(format!("qmx-fav-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let svc = ResourceFavoriteService {
+            file_path: dir.join("resource_favorites.json"),
+            items: Mutex::new(Vec::new()),
+        };
+        svc.upsert(item("OLD", "mod", "旧")).unwrap();
+
+        let mut later = item("A", "mod", "后");
+        later.source = " modrinth ".into();
+        let mut invalid = item("", "mod", "");
+        invalid.id = "   ".into();
+        let count = svc
+            .replace_all(vec![item("A", "mod", "前"), later, invalid])
+            .unwrap();
+        assert_eq!(count, 1);
+        let all = svc.get_all();
+        assert_eq!(all.len(), 1, "覆盖导入必须清掉旧条目");
+        assert_eq!(all[0].title, "后");
+        assert_eq!(all[0].source, "modrinth");
+        assert!(
+            !all[0].created_at.is_empty(),
+            "缺省 createdAt 必须补当前时间"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

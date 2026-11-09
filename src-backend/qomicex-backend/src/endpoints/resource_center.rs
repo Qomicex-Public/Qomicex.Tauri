@@ -30,6 +30,11 @@ use std::time::{Duration, Instant};
 use crate::error::{ApiError, ApiResult};
 use crate::services::resource_favorite::ResourceFavorite;
 use crate::services::resource_favorite_folder::{FavoriteFolder, FolderError};
+use crate::services::resource_favorite_transfer::{
+    backup_favorite_files, build_export, favorite_key, merge_candidates, plan_folders,
+    read_export_file, remap_folder_ids, write_export_file, FavoriteExport, FavoriteKey, ImportMode,
+    TransferError,
+};
 use crate::state::SharedState;
 
 // =====================================================================
@@ -303,6 +308,14 @@ pub fn router() -> Router<SharedState> {
             get(list_resource_favorites)
                 .post(add_resource_favorite)
                 .delete(remove_resource_favorite),
+        )
+        .route(
+            "/resource-favorites/export",
+            post(export_resource_favorites),
+        )
+        .route(
+            "/resource-favorites/import",
+            post(import_resource_favorites),
         )
         .route(
             "/resource-favorite-folders",
@@ -3356,6 +3369,152 @@ async fn remove_resource_favorite(
         .remove(&source, &id, &category)
         .map_err(|e| ApiError::internal(format!("删除收藏失败: {e}")))?;
     Ok(Json(serde_json::json!({ "removed": removed })))
+}
+
+// =====================================================================
+// Handlers: 收藏导入导出（本地 JSON 文件，issue #293）
+// =====================================================================
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FavoriteExportRequest {
+    path: String,
+    /// 缺省 = 全部收藏；给定则只导出「当前筛选结果」命中的条目。
+    #[serde(default)]
+    keys: Option<Vec<FavoriteKey>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FavoriteImportRequest {
+    path: String,
+    mode: ImportMode,
+}
+
+fn map_transfer_error(e: TransferError) -> ApiError {
+    if e.is_client_error() {
+        ApiError::bad_request("FAVORITE_TRANSFER_INVALID", e.message().to_string())
+    } else {
+        ApiError::internal(e.message().to_string())
+    }
+}
+
+async fn export_resource_favorites(
+    State(state): State<SharedState>,
+    req: Json<FavoriteExportRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let export = build_export(
+        state.resource_favorites.get_all(),
+        state.resource_favorite_folders.get_all(),
+        req.keys.as_deref(),
+    );
+    let (favorites, folders) = (export.favorites.len(), export.folders.len());
+    write_export_file(&req.path, &export).map_err(map_transfer_error)?;
+    Ok(Json(serde_json::json!({
+        "path": req.path.trim(),
+        "favorites": favorites,
+        "folders": folders,
+    })))
+}
+
+async fn import_resource_favorites(
+    State(state): State<SharedState>,
+    req: Json<FavoriteImportRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let export = read_export_file(&req.path).map_err(map_transfer_error)?;
+    match req.mode {
+        ImportMode::Merge => import_merge(&state, export),
+        ImportMode::Overwrite => import_overwrite(&state, export),
+    }
+}
+
+/// 合并导入：夹子按 id/名称复用，收藏同键保留本地。可重复导入，不破坏本地数据。
+fn import_merge(
+    state: &SharedState,
+    mut export: FavoriteExport,
+) -> ApiResult<Json<serde_json::Value>> {
+    let local_folders = state.resource_favorite_folders.get_all();
+    let mut remap: HashMap<String, String> = HashMap::new();
+    let mut folders_created = 0usize;
+    for plan in plan_folders(&local_folders, &export.folders) {
+        let target = match plan.existing_id {
+            Some(id) => id,
+            None => {
+                let created = state
+                    .resource_favorite_folders
+                    .create(&plan.name)
+                    .map_err(map_folder_error)?;
+                folders_created += 1;
+                created.id
+            }
+        };
+        remap.insert(plan.imported_id, target);
+    }
+    remap_folder_ids(&mut export.favorites, &remap);
+
+    let local_keys: HashSet<String> = state
+        .resource_favorites
+        .get_all()
+        .iter()
+        .map(|f| favorite_key(&f.source, &f.id, &f.category))
+        .collect();
+    let (candidates, skipped) = merge_candidates(&local_keys, &export.favorites);
+    let (imported, raced) = state
+        .resource_favorites
+        .merge_in(candidates)
+        .map_err(|e| ApiError::internal(format!("保存收藏失败: {e}")))?;
+    Ok(Json(serde_json::json!({
+        "mode": "merge",
+        "imported": imported,
+        "skipped": skipped + raced,
+        "foldersCreated": folders_created,
+    })))
+}
+
+/// 覆盖导入：先备份 `.bak`，再整体替换。
+///
+/// 收藏夹先落盘、收藏后落盘：中途失败会留下「夹子已换、收藏还是旧的」这种
+/// 悬空引用，但 `.bak` 已生成，用户可恢复；反过来也会出现悬空引用，无法两全。
+fn import_overwrite(
+    state: &SharedState,
+    export: FavoriteExport,
+) -> ApiResult<Json<serde_json::Value>> {
+    let total = export.favorites.len();
+    let backup_files = backup_favorite_files().map_err(map_transfer_error)?;
+
+    let names: Vec<String> = export.folders.iter().map(|f| f.name.clone()).collect();
+    let created = state
+        .resource_favorite_folders
+        .replace_all_named(&names)
+        .map_err(map_folder_error)?;
+    let by_name: HashMap<String, String> = created
+        .iter()
+        .map(|f| (f.name.to_lowercase(), f.id.clone()))
+        .collect();
+    let remap: HashMap<String, String> = export
+        .folders
+        .iter()
+        .filter_map(|f| {
+            by_name
+                .get(&f.name.to_lowercase())
+                .map(|id| (f.id.clone(), id.clone()))
+        })
+        .collect();
+    let mut favorites = export.favorites;
+    remap_folder_ids(&mut favorites, &remap);
+
+    let imported = state
+        .resource_favorites
+        .replace_all(favorites)
+        .map_err(|e| ApiError::internal(format!("保存收藏失败: {e}")))?;
+    let folders_created = created.len();
+    Ok(Json(serde_json::json!({
+        "mode": "overwrite",
+        "imported": imported,
+        "skipped": total.saturating_sub(imported),
+        "foldersCreated": folders_created,
+        "backupFiles": backup_files,
+    })))
 }
 
 // =====================================================================

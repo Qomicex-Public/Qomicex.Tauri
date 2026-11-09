@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::settings;
 
 /// 收藏夹名长度上限（字符数，非字节）。本地 JSON 也做防御性上限，避免无界增长。
-const MAX_FOLDER_NAME_CHARS: usize = 64;
+pub const MAX_FOLDER_NAME_CHARS: usize = 64;
 
 /// 收藏夹（全部 camelCase）。
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -191,6 +191,34 @@ impl ResourceFavoriteFolderService {
         *guard = next;
         Ok(folder)
     }
+
+    /// 覆盖导入：按给定名称一次性重建全部收藏夹（单次原子写，id 重新生成）。
+    ///
+    /// 调用方（导入端点）已校验并去重名称；这里再防御一次：空名/超长/重名跳过。
+    /// 返回实际的夹子列表（顺序与输入有效项一致），调用方据此按名称映射 id。
+    pub fn replace_all_named(&self, names: &[String]) -> Result<Vec<FavoriteFolder>, FolderError> {
+        let created_at = chrono::Utc::now().to_rfc3339();
+        let mut next: Vec<FavoriteFolder> = Vec::with_capacity(names.len());
+        for raw in names {
+            let name = raw.trim();
+            if name.is_empty()
+                || name.chars().count() > MAX_FOLDER_NAME_CHARS
+                || next.iter().any(|f| f.name.eq_ignore_ascii_case(name))
+            {
+                continue;
+            }
+            next.push(FavoriteFolder {
+                id: new_short_id(),
+                name: name.to_string(),
+                created_at: created_at.clone(),
+            });
+        }
+        let mut guard = self.lock();
+        self.save_locked(&next).map_err(FolderError::Save)?;
+        let out = next.clone();
+        *guard = next;
+        Ok(out)
+    }
 }
 
 /// 生成 12 位十六进制短 id（与 `instance_group.rs` / `instance.rs` 一致）。
@@ -342,6 +370,38 @@ mod tests {
         assert_eq!(svc2.get_all()[0].name, "优化");
         assert!(svc2.delete("f1").unwrap_err().is_save_failure());
         assert_eq!(svc2.get_all().len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 覆盖导入：名称 trim + 大小写不敏感去重 + 空名丢弃，id 全部重新生成。
+    #[test]
+    fn replace_all_named_regenerates_ids_and_dedups() {
+        let dir = tmp_dir();
+        let svc = service(&dir);
+        let old = svc.create("旧夹子").unwrap();
+
+        let created = svc
+            .replace_all_named(&[
+                " 常用 ".to_string(),
+                "常用".to_string(),
+                "".to_string(),
+                "测试".to_string(),
+            ])
+            .unwrap();
+        assert_eq!(created.len(), 2);
+        assert_eq!(created[0].name, "常用");
+        assert_eq!(created[1].name, "测试");
+        assert_ne!(created[0].id, old.id, "覆盖导入必须重新生成 id");
+        assert_eq!(svc.get_all().len(), 2);
+        assert!(!svc.exists(&old.id), "旧夹子应被整体替换");
+
+        // 落盘内容与内存一致（重新加载验证）。
+        let reloaded = ResourceFavoriteFolderService {
+            file_path: dir.join("resource_favorite_folders.json"),
+            folders: Mutex::new(load_from_file(&dir.join("resource_favorite_folders.json"))),
+        };
+        assert_eq!(reloaded.get_all().len(), 2);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

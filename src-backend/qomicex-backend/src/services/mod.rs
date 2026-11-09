@@ -36,6 +36,7 @@ pub mod plugin_store;
 pub mod region;
 pub mod resource_favorite;
 pub mod resource_favorite_folder;
+pub mod resource_favorite_transfer;
 pub mod scan_cache;
 pub mod schematic_assets;
 pub mod source_policy;
