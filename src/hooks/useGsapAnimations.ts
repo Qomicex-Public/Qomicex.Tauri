@@ -299,6 +299,13 @@ export function useAnimatedList<T extends HTMLElement>(
 
     tlRef.current = gsap.timeline()
     tlRef.current.fromTo(children, from, to)
+    // 入场 tween 结束后清掉 GSAP 写入的内联 transform（force3D 会留下
+    // translate3d(0,0,0)）。这些残留会把卡片固定在独立合成层里，WebView2 下
+    // `.glass-surface` 的 backdrop-filter 首帧不重绘：列表项看不到毛玻璃，
+    // 鼠标移入触发别的重绘后才恢复（issue #327）。
+    tlRef.current.eventCallback('onComplete', () => {
+      gsap.set(children, { clearProps: 'transform' })
+    })
 
     // 记录本批 children 及其视口坐标（在挂载期间记录，供下次退出克隆定位）
     prevChildrenRef.current = allChildren
