@@ -219,6 +219,15 @@ impl ResourceFavoriteFolderService {
         *guard = next;
         Ok(out)
     }
+
+    /// 回滚/恢复：用给定记录整体替换（保留 id 与 createdAt，不重命名/不去重）。
+    /// 仅供导入失败后的回滚使用。
+    pub fn restore_all(&self, folders: Vec<FavoriteFolder>) -> Result<(), FolderError> {
+        let mut guard = self.lock();
+        self.save_locked(&folders).map_err(FolderError::Save)?;
+        *guard = folders;
+        Ok(())
+    }
 }
 
 /// 生成 12 位十六进制短 id（与 `instance_group.rs` / `instance.rs` 一致）。

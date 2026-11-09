@@ -1741,6 +1741,9 @@ pub(crate) fn dedup_miss_files(
 /// 跨批次去重（issue #316）：installer 分支的 loader libs 与 base 分支可能命中
 /// 同一个 `libraries/*` 目标。`claimed` 是 base 批次已经要下载的 dest 键集，
 /// 命中即从本批次剔除 —— 同一文件只下一次，也不再有 DestGuard 目标占用失败。
+///
+/// 被剔除条目的 URL 不再参与 base 批次的镜像回退（base 自身已有官方/BMCLAPI
+/// 兜底）；跨批次共享镜像需要延迟 base 下载或下载器支持 late-mirror，留待后续。
 fn retain_unclaimed_libraries(
     files: Vec<MissFileData>,
     root: &Path,

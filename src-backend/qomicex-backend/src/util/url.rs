@@ -28,12 +28,24 @@ pub fn redact_url(raw: &str) -> String {
 pub fn redact_urls_in_text(text: &str) -> String {
     text.split_whitespace()
         .map(|token| {
-            let (url, suffix) = split_trailing_punct(token);
-            if url.starts_with("http://") || url.starts_with("https://") {
-                format!("{}{suffix}", redact_url(url))
-            } else {
-                token.to_string()
+            // URL 可能嵌在 token 中间（JSON 字符串、Markdown 链接等）：
+            // 找到第一个 http(s):// 后，前缀原样保留，只脱敏 URL 本体。
+            let Some(start) = token.find("https://").or_else(|| token.find("http://")) else {
+                return token.to_string();
+            };
+            let (prefix, rest) = token.split_at(start);
+            // URL 到成对的引号/括号/尖括号为止；其余走到 token 尾（再交给
+            // `split_trailing_punct` 去掉句末标点）。否则 JSON 里的
+            // `...?token=x","next":1}` 会把尾部一起塞进 Url::parse 导致解析失败。
+            let end = rest
+                .find(['"', '\'', '<', '>', '`', ')', ']', '}'])
+                .unwrap_or(rest.len());
+            let (url_part, suffix) = rest.split_at(end);
+            let (url, trailing) = split_trailing_punct(url_part);
+            if url.len() < "http://".len() {
+                return token.to_string();
             }
+            format!("{prefix}{}{trailing}{suffix}", redact_url(url))
         })
         .collect::<Vec<_>>()
         .join(" ")
@@ -45,7 +57,20 @@ fn split_trailing_punct(token: &str) -> (&str, &str) {
     for (idx, ch) in token.char_indices().rev() {
         if matches!(
             ch,
-            ')' | ']' | '}' | ',' | ';' | '。' | '，' | '；' | '）' | '】'
+            ')' | ']'
+                | '}'
+                | ','
+                | ';'
+                | '。'
+                | '，'
+                | '；'
+                | '）'
+                | '】'
+                | '"'
+                | '\''
+                | '<'
+                | '>'
+                | '`'
         ) {
             end = idx;
         } else {
@@ -76,5 +101,24 @@ mod tests {
         assert!(!got.contains("sig=abc"));
         assert!(got.contains("cdn.example.com/a.jar"));
         assert!(got.contains("retry later"));
+    }
+
+    /// JSON 字符串 / Markdown 链接里 URL 前面带 `{"url":"`、`(` 等前缀时也要脱敏。
+    #[test]
+    fn redacts_urls_wrapped_in_quotes_and_markdown() {
+        let json = r#"{"url":"https://user:pass@example.com/a.jar?token=abc","ok":true}"#;
+        let got = redact_urls_in_text(json);
+        assert!(!got.contains("user"), "实际: {got}");
+        assert!(!got.contains("pass"), "实际: {got}");
+        assert!(!got.contains("token=abc"), "实际: {got}");
+        assert!(got.contains("example.com/a.jar"), "实际: {got}");
+        assert!(got.contains(r#""ok":true"#), "非 URL 文本必须保留: {got}");
+
+        let md = "[下载](https://u:p@cdn.example.com/x.zip?sig=1)";
+        let got = redact_urls_in_text(md);
+        assert!(!got.contains("u:p"), "实际: {got}");
+        assert!(!got.contains("sig=1"), "实际: {got}");
+        assert!(got.starts_with("[下载]("), "前缀必须保留: {got}");
+        assert!(got.ends_with(')'), "后缀必须保留: {got}");
     }
 }

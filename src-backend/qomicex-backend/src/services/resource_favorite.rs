@@ -20,6 +20,7 @@
 //! 不序列化），在 `normalize_meta` 里并入 `folderIds` 后清零 —— 于是「读兼容旧字段、
 //! 写只写新字段」，**零手动迁移**：旧文件被读进来即已生效，下一次写入自然改写为新格式。
 
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -94,6 +95,11 @@ impl ResourceFavorite {
         self.source == source && self.id == id && self.category == category
     }
 
+    /// 唯一键（`source + id + category`，键段 trim）。导入去重/哈希索引共用。
+    pub fn unique_key(&self) -> String {
+        favorite_key(&self.source, &self.id, &self.category)
+    }
+
     /// 裁剪三个键段的首尾空白。
     ///
     /// `DELETE` 的查询参数（`FavoriteKeyQuery::validated`）会裁剪后再做精确匹配，
@@ -162,6 +168,16 @@ impl ResourceFavorite {
         }
         self.tags = tags;
     }
+}
+
+/// 收藏唯一键（分隔符用 \u{1f}，避免 source/id/category 拼接撞键；键段先 trim）。
+pub fn favorite_key(source: &str, id: &str, category: &str) -> String {
+    format!(
+        "{}\u{1f}{}\u{1f}{}",
+        source.trim(),
+        id.trim(),
+        category.trim()
+    )
 }
 
 /// 资源收藏服务（独立 resource_favorites.json）。
@@ -289,6 +305,7 @@ impl ResourceFavoriteService {
     /// 后出现的重复键覆盖先出现的条目，避免落盘出同一键两条。
     pub fn replace_all(&self, items: Vec<ResourceFavorite>) -> Result<usize, String> {
         let mut next: Vec<ResourceFavorite> = Vec::with_capacity(items.len());
+        let mut index: HashMap<String, usize> = HashMap::new();
         for mut item in items {
             item.normalize_key();
             item.normalize_meta();
@@ -298,12 +315,11 @@ impl ResourceFavoriteService {
             if item.created_at.trim().is_empty() {
                 item.created_at = chrono::Utc::now().to_rfc3339();
             }
-            if let Some(existing) = next
-                .iter_mut()
-                .find(|x| x.matches(&item.source, &item.id, &item.category))
-            {
-                *existing = item;
+            let key = item.unique_key();
+            if let Some(&position) = index.get(&key) {
+                next[position] = item;
             } else {
+                index.insert(key, next.len());
                 next.push(item);
             }
         }
@@ -320,6 +336,8 @@ impl ResourceFavoriteService {
     pub fn merge_in(&self, items: Vec<ResourceFavorite>) -> Result<(usize, usize), String> {
         let mut guard = self.lock();
         let mut next = guard.clone();
+        // 哈希索引：导入规模可达 2 万条，逐项扫描会退化成 O(n²)。
+        let mut seen: HashSet<String> = next.iter().map(ResourceFavorite::unique_key).collect();
         let mut added = 0usize;
         let mut skipped = 0usize;
         for mut item in items {
@@ -329,10 +347,7 @@ impl ResourceFavoriteService {
                 skipped += 1;
                 continue;
             }
-            if next
-                .iter()
-                .any(|x| x.matches(&item.source, &item.id, &item.category))
-            {
+            if !seen.insert(item.unique_key()) {
                 skipped += 1;
                 continue;
             }
@@ -853,6 +868,11 @@ mod tests {
             !added_item.created_at.is_empty(),
             "新增条目必须补 createdAt"
         );
+        // 内存断言无法发现「忘了落盘」：重新读文件确认改动真的持久化。
+        let reloaded = load_from_file(&svc.file_path);
+        assert_eq!(reloaded.len(), 2);
+        assert!(reloaded.iter().any(|f| f.id == "A" && f.title == "本地"));
+        assert!(reloaded.iter().any(|f| f.id == "B" && f.title == "新增"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -884,6 +904,11 @@ mod tests {
             !all[0].created_at.is_empty(),
             "缺省 createdAt 必须补当前时间"
         );
+        let reloaded = load_from_file(&svc.file_path);
+        assert_eq!(reloaded.len(), 1);
+        assert_eq!(reloaded[0].id, "A");
+        assert_eq!(reloaded[0].title, "后");
+        assert_eq!(reloaded[0].source, "modrinth");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

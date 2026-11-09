@@ -26,6 +26,7 @@ const MAX_ERROR_BODY_BYTES: usize = 16 * 1024;
 /// 日志里保留的字符数（按字符截断，避免切出半个 UTF-8）。
 const MAX_ERROR_BODY_CHARS: usize = 512;
 
+/// 中间件入口：为 `ApiError` 响应补齐请求维度日志；框架层错误额外读小体积 body。
 pub async fn log_api_errors(req: Request, next: Next) -> Response {
     let method = req.method().clone();
     let uri = req.uri().clone();
@@ -107,6 +108,7 @@ pub async fn log_api_errors(req: Request, next: Next) -> Response {
     }
 }
 
+/// 记录框架层错误：5xx 用 error，4xx 用 warn；`body` 为已脱敏/截断的响应摘要。
 fn log_framework_error(
     method: &axum::http::Method,
     path: &str,
@@ -214,6 +216,37 @@ mod tests {
         let out = body_excerpt(&long);
         assert_eq!(out.chars().count(), MAX_ERROR_BODY_CHARS + 1);
         assert!(out.ends_with('…'));
+    }
+
+    /// 真实的 `Json` extractor 拒绝也要走同一条日志路径，且响应体保持可读。
+    #[tokio::test]
+    async fn middleware_handles_real_json_extractor_rejection() {
+        async fn json_handler(_: Json<serde_json::Value>) -> &'static str {
+            "ok"
+        }
+        let app = Router::new()
+            .route("/api/probe_json", post(json_handler))
+            .layer(axum::middleware::from_fn(log_api_errors));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/probe_json")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{ not json"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), 4096).await.unwrap();
+        let text = String::from_utf8_lossy(&body);
+        assert!(
+            text.contains("Failed to parse the request body as JSON"),
+            "extractor 拒绝原因不能丢: {text}"
+        );
     }
 
     /// 中间件读 body 后必须原样放回：客户端收到的状态码与内容不能变。

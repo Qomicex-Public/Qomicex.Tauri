@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::services::resource_favorite::favorite_key;
 use crate::services::resource_favorite::ResourceFavorite;
 use crate::services::resource_favorite_folder::{FavoriteFolder, MAX_FOLDER_NAME_CHARS};
 
@@ -43,9 +44,7 @@ pub struct FavoriteExport {
     pub version: u32,
     #[serde(default)]
     pub exported_at: String,
-    #[serde(default)]
     pub folders: Vec<FavoriteFolder>,
-    #[serde(default)]
     pub favorites: Vec<ResourceFavorite>,
 }
 
@@ -74,25 +73,17 @@ pub enum TransferError {
 }
 
 impl TransferError {
+    /// 是否是调用方输入造成的错误（端点映射 400）。
     pub fn is_client_error(&self) -> bool {
         matches!(self, TransferError::Invalid(_))
     }
 
+    /// 面向用户的错误文案。
     pub fn message(&self) -> &str {
         match self {
             TransferError::Invalid(m) | TransferError::Io(m) => m,
         }
     }
-}
-
-/// 收藏唯一键（分隔符用 \u{1f}，避免 source/id/category 拼接撞键）。
-pub fn favorite_key(source: &str, id: &str, category: &str) -> String {
-    format!(
-        "{}\u{1f}{}\u{1f}{}",
-        source.trim(),
-        id.trim(),
-        category.trim()
-    )
 }
 
 /// 构建导出包。`keys = None` 表示全部收藏；给定 keys 时只导出命中的条目，
@@ -171,7 +162,7 @@ pub fn parse_export(raw: &str) -> Result<FavoriteExport, TransferError> {
             || folder.name.is_empty()
             || folder.name.chars().count() > MAX_FOLDER_NAME_CHARS
             || !seen_ids.insert(folder.id.clone())
-            || !seen_names.insert(folder.name.to_lowercase())
+            || !seen_names.insert(folder.name.to_ascii_lowercase())
         {
             continue;
         }
@@ -183,18 +174,18 @@ pub fn parse_export(raw: &str) -> Result<FavoriteExport, TransferError> {
     export.folders = folders;
 
     let mut favorites: Vec<ResourceFavorite> = Vec::with_capacity(export.favorites.len());
+    let mut index: HashMap<String, usize> = HashMap::new();
     for mut item in export.favorites {
         item.normalize_key();
         item.normalize_meta();
         if item.source.is_empty() || item.id.is_empty() || item.category.is_empty() {
             continue;
         }
-        if let Some(existing) = favorites.iter_mut().find(|x| {
-            favorite_key(&x.source, &x.id, &x.category)
-                == favorite_key(&item.source, &item.id, &item.category)
-        }) {
-            *existing = item;
+        let key = favorite_key(&item.source, &item.id, &item.category);
+        if let Some(&position) = index.get(&key) {
+            favorites[position] = item;
         } else {
+            index.insert(key, favorites.len());
             favorites.push(item);
         }
     }
@@ -212,6 +203,8 @@ pub struct FolderPlan {
     pub existing_id: Option<String>,
 }
 
+/// 计算每个导入收藏夹与本地夹子的对应关系：同 id 优先，其次同名（ASCII
+/// 大小写不敏感）；都没有则 `existing_id = None`（调用方新建）。
 pub fn plan_folders(local: &[FavoriteFolder], imported: &[FavoriteFolder]) -> Vec<FolderPlan> {
     imported
         .iter()
@@ -302,28 +295,85 @@ pub fn read_export_file(raw_path: &str) -> Result<FavoriteExport, TransferError>
 }
 
 /// 写出导出文件（覆盖同名文件；父目录不存在时报错）。
+///
+/// 导出结果必须能被自己的导入器吃下：条数上限与序列化后的体积都按导入侧
+/// 的常量校验，超限直接报错，避免生成「看起来成功、导入却失败」的备份文件。
+/// 同时拒绝指向收藏数据库本身，防止把用户数据覆盖成导出包。
 pub fn write_export_file(raw_path: &str, export: &FavoriteExport) -> Result<(), TransferError> {
     let path = validate_json_path(raw_path)?;
+    if is_protected_favorite_db(&path) {
+        return Err(TransferError::Invalid(
+            "不能把导出文件写到收藏数据库上".to_string(),
+        ));
+    }
+    if export.favorites.len() > MAX_IMPORT_FAVORITES {
+        return Err(TransferError::Invalid(format!(
+            "收藏条目过多（{}，上限 {MAX_IMPORT_FAVORITES}），导入器无法读取",
+            export.favorites.len()
+        )));
+    }
+    if export.folders.len() > MAX_IMPORT_FOLDERS {
+        return Err(TransferError::Invalid(format!(
+            "收藏夹过多（{}，上限 {MAX_IMPORT_FOLDERS}），导入器无法读取",
+            export.folders.len()
+        )));
+    }
     let json = serde_json::to_string_pretty(export)
         .map_err(|e| TransferError::Io(format!("序列化导出内容失败: {e}")))?;
+    if json.len() as u64 > MAX_IMPORT_BYTES {
+        return Err(TransferError::Invalid(format!(
+            "导出内容过大（{} 字节，上限 {MAX_IMPORT_BYTES}），导入器无法读取",
+            json.len()
+        )));
+    }
     std::fs::write(&path, json).map_err(|e| TransferError::Io(format!("写入导出文件失败: {e}")))?;
     Ok(())
 }
 
-/// 覆盖导入前把现有收藏/收藏夹 JSON 备份为 `.bak`（同目录，覆盖旧备份）。
-/// 返回实际备份的文件数（文件不存在时跳过）。
+/// 目标是否就是收藏/收藏夹数据库文件（含经目录别名/软链接的等价路径）。
+fn is_protected_favorite_db(path: &Path) -> bool {
+    is_protected_db_in(&crate::settings::resolve_base_dir().join("data"), path)
+}
+
+/// `is_protected_favorite_db` 的目录可注入版本（测试用）。
+fn is_protected_db_in(data_dir: &Path, path: &Path) -> bool {
+    let Ok(dir) = data_dir.canonicalize() else {
+        return false;
+    };
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    let Ok(parent) = parent.canonicalize() else {
+        return false;
+    };
+    if parent != dir {
+        return false;
+    }
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|name| {
+            name.eq_ignore_ascii_case("resource_favorites.json")
+                || name.eq_ignore_ascii_case("resource_favorite_folders.json")
+        })
+}
+
+/// 覆盖导入前把现有收藏/收藏夹 JSON 备份为带时间戳的 `.bak`。
+///
+/// 时间戳后缀保证重试不会覆盖上一次（可能是唯一一份）的原始备份；返回实际
+/// 备份的文件数（文件不存在时跳过）。
 pub fn backup_favorite_files() -> Result<usize, TransferError> {
     backup_files_in(&crate::settings::resolve_base_dir().join("data"))
 }
 
 fn backup_files_in(dir: &Path) -> Result<usize, TransferError> {
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%.3f");
     let mut backed_up = 0usize;
     for name in ["resource_favorites.json", "resource_favorite_folders.json"] {
         let src = dir.join(name);
         if !src.is_file() {
             continue;
         }
-        let dst = dir.join(format!("{name}.bak"));
+        let dst = dir.join(format!("{name}.bak.{stamp}"));
         std::fs::copy(&src, &dst)
             .map_err(|e| TransferError::Io(format!("备份 {} 失败: {e}", src.display())))?;
         backed_up += 1;
@@ -379,14 +429,31 @@ mod tests {
 
     #[test]
     fn parse_rejects_wrong_format_version_and_oversize() {
-        let wrong_format = r#"{"format":"other","version":1,"favorites":[]}"#;
+        let wrong_format = r#"{"format":"other","version":1,"folders":[],"favorites":[]}"#;
         assert!(parse_export(wrong_format).is_err());
 
         let wrong_version =
-            r#"{"format":"qomicex-resource-favorites","version":99,"favorites":[]}"#;
+            r#"{"format":"qomicex-resource-favorites","version":99,"folders":[],"favorites":[]}"#;
         assert!(parse_export(wrong_version).is_err());
 
         assert!(parse_export("{ not json").is_err());
+    }
+
+    /// 导入文件必须显式带 `folders` 与 `favorites`（空数组合法）。
+    #[test]
+    fn parse_requires_both_arrays() {
+        assert!(parse_export(
+            r#"{"format":"qomicex-resource-favorites","version":1,"favorites":[]}"#
+        )
+        .is_err());
+        assert!(parse_export(
+            r#"{"format":"qomicex-resource-favorites","version":1,"folders":[]}"#
+        )
+        .is_err());
+        assert!(parse_export(
+            r#"{"format":"qomicex-resource-favorites","version":1,"folders":[],"favorites":[]}"#
+        )
+        .is_ok());
     }
 
     #[test]
@@ -468,12 +535,137 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("qmx-fav-backup-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("resource_favorites.json"), "[]").unwrap();
+
         assert_eq!(backup_files_in(&dir).unwrap(), 1);
-        assert_eq!(
-            std::fs::read_to_string(dir.join("resource_favorites.json.bak")).unwrap(),
-            "[]"
+        let first: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("resource_favorites.json.bak.")
+            })
+            .collect();
+        assert_eq!(first.len(), 1);
+        assert_eq!(std::fs::read_to_string(first[0].path()).unwrap(), "[]");
+
+        // 第二次备份必须生成新文件，不能覆盖上一次的原始备份。
+        std::fs::write(dir.join("resource_favorites.json"), "[{\"a\":1}]").unwrap();
+        assert_eq!(backup_files_in(&dir).unwrap(), 1);
+        let all: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("resource_favorites.json.bak.")
+            })
+            .collect();
+        assert_eq!(all.len(), 2, "重试备份不得覆盖原始备份");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn export_with_counts(favorites: usize, folders: usize) -> FavoriteExport {
+        FavoriteExport {
+            format: EXPORT_FORMAT.to_string(),
+            version: EXPORT_VERSION,
+            exported_at: String::new(),
+            folders: (0..folders)
+                .map(|i| FavoriteFolder {
+                    id: format!("f{i}"),
+                    name: format!("分组{i}"),
+                    created_at: String::new(),
+                })
+                .collect(),
+            favorites: (0..favorites)
+                .map(|i| ResourceFavorite {
+                    source: "modrinth".into(),
+                    id: format!("id{i}"),
+                    category: "mod".into(),
+                    ..Default::default()
+                })
+                .collect(),
+        }
+    }
+
+    /// 导入条数上限的边界：正好达到上限可通过，超出返回限制错误。
+    #[test]
+    fn parse_enforces_count_limits_at_boundary() {
+        let at_limit = serde_json::to_string(&export_with_counts(
+            MAX_IMPORT_FAVORITES,
+            MAX_IMPORT_FOLDERS,
+        ))
+        .unwrap();
+        assert!(parse_export(&at_limit).is_ok());
+
+        let too_many_favorites =
+            serde_json::to_string(&export_with_counts(MAX_IMPORT_FAVORITES + 1, 0)).unwrap();
+        assert!(parse_export(&too_many_favorites).is_err());
+
+        let too_many_folders =
+            serde_json::to_string(&export_with_counts(0, MAX_IMPORT_FOLDERS + 1)).unwrap();
+        assert!(parse_export(&too_many_folders).is_err());
+    }
+
+    /// 读取侧文件体积上限：超过上限时不读内容直接报错。
+    #[test]
+    fn read_rejects_file_larger_than_limit() {
+        let dir = std::env::temp_dir().join(format!("qmx-fav-size-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("too-big.json");
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(MAX_IMPORT_BYTES + 1).unwrap();
+        drop(file);
+
+        let err = read_export_file(&path.to_string_lossy()).unwrap_err();
+        assert!(
+            err.message().contains("文件过大"),
+            "实际: {}",
+            err.message()
         );
-        assert_eq!(backup_files_in(&dir).unwrap(), 1, "备份可重复覆盖");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 导出结果必须满足导入侧上限，避免生成无法恢复的备份文件。
+    #[test]
+    fn write_export_rejects_results_import_cannot_read() {
+        let dir = std::env::temp_dir().join(format!("qmx-fav-export-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("out.json");
+        let export = export_with_counts(MAX_IMPORT_FAVORITES + 1, 0);
+        let err = write_export_file(&path.to_string_lossy(), &export).unwrap_err();
+        assert!(
+            err.message().contains("收藏条目过多"),
+            "实际: {}",
+            err.message()
+        );
+        assert!(!path.exists(), "超限时不得写出文件");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 导出目标不得指向收藏数据库本身（含经 `..` 的等价路径）。
+    #[test]
+    fn protected_db_path_is_rejected() {
+        let dir = std::env::temp_dir().join(format!("qmx-fav-protect-{}", uuid::Uuid::new_v4()));
+        let data = dir.join("data");
+        std::fs::create_dir_all(&data).unwrap();
+
+        assert!(is_protected_db_in(
+            &data,
+            &data.join("resource_favorites.json")
+        ));
+        assert!(is_protected_db_in(
+            &data,
+            &data.join("resource_favorite_folders.json")
+        ));
+        assert!(!is_protected_db_in(&data, &data.join("export.json")));
+        // 目录别名/`..` 经 canonicalize 后仍是同一个文件。
+        assert!(is_protected_db_in(
+            &data,
+            &data.join("..").join("data").join("resource_favorites.json")
+        ));
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
