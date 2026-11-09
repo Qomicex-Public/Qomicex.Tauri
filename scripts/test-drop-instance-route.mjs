@@ -43,7 +43,7 @@ try {
     { stdio: 'inherit' },
   )
   const require = createRequire(import.meta.url)
-  const { instanceIdFromPath } = require(join(outDir, 'drop-routing.js'))
+  const { instanceIdFromPath, orderInstancesByPreferred } = require(join(outDir, 'drop-routing.js'))
 
   // ---- 命中当前实例 ----
   check('实例详情页', instanceIdFromPath('/instances/gtnh'), 'gtnh')
@@ -58,6 +58,13 @@ try {
   check('资源中心', instanceIdFromPath('/resource-center/abc'), null)
   check('空串', instanceIdFromPath(''), null)
   check('非法编码', instanceIdFromPath('/instances/%E0%A4%A'), null)
+
+  // ---- 置顶排序（拖放对话框预选）----
+  const list = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+  check('当前实例置顶', orderInstancesByPreferred(list, 'b').map((i) => i.id), ['b', 'a', 'c'])
+  check('首选在首位保持不变', orderInstancesByPreferred(list, 'a').map((i) => i.id), ['a', 'b', 'c'])
+  check('未知实例保持原序', orderInstancesByPreferred(list, 'missing'), list)
+  check('无首选保持原序', orderInstancesByPreferred(list, null), list)
 
   console.log(`drop-instance-route: ${checks} checks passed`)
 } finally {
