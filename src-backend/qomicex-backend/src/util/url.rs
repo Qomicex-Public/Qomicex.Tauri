@@ -140,5 +140,9 @@ mod tests {
         assert!(!got.contains("token=abc"), "实际: {got}");
         assert!(got.contains("a(1).zip"), "实际: {got}");
         assert!(got.contains("retry"), "实际: {got}");
+
+        // 只有协议、后面紧跟终止符时不能被吞掉。
+        assert_eq!(redact_urls_in_text("(http://)"), "(http://)");
+        assert_eq!(redact_urls_in_text("\"https://\""), "\"https://\"");
     }
 }
