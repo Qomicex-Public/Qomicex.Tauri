@@ -191,6 +191,17 @@ const MAX_ANIMATE_ITEMS = 35
  *
  * 调用方必须给子元素加 `data-key` 才能启用退出动画。
  */
+/** 终止入场 timeline 并把每个元素的内联 transform 还原到动画前（幂等）。 */
+function stopAnimation(
+  tlRef: { current: gsap.core.Timeline | null },
+  originalsRef: { current: Map<HTMLElement, string> },
+): void {
+  tlRef.current?.kill()
+  tlRef.current = null
+  for (const [node, value] of originalsRef.current) node.style.transform = value
+  originalsRef.current.clear()
+}
+
 export function useAnimatedList<T extends HTMLElement>(
   deps: unknown[] = [],
   options?: {
@@ -214,16 +225,16 @@ export function useAnimatedList<T extends HTMLElement>(
 
   useLayoutEffect(() => {
     const el = ref.current
-    if (!el) return
+    if (!el) {
+      stopAnimation(tlRef, originalsRef)
+      return
+    }
 
     const settings = getSettings()
     if (!settings.animationsEnabled) {
       // 关闭动画时旧 timeline 可能仍在跑：终止并还原它写入的 transform，
       // 否则残留合成层会让毛玻璃不重绘（issue #327）。
-      tlRef.current?.kill()
-      tlRef.current = null
-      for (const [node, value] of originalsRef.current) node.style.transform = value
-      originalsRef.current.clear()
+      stopAnimation(tlRef, originalsRef)
       return
     }
 
@@ -310,9 +321,7 @@ export function useAnimatedList<T extends HTMLElement>(
 
     // 结束上一轮动画并还原它写入的 transform，再记录这批元素的原始值。
     // 顺序不能反：先快照会把上一轮的 translate3d(0,0,0) 当成「原始值」。
-    tlRef.current?.kill()
-    for (const [node, value] of originalsRef.current) node.style.transform = value
-    originalsRef.current.clear()
+    stopAnimation(tlRef, originalsRef)
     const originals = new Map<HTMLElement, string>()
     for (const child of children) originals.set(child, child.style.transform)
     originalsRef.current = originals
@@ -341,6 +350,10 @@ export function useAnimatedList<T extends HTMLElement>(
     })
     prevRectsRef.current = rects
   }, deps)
+
+  // 卸载时终止动画并还原内联 transform（列表在入场动画途中切换页面时，
+  // 避免旧 timeline 继续跑、节点残留合成层）。
+  useLayoutEffect(() => () => stopAnimation(tlRef, originalsRef), [])
 
   // 滚动期间暂停本列表自身的动画 timeline，停止后恢复
   // 自动向上查找最近的滚动祖先，无需页面单独传滚动容器 ref

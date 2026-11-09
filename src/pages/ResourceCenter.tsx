@@ -1330,7 +1330,8 @@ export default function ResourceCenter() {
     if (scope.length === 0) {
       notify(t('resource.favorites.transfer.empty'), 'info')
       return
-    }    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
+    }
+    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
       notify(t('resource.favorites.transfer.desktopOnly'), 'error')
       return
     }
@@ -1348,6 +1349,7 @@ export default function ResourceCenter() {
       return
     }
     try {
+      // 空数组已在上方按「无可导出」拦截：undefined = 全部，非空 = 当前筛选。
       const result = await exportResourceFavorites(target, keys)
       notify(t('resource.favorites.transfer.exported', { count: result.favorites }), 'success')
     } catch (e) {

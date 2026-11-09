@@ -203,8 +203,9 @@ pub struct FolderPlan {
     pub existing_id: Option<String>,
 }
 
-/// 计算每个导入收藏夹与本地夹子的对应关系：同 id 优先，其次同名（ASCII
-/// 大小写不敏感，避免 `Ä`/`ä` 被合并）；都没有则 `existing_id = None`（调用方新建）。
+/// 计算每个导入收藏夹与本地夹子的对应关系：同 id 优先，其次同名（仅 ASCII
+/// 大小写不敏感，避免 `Foo`/`foo` 互相覆盖；`Ä`/`ä` 视为不同名）；
+/// 都没有则 `existing_id = None`（调用方新建）。
 pub fn plan_folders(local: &[FavoriteFolder], imported: &[FavoriteFolder]) -> Vec<FolderPlan> {
     imported
         .iter()
