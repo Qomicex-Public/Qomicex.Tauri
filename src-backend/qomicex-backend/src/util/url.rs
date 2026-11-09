@@ -34,12 +34,28 @@ pub fn redact_urls_in_text(text: &str) -> String {
                 return token.to_string();
             };
             let (prefix, rest) = token.split_at(start);
-            // URL 到成对的引号/括号/尖括号为止；其余走到 token 尾（再交给
-            // `split_trailing_punct` 去掉句末标点）。否则 JSON 里的
-            // `...?token=x","next":1}` 会把尾部一起塞进 Url::parse 导致解析失败。
-            let end = rest
-                .find(['"', '\'', '<', '>', '`', ')', ']', '}'])
-                .unwrap_or(rest.len());
+            // URL 到成对的引号/尖括号/反引号，或**不配对**的右括号为止；
+            // 括号内的内容属于 URL（`a(1).zip` 不能被截断，否则 query 里的
+            // token 会漏进日志）。JSON 的 `","next":1}` 由引号终止。
+            let mut depth = 0usize;
+            let mut end = rest.len();
+            for (idx, ch) in rest.char_indices() {
+                match ch {
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' => {
+                        if depth == 0 {
+                            end = idx;
+                            break;
+                        }
+                        depth -= 1;
+                    }
+                    '"' | '\'' | '<' | '>' | '`' => {
+                        end = idx;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
             let (url_part, suffix) = rest.split_at(end);
             let (url, trailing) = split_trailing_punct(url_part);
             format!("{prefix}{}{trailing}{suffix}", redact_url(url))
@@ -117,5 +133,12 @@ mod tests {
         assert!(!got.contains("sig=1"), "实际: {got}");
         assert!(got.starts_with("[下载]("), "前缀必须保留: {got}");
         assert!(got.ends_with(')'), "后缀必须保留: {got}");
+
+        // URL 自带成对括号时不能被提前截断（否则 query 里的 token 会漏出来）。
+        let paren = "see https://cdn.example.com/a(1).zip?token=abc, retry";
+        let got = redact_urls_in_text(paren);
+        assert!(!got.contains("token=abc"), "实际: {got}");
+        assert!(got.contains("a(1).zip"), "实际: {got}");
+        assert!(got.contains("retry"), "实际: {got}");
     }
 }

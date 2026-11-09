@@ -31,9 +31,8 @@ use crate::error::{ApiError, ApiResult};
 use crate::services::resource_favorite::ResourceFavorite;
 use crate::services::resource_favorite_folder::{FavoriteFolder, FolderError};
 use crate::services::resource_favorite_transfer::{
-    backup_favorite_files, build_export, favorite_key, merge_candidates, plan_folders,
-    read_export_file, remap_folder_ids, write_export_file, FavoriteExport, FavoriteKey, ImportMode,
-    TransferError,
+    backup_favorite_files, build_export, merge_candidates, plan_folders, read_export_file,
+    remap_folder_ids, write_export_file, FavoriteExport, FavoriteKey, ImportMode, TransferError,
 };
 use crate::state::SharedState;
 
@@ -3468,7 +3467,7 @@ fn import_merge(
         .resource_favorites
         .get_all()
         .iter()
-        .map(|f| favorite_key(&f.source, &f.id, &f.category))
+        .map(|f| f.unique_key())
         .collect();
     let (candidates, skipped) = merge_candidates(&local_keys, &export.favorites);
     let (imported, raced) = state
