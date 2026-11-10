@@ -163,9 +163,6 @@ export function WidgetGrid({ widgets }: { widgets: WidgetEntry[] }) {
                     className="rounded-lg border border-border/40 px-3 py-1.5 text-xs hover:bg-accent"
                   >
                     {def.name}
-                    {def.pendingUpdate && (
-                      <span className="ml-1 text-primary">{t('dashboard.custom.updatePendingSuffix')}</span>
-                    )}
                   </button>
                 ))}
               </div>

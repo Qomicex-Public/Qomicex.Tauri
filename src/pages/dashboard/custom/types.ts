@@ -3,43 +3,63 @@
 
 import type {
   ActionName,
+  DATA_SOURCES,
+  DATA_TYPES,
   DataSourceSpec,
+  FIELD_TYPES,
   FolderTarget,
-  NavTarget,
   INSTALL_CATEGORIES,
   INSTALL_SOURCES,
+  NavTarget,
+  TRIGGER_EVENTS,
 } from './schema.ts'
 
 export type Bindable = string
 
+export interface ActionSpec {
+  name: ActionName
+  args: Record<string, string>
+}
+
+export interface GridAttached {
+  row?: number
+  column?: number
+  rowSpan?: number
+  columnSpan?: number
+}
+
+export interface NodeBase {
+  attached?: GridAttached
+}
+
 export interface LayoutAttrs {
   gap?: number
   padding?: number
-  align?: 'start' | 'center' | 'end' | 'stretch'
-  justify?: 'start' | 'center' | 'end' | 'between'
+  align?: 'Start' | 'Center' | 'End' | 'Stretch'
+  justify?: 'Start' | 'Center' | 'End' | 'Between'
   wrap?: boolean
 }
 
-export interface ContainerNode extends LayoutAttrs {
+export interface ContainerNode extends NodeBase, LayoutAttrs {
   kind: 'container'
-  direction: 'row' | 'column'
+  direction: 'Row' | 'Column'
   border: boolean
-  background: 'transparent' | 'card' | 'muted' | 'primary'
-  radius: 'none' | 'sm' | 'md' | 'lg' | 'full'
+  background: 'Transparent' | 'Card' | 'Muted' | 'Primary'
+  radius: 'None' | 'Sm' | 'Md' | 'Lg' | 'Full'
   children: WidgetNode[]
 }
 
-export interface RowNode extends LayoutAttrs {
+export interface RowNode extends NodeBase, LayoutAttrs {
   kind: 'row'
   children: WidgetNode[]
 }
 
-export interface ColumnNode extends LayoutAttrs {
+export interface ColumnNode extends NodeBase, LayoutAttrs {
   kind: 'column'
   children: WidgetNode[]
 }
 
-export interface GridNode extends LayoutAttrs {
+export interface GridNode extends NodeBase, LayoutAttrs {
   kind: 'grid'
   columns: number
   children: WidgetNode[]
@@ -51,7 +71,7 @@ export interface TabItemNode {
   children: WidgetNode[]
 }
 
-export interface TabsNode {
+export interface TabsNode extends NodeBase {
   kind: 'tabs'
   defaultIndex: number
   children: TabItemNode[]
@@ -62,7 +82,7 @@ export interface ListItemNode {
   child: WidgetNode
 }
 
-export interface ListNode {
+export interface ListNode extends NodeBase {
   kind: 'list'
   items: string
   as: string
@@ -71,26 +91,26 @@ export interface ListNode {
   item: ListItemNode
 }
 
-export interface TextNode {
+export interface TextNode extends NodeBase {
   kind: 'text'
   value: Bindable
-  size: 'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl'
-  weight: 'normal' | 'medium' | 'semibold' | 'bold'
-  color: 'default' | 'muted' | 'primary' | 'destructive'
+  size: 'Xs' | 'Sm' | 'Md' | 'Lg' | 'Xl' | '2Xl'
+  weight: 'Normal' | 'Medium' | 'Semibold' | 'Bold'
+  color: 'Default' | 'Muted' | 'Primary' | 'Destructive'
   clamp?: number
-  align?: 'start' | 'center' | 'end'
+  align?: 'Start' | 'Center' | 'End'
 }
 
-export interface ButtonNode {
+export interface ButtonNode extends NodeBase {
   kind: 'button'
+  name?: string
   text: Bindable
-  variant: 'default' | 'secondary' | 'outline' | 'ghost' | 'destructive' | 'link'
-  size: 'sm' | 'default' | 'lg'
-  onClick: ActionName
-  args: Record<string, Bindable>
+  variant: 'Default' | 'Secondary' | 'Outline' | 'Ghost' | 'Destructive' | 'Link'
+  size: 'Sm' | 'Md' | 'Lg'
+  onClick?: ActionSpec
 }
 
-export interface ImageNode {
+export interface ImageNode extends NodeBase {
   kind: 'image'
   src: Bindable
   alt?: string
@@ -99,19 +119,107 @@ export interface ImageNode {
   rounded: boolean
 }
 
-export interface DividerNode {
+export interface MediaNode extends NodeBase {
+  kind: 'media'
+  type: 'Audio' | 'Video'
+  source: Bindable
+  controls: boolean
+  autoPlay: boolean
+  loop: boolean
+  poster?: Bindable
+  volume?: number
+  muted: boolean
+}
+
+export interface TextBoxNode extends NodeBase {
+  kind: 'textBox'
+  name: string
+  value?: Bindable
+  placeholder?: Bindable
+  multiline: boolean
+  password: boolean
+  readOnly: boolean
+  maxLength?: number
+  onChange?: ActionSpec
+}
+
+export interface CheckBoxNode extends NodeBase {
+  kind: 'checkBox'
+  name: string
+  text?: Bindable
+  checked: boolean
+  onChange?: ActionSpec
+}
+
+export interface SliderNode extends NodeBase {
+  kind: 'slider'
+  name: string
+  value: number
+  min: number
+  max: number
+  step: number
+  onChange?: ActionSpec
+}
+
+export interface SelectNode extends NodeBase {
+  kind: 'select'
+  name: string
+  value?: Bindable
+  options: Bindable
+  onChange?: ActionSpec
+}
+
+export interface ProgressNode extends NodeBase {
+  kind: 'progress'
+  value: Bindable
+  max: number
+}
+
+export interface LinkNode extends NodeBase {
+  kind: 'link'
+  name?: string
+  text: Bindable
+  url?: Bindable
+  onClick?: ActionSpec
+}
+
+export interface FilePickerNode extends NodeBase {
+  kind: 'filePicker'
+  name: string
+  text: Bindable
+  filter?: string
+  value?: Bindable
+}
+
+export interface ColorPickerNode extends NodeBase {
+  kind: 'colorPicker'
+  name: string
+  value?: Bindable
+  onChange?: ActionSpec
+}
+
+export interface DividerNode extends NodeBase {
   kind: 'divider'
 }
 
-export interface SpacerNode {
+export interface SpacerNode extends NodeBase {
   kind: 'spacer'
   size: number
 }
 
-export interface IfNode {
+export interface IfNode extends NodeBase {
   kind: 'if'
   test: string
   children: WidgetNode[]
+}
+
+export interface UsingNode extends NodeBase {
+  kind: 'using'
+  name?: string
+  url?: string
+  as: string
+  refresh?: number
+  argumentsJson?: string
 }
 
 export type WidgetNode =
@@ -124,9 +232,65 @@ export type WidgetNode =
   | TextNode
   | ButtonNode
   | ImageNode
+  | MediaNode
+  | TextBoxNode
+  | CheckBoxNode
+  | SliderNode
+  | SelectNode
+  | ProgressNode
+  | LinkNode
+  | FilePickerNode
+  | ColorPickerNode
   | DividerNode
   | SpacerNode
   | IfNode
+  | UsingNode
+
+export interface ResourceEntry {
+  name: string
+  type: 'String' | 'Bool' | 'Number' | 'Binary' | 'Json'
+  value: string
+  mime?: string
+}
+
+export interface StructField {
+  name: string
+  type: (typeof FIELD_TYPES)[number] | string
+}
+
+export interface StructDef {
+  name: string
+  fields: StructField[]
+}
+
+export interface FunctionInput {
+  type: string
+  name: string
+}
+
+export interface FunctionOutput {
+  type: string
+  name: string
+}
+
+export interface FunctionNode {
+  name: string
+  timeout: number
+  structs: StructDef[]
+  inputs: FunctionInput[]
+  outputs: FunctionOutput[]
+  script: string
+}
+
+export interface TriggerNode {
+  event: (typeof TRIGGER_EVENTS)[number]
+  function?: string
+  action?: ActionSpec
+  control?: string
+  data?: string
+  interval?: number
+  once: boolean
+}
 
 export interface WidgetDocument {
   name: string
@@ -135,23 +299,38 @@ export interface WidgetDocument {
   description?: string
   updateUrl?: string
   datas: DataSourceSpec[]
+  resources: ResourceEntry[]
+  functions: FunctionNode[]
+  triggers: TriggerNode[]
   nodes: WidgetNode[]
-  staticImageUrls: string[]
+  staticMediaUrls: string[]
+  nestedUrls: string[]
 }
 
-export interface WidgetAction {
-  name: ActionName
-  args: Record<string, string>
+export interface BinaryValue {
+  Url: string
+  Base64: string
+  Mime: string
+  Size: number
 }
 
-/** 动作参数在点击时才求值；这里只保存已解析的枚举类型。 */
+export type DataSourceType = (typeof DATA_TYPES)[number]
+export type DataSourceKind = (typeof DATA_SOURCES)[number]
+
 export interface ResolvedActionArgs {
   instance?: string
   to?: NavTarget
   url?: string
-  target?: FolderTarget
+  folder?: FolderTarget
   value?: string
   projectId?: string
   source?: (typeof INSTALL_SOURCES)[number]
   category?: (typeof INSTALL_CATEGORIES)[number]
+  function?: string
+  arguments?: string
+  command?: string
+  workingDirectory?: string
+  timeout?: string
+  pluginId?: string
+  method?: string
 }

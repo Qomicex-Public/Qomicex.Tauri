@@ -5,7 +5,8 @@ import { getInstances, setDefaultInstance as apiSetDefaultInstance } from '../..
 import { loadSettings, openFolder } from '../../../api/settings.ts'
 import { openExternalUrl } from '../../../api/system.ts'
 import { NAV_PATHS, isSafeHttpsUrl, type NavTarget } from './schema.ts'
-import type { WidgetAction } from './types.ts'
+import { actionArguments } from './script/functions.ts'
+import type { ActionSpec } from './types.ts'
 import type { GameInstance } from '../../../types/index.ts'
 
 export interface WidgetActionContext {
@@ -16,6 +17,10 @@ export interface WidgetActionContext {
   refreshWidget: () => void
   notify: (message: string) => void
   navigateTo: (path: string) => void
+  runFunction: (name: string, action: ActionSpec) => Promise<void>
+  runCommand: (command: string, workingDirectory?: string, timeout?: number) => Promise<void>
+  callPlugin: (pluginId: string, method: string, args: unknown) => Promise<void>
+  scope: Record<string, unknown>
   t: (key: string) => string
 }
 
@@ -27,70 +32,99 @@ async function findInstance(ref: string): Promise<GameInstance> {
   return found
 }
 
-export async function runWidgetAction(action: WidgetAction, ctx: WidgetActionContext): Promise<void> {
+const INSTALL_SOURCE: Record<string, string> = {
+  Curseforge: 'curseforge',
+  Modrinth: 'modrinth',
+  Ftb: 'ftb',
+}
+
+const INSTALL_CATEGORY: Record<string, string> = {
+  Mod: 'mod',
+  Modpack: 'modpack',
+  Shader: 'shader',
+  Resourcepack: 'resourcepack',
+  Datapack: 'datapack',
+  Save: 'save',
+}
+
+export async function runWidgetAction(action: ActionSpec, ctx: WidgetActionContext): Promise<void> {
   const args = action.args
   switch (action.name) {
-    case 'launch': {
-      const instance = args.instance ? await findInstance(args.instance) : ctx.defaultInstance
+    case 'Launch': {
+      const instance = args.Instance ? await findInstance(args.Instance) : ctx.defaultInstance
       if (!instance) throw new Error(ctx.t('dashboard.noPinnedInstance'))
       await ctx.launch(instance)
       return
     }
-    case 'setDefaultInstance': {
-      const instance = await findInstance(args.instance)
+    case 'SetDefaultInstance': {
+      const instance = await findInstance(args.Instance)
       await apiSetDefaultInstance(instance.id)
       ctx.refreshDashboard()
       ctx.notify(ctx.t('dashboard.custom.actionDone'))
       return
     }
-    case 'openInstance': {
-      const instance = await findInstance(args.instance)
+    case 'OpenInstance': {
+      const instance = await findInstance(args.Instance)
       ctx.navigateTo(`/instances/${encodeURIComponent(instance.id)}`)
       return
     }
-    case 'navigate': {
-      const target = args.to as NavTarget
-      const path = NAV_PATHS[target]
-      if (!path) throw new Error(args.to)
+    case 'Navigate': {
+      const path = NAV_PATHS[args.To as NavTarget]
+      if (!path) throw new Error(args.To)
       ctx.navigateTo(path)
       return
     }
-    case 'openUrl': {
-      if (!isSafeHttpsUrl(args.url)) throw new Error(ctx.t('dashboard.custom.error.invalidUrl'))
-      await openExternalUrl(args.url)
+    case 'OpenUrl': {
+      if (!isSafeHttpsUrl(args.Url ?? '')) throw new Error(ctx.t('dashboard.custom.error.invalidUrl'))
+      await openExternalUrl(args.Url ?? '')
       return
     }
-    case 'openFolder': {
+    case 'OpenFolder': {
       const settings = await loadSettings()
       const base = settings.gameDir.replace(/[/\\]+$/, '')
-      const path = args.target === 'data'
+      const path = args.Folder === 'Data'
         ? settings.dataDir
-        : args.target === 'logs'
+        : args.Folder === 'Logs'
           ? `${base}/logs`
-          : args.target === 'screenshots'
+          : args.Folder === 'Screenshots'
             ? `${base}/screenshots`
             : base
       await openFolder(path)
       return
     }
-    case 'copy': {
-      await navigator.clipboard.writeText(args.value)
+    case 'Copy': {
+      await navigator.clipboard.writeText(args.Value ?? '')
       ctx.notify(ctx.t('dashboard.custom.actionDone'))
       return
     }
-    case 'selectAccount': {
+    case 'SelectAccount': {
       await ctx.selectAccount()
       return
     }
-    case 'install': {
-      const category = args.category || 'mod'
+    case 'Install': {
+      const source = INSTALL_SOURCE[args.Source ?? ''] ?? 'modrinth'
+      const category = INSTALL_CATEGORY[args.Category ?? 'Mod'] ?? 'mod'
       ctx.navigateTo(
-        `/resource-center/${encodeURIComponent(args.projectId)}?source=${encodeURIComponent(args.source)}&category=${encodeURIComponent(category)}`,
+        `/resource-center/${encodeURIComponent(args.ProjectId)}?source=${source}&category=${category}`,
       )
       return
     }
-    case 'refresh': {
+    case 'Refresh': {
       ctx.refreshWidget()
+      return
+    }
+    case 'CallFunction': {
+      await ctx.runFunction(args.Function, action)
+      return
+    }
+    case 'RunCommand': {
+      const timeout = args.Timeout ? Number(args.Timeout) : undefined
+      await ctx.runCommand(args.Command, args.WorkingDirectory, timeout)
+      return
+    }
+    case 'PluginApi': {
+      const payload = actionArguments(action, ctx.scope)
+      await ctx.callPlugin(args.PluginId, args.Method, payload)
       return
     }
     default:

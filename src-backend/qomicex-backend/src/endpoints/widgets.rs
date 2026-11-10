@@ -13,6 +13,7 @@ use std::time::Duration;
 use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
+use base64::Engine;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use url::{Host, Url};
@@ -20,13 +21,17 @@ use url::{Host, Url};
 use crate::error::{ApiError, ApiResult};
 use crate::state::{proxy_settings, SharedState, USER_AGENT};
 
-/// 单次响应体上限。组件 XML 与新闻类 JSON 都远小于此值。
-const MAX_RESPONSE_BYTES: usize = 512 * 1024;
+/// 文本/JSON/XML 响应体上限。
+const MAX_TEXT_BYTES: usize = 1024 * 1024;
+/// 图片/音频/视频等二进制响应体上限。
+const MAX_BINARY_BYTES: usize = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Deserialize)]
 pub struct ProxyRequest {
     url: String,
+    #[serde(default)]
+    binary: bool,
 }
 
 #[derive(Serialize)]
@@ -34,6 +39,10 @@ pub struct ProxyRequest {
 pub struct ProxyResponse {
     content_type: String,
     body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    base64: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<usize>,
 }
 
 pub fn router() -> Router<SharedState> {
@@ -45,6 +54,11 @@ async fn proxy(
     Json(req): Json<ProxyRequest>,
 ) -> ApiResult<Json<ProxyResponse>> {
     let url = validate_target_url(&req.url)?;
+    let limit = if req.binary {
+        MAX_BINARY_BYTES
+    } else {
+        MAX_TEXT_BYTES
+    };
     let host = match url.host() {
         Some(Host::Domain(d)) => d.to_string(),
         Some(Host::Ipv4(ip)) => ip.to_string(),
@@ -73,10 +87,14 @@ async fn proxy(
         )));
     }
     if let Some(len) = response.content_length() {
-        if len > MAX_RESPONSE_BYTES as u64 {
+        if len > limit as u64 {
             return Err(ApiError::bad_request(
                 "WIDGET_RESPONSE_TOO_LARGE",
-                "组件数据源响应超过 512KB",
+                if req.binary {
+                    "组件二进制响应超过 8MB"
+                } else {
+                    "组件文本响应超过 1MB"
+                },
             ));
         }
     }
@@ -91,17 +109,35 @@ async fn proxy(
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| ApiError::upstream_cause("读取组件数据源失败", &e))?;
-        if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
+        if body.len() + chunk.len() > limit {
             return Err(ApiError::bad_request(
                 "WIDGET_RESPONSE_TOO_LARGE",
-                "组件数据源响应超过 512KB",
+                if req.binary {
+                    "组件二进制响应超过 8MB"
+                } else {
+                    "组件文本响应超过 1MB"
+                },
             ));
         }
         body.extend_from_slice(&chunk);
     }
+    if req.binary {
+        let size = body.len();
+        return Ok(Json(ProxyResponse {
+            content_type,
+            body: String::new(),
+            base64: Some(base64::engine::general_purpose::STANDARD.encode(body)),
+            size: Some(size),
+        }));
+    }
     let body =
         String::from_utf8(body).map_err(|_| ApiError::upstream("组件数据源响应不是 UTF-8 文本"))?;
-    Ok(Json(ProxyResponse { content_type, body }))
+    Ok(Json(ProxyResponse {
+        content_type,
+        body,
+        base64: None,
+        size: None,
+    }))
 }
 
 /// 只允许 `https://host[:443]/...`：不允许 http、非 443 端口、用户信息与本地主机名。

@@ -1,119 +1,165 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// QWidget XML 的白名单、限制与纯函数工具。
-// 解析层（xml.ts）只做 DOM 遍历，所有安全判定集中在这里，方便用 node 脚本回归。
+// QWidget v2 XML 的白名单、限制与纯函数工具。
+// 元素/属性/枚举值统一大驼峰；解析层只做 DOM 遍历，安全判定集中在这里。
 
 export const WIDGET_LIMITS = {
-  maxXmlBytes: 64 * 1024,
-  maxDepth: 12,
-  maxNodes: 500,
+  maxXmlBytes: 256 * 1024,
+  maxDepth: 16,
+  maxNodes: 1000,
   maxListItems: 200,
   maxDataSources: 8,
-  maxDataBytes: 512 * 1024,
-  maxCacheBytes: 1024 * 1024,
+  maxDataBytes: 1024 * 1024,
+  maxBinaryBytes: 8 * 1024 * 1024,
+  maxCacheBytes: 2 * 1024 * 1024,
   maxFileBytes: 256 * 1024,
   updateTtlMs: 6 * 60 * 60 * 1000,
+  maxNestedDepth: 5,
+  maxNestedInstances: 20,
+  maxScriptBytes: 64 * 1024,
+  defaultScriptTimeoutMs: 3000,
+  maxScriptTimeoutMs: 10000,
+  maxCommandOutputBytes: 64 * 1024,
+  maxCommandTimeoutMs: 60_000,
+  triggerRatePerSecond: 20,
 } as const
 
 export const ACTION_NAMES = [
-  'launch',
-  'setDefaultInstance',
-  'openInstance',
-  'navigate',
-  'openUrl',
-  'openFolder',
-  'copy',
-  'selectAccount',
-  'install',
-  'refresh',
+  'Launch',
+  'SetDefaultInstance',
+  'OpenInstance',
+  'Navigate',
+  'OpenUrl',
+  'OpenFolder',
+  'Copy',
+  'SelectAccount',
+  'Install',
+  'Refresh',
+  'CallFunction',
+  'RunCommand',
+  'PluginApi',
 ] as const
 export type ActionName = (typeof ACTION_NAMES)[number]
 
 export const ACTION_ARGS: Record<ActionName, readonly string[]> = {
-  launch: ['instance'],
-  setDefaultInstance: ['instance'],
-  openInstance: ['instance'],
-  navigate: ['to'],
-  openUrl: ['url'],
-  openFolder: ['target'],
-  copy: ['value'],
-  selectAccount: [],
-  install: ['projectId', 'source', 'category'],
-  refresh: [],
+  Launch: ['Instance'],
+  SetDefaultInstance: ['Instance'],
+  OpenInstance: ['Instance'],
+  Navigate: ['To'],
+  OpenUrl: ['Url'],
+  OpenFolder: ['Folder'],
+  Copy: ['Value'],
+  SelectAccount: [],
+  Install: ['ProjectId', 'Source', 'Category'],
+  Refresh: [],
+  CallFunction: ['Function', 'Arguments'],
+  RunCommand: ['Command', 'WorkingDirectory', 'Timeout'],
+  PluginApi: ['PluginId', 'Method', 'Arguments'],
 }
 
 export const ACTION_REQUIRED: Record<ActionName, readonly string[]> = {
-  launch: [],
-  setDefaultInstance: ['instance'],
-  openInstance: ['instance'],
-  navigate: ['to'],
-  openUrl: ['url'],
-  openFolder: ['target'],
-  copy: ['value'],
-  selectAccount: [],
-  install: ['projectId', 'source'],
-  refresh: [],
+  Launch: [],
+  SetDefaultInstance: ['Instance'],
+  OpenInstance: ['Instance'],
+  Navigate: ['To'],
+  OpenUrl: ['Url'],
+  OpenFolder: ['Folder'],
+  Copy: ['Value'],
+  SelectAccount: [],
+  Install: ['ProjectId', 'Source'],
+  Refresh: [],
+  CallFunction: ['Function'],
+  RunCommand: ['Command'],
+  PluginApi: ['PluginId', 'Method'],
 }
 
 export const NAV_TARGETS = [
-  'instances',
-  'downloads',
-  'accounts',
-  'resourceCenter',
-  'settings',
-  'connect',
-  'running',
+  'Instances',
+  'Downloads',
+  'Accounts',
+  'ResourceCenter',
+  'Settings',
+  'Connect',
+  'Running',
 ] as const
 export type NavTarget = (typeof NAV_TARGETS)[number]
 
 export const NAV_PATHS: Record<NavTarget, string> = {
-  instances: '/instances',
-  downloads: '/downloads',
-  accounts: '/accounts',
-  resourceCenter: '/resource-center',
-  settings: '/settings',
-  connect: '/connect',
-  running: '/running',
+  Instances: '/instances',
+  Downloads: '/downloads',
+  Accounts: '/accounts',
+  ResourceCenter: '/resource-center',
+  Settings: '/settings',
+  Connect: '/connect',
+  Running: '/running',
 }
 
-export const FOLDER_TARGETS = ['game', 'logs', 'data', 'screenshots'] as const
+export const FOLDER_TARGETS = ['Game', 'Logs', 'Data', 'Screenshots'] as const
 export type FolderTarget = (typeof FOLDER_TARGETS)[number]
 
-export const INSTALL_SOURCES = ['curseforge', 'modrinth', 'ftb'] as const
-export const INSTALL_CATEGORIES = ['mod', 'modpack', 'shader', 'resourcepack', 'datapack', 'save'] as const
+export const INSTALL_SOURCES = ['Curseforge', 'Modrinth', 'Ftb'] as const
+export const INSTALL_CATEGORIES = ['Mod', 'Modpack', 'Shader', 'Resourcepack', 'Datapack', 'Save'] as const
 
-export const TEXT_SIZES = ['xs', 'sm', 'md', 'lg', 'xl', '2xl'] as const
-export const TEXT_WEIGHTS = ['normal', 'medium', 'semibold', 'bold'] as const
-export const TEXT_COLORS = ['default', 'muted', 'primary', 'destructive'] as const
-export const ALIGN_VALUES = ['start', 'center', 'end', 'stretch'] as const
-export const JUSTIFY_VALUES = ['start', 'center', 'end', 'between'] as const
-export const BUTTON_VARIANTS = ['default', 'secondary', 'outline', 'ghost', 'destructive', 'link'] as const
-export const BUTTON_SIZES = ['sm', 'default', 'lg'] as const
-export const BACKGROUND_VALUES = ['transparent', 'card', 'muted', 'primary'] as const
-export const RADIUS_VALUES = ['none', 'sm', 'md', 'lg', 'full'] as const
+export const TEXT_SIZES = ['Xs', 'Sm', 'Md', 'Lg', 'Xl', '2Xl'] as const
+export const TEXT_WEIGHTS = ['Normal', 'Medium', 'Semibold', 'Bold'] as const
+export const TEXT_COLORS = ['Default', 'Muted', 'Primary', 'Destructive'] as const
+export const ALIGN_VALUES = ['Start', 'Center', 'End', 'Stretch'] as const
+export const JUSTIFY_VALUES = ['Start', 'Center', 'End', 'Between'] as const
+export const BUTTON_VARIANTS = ['Default', 'Secondary', 'Outline', 'Ghost', 'Destructive', 'Link'] as const
+export const BUTTON_SIZES = ['Sm', 'Md', 'Lg'] as const
+export const BACKGROUND_VALUES = ['Transparent', 'Card', 'Muted', 'Primary'] as const
+export const RADIUS_VALUES = ['None', 'Sm', 'Md', 'Lg', 'Full'] as const
+export const DATA_TYPES = ['Json', 'Text', 'Xml', 'Binary'] as const
+export const DATA_SOURCES = ['Url', 'File'] as const
+export const MEDIA_TYPES = ['Audio', 'Video'] as const
+export const TRIGGER_EVENTS = ['Loaded', 'DataChanged', 'Click', 'Timer'] as const
+export const FIELD_TYPES = ['String', 'Number', 'Bool', 'DateTime', 'Json', 'Binary'] as const
 
-/** 元素 → 允许属性。未知元素/属性一律解析失败（远程 XML 不交给宽松解析）。 */
+/** 元素 → 允许属性。未知元素/属性一律解析失败。 */
 export const ELEMENT_ATTRS: Record<string, readonly string[]> = {
-  Widget: ['name', 'version', 'author', 'description', 'updateUrl'],
-  Data: ['name', 'url', 'refresh'],
-  Container: ['direction', 'gap', 'padding', 'align', 'justify', 'border', 'background', 'radius'],
-  Row: ['gap', 'padding', 'align', 'justify', 'wrap'],
-  Column: ['gap', 'padding', 'align', 'justify', 'wrap'],
-  Grid: ['columns', 'gap', 'padding', 'align', 'justify'],
-  Tabs: ['default'],
-  TabItem: ['title'],
-  List: ['items', 'as', 'gap', 'emptyText'],
+  Widget: ['Name', 'Version', 'Author', 'Description', 'UpdateUrl'],
+  Data: ['Name', 'Type', 'Source', 'Url', 'Path', 'Mime', 'Refresh'],
+  Resources: [],
+  String: ['Name'],
+  Bool: ['Name'],
+  Number: ['Name'],
+  Binary: ['Name', 'Mime'],
+  Resource: ['Name', 'Type', 'Mime'],
+  Triggers: [],
+  Trigger: ['Event', 'Function', 'Action', 'Control', 'Data', 'Interval', 'Once', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'PluginId', 'Method', 'Arguments'],
+  Function: ['Name', 'Timeout'],
+  Struct: ['Name'],
+  Field: ['Name', 'Type'],
+  Container: ['Direction', 'Gap', 'Padding', 'Align', 'Justify', 'Border', 'Background', 'Radius'],
+  Row: ['Gap', 'Padding', 'Align', 'Justify', 'Wrap'],
+  Column: ['Gap', 'Padding', 'Align', 'Justify', 'Wrap'],
+  Grid: ['Columns', 'Gap', 'Padding', 'Align', 'Justify'],
+  Tabs: ['Default'],
+  TabItem: ['Title'],
+  List: ['Items', 'As', 'Gap', 'EmptyText'],
   ListItem: [],
-  If: ['test'],
-  Text: ['value', 'size', 'weight', 'color', 'clamp', 'align'],
-  Button: ['text', 'variant', 'size', 'onClick', 'url', 'to', 'instance', 'target', 'value', 'source', 'projectId', 'category'],
-  Image: ['src', 'alt', 'w', 'h', 'rounded'],
+  If: ['Test'],
+  Text: ['Value', 'Size', 'Weight', 'Color', 'Clamp', 'Align'],
+  Button: ['Name', 'Text', 'Variant', 'Size', 'OnClick', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Function', 'Arguments', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method'],
+  Image: ['Src', 'Alt', 'W', 'H', 'Rounded'],
+  Media: ['Type', 'Source', 'Controls', 'AutoPlay', 'Loop', 'Poster', 'Volume', 'Muted'],
+  TextBox: ['Name', 'Value', 'Placeholder', 'Multiline', 'Password', 'ReadOnly', 'MaxLength', 'OnChange'],
+  CheckBox: ['Name', 'Text', 'Checked', 'OnChange'],
+  Slider: ['Name', 'Value', 'Min', 'Max', 'Step', 'OnChange'],
+  Select: ['Name', 'Value', 'Options', 'OnChange'],
+  Progress: ['Value', 'Max'],
+  Link: ['Name', 'Text', 'Url', 'OnClick', 'To'],
+  FilePicker: ['Name', 'Text', 'Filter', 'Value'],
+  ColorPicker: ['Name', 'Value', 'OnChange'],
   Divider: [],
-  Spacer: ['size'],
+  Spacer: ['Size'],
+  Using: ['Name', 'Url', 'As', 'Refresh', 'Arguments'],
 }
 
-export const BUTTON_BASE_ATTRS = ['text', 'variant', 'size', 'onClick'] as const
+export const BUTTON_BASE_ATTRS = ['Name', 'Text', 'Variant', 'Size', 'OnClick'] as const
+export const LINK_BASE_ATTRS = ['Name', 'Text', 'Url', 'OnClick', 'To'] as const
+export const ATTACHED_ATTRS = ['Grid.Row', 'Grid.Column', 'Grid.RowSpan', 'Grid.ColumnSpan'] as const
 
 export type WidgetErrorCode =
   | 'xmlEmpty'
@@ -137,6 +183,15 @@ export type WidgetErrorCode =
   | 'listTemplate'
   | 'tabsTemplate'
   | 'listItemRoot'
+  | 'duplicateProperty'
+  | 'invalidResource'
+  | 'invalidTrigger'
+  | 'invalidFunction'
+  | 'invalidStruct'
+  | 'invalidScript'
+  | 'invalidUsing'
+  | 'nestedTooDeep'
+  | 'nestedCycle'
 
 export class WidgetError extends Error {
   readonly code: WidgetErrorCode
@@ -168,6 +223,8 @@ export function resolvePath(scope: unknown, rawPath: string): unknown {
     } else if (typeof current === 'object') {
       if (!Object.prototype.hasOwnProperty.call(current, part)) return undefined
       current = (current as Record<string, unknown>)[part]
+    } else if (typeof current === 'string' && /^\d+$/.test(part)) {
+      current = current[Number(part)]
     } else {
       return undefined
     }
@@ -189,6 +246,22 @@ export function stringifyBinding(value: unknown): string {
 /** 把 `{path}` 插值成字符串；未命中为空串。 */
 export function interpolate(template: string, scope: unknown): string {
   return template.replace(BINDING, (_, token: string) => stringifyBinding(resolvePath(scope, token)))
+}
+
+/** JSON/对象参数递归插值：整个值就是一个绑定时保留原始类型。 */
+export function interpolateDeep(value: unknown, scope: unknown): unknown {
+  if (typeof value === 'string') {
+    const exact = value.trim().match(/^\{([^{}]+)\}$/s)
+    if (exact) return resolvePath(scope, exact[1])
+    return interpolate(value, scope)
+  }
+  if (Array.isArray(value)) return value.map((item) => interpolateDeep(item, scope))
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [key, item] of Object.entries(value)) out[key] = interpolateDeep(item, scope)
+    return out
+  }
+  return value
 }
 
 /** 严格 https:443、无用户信息、非本地主机名。私网 IP 由后端再拦一遍。 */
@@ -227,6 +300,11 @@ export function validateIdentifier(name: string, label: string): void {
   }
 }
 
+export function sanitizeAlias(raw: string): string {
+  const base = raw.replace(/[^A-Za-z0-9_]/g, '_').replace(/^(\d)/, '_$1')
+  return base || 'Child'
+}
+
 /** 远程 XML 的预检：拒绝 DOCTYPE/ENTITY 与超限内容（先于 DOMParser）。 */
 export function assertSafeXml(xml: string): void {
   if (!xml.trim()) throw new WidgetError('xmlEmpty')
@@ -240,18 +318,24 @@ export function assertSafeXml(xml: string): void {
 
 export interface DataSourceSpec {
   name: string
-  url: string
+  type: (typeof DATA_TYPES)[number]
+  source: (typeof DATA_SOURCES)[number]
+  url?: string
+  path?: string
+  mime?: string
   refresh: number
 }
 
-/** 组件会自动出网的目标主机：数据源、更新源、静态图片。动态图片由运行期白名单拦截。 */
+/** 组件会自动出网的目标主机：数据源、更新源、嵌套组件、静态图片/媒体。 */
 export function collectAutoHosts(input: {
   datas: DataSourceSpec[]
   updateUrl?: string
-  staticImageUrls: string[]
+  staticMediaUrls: string[]
+  nestedUrls: string[]
 }): string[] {
   const hosts = new Set<string>()
   for (const data of input.datas) {
+    if (data.source !== 'Url' || !data.url) continue
     const host = hostOf(data.url)
     if (host) hosts.add(host)
   }
@@ -259,10 +343,18 @@ export function collectAutoHosts(input: {
     const host = hostOf(input.updateUrl)
     if (host) hosts.add(host)
   }
-  for (const src of input.staticImageUrls) {
-    if (isBound(src)) continue
-    const host = hostOf(src)
+  for (const url of [...input.staticMediaUrls, ...input.nestedUrls]) {
+    if (isBound(url)) continue
+    const host = hostOf(url)
     if (host) hosts.add(host)
   }
   return [...hosts].sort()
+}
+
+/** 本地文件相对路径解析：绝对路径原样；相对路径基于组件目录或数据目录。 */
+export function resolveLocalPath(raw: string, baseDir: string): string {
+  const path = raw.trim()
+  if (!path) return ''
+  if (/^[A-Za-z]:[\\/]/.test(path) || path.startsWith('\\\\') || path.startsWith('/')) return path
+  return `${baseDir.replace(/[/\\]+$/, '')}/${path.replace(/^\.\//, '')}`
 }

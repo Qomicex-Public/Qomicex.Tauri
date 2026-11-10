@@ -3,23 +3,19 @@
 
 import { create } from 'zustand'
 import { WIDGET_LIMITS } from './schema.ts'
-
-export interface PendingUpdate {
-  xml: string
-  version: string
-  hosts: string[]
-}
+import type { BinaryValue } from './types.ts'
 
 export interface CustomWidgetDef {
   id: string
   name: string
   xml: string
-  /** 在线导入来源；存在时按 TTL 静默检查更新。 */
+  /** 在线导入来源；存在时按 TTL 检查更新。 */
   sourceUrl?: string
-  /** 用户已确认的可自动出网域名（数据源 / 更新源 / 静态图片）。 */
+  /** 本地导入的 .qwidget 路径；相对路径以它所在目录为基准。 */
+  sourcePath?: string
+  /** 用户已确认的可自动出网域名。 */
   hosts: string[]
   lastChecked?: number
-  pendingUpdate?: PendingUpdate
 }
 
 interface DataEntry {
@@ -36,12 +32,12 @@ interface CustomWidgetState {
   addDef: (def: CustomWidgetDef) => void
   updateDef: (id: string, patch: Partial<CustomWidgetDef>) => void
   removeDef: (id: string) => void
-  setData: (widgetId: string, name: string, json: unknown) => void
-  clearData: (widgetId: string) => void
+  setData: (widgetKey: string, name: string, json: unknown) => void
+  clearData: (widgetKey: string) => void
 }
 
-const DEFS_KEY = 'qomicex.dashboard.customWidgets.v1'
-const CACHE_KEY = 'qomicex.dashboard.customWidgetData.v1'
+const DEFS_KEY = 'qomicex.dashboard.customWidgets.v2'
+const CACHE_KEY = 'qomicex.dashboard.customWidgetData.v2'
 
 function loadDefs(): CustomWidgetDef[] {
   try {
@@ -58,7 +54,7 @@ function persistDefs(defs: CustomWidgetDef[]): void {
   try {
     localStorage.setItem(DEFS_KEY, JSON.stringify(defs))
   } catch {
-    /* 配额满时保留内存状态，下次写入再试 */
+    /* 配额满时保留内存状态 */
   }
 }
 
@@ -73,32 +69,30 @@ function loadCache(): DataCache {
   }
 }
 
-/** 总量裁剪：按写入时间从旧到新丢弃，直到序列化长度低于上限。 */
+/** 总量裁剪：按写入时间从旧到新丢弃，直到低于上限。 */
 export function pruneDataCache(cache: DataCache): DataCache {
-  const entries: Array<{ widgetId: string; name: string; at: number; size: number }> = []
-  for (const [widgetId, sources] of Object.entries(cache)) {
+  const entries: Array<{ widgetKey: string; name: string; at: number; size: number }> = []
+  for (const [widgetKey, sources] of Object.entries(cache)) {
     for (const [name, entry] of Object.entries(sources)) {
       entries.push({
-        widgetId,
+        widgetKey,
         name,
         at: entry.at,
         size: JSON.stringify(entry.json)?.length ?? 0,
       })
     }
   }
-  const total = entries.reduce((sum, e) => sum + e.size, 0)
-  if (total <= WIDGET_LIMITS.maxCacheBytes) return cache
-
+  if (entries.reduce((sum, entry) => sum + entry.size, 0) <= WIDGET_LIMITS.maxCacheBytes) return cache
   entries.sort((a, b) => a.at - b.at)
   const next: DataCache = {}
-  let remaining = total
+  let remaining = entries.reduce((sum, entry) => sum + entry.size, 0)
   for (const entry of entries) {
     if (remaining > WIDGET_LIMITS.maxCacheBytes) {
       remaining -= entry.size
       continue
     }
-    const sources = next[entry.widgetId] ?? (next[entry.widgetId] = {})
-    const original = cache[entry.widgetId]?.[entry.name]
+    const sources = next[entry.widgetKey] ?? (next[entry.widgetKey] = {})
+    const original = cache[entry.widgetKey]?.[entry.name]
     if (original) sources[entry.name] = original
   }
   return next
@@ -144,11 +138,11 @@ export const useCustomWidgetStore = create<CustomWidgetState>((set, get) => ({
     set({ defs, dataCache })
   },
 
-  setData: (widgetId, name, json) => {
+  setData: (widgetKey, name, json) => {
     const dataCache = pruneDataCache({
       ...get().dataCache,
-      [widgetId]: {
-        ...(get().dataCache[widgetId] ?? {}),
+      [widgetKey]: {
+        ...(get().dataCache[widgetKey] ?? {}),
         [name]: { at: Date.now(), json },
       },
     })
@@ -156,10 +150,35 @@ export const useCustomWidgetStore = create<CustomWidgetState>((set, get) => ({
     set({ dataCache })
   },
 
-  clearData: (widgetId) => {
+  clearData: (widgetKey) => {
     const dataCache = { ...get().dataCache }
-    delete dataCache[widgetId]
+    delete dataCache[widgetKey]
     persistCache(dataCache)
     set({ dataCache })
   },
 }))
+
+// 远程嵌套组件 XML 缓存（内存）。按 URL + 6h TTL 复用。
+const remoteWidgets = new Map<string, { xml: string; at: number }>()
+
+export function getRemoteWidget(url: string): string | null {
+  const hit = remoteWidgets.get(url)
+  if (!hit) return null
+  if (Date.now() - hit.at > WIDGET_LIMITS.updateTtlMs) return null
+  return hit.xml
+}
+
+export function setRemoteWidget(url: string, xml: string): void {
+  remoteWidgets.set(url, { xml, at: Date.now() })
+}
+
+// 二进制只放内存，避免 base64 撑爆 localStorage。
+const binaryCache = new Map<string, BinaryValue>()
+
+export function getBinary(key: string): BinaryValue | undefined {
+  return binaryCache.get(key)
+}
+
+export function setBinary(key: string, value: BinaryValue): void {
+  binaryCache.set(key, value)
+}
