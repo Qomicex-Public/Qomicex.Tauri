@@ -93,7 +93,13 @@ pub(crate) async fn deep_scan_java_runtimes(
     });
     match tokio::time::timeout(budget, scan).await {
         Ok(Ok(results)) => Some(results),
-        _ => None,
+        // 扫描任务 panic / 被取消：与超时区分开，否则调用方只会写"超时"，
+        // 把真正的失败原因埋掉。
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "深度扫描任务未正常结束");
+            None
+        }
+        Err(_) => None,
     }
 }
 
@@ -110,21 +116,32 @@ pub(crate) async fn download_java_runtime(
     manager: Arc<DownloadManager>,
     required_major: i32,
 ) -> Result<String, String> {
+    let Some(architecture) = host_architecture() else {
+        return Err(format!(
+            "当前 CPU 架构（{}）没有可用的 Java 下载包",
+            std::env::consts::ARCH
+        ));
+    };
     let store = JavaRuntimeStore::new(core.clone());
     let service = JavaDownloadService::new(core.clone(), store, Arc::new(ArcSwap::from(manager)));
 
-    let mut last_error = String::new();
+    // 各来源的错误都保留：只留最后一条会把 Adoptium 的 TLS 失败盖掉，
+    // 用户只看到 Zulu 的镜像问题就判断不出根因。
+    let mut errors: Vec<String> = Vec::new();
     for vendor in ["temurin", "zulu"] {
-        let Some(request) = resolve_java_package(core, vendor, required_major).await else {
-            last_error = format!("{vendor}: 未找到 Java {required_major} 或更高版本的下载包");
+        let Some(request) = resolve_java_package(core, vendor, required_major, architecture).await
+        else {
+            errors.push(format!(
+                "{vendor}: 未找到 Java {required_major} 或更高版本的下载包"
+            ));
             continue;
         };
         match service.download_blocking(request).await {
             Ok(path) => return Ok(path),
-            Err(e) => last_error = format!("{vendor}: {e}"),
+            Err(e) => errors.push(format!("{vendor}: {e}")),
         }
     }
-    Err(last_error)
+    Err(errors.join("; "))
 }
 
 /// 解析指定来源下可用的下载请求（大版本按候选顺序降级）。
@@ -132,13 +149,14 @@ async fn resolve_java_package(
     core: &Arc<GameCore>,
     vendor: &str,
     required_major: i32,
+    architecture: &str,
 ) -> Option<JavaDownloadStartRequest> {
     for version in java_download_candidates(required_major) {
         let request = JavaDownloadStartRequest {
             vendor: vendor.to_string(),
             version,
             platform: host_platform(),
-            architecture: host_architecture(),
+            architecture: architecture.to_string(),
         };
         if resolve_package(core, &request).await.is_ok() {
             return Some(request);
@@ -1251,15 +1269,14 @@ fn host_platform() -> String {
     }
 }
 
-/// 宿主 CPU 架构（对应 `/java/download/catalog` 的 architecture 取值）。
-fn host_architecture() -> String {
+/// 宿主 CPU 架构（取值须与 `map_architecture` 支持的一致）；不支持时为 `None`，
+/// 不能静默回退 —— 装错架构的 JDK 只会让安装器以一个更费解的错误退出。
+fn host_architecture() -> Option<&'static str> {
     match std::env::consts::ARCH {
-        "x86_64" => "x64",
-        "aarch64" => "arm64",
-        "x86" => "x86",
-        _ => "x64",
+        "x86_64" => Some("x64"),
+        "aarch64" => Some("arm64"),
+        _ => None,
     }
-    .to_string()
 }
 
 fn new_task_id() -> String {

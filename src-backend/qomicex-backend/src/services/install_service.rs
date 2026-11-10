@@ -1178,11 +1178,13 @@ pub(crate) async fn resolve_java_path(
         if let Some(deep) =
             crate::endpoints::java::deep_scan_java_runtimes(core, DEEP_SCAN_BUDGET).await
         {
-            javas = deep;
+            // 深扫不接 game_dir（全盘 BFS 用不上它），所以要把 Quick 命中、
+            // 深扫没覆盖到的 `{gameDir}/runtime` 合并回来，按路径去重。
+            merge_java_runtimes(&mut javas, deep);
         } else {
             tracing::warn!(
                 budget_secs = DEEP_SCAN_BUDGET.as_secs(),
-                "深度扫描超时，跳过"
+                "深度扫描未在预算内完成，跳过"
             );
         }
     }
@@ -1244,6 +1246,18 @@ fn satisfies(java: &JavaResult, required_java: i32) -> bool {
         java.major_version == 8
     } else {
         java.major_version >= required_java
+    }
+}
+
+/// 按路径（忽略大小写）并入扫描结果，已有路径不重复加。
+fn merge_java_runtimes(base: &mut Vec<JavaResult>, extra: Vec<JavaResult>) {
+    for found in extra {
+        if !base
+            .iter()
+            .any(|j| j.path.eq_ignore_ascii_case(&found.path))
+        {
+            base.push(found);
+        }
     }
 }
 
@@ -2692,6 +2706,28 @@ mod tests {
         // 8：必须精确 8（与 core JavaRecommender 一致，17 跑不了 1.8 的加载器处理器）
         assert!(satisfies(&mk(8), 8));
         assert!(!satisfies(&mk(17), 8));
+    }
+
+    #[test]
+    fn merge_java_runtimes_dedupes_by_path_ignoring_case() {
+        let mk = |path: &str, major: i32| JavaResult {
+            path: path.to_string(),
+            major_version: major,
+            version: format!("{major}.0"),
+            state: JavaState::Valid,
+            arch: "x64".to_string(),
+            r#type: qomicex_core::models::java::JavaType::JDK,
+            discovered_by: "test".to_string(),
+            name: format!("Java {major}"),
+        };
+        let mut base = vec![mk("C:/a/bin/java.exe", 17)];
+        // 深扫结果里重复的路径（大小写不同）不再追加，新的才追加
+        merge_java_runtimes(
+            &mut base,
+            vec![mk("c:/A/bin/java.exe", 8), mk("D:/b/bin/java.exe", 21)],
+        );
+        assert_eq!(base.len(), 2, "{base:?}");
+        assert_eq!(base[1].major_version, 21);
     }
 
     #[test]
