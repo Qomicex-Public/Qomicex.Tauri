@@ -121,6 +121,12 @@ try {
   check('版本比较 2.0 > 1.9.9', schema.compareVersions('2.0', '1.9.9') > 0, true)
   check('版本预发布低于正式版', schema.compareVersions('1.2.0-beta', '1.2.0') < 0, true)
 
+  // ---- ContentProperty ----
+  check('Text ContentProperty', schema.CONTENT_PROPERTY.Text, 'Value')
+  check('Button ContentProperty', schema.CONTENT_PROPERTY.Button, 'Text')
+  check('Media ContentProperty', schema.CONTENT_PROPERTY.Media, 'Source')
+  check('Container 无标量 ContentProperty', schema.CONTENT_PROPERTY.Container, undefined)
+
   // ---- 标识符 ----
   schema.validateIdentifier('newsData', 'test')
   schema.validateIdentifier('a-b', 'test')

@@ -219,3 +219,57 @@
 - 属性候选按 Tab/Enter 会插入 `Name=""` 并把光标放在引号内；标签/值/绑定候选只插入名称。
 - 输入 `/` 会自动补成 `/>`（已有 `>` 时只补 `/`）。
 
+
+
+### 2026-11-10 更新
+
+## 三种等价写法（属性 / 内容 / 属性元素）
+
+同一个属性赋值支持三种写法，效果一致；同时设置会报 `duplicateProperty`。
+
+```xml
+<!-- 属性语法 -->
+<Text Value="Hello" />
+
+<!-- 内容语法（ContentProperty） -->
+<Text>Hello</Text>
+
+<!-- 属性元素语法 -->
+<Text><Text.Value>Hello</Text.Value></Text>
+```
+
+内容语法依赖每个元素的 ContentProperty：
+
+| 元素 | ContentProperty |
+|---|---|
+| `Text` | `Value` |
+| `Button` / `Link` / `CheckBox` / `FilePicker` | `Text` |
+| `TextBox` / `ColorPicker` / `Progress` / `Slider` | `Value` |
+| `Select` | `Options`（JSON） |
+| `Media` | `Source` |
+| `Image` | `Src` |
+| `Spacer` | `Size` |
+| `Data` | `Url` |
+| `String` / `Bool` / `Number` / `Binary` / `Resource` | 文本内容（等价 `Text` 属性） |
+| `Container` / `Row` / `Column` / `Grid` / `Tabs` / `List` / `If` / `Widget` | 子元素（内容语法天然支持） |
+
+示例：
+
+```xml
+<Button OnClick="Navigate" To="Instances">实例管理</Button>
+
+<TextBox Name="Keyword" Placeholder="搜索">
+  <TextBox.Value>{Resources.LastKeyword}</TextBox.Value>
+</TextBox>
+
+<Media Type="Audio">
+  <Media.Source>{Data.Music.Url}</Media.Source>
+</Media>
+```
+
+注意：
+
+- 内容语法只能表达**文本值**；属性元素语法适合显式指定属性、枚举、动作参数，以及未来可能出现的复杂对象。
+- 元素内容不能同时放子元素和文本（容器除外：容器内容就是子元素）。
+- 属性与内容/属性元素重复设置同一个属性会直接报错。
+

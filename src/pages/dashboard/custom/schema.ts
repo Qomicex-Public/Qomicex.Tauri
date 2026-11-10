@@ -161,6 +161,27 @@ export const BUTTON_BASE_ATTRS = ['Name', 'Text', 'Variant', 'Size', 'OnClick'] 
 export const LINK_BASE_ATTRS = ['Name', 'Text', 'Url', 'OnClick', 'To'] as const
 export const ATTACHED_ATTRS = ['Grid.Row', 'Grid.Column', 'Grid.RowSpan', 'Grid.ColumnSpan'] as const
 
+/**
+ * ContentProperty 映射：标签之间的文本等价于给这个属性赋值。
+ * 容器/集合类元素（Container/Row/Grid/Tabs/Resources 等）的内容是子元素，不在表内。
+ */
+export const CONTENT_PROPERTY: Record<string, string> = {
+  Text: 'Value',
+  Button: 'Text',
+  Link: 'Text',
+  CheckBox: 'Text',
+  FilePicker: 'Text',
+  Media: 'Source',
+  Image: 'Src',
+  TextBox: 'Value',
+  ColorPicker: 'Value',
+  Select: 'Options',
+  Progress: 'Value',
+  Slider: 'Value',
+  Spacer: 'Size',
+  Data: 'Url',
+}
+
 export type WidgetErrorCode =
   | 'xmlEmpty'
   | 'xmlTooLarge'

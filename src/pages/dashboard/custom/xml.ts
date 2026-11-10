@@ -6,6 +6,7 @@ import {
   ACTION_NAMES,
   ACTION_REQUIRED,
   ATTACHED_ATTRS,
+  CONTENT_PROPERTY,
   DATA_SOURCES,
   DATA_TYPES,
   ELEMENT_ATTRS,
@@ -137,6 +138,26 @@ function directText(el: Element): string {
     if (child.nodeType === 3 || child.nodeType === 4) out += child.textContent ?? ''
   }
   return out.trim()
+}
+
+/** 内容语法：标签之间的文本等价于给 ContentProperty 赋值。 */
+function applyContentProperty(
+  tag: string,
+  attrs: Map<string, string>,
+  el: Element,
+  children: Element[],
+): void {
+  const property = CONTENT_PROPERTY[tag]
+  if (!property) return
+  const text = directText(el)
+  if (children.length > 0) {
+    throw new WidgetError('unknownElement', `${tag} 的内容只能是文本，子元素请用属性元素或容器`)
+  }
+  if (!text) return
+  if (attrs.has(property)) {
+    throw new WidgetError('duplicateProperty', `${tag}.${property} 同时通过属性和内容赋值`)
+  }
+  attrs.set(property, text)
 }
 
 function validateAttrs(tag: string, attrs: Map<string, string>): void {
@@ -310,8 +331,9 @@ function parseAction(attrs: Map<string, string>, tag: string, actionName: string
 }
 
 function parseData(el: Element, ctx: ParseCtx): void {
-  const { attrs, propertyElements } = readElement(el)
+  const { attrs, propertyElements, children } = readElement(el)
   applyProperties('Data', attrs, propertyElements)
+  applyContentProperty('Data', attrs, el, children)
   validateAttrs('Data', attrs)
   if (ctx.datas.length >= WIDGET_LIMITS.maxDataSources) throw new WidgetError('tooManyData')
   const name = attr(attrs, 'Name')?.trim() || 'Data'
@@ -603,8 +625,9 @@ function parseNode(el: Element, ctx: ParseCtx, depth: number): WidgetNode {
       return { kind: 'divider', attached: parseAttached(attrs) }
     }
     case 'Spacer': {
-      const { attrs, propertyElements } = readElement(el)
+      const { attrs, propertyElements, children } = readElement(el)
       applyProperties('Spacer', attrs, propertyElements)
+      applyContentProperty('Spacer', attrs, el, children)
       validateAttrs('Spacer', attrs)
       return { kind: 'spacer', size: intAttr(attrs, 'Spacer', 'Size', 0, 96, 8), attached: parseAttached(attrs) } satisfies SpacerNode
     }
@@ -747,8 +770,9 @@ function baseNode(_tag: string, attrs: Map<string, string>) {
 }
 
 function parseText(el: Element): TextNode {
-  const { attrs, propertyElements } = readElement(el)
+  const { attrs, propertyElements, children } = readElement(el)
   applyProperties('Text', attrs, propertyElements)
+  applyContentProperty('Text', attrs, el, children)
   validateAttrs('Text', attrs)
   return {
     kind: 'text',
@@ -763,8 +787,9 @@ function parseText(el: Element): TextNode {
 }
 
 function parseButton(el: Element): ButtonNode {
-  const { attrs, propertyElements } = readElement(el)
+  const { attrs, propertyElements, children } = readElement(el)
   applyProperties('Button', attrs, propertyElements)
+  applyContentProperty('Button', attrs, el, children)
   validateAttrs('Button', attrs)
   const onClickRaw = attr(attrs, 'OnClick')
   const onClick = onClickRaw ? parseAction(attrs, 'Button', onClickRaw) : undefined
@@ -787,8 +812,9 @@ function parseButton(el: Element): ButtonNode {
 }
 
 function parseImage(el: Element, ctx: ParseCtx): ImageNode {
-  const { attrs, propertyElements } = readElement(el)
+  const { attrs, propertyElements, children } = readElement(el)
   applyProperties('Image', attrs, propertyElements)
+  applyContentProperty('Image', attrs, el, children)
   validateAttrs('Image', attrs)
   const src = requiredAttr(attrs, 'Image', 'Src')
   validateStaticUrl(src, 'Image@Src')
@@ -805,8 +831,9 @@ function parseImage(el: Element, ctx: ParseCtx): ImageNode {
 }
 
 function parseMedia(el: Element, ctx: ParseCtx): MediaNode {
-  const { attrs, propertyElements } = readElement(el)
+  const { attrs, propertyElements, children } = readElement(el)
   applyProperties('Media', attrs, propertyElements)
+  applyContentProperty('Media', attrs, el, children)
   validateAttrs('Media', attrs)
   const source = requiredAttr(attrs, 'Media', 'Source')
   validateStaticUrl(source, 'Media@Source')
@@ -831,8 +858,9 @@ function parseOnChange(attrs: Map<string, string>, tag: string): ActionSpec | un
 }
 
 function parseTextBox(el: Element): TextBoxNode {
-  const { attrs, propertyElements } = readElement(el)
+  const { attrs, propertyElements, children } = readElement(el)
   applyProperties('TextBox', attrs, propertyElements)
+  applyContentProperty('TextBox', attrs, el, children)
   validateAttrs('TextBox', attrs)
   return {
     kind: 'textBox',
@@ -849,8 +877,9 @@ function parseTextBox(el: Element): TextBoxNode {
 }
 
 function parseCheckBox(el: Element): CheckBoxNode {
-  const { attrs, propertyElements } = readElement(el)
+  const { attrs, propertyElements, children } = readElement(el)
   applyProperties('CheckBox', attrs, propertyElements)
+  applyContentProperty('CheckBox', attrs, el, children)
   validateAttrs('CheckBox', attrs)
   return {
     kind: 'checkBox',
@@ -865,8 +894,9 @@ function parseCheckBox(el: Element): CheckBoxNode {
 }
 
 function parseSlider(el: Element): SliderNode {
-  const { attrs, propertyElements } = readElement(el)
+  const { attrs, propertyElements, children } = readElement(el)
   applyProperties('Slider', attrs, propertyElements)
+  applyContentProperty('Slider', attrs, el, children)
   validateAttrs('Slider', attrs)
   return {
     kind: 'slider',
@@ -881,8 +911,9 @@ function parseSlider(el: Element): SliderNode {
 }
 
 function parseSelect(el: Element): SelectNode {
-  const { attrs, propertyElements } = readElement(el)
+  const { attrs, propertyElements, children } = readElement(el)
   applyProperties('Select', attrs, propertyElements)
+  applyContentProperty('Select', attrs, el, children)
   validateAttrs('Select', attrs)
   const options = attr(attrs, 'Options') ?? '[]'
   if (!isBound(options)) {
@@ -904,8 +935,9 @@ function parseSelect(el: Element): SelectNode {
 }
 
 function parseProgress(el: Element): ProgressNode {
-  const { attrs, propertyElements } = readElement(el)
+  const { attrs, propertyElements, children } = readElement(el)
   applyProperties('Progress', attrs, propertyElements)
+  applyContentProperty('Progress', attrs, el, children)
   validateAttrs('Progress', attrs)
   return {
     kind: 'progress',
@@ -916,8 +948,9 @@ function parseProgress(el: Element): ProgressNode {
 }
 
 function parseLink(el: Element): LinkNode {
-  const { attrs, propertyElements } = readElement(el)
+  const { attrs, propertyElements, children } = readElement(el)
   applyProperties('Link', attrs, propertyElements)
+  applyContentProperty('Link', attrs, el, children)
   validateAttrs('Link', attrs)
   const url = attr(attrs, 'Url')
   if (url) validateStaticUrl(url, 'Link@Url')
@@ -934,8 +967,9 @@ function parseLink(el: Element): LinkNode {
 }
 
 function parseFilePicker(el: Element): FilePickerNode {
-  const { attrs, propertyElements } = readElement(el)
+  const { attrs, propertyElements, children } = readElement(el)
   applyProperties('FilePicker', attrs, propertyElements)
+  applyContentProperty('FilePicker', attrs, el, children)
   validateAttrs('FilePicker', attrs)
   return {
     kind: 'filePicker',
@@ -948,8 +982,9 @@ function parseFilePicker(el: Element): FilePickerNode {
 }
 
 function parseColorPicker(el: Element): ColorPickerNode {
-  const { attrs, propertyElements } = readElement(el)
+  const { attrs, propertyElements, children } = readElement(el)
   applyProperties('ColorPicker', attrs, propertyElements)
+  applyContentProperty('ColorPicker', attrs, el, children)
   validateAttrs('ColorPicker', attrs)
   return {
     kind: 'colorPicker',
