@@ -3,7 +3,7 @@
 
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tauri::async_runtime;
 use tauri::Window;
@@ -60,7 +60,7 @@ const MAX_COMMAND_OUTPUT_BYTES: usize = 64 * 1024;
 
 /// 只允许 `.qwidget` / `.xml`：导入导出走原生对话框选路径，但 IPC 仍可能被
 /// 任意页面调用，扩展名白名单把可读写面收窄到组件文件。
-fn is_widget_file(path: &PathBuf) -> bool {
+fn is_widget_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| {
