@@ -23,7 +23,7 @@ use qomicex_core::builder::GameCoreBuilder;
 use qomicex_core::core::GameCore;
 use qomicex_core::models::download::DownloadMirror;
 use qomicex_core::models::installer::{MissFileInfo, ModLoaderType};
-use qomicex_core::models::java::{JavaResult, JavaState};
+use qomicex_core::models::java::{JavaResult, JavaSearchMode, JavaState};
 use qomicex_core::models::version_metadata::{CompleteVersionMetadata, JavaVersion};
 use qomicex_core::services::installers::factory::DefaultInstallerFactory;
 use qomicex_core::services::installers::installer::{Installer, MissFileData};
@@ -35,6 +35,10 @@ use crate::services::install_tracker::{InstallHandle, InstallStatus, InstallStep
 
 /// 顶层管线的步骤权重预算（合成总进度按 Σweight 归一化，任意正数均可）。
 pub const INSTALL_STEP_BUDGET_TOP: f64 = 100.0;
+
+/// 安装前深度扫描 Java 的时间预算：机械盘上全盘 BFS 可能拖很久，
+/// 超时就直接进下载分支（扫描线程自行跑完，结果丢弃）。
+const DEEP_SCAN_BUDGET: Duration = Duration::from_secs(30);
 
 /// 安装流水线输入参数（由 `install_instance` 从 `InstallerRequest` + 实例组装）。
 #[derive(Debug, Clone)]
@@ -630,6 +634,7 @@ pub async fn run_install_pipeline(
                     &game_version,
                     None,
                     download_source_id,
+                    &download_manager,
                 )
                 .await?;
                 handle.mark_step("install-optifine", "done");
@@ -652,6 +657,7 @@ pub async fn run_install_pipeline(
             &game_version,
             installer_path.as_deref(),
             download_source_id,
+            &download_manager,
         )
         .await?;
         handle.mark_step("install-loader", "done");
@@ -1065,6 +1071,7 @@ async fn install_loader(
     game_version: &str,
     installer_path: Option<&Path>,
     download_source_id: i32,
+    download_manager: &Arc<DownloadManager>,
 ) -> Result<(), String> {
     let factory = DefaultInstallerFactory;
     let game_dir_str = game_dir.to_string_lossy().into_owned();
@@ -1082,7 +1089,9 @@ async fn install_loader(
                 .ok_or("安装器路径非法")?
                 .to_string();
             let required_java = required_java_from_json(inherits_from_json);
-            let java_path = resolve_java_path(core, required_java).await?;
+            let java_path =
+                resolve_java_path(core, Some(&game_dir_str), required_java, download_manager)
+                    .await?;
             let inst = if lower == "forge" {
                 factory.create_forge(download_source_id, &game_dir_str, game_version)
             } else {
@@ -1149,17 +1158,52 @@ async fn install_loader(
 /// 按所需 Java 大版本经 `recommand` 选最优。旧实现 Deep 全盘扫描取第一个 Valid，
 /// 既重复扫描，又会把 Apple JavaAppletPlugin 等遗留 Java 8 误选去跑需要 Java 17
 /// 的 Forge/NeoForge 处理器，导致 binarypatcher 等退出码 1）。
+///
+/// 分三级找 Java：Quick（含 `{gameDir}/runtime`）→ 限时 Deep（IDE 自带 JBR、
+/// `D:\Java\...` 这类非标准目录只有全盘 BFS 找得到）→ 自动下载。先深扫再下载，
+/// 避免为了一个已经存在的 JDK 再下几百 MB。
 pub(crate) async fn resolve_java_path(
     core: &Arc<GameCore>,
+    game_dir: Option<&str>,
     required_java: i32,
+    download_manager: &Arc<DownloadManager>,
 ) -> Result<String, String> {
-    let javas = crate::endpoints::java::merged_java_runtimes(core).await;
-    let javas: Vec<JavaResult> = javas
-        .into_iter()
-        .filter(|j| j.state == JavaState::Valid)
-        .collect();
+    let mut javas = valid_java_runtimes(core, game_dir).await;
+    if !javas.iter().any(|j| satisfies(j, required_java)) {
+        tracing::info!(
+            required = required_java,
+            quick = javas.len(),
+            "快速扫描没有满足要求的 Java，转深度扫描"
+        );
+        if let Some(deep) =
+            crate::endpoints::java::deep_scan_java_runtimes(core, DEEP_SCAN_BUDGET).await
+        {
+            // 深扫不接 game_dir（全盘 BFS 用不上它），所以要把 Quick 命中、
+            // 深扫没覆盖到的 `{gameDir}/runtime` 合并回来，按路径去重。
+            merge_java_runtimes(&mut javas, deep);
+        } else {
+            tracing::warn!(
+                budget_secs = DEEP_SCAN_BUDGET.as_secs(),
+                "深度扫描未在预算内完成，跳过"
+            );
+        }
+    }
+    if !javas.iter().any(|j| satisfies(j, required_java)) {
+        crate::endpoints::java::download_java_runtime(
+            core,
+            download_manager.clone(),
+            required_java,
+        )
+        .await
+        .map_err(|e| {
+            format!("未找到可用的 Java 运行时（需要 Java {required_java}），自动下载失败: {e}")
+        })?;
+        javas = valid_java_runtimes(core, game_dir).await;
+    }
     if javas.is_empty() {
-        return Err("未找到可用的 Java 运行时，请先下载或指定 Java".to_string());
+        return Err(format!(
+            "未找到可用的 Java 运行时（需要 Java {required_java}），请在实例设置中指定 Java 路径"
+        ));
     }
     let metadata = CompleteVersionMetadata {
         id: String::new(),
@@ -1185,6 +1229,36 @@ pub(crate) async fn resolve_java_path(
         .await
         .map_err(|e| format!("选择 Java 运行时失败: {e}"))?;
     Ok(recommended.path)
+}
+
+/// 合并列表中状态为 Valid 的运行时。
+async fn valid_java_runtimes(core: &Arc<GameCore>, game_dir: Option<&str>) -> Vec<JavaResult> {
+    crate::endpoints::java::merged_java_runtimes(core, JavaSearchMode::Quick, game_dir)
+        .await
+        .into_iter()
+        .filter(|j| j.state == JavaState::Valid)
+        .collect()
+}
+
+/// 是否满足所需大版本（与 core `JavaRecommender` 的规则一致：Java 8 必须精确 8）。
+fn satisfies(java: &JavaResult, required_java: i32) -> bool {
+    if required_java == 8 {
+        java.major_version == 8
+    } else {
+        java.major_version >= required_java
+    }
+}
+
+/// 按路径（忽略大小写）并入扫描结果，已有路径不重复加。
+fn merge_java_runtimes(base: &mut Vec<JavaResult>, extra: Vec<JavaResult>) {
+    for found in extra {
+        if !base
+            .iter()
+            .any(|j| j.path.eq_ignore_ascii_case(&found.path))
+        {
+            base.push(found);
+        }
+    }
 }
 
 /// 从原版版本 JSON（`inherits_from_json`）解析所需 Java 大版本
@@ -2611,6 +2685,49 @@ mod tests {
             got, expected,
             "relative game_dir must anchor to BaseDir, not cwd"
         );
+    }
+
+    #[test]
+    fn satisfies_follows_recommender_major_rules() {
+        let mk = |major: i32| JavaResult {
+            path: format!("C:/java{major}/bin/java.exe"),
+            major_version: major,
+            version: format!("{major}.0"),
+            state: JavaState::Valid,
+            arch: "x64".to_string(),
+            r#type: qomicex_core::models::java::JavaType::JDK,
+            discovered_by: "test".to_string(),
+            name: format!("Java {major}"),
+        };
+        // 非 8：>= 即可用，避免"只有 Java 8 却要 21"时白等一次下载
+        assert!(satisfies(&mk(21), 21));
+        assert!(satisfies(&mk(25), 21));
+        assert!(!satisfies(&mk(17), 21));
+        // 8：必须精确 8（与 core JavaRecommender 一致，17 跑不了 1.8 的加载器处理器）
+        assert!(satisfies(&mk(8), 8));
+        assert!(!satisfies(&mk(17), 8));
+    }
+
+    #[test]
+    fn merge_java_runtimes_dedupes_by_path_ignoring_case() {
+        let mk = |path: &str, major: i32| JavaResult {
+            path: path.to_string(),
+            major_version: major,
+            version: format!("{major}.0"),
+            state: JavaState::Valid,
+            arch: "x64".to_string(),
+            r#type: qomicex_core::models::java::JavaType::JDK,
+            discovered_by: "test".to_string(),
+            name: format!("Java {major}"),
+        };
+        let mut base = vec![mk("C:/a/bin/java.exe", 17)];
+        // 深扫结果里重复的路径（大小写不同）不再追加，新的才追加
+        merge_java_runtimes(
+            &mut base,
+            vec![mk("c:/A/bin/java.exe", 8), mk("D:/b/bin/java.exe", 21)],
+        );
+        assert_eq!(base.len(), 2, "{base:?}");
+        assert_eq!(base[1].major_version, 21);
     }
 
     #[test]

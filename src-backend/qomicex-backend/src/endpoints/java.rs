@@ -42,17 +42,143 @@ struct JavaStateData {
     download: Arc<JavaDownloadService>,
 }
 
-/// 与 Java 管理页一致的合并运行时列表（Quick 扫描 + 下载目录 + 自定义注册），
-/// 供安装等需要按版本选 Java 的场景复用，避免各自再全盘扫描。返回 `JavaResult`
+/// 与 Java 管理页一致的合并运行时列表（扫描 + 下载目录 + 自定义注册），
+/// 供安装/启动等需要按版本选 Java 的场景复用，避免各自再全盘扫描。返回 `JavaResult`
 /// 供 `recommand` 使用。
-pub(crate) async fn merged_java_runtimes(core: &Arc<GameCore>) -> Vec<JavaResult> {
+///
+/// `game_dir` 用于覆盖 `{gameDir}/runtime`（官方启动器/整合包自带的运行时）；
+/// 传 `None` 时该来源不参与扫描。
+pub(crate) async fn merged_java_runtimes(
+    core: &Arc<GameCore>,
+    mode: JavaSearchMode,
+    game_dir: Option<&str>,
+) -> Vec<JavaResult> {
     let store = JavaRuntimeStore::new(core.clone());
+    let options = JavaSearchOptions {
+        mode,
+        game_dir: game_dir.map(str::to_string),
+        ..Default::default()
+    };
     store
-        .get_merged(JavaSearchMode::Quick)
+        .get_merged(&options)
         .await
         .into_iter()
         .filter_map(dto_to_result)
         .collect()
+}
+
+/// 带时间预算的深度扫描（合并下载目录与自定义注册），只返回 Valid。
+///
+/// 全盘 BFS 在机械盘/大容量盘上可能跑很久，超时返回 `None` 让调用方继续走别的
+/// 分支（扫描线程自行跑完，结果丢弃）。放在 `spawn_blocking` 里跑，避免占住
+/// 异步 worker（scanner 是同步实现）。
+pub(crate) async fn deep_scan_java_runtimes(
+    core: &Arc<GameCore>,
+    budget: std::time::Duration,
+) -> Option<Vec<JavaResult>> {
+    let handle = tokio::runtime::Handle::current();
+    let core = core.clone();
+    let scan = tokio::task::spawn_blocking(move || {
+        let store = JavaRuntimeStore::new(core);
+        let options = JavaSearchOptions {
+            mode: JavaSearchMode::Deep,
+            ..Default::default()
+        };
+        let results = handle.block_on(store.get_merged(&options));
+        results
+            .into_iter()
+            .filter_map(dto_to_result)
+            .filter(|j| j.state == JavaState::Valid)
+            .collect::<Vec<_>>()
+    });
+    match tokio::time::timeout(budget, scan).await {
+        Ok(Ok(results)) => Some(results),
+        // 扫描任务 panic / 被取消：与超时区分开，否则调用方只会写"超时"，
+        // 把真正的失败原因埋掉。
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "深度扫描任务未正常结束");
+            None
+        }
+        Err(_) => None,
+    }
+}
+
+/// 安装链路兜底：本机没有满足要求的 Java 时自动下载并注册，返回注册后的 java 路径。
+///
+/// 复用 `/java/download/start` 的同一管线（解析 → 下载 → 解压 → add_custom），
+/// 不走任务状态表：安装成败只看返回值。`required_major` 对应的包不存在时
+/// （Adoptium 不保证每个大版本都有）按固定档位里更大的版本依次尝试。
+///
+/// 来源按 Adoptium → Zulu 依次尝试：Adoptium 包托管在 GitHub releases，
+/// 部分网络下 GitHub 被中间人劫持（TLS 校验失败）而 Zulu CDN 可用。
+pub(crate) async fn download_java_runtime(
+    core: &Arc<GameCore>,
+    manager: Arc<DownloadManager>,
+    required_major: i32,
+) -> Result<String, String> {
+    let Some(architecture) = host_architecture() else {
+        return Err(format!(
+            "当前 CPU 架构（{}）没有可用的 Java 下载包",
+            std::env::consts::ARCH
+        ));
+    };
+    let store = JavaRuntimeStore::new(core.clone());
+    let service = JavaDownloadService::new(core.clone(), store, Arc::new(ArcSwap::from(manager)));
+
+    // 各来源的错误都保留：只留最后一条会把 Adoptium 的 TLS 失败盖掉，
+    // 用户只看到 Zulu 的镜像问题就判断不出根因。
+    let mut errors: Vec<String> = Vec::new();
+    for vendor in ["temurin", "zulu"] {
+        let Some(request) = resolve_java_package(core, vendor, required_major, architecture).await
+        else {
+            errors.push(format!(
+                "{vendor}: 未找到 Java {required_major} 或更高版本的下载包"
+            ));
+            continue;
+        };
+        match service.download_blocking(request).await {
+            Ok(path) => return Ok(path),
+            Err(e) => errors.push(format!("{vendor}: {e}")),
+        }
+    }
+    Err(errors.join("; "))
+}
+
+/// 解析指定来源下可用的下载请求（大版本按候选顺序降级）。
+async fn resolve_java_package(
+    core: &Arc<GameCore>,
+    vendor: &str,
+    required_major: i32,
+    architecture: &str,
+) -> Option<JavaDownloadStartRequest> {
+    for version in java_download_candidates(required_major) {
+        let request = JavaDownloadStartRequest {
+            vendor: vendor.to_string(),
+            version,
+            platform: host_platform(),
+            architecture: architecture.to_string(),
+        };
+        if resolve_package(core, &request).await.is_ok() {
+            return Some(request);
+        }
+    }
+    None
+}
+
+/// 下载候选大版本：所需版本优先，其后是更大的固定档位。
+///
+/// Java 8 必须精确 8（与推荐器一致），下更大的版本反而装不上，故不降级。
+fn java_download_candidates(required_major: i32) -> Vec<i32> {
+    if required_major == 8 {
+        return vec![8];
+    }
+    let mut versions = vec![required_major];
+    versions.extend(
+        [11, 17, 21, 25, 26]
+            .into_iter()
+            .filter(|v| *v > required_major),
+    );
+    versions
 }
 
 /// `JavaRuntimeDto` → `JavaResult`（`From<JavaResult> for JavaRuntimeDto` 的逆变换）。
@@ -191,12 +317,8 @@ impl JavaRuntimeStore {
     }
 
     /// 扫描 + 下载目录 + 自定义合并（对应 GetMergedAsync）。
-    async fn get_merged(&self, mode: JavaSearchMode) -> Vec<JavaRuntimeDto> {
-        let options = JavaSearchOptions {
-            mode,
-            ..Default::default()
-        };
-        let scanned = self.search_provider(&options).await;
+    async fn get_merged(&self, options: &JavaSearchOptions) -> Vec<JavaRuntimeDto> {
+        let scanned = self.search_provider(options).await;
         let mut merged: HashMap<String, JavaRuntimeDto> = HashMap::new();
         for r in scanned {
             merged.insert(full_path(&r.path), JavaRuntimeDto::from(r));
@@ -367,6 +489,23 @@ impl JavaDownloadService {
             ));
         }
 
+        let (task_id, target_dir) = self.insert_task(&request);
+
+        let this = self.clone();
+        let spawn_task_id = task_id.clone();
+        tokio::spawn(async move {
+            this.run_task(spawn_task_id, request).await;
+        });
+
+        Ok(JavaDownloadStartResponse {
+            task_id,
+            status: "queued".to_string(),
+            target_dir,
+        })
+    }
+
+    /// 登记任务并返回 `(task_id, target_dir)`（`start` 与安装链路兜底共用）。
+    fn insert_task(&self, request: &JavaDownloadStartRequest) -> (String, String) {
         let task_id = new_task_id();
         let target_dir = java_download_dir()
             .join(&request.vendor)
@@ -384,18 +523,29 @@ impl JavaDownloadService {
                 ..Default::default()
             },
         );
+        (task_id, target_dir)
+    }
 
-        let this = self.clone();
-        let spawn_task_id = task_id.clone();
-        tokio::spawn(async move {
-            this.run_task(spawn_task_id, request).await;
-        });
-
-        Ok(JavaDownloadStartResponse {
-            task_id,
-            status: "queued".to_string(),
-            target_dir,
-        })
+    /// 同步下载并注册：复用任务状态机并等待完成，返回注册后的 java 可执行文件路径。
+    ///
+    /// shortcut: 安装取消不会中断该下载（几十 MB，注册后对后续启动仍有价值），
+    /// 需要联动取消时把 `InstallHandle` 传进来。
+    async fn download_blocking(
+        self: &Arc<Self>,
+        request: JavaDownloadStartRequest,
+    ) -> Result<String, String> {
+        let (task_id, target_dir) = self.insert_task(&request);
+        let mut tmp_dir = None;
+        let result = self.run_task_inner(&task_id, request, &mut tmp_dir).await;
+        if let Some(dir) = tmp_dir {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+        match result {
+            Ok(TaskExit::Done) => find_java_executable(Path::new(&target_dir))
+                .ok_or_else(|| "解压后未找到 Java 可执行文件".to_string()),
+            Ok(TaskExit::Cancelled) => Err("Java 下载已取消".to_string()),
+            Err(message) => Err(message),
+        }
     }
 
     /// 后台任务状态机（对应 C# RunTaskAsync）。
@@ -764,7 +914,11 @@ async fn list(
     Query(q): Query<ModeQuery>,
 ) -> ApiResult<Json<Vec<JavaRuntimeDto>>> {
     let mode = parse_search_mode(q.mode.as_deref())?;
-    Ok(Json(java_data(&s).store.get_merged(mode).await))
+    let options = JavaSearchOptions {
+        mode,
+        ..Default::default()
+    };
+    Ok(Json(java_data(&s).store.get_merged(&options).await))
 }
 
 async fn validate(
@@ -1115,6 +1269,16 @@ fn host_platform() -> String {
     }
 }
 
+/// 宿主 CPU 架构（取值须与 `map_architecture` 支持的一致）；不支持时为 `None`，
+/// 不能静默回退 —— 装错架构的 JDK 只会让安装器以一个更费解的错误退出。
+fn host_architecture() -> Option<&'static str> {
+    match std::env::consts::ARCH {
+        "x86_64" => Some("x64"),
+        "aarch64" => Some("arm64"),
+        _ => None,
+    }
+}
+
 fn new_task_id() -> String {
     let n = uuid::Uuid::new_v4();
     n.to_string().replace('-', "")[..12].to_string()
@@ -1431,6 +1595,15 @@ struct JavaDownloadCatalogResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn download_candidates_try_required_first_then_larger() {
+        assert_eq!(java_download_candidates(21), vec![21, 25, 26]);
+        // Java 8 必须精确 8，不降级到更高版本（装了也用不上）
+        assert_eq!(java_download_candidates(8), vec![8]);
+        // 已不在固定档位里的版本：自身优先，其后是更大的档位
+        assert_eq!(java_download_candidates(22), vec![22, 25, 26]);
+    }
 
     #[test]
     fn dto_round_trips_back_to_result() {
