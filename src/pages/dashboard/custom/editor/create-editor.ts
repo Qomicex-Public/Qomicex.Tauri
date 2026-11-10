@@ -4,7 +4,7 @@
 import { basicSetup } from 'codemirror'
 import { EditorView, keymap } from '@codemirror/view'
 import { EditorState } from '@codemirror/state'
-import { defaultKeymap, historyKeymap } from '@codemirror/commands'
+import { defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { searchKeymap } from '@codemirror/search'
 import { bracketMatching, foldKeymap, syntaxHighlighting, HighlightStyle } from '@codemirror/language'
 import {
@@ -12,6 +12,8 @@ import {
   closeBrackets,
   closeBracketsKeymap,
   completionKeymap,
+  acceptCompletion,
+  completionStatus,
   startCompletion,
   type Completion,
   type CompletionContext,
@@ -154,7 +156,7 @@ function xmlCompletion(context: CompletionContext, getDefs: () => CustomWidgetDe
     return { from: word.from, options, validFor: /^[\w-]*$/ }
   }
 
-  const openTag = before.match(/<([A-Za-z][\w.]*)(?:\s+[^<>]*)?$/)
+  const openTag = before.match(/<([A-Za-z][\w.]*)\s+[^<>]*$/)
   if (openTag) {
     const tag = openTag[1]
     const attrs = ELEMENT_ATTRS[tag] ?? []
@@ -164,6 +166,33 @@ function xmlCompletion(context: CompletionContext, getDefs: () => CustomWidgetDe
       ...['Grid.Row', 'Grid.Column', 'Grid.RowSpan', 'Grid.ColumnSpan'].map((attr) => completionOption(attr, 'property')),
     ]
     return { from: word?.from ?? context.pos, options, validFor: /^[\w.-]*$/ }
+  }
+
+  const tagPrefix = before.match(/<([A-Za-z][\w.]*)$/)
+  if (tagPrefix) {
+    const from = context.pos - tagPrefix[1].length
+    const options = [
+      ...Object.keys(ELEMENT_ATTRS).map((tag) => completionOption(tag, 'type')),
+      completionOption('Widget.Using', 'type'),
+      completionOption('Struct', 'type'),
+      completionOption('Field', 'type'),
+      completionOption('Trigger', 'type'),
+    ]
+    return { from, options, validFor: /^[\w.-]*$/ }
+  }
+
+  if (/<$/.test(before)) {
+    return {
+      from: context.pos,
+      options: [
+        ...Object.keys(ELEMENT_ATTRS).map((tag) => completionOption(tag, 'type')),
+        completionOption('Widget.Using', 'type'),
+        completionOption('Struct', 'type'),
+        completionOption('Field', 'type'),
+        completionOption('Trigger', 'type'),
+      ],
+      validFor: /^[\w.-]*$/,
+    }
   }
 
   const word = context.matchBefore(/[\w.-]*/)
@@ -266,9 +295,14 @@ const highlightStyle = HighlightStyle.define([
 
 const editorTheme = EditorView.theme({
   '&': {
+    height: '100%',
     backgroundColor: 'transparent',
     color: 'hsl(var(--foreground))',
     fontSize: '12px',
+  },
+  '.cm-scroller': {
+    overflow: 'auto',
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
   },
   '.cm-content': {
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
@@ -318,6 +352,8 @@ export function mountEditor(parent: HTMLElement, options: MountEditorOptions): E
     keymap.of([
       ...closeBracketsKeymap,
       ...completionKeymap,
+      { key: 'Tab', run: (view) => { if (completionStatus(view.state) === 'active') return acceptCompletion(view); return false } },
+      indentWithTab,
       ...defaultKeymap,
       ...historyKeymap,
       ...searchKeymap,

@@ -60,8 +60,9 @@ export function CodeEditor({
   return (
     <div
       ref={hostRef}
+      style={{ height: 'min(420px, 45vh)' }}
       className={cn(
-        'min-h-[320px] overflow-auto rounded-md border border-input bg-background/60 text-xs shadow-sm focus-within:ring-1 focus-within:ring-ring',
+        'overflow-hidden rounded-md border border-input bg-background/60 text-xs shadow-sm focus-within:ring-1 focus-within:ring-ring',
         className,
       )}
     />
