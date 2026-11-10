@@ -39,6 +39,8 @@ pub struct SystemInfoResponse {
     pub git_commit: String,
     pub memory: i64,
     pub available_memory: i64,
+    /// 启动器版本（CARGO_PKG_VERSION，与发布流程同步）。
+    pub app_version: String,
     /// 启动器数据目录（插件默认工作区定位用；等价 GET /settings/data-dir）。
     pub data_dir: String,
 }

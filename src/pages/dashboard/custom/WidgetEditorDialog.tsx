@@ -31,11 +31,13 @@ import {
   WIDGET_LIMITS,
   WidgetError,
   collectAutoHosts,
+  compareVersions,
   hostOf,
   isSafeHttpsUrl,
 } from './schema.ts'
 import { useCustomWidgetStore } from './store.ts'
 import { WIDGET_TEMPLATE } from './template.ts'
+import { getLauncherVersion } from './launcher-version.ts'
 import type { ActionName } from './schema.ts'
 import type { UsingNode, WidgetNode } from './types.ts'
 import { parseWidgetXml } from './xml.ts'
@@ -179,7 +181,13 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
   const [scriptResult, setScriptResult] = useState<string | null>(null)
   const [previewInputs, setPreviewInputs] = useState<Record<string, unknown>>({})
   const [previewResults, setPreviewResults] = useState<Record<string, Record<string, unknown>>>({})
+  const [appVersion, setAppVersion] = useState<string | null>(null)
   const previewUrls = useRef(new Set<string>())
+
+  useEffect(() => {
+    if (!open) return
+    void getLauncherVersion().then(setAppVersion)
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -721,6 +729,12 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
                   <p className="font-mono">{actions.length > 0 ? actions.join(', ') : t('dashboard.custom.none')}</p>
                 </div>
                 <p className="truncate font-mono">{t('dashboard.custom.baseDir')}: {baseDir}</p>
+                {doc.launcherVersion && (
+                  <p className={appVersion && compareVersions(appVersion, doc.launcherVersion) < 0 ? 'text-destructive' : ''}>
+                    LauncherVersion: {doc.launcherVersion}
+                    {appVersion ? ` (${appVersion})` : ''}
+                  </p>
+                )}
               </div>
             )}
 

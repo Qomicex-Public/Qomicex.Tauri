@@ -107,10 +107,19 @@ try {
   )
 
   // ---- 本地路径 ----
-  check('相对路径基于组件目录', schema.resolveLocalPath('./a/b.png', 'C:/widgets'), 'C:/widgets/a/b.png')
-  check('绝对路径原样', schema.resolveLocalPath('C:/music/a.mp3', 'C:/widgets'), 'C:/music/a.mp3')
+  check('本地路径相对路径', schema.resolveLocalPath('./a/b.png', 'C:/widgets'), 'C:/widgets/a/b.png')
+  check('本地绝对路径', schema.resolveLocalPath('C:/music/a.mp3', 'C:/widgets'), 'C:/music/a.mp3')
   check('别名清洗', schema.sanitizeAlias('天气卡片'), '____')
   check('别名数字开头', schema.sanitizeAlias('1abc'), '_1abc')
+
+  // ---- 版本要求 ----
+  check('版本格式 1.2', schema.isVersionRequirement('1.2'), true)
+  check('版本格式 1.2.3-beta', schema.isVersionRequirement('1.2.3-beta'), true)
+  check('版本格式非法', schema.isVersionRequirement('latest'), false)
+  check('版本比较 1.2 < 1.3', schema.compareVersions('1.2', '1.3') < 0, true)
+  check('版本比较 1.2.0 == 1.2', schema.compareVersions('1.2.0', '1.2'), 0)
+  check('版本比较 2.0 > 1.9.9', schema.compareVersions('2.0', '1.9.9') > 0, true)
+  check('版本预发布低于正式版', schema.compareVersions('1.2.0-beta', '1.2.0') < 0, true)
 
   // ---- 标识符 ----
   schema.validateIdentifier('newsData', 'test')

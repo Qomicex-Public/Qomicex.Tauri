@@ -11,6 +11,9 @@ export interface SystemInfo {
   gitCommit: string
   memory: number
   availableMemory: number
+  /** 启动器版本（CARGO_PKG_VERSION） */
+  appVersion?: string
+  dataDir?: string
 }
 
 export interface JavaRuntime {

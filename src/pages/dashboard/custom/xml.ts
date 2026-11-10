@@ -20,6 +20,7 @@ import {
   assertSafeXml,
   isBound,
   isSafeHttpsUrl,
+  isVersionRequirement,
   sanitizeAlias,
   validateIdentifier,
   type ActionName,
@@ -346,7 +347,7 @@ function parseResources(el: Element, ctx: ParseCtx): void {
     validateIdentifier(name, `${child.tagName}@Name`)
     if (ctx.names.has(`resource:${name}`)) throw new WidgetError('invalidResource', `重复资源 ${name}`)
     let type: ResourceEntry['type']
-    let value = (child.textContent ?? '').trim()
+    let value = (attr(split.attrs, 'Text') ?? child.textContent ?? '').trim()
     let mime: string | undefined
     if (child.tagName === 'Resource') {
       type = enumAttr(split.attrs, 'Resource', 'Type', ['String', 'Bool', 'Number', 'Binary', 'Json'] as const, 'String')!
@@ -981,6 +982,10 @@ export function parseWidgetXml(xml: string): WidgetDocument {
   if (updateUrl && (isBound(updateUrl) || !isSafeHttpsUrl(updateUrl))) {
     throw new WidgetError('invalidUrl', `Widget@UpdateUrl=${updateUrl}`)
   }
+  const launcherVersion = attr(rootSplit.attrs, 'LauncherVersion')?.trim() || undefined
+  if (launcherVersion && !isVersionRequirement(launcherVersion)) {
+    throw new WidgetError('invalidAttribute', `Widget@LauncherVersion=${launcherVersion}`)
+  }
 
   const ctx: ParseCtx = {
     nodes: 0,
@@ -1027,6 +1032,7 @@ export function parseWidgetXml(xml: string): WidgetDocument {
     author: attr(rootSplit.attrs, 'Author')?.trim() || undefined,
     description: attr(rootSplit.attrs, 'Description')?.trim() || undefined,
     updateUrl,
+    launcherVersion,
     datas: ctx.datas,
     resources: ctx.resources,
     functions: ctx.functions,

@@ -298,6 +298,7 @@ export interface WidgetDocument {
   author?: string
   description?: string
   updateUrl?: string
+  launcherVersion?: string
   datas: DataSourceSpec[]
   resources: ResourceEntry[]
   functions: FunctionNode[]

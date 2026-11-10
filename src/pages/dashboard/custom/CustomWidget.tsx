@@ -11,11 +11,13 @@ import { useDashboard } from '../context.tsx'
 import { runWidgetAction } from './actions.ts'
 import {
   collectAutoHosts,
+  compareVersions,
   interpolateDeep,
   WIDGET_LIMITS,
   WidgetError,
 } from './schema.ts'
 import { makeBinaryValue, mimeFromPath, parseResourceEntries, parseXmlValue, readLocalBinary, readLocalText, resolveDataPath } from './binary.ts'
+import { getLauncherVersion } from './launcher-version.ts'
 import { renderNodes, type RenderContext } from './render.tsx'
 import { runFunction as executeFunction } from './script/functions.ts'
 import { ScriptSandbox } from './script/sandbox.ts'
@@ -89,6 +91,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [tick, setTick] = useState(0)
+  const [launcherVersion, setLauncherVersion] = useState<string | null>(null)
   const objectUrls = useRef(new Set<string>())
   const sandboxRef = useRef<ScriptSandbox | null>(null)
   const triggerRate = useRef<number[]>([])
@@ -144,6 +147,11 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
       controller.abort()
     }
   }, [doc, def, updateDef, clearData])
+
+  useEffect(() => {
+    if (!doc?.launcherVersion) return
+    void getLauncherVersion().then(setLauncherVersion)
+  }, [doc])
 
   useEffect(() => {
     const urls = objectUrls.current
@@ -468,6 +476,14 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
       <div className="flex h-full items-center justify-center rounded-xl border border-destructive/30 p-3 text-xs text-destructive">
         {t('dashboard.custom.invalid')}
       </div>
+    )
+  }
+
+  if (doc.launcherVersion && launcherVersion && compareVersions(launcherVersion, doc.launcherVersion) < 0) {
+    return (
+      <WidgetErrorBox
+        message={t('dashboard.custom.launcherTooOld', { required: doc.launcherVersion, current: launcherVersion })}
+      />
     )
   }
 

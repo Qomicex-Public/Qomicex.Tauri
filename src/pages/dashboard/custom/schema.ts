@@ -118,14 +118,14 @@ export const FIELD_TYPES = ['String', 'Number', 'Bool', 'DateTime', 'Json', 'Bin
 
 /** 元素 → 允许属性。未知元素/属性一律解析失败。 */
 export const ELEMENT_ATTRS: Record<string, readonly string[]> = {
-  Widget: ['Name', 'Version', 'Author', 'Description', 'UpdateUrl'],
+  Widget: ['Name', 'Version', 'Author', 'Description', 'UpdateUrl', 'LauncherVersion'],
   Data: ['Name', 'Type', 'Source', 'Url', 'Path', 'Mime', 'Refresh'],
   Resources: [],
-  String: ['Name'],
-  Bool: ['Name'],
-  Number: ['Name'],
-  Binary: ['Name', 'Mime'],
-  Resource: ['Name', 'Type', 'Mime'],
+  String: ['Name', 'Text'],
+  Bool: ['Name', 'Text'],
+  Number: ['Name', 'Text'],
+  Binary: ['Name', 'Mime', 'Text'],
+  Resource: ['Name', 'Type', 'Mime', 'Text'],
   Triggers: [],
   Trigger: ['Event', 'Function', 'Action', 'Control', 'Data', 'Interval', 'Once', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'PluginId', 'Method', 'Arguments'],
   Function: ['Name', 'Timeout'],
@@ -303,6 +303,30 @@ export function validateIdentifier(name: string, label: string): void {
 export function sanitizeAlias(raw: string): string {
   const base = raw.replace(/[^A-Za-z0-9_]/g, '_').replace(/^(\d)/, '_$1')
   return base || 'Child'
+}
+
+/** 宽松 semver：1 / 1.2 / 1.2.3 / 1.2.3-beta.1。 */
+export function isVersionRequirement(value: string): boolean {
+  return /^\d+(\.\d+){0,2}([-.][0-9A-Za-z.-]+)?$/.test(value.trim())
+}
+
+/** 比较主版本号，返回 <0 / 0 / >0；预发布后缀按字符串比较。 */
+export function compareVersions(a: string, b: string): number {
+  const parse = (value: string) => {
+    const [core, ...rest] = value.trim().split(/[-+]/)
+    const nums = core.split('.').map((part) => Number(part) || 0)
+    while (nums.length < 3) nums.push(0)
+    return { nums, suffix: rest.join('-') }
+  }
+  const left = parse(a)
+  const right = parse(b)
+  for (let i = 0; i < 3; i += 1) {
+    if (left.nums[i] !== right.nums[i]) return left.nums[i] - right.nums[i]
+  }
+  if (left.suffix === right.suffix) return 0
+  if (!left.suffix) return 1
+  if (!right.suffix) return -1
+  return left.suffix.localeCompare(right.suffix)
 }
 
 /** 远程 XML 的预检：拒绝 DOCTYPE/ENTITY 与超限内容（先于 DOMParser）。 */

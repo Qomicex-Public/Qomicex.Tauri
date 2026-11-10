@@ -187,3 +187,35 @@
 ## 修订记录
 | 日期 | 版本 | 修改内容 | 修改人 |
 | 2026-11-10 | v1.0 | 初版创建 | AI Agent |
+
+### 2026-11-10 更新
+
+## 补充（2026-11-10）
+
+### LauncherVersion
+
+```xml
+<Widget Name="示例" Version="1.0.0" LauncherVersion="1.4.0">
+  ...
+</Widget>
+```
+
+`LauncherVersion` 表示最低启动器版本（semver，如 `1.4` / `1.4.0` / `1.4.0-beta`）。运行时当前版本低于要求时组件显示错误占位；编辑器信息面板显示要求版本与当前版本。
+
+### Resource 的 Text 属性
+
+`String` / `Bool` / `Number` / `Binary` / `Resource` 同时支持文本内容与 `Text` 属性：
+
+```xml
+<String Name="Greeting">你好，Qomicex</String>
+<String Name="Greeting" Text="你好，Qomicex" />
+```
+
+两种写法等价；`Binary` 的 `Text` 填 base64。
+
+### 编辑器补全
+
+- 输入 `<` 出现元素候选；输入 `<Text ` 出现属性候选。
+- 属性候选按 Tab/Enter 会插入 `Name=""` 并把光标放在引号内；标签/值/绑定候选只插入名称。
+- 输入 `/` 会自动补成 `/>`（已有 `>` 时只补 `/`）。
+

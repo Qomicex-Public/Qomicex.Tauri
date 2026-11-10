@@ -1,17 +1,33 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { basicSetup } from 'codemirror'
-import { EditorView, keymap } from '@codemirror/view'
-import { EditorState } from '@codemirror/state'
-import { defaultKeymap, historyKeymap, indentWithTab } from '@codemirror/commands'
-import { searchKeymap } from '@codemirror/search'
-import { bracketMatching, foldKeymap, syntaxHighlighting, HighlightStyle } from '@codemirror/language'
+import {
+  EditorView,
+  keymap,
+  lineNumbers,
+  highlightActiveLineGutter,
+  highlightSpecialChars,
+  drawSelection,
+  dropCursor,
+  rectangularSelection,
+  crosshairCursor,
+  highlightActiveLine,
+} from '@codemirror/view'
+import { EditorState, Prec } from '@codemirror/state'
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search'
+import {
+  bracketMatching,
+  foldGutter,
+  foldKeymap,
+  indentOnInput,
+  syntaxHighlighting,
+  HighlightStyle,
+} from '@codemirror/language'
 import {
   autocompletion,
   closeBrackets,
   closeBracketsKeymap,
-  completionKeymap,
   acceptCompletion,
   completionStatus,
   startCompletion,
@@ -21,7 +37,7 @@ import {
 } from '@codemirror/autocomplete'
 import { linter, lintGutter, type Diagnostic } from '@codemirror/lint'
 import { javascript } from '@codemirror/lang-javascript'
-import { autoCloseTags, xml } from '@codemirror/lang-xml'
+import { xml } from '@codemirror/lang-xml'
 import { tags } from '@lezer/highlight'
 import { ELEMENT_ATTRS } from '../schema.ts'
 import type { CustomWidgetDef } from '../store.ts'
@@ -55,6 +71,7 @@ export interface MountEditorOptions {
 export interface EditorHandle {
   setValue: (value: string) => void
   focus: () => void
+  insertCompletion: (label: string) => void
   destroy: () => void
 }
 
@@ -83,6 +100,20 @@ const BOOL_ATTRS = new Set(['Controls', 'AutoPlay', 'Loop', 'Muted', 'Multiline'
 
 function completionOption(label: string, type: Completion['type'], detail?: string): Completion {
   return { label, type, detail }
+}
+
+function attributeCompletion(name: string): Completion {
+  return {
+    label: name,
+    type: 'property',
+    apply: (view, _completion, from, to) => {
+      const insert = `${name}=""`
+      view.dispatch({
+        changes: { from, to, insert },
+        selection: { anchor: from + name.length + 2 },
+      })
+    },
+  }
 }
 
 function tagged(text: string, pattern: RegExp): string[] {
@@ -162,8 +193,8 @@ function xmlCompletion(context: CompletionContext, getDefs: () => CustomWidgetDe
     const attrs = ELEMENT_ATTRS[tag] ?? []
     const word = context.matchBefore(/[\w.-]*/)
     const options = [
-      ...attrs.map((attr) => completionOption(attr, 'property')),
-      ...['Grid.Row', 'Grid.Column', 'Grid.RowSpan', 'Grid.ColumnSpan'].map((attr) => completionOption(attr, 'property')),
+      ...attrs.map((attr) => attributeCompletion(attr)),
+      ...['Grid.Row', 'Grid.Column', 'Grid.RowSpan', 'Grid.ColumnSpan'].map((attr) => attributeCompletion(attr)),
     ]
     return { from: word?.from ?? context.pos, options, validFor: /^[\w.-]*$/ }
   }
@@ -234,6 +265,30 @@ function locateError(text: string, error: unknown): { from: number; to: number; 
     if (index >= 0) return { from: index, to: Math.min(text.length, index + bare.length + 1), message: raw }
   }
   return { from: 0, to: Math.min(1, text.length), message: raw }
+}
+
+function xmlSlashCloseTag() {
+  return Prec.highest(EditorView.inputHandler.of((view, from, to, text) => {
+    if (text !== '/' || from !== to || view.composing || view.state.readOnly) return false
+    const start = Math.max(0, from - 500)
+    const before = view.state.sliceDoc(start, from)
+    const lt = before.lastIndexOf('<')
+    if (lt < 0) return false
+    const fragment = before.slice(lt)
+    if (fragment.startsWith('</') || fragment.includes('>')) return false
+    if (!/^<[A-Za-z][\w.:-]*(\s|$)/.test(fragment)) return false
+    for (const quote of ['"', "'"]) {
+      if ((fragment.split(quote).length - 1) % 2 === 1) return false
+    }
+    const next = view.state.sliceDoc(to, Math.min(view.state.doc.length, to + 1))
+    const insert = next === '>' ? '/' : '/>'
+    view.dispatch({
+      changes: { from, to, insert },
+      selection: { anchor: from + insert.length },
+      userEvent: 'input.complete',
+    })
+    return true
+  }))
 }
 
 function xmlLintExtension() {
@@ -343,7 +398,20 @@ export function mountEditor(parent: HTMLElement, options: MountEditorOptions): E
   const getTsContext = options.getTsContext
 
   const extensions = [
-    basicSetup,
+    lineNumbers(),
+    highlightActiveLineGutter(),
+    highlightSpecialChars(),
+    history(),
+    foldGutter(),
+    drawSelection(),
+    dropCursor(),
+    EditorState.allowMultipleSelections.of(true),
+    indentOnInput(),
+    search({ top: true }),
+    highlightSelectionMatches(),
+    highlightActiveLine(),
+    rectangularSelection(),
+    crosshairCursor(),
     editorTheme,
     syntaxHighlighting(highlightStyle),
     bracketMatching(),
@@ -351,16 +419,18 @@ export function mountEditor(parent: HTMLElement, options: MountEditorOptions): E
     lintGutter(),
     keymap.of([
       ...closeBracketsKeymap,
-      ...completionKeymap,
-      { key: 'Tab', run: (view) => { if (completionStatus(view.state) === 'active') return acceptCompletion(view); return false } },
-      indentWithTab,
       ...defaultKeymap,
       ...historyKeymap,
       ...searchKeymap,
       ...foldKeymap,
+      indentWithTab,
       { key: 'Mod-s', run: () => { onSaveRef.current?.(); return true } },
       { key: 'Mod-Space', run: (view) => { startCompletion(view); return true } },
     ]),
+    Prec.highest(keymap.of([
+      { key: 'Tab', run: (view) => (completionStatus(view.state) === 'active' ? acceptCompletion(view) : false) },
+      { key: 'Enter', run: (view) => (completionStatus(view.state) === 'active' ? acceptCompletion(view) : false) },
+    ])),
     EditorView.updateListener.of((update) => {
       if (update.docChanged) onChangeRef.current(update.state.doc.toString())
       if (update.selectionSet || update.docChanged) {
@@ -378,8 +448,14 @@ export function mountEditor(parent: HTMLElement, options: MountEditorOptions): E
   if (options.language === 'xml') {
     extensions.push(
       xml(),
-      autoCloseTags,
-      autocompletion({ override: [(context) => xmlCompletion(context, getDefs)] }),
+      xmlSlashCloseTag(),
+      autocompletion({
+        override: [(context) => xmlCompletion(context, getDefs)],
+        selectOnOpen: true,
+        activateOnTyping: true,
+        defaultKeymap: true,
+        interactionDelay: 0,
+      }),
       xmlLintExtension(),
     )
   } else {
@@ -401,6 +477,24 @@ export function mountEditor(parent: HTMLElement, options: MountEditorOptions): E
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } })
     },
     focus: () => view.focus(),
+    insertCompletion: (label: string) => {
+      const pos = view.state.selection.main.head
+      const start = Math.max(0, pos - 500)
+      const before = view.state.sliceDoc(start, pos)
+      const word = before.match(/[\w.:-]*$/)?.[0] ?? ''
+      const from = pos - word.length
+      const fragment = before.slice(before.lastIndexOf('<'))
+      const inTag = /^<[A-Za-z][\w.:-]*(\s|$)/.test(fragment) && !fragment.includes('>')
+      const quoted = (fragment.match(/"/g)?.length ?? 0) % 2 === 1
+      const isValue = quoted || /\{[\w.:-]*$/.test(before)
+      const insert = inTag && !isValue && !/^<[A-Za-z][\w.:-]*$/.test(fragment) ? `${label}=""` : label
+      view.dispatch({
+        changes: { from, to: pos, insert },
+        selection: { anchor: from + insert.length - (inTag && !isValue && !/^<[A-Za-z][\w.:-]*$/.test(fragment) ? 1 : 0) },
+        userEvent: 'input.complete',
+      })
+      view.focus()
+    },
     destroy: () => view.destroy(),
   }
 }
