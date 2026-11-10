@@ -72,7 +72,7 @@ async fn proxy(
     };
     let port = url.port_or_known_default().unwrap_or(443);
     let pinned = resolve_public_addr(&host, port).await?;
-    let client = build_client(&state, &host, pinned).await;
+    let client = build_client(&state, &host, pinned).await?;
 
     let response = client
         .get(url)
@@ -245,7 +245,11 @@ fn is_blocked_v4(ip: Ipv4Addr) -> bool {
         || (o[0] == 198 && (o[1] == 18 || o[1] == 19)) // 198.18.0.0/15 基准测试
 }
 
-async fn build_client(state: &SharedState, host: &str, pinned: SocketAddr) -> reqwest::Client {
+async fn build_client(
+    state: &SharedState,
+    host: &str,
+    pinned: SocketAddr,
+) -> ApiResult<reqwest::Client> {
     let (proxy, no_proxy) = {
         let settings = state.settings.read().await;
         proxy_settings(&settings)
@@ -263,7 +267,9 @@ async fn build_client(state: &SharedState, host: &str, pinned: SocketAddr) -> re
             builder = builder.proxy(p);
         }
     }
-    builder.build().unwrap_or_else(|_| reqwest::Client::new())
+    builder
+        .build()
+        .map_err(|error| ApiError::internal(format!("构建组件代理客户端失败: {error}")))
 }
 
 #[cfg(test)]

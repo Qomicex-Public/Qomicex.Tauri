@@ -98,7 +98,7 @@ export function resolveDataPath(def: Pick<CustomWidgetDef, 'sourcePath'>, path: 
 }
 
 export async function readLocalText(path: string): Promise<string> {
-  return invoke<string>('read_widget_file', { path })
+  return invoke<string>('read_widget_data_text', { path })
 }
 
 export async function readLocalBinary(path: string): Promise<{ base64: string; size: number }> {

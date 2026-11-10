@@ -12,6 +12,7 @@ import { runWidgetAction } from './actions.ts'
 import {
   collectAutoHosts,
   compareVersions,
+  hostOf,
   interpolateDeep,
   WIDGET_LIMITS,
   WidgetError,
@@ -97,6 +98,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   const triggerRate = useRef<number[]>([])
   const loadedRef = useRef<string | null>(null)
   const lastSnapshot = useRef('')
+  const forceRefreshRef = useRef(false)
   const executeFunctionRef = useRef<(name: string, trigger: TriggerNode) => void>(() => {})
 
   const trackUrl = useCallback((url: string) => {
@@ -131,10 +133,11 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
           staticMediaUrls: next.staticMediaUrls,
           nestedUrls: next.nestedUrls,
         })
+        const sourceHost = def.sourceUrl ? hostOf(def.sourceUrl) : null
         updateDef(def.id, {
           xml: response.body,
           name: next.name,
-          hosts: [...new Set([...def.hosts, ...hosts])],
+          hosts: [...new Set([...def.hosts, ...hosts, ...(sourceHost ? [sourceHost] : [])])],
           lastChecked: now,
         })
         clearData(def.id)
@@ -186,7 +189,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
 
   const decodeData = useCallback(async (source: WidgetDocument['datas'][number], signal: AbortSignal): Promise<unknown> => {
     if (source.source === 'File') {
-      const path = resolveDataPath(def, source.path ?? '')
+      const path = resolveDataPath({ sourcePath: def.sourcePath }, source.path ?? '')
       if (source.type === 'Binary') {
         const file = await readLocalBinary(path)
         const value = makeBinaryValue(file.base64, source.mime || mimeFromPath(path), file.size)
@@ -215,18 +218,21 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     if (source.type === 'Xml') return parseXmlValue(response.body)
     if (source.type === 'Json') return JSON.parse(response.body)
     return response.body
-  }, [def, trackUrl])
+  }, [def.id, def.sourcePath, trackUrl])
 
   useEffect(() => {
     if (!doc || doc.datas.length === 0) return
     const controller = new AbortController()
     let cancelled = false
     const now = Date.now()
+    const force = forceRefreshRef.current
+    forceRefreshRef.current = false
     const cache = useCustomWidgetStore.getState().dataCache[def.id]
     const next: Record<string, unknown> = { ...data }
     let changed = false
 
     const stale = doc.datas.filter((source) => {
+      if (force) return true
       const entry = cache?.[source.name]
       const fresh = entry && source.refresh > 0 && now - entry.at <= source.refresh * 1000
       if (fresh) {
@@ -237,7 +243,10 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
       if (source.type === 'Binary') {
         const binary = getBinary(`${def.id}:${source.name}`)
         if (binary) {
-          next[source.name] = binary
+          const freshBinary = makeBinaryValue(binary.Base64, binary.Mime, binary.Size)
+          trackUrl(freshBinary.Url)
+          setBinary(`${def.id}:${source.name}`, freshBinary)
+          next[source.name] = freshBinary
           changed = true
           return false
         }
@@ -277,7 +286,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     }
     // data 故意不进依赖：只在数据源/刷新/重试时重拉，避免 setData 触发自身
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc, def, tick, decodeData, setCachedData])
+  }, [doc, def.id, tick, decodeData, setCachedData])
 
   const sandbox = useCallback(() => {
     if (!sandboxRef.current) {
@@ -301,7 +310,10 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     selectAccount: async () => {
       await resolveAccountCheck()
     },
-    refreshWidget: () => setTick((value) => value + 1),
+    refreshWidget: () => {
+      forceRefreshRef.current = true
+      setTick((value) => value + 1)
+    },
     notify,
     navigateTo: (path: string) => navigate(path),
     runFunction: async (name: string, action: ActionSpec) => {
@@ -348,11 +360,17 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     const rawArgs = { ...action.args }
     const resolvedArgs: Record<string, string> = {}
     for (const [key, value] of Object.entries(rawArgs)) {
-      if (key === 'Arguments') resolvedArgs[key] = value
-      else resolvedArgs[key] = value.replace(/\{([^{}]+)\}/g, (_, token: string) => {
-        const found = resolveScopeValue({ ...scope, Inputs: inputsRef.current }, token)
-        return found === undefined || found === null ? '' : String(found)
-      })
+      if (
+        key === 'Arguments'
+        || (action.name === 'RunCommand' && (key === 'Command' || key === 'WorkingDirectory'))
+      ) {
+        resolvedArgs[key] = value
+      } else {
+        resolvedArgs[key] = value.replace(/\{([^{}]+)\}/g, (_, token: string) => {
+          const found = resolveScopeValue({ ...scope, Inputs: inputsRef.current }, token)
+          return found === undefined || found === null ? '' : String(found)
+        })
+      }
     }
     try {
       await runWidgetAction({ name: action.name, args: resolvedArgs }, actionContext())
@@ -521,6 +539,7 @@ function NestedUsing({ node, chain, parentScope, parentAllowedHosts, onSnapshot,
   const local = node.name ? defs.filter((item) => item.name === node.name) : []
   const [remoteXml, setRemoteXml] = useState<string | null>(node.url ? getRemoteWidget(node.url, node.refresh ? node.refresh * 1000 : undefined) : null)
   const [error, setError] = useState<string | null>(null)
+  const mountedAt = useRef(Date.now())
 
   useEffect(() => {
     if (!node.url) return
@@ -603,7 +622,7 @@ function NestedUsing({ node, chain, parentScope, parentAllowedHosts, onSnapshot,
     sourceUrl: node.url ?? localDef?.sourceUrl,
     sourcePath: localDef?.sourcePath,
     hosts: [...childHosts],
-    lastChecked: Date.now(),
+    lastChecked: mountedAt.current,
   }
 
   return (

@@ -69,6 +69,18 @@ fn is_widget_file(path: &Path) -> bool {
         })
 }
 
+/// 数据文件（Json/Text/Xml）的扩展名白名单；与组件文件分开，避免放宽 `.qwidget` 导入。
+fn is_data_text_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "json" | "txt" | "xml" | "md" | "csv" | "log" | "yaml" | "yml" | "toml"
+            )
+        })
+}
+
 #[tauri::command]
 pub fn read_widget_file(path: String) -> Result<String, String> {
     let path = PathBuf::from(path);
@@ -94,6 +106,24 @@ pub fn write_widget_file(path: String, content: String) -> Result<(), String> {
         return Err("组件内容超过 1MB".to_string());
     }
     std::fs::write(&path, content).map_err(|e| format!("写入组件文件失败: {e}"))
+}
+
+/// 读取 Json/Text/Xml 数据源文件；组件文件读写命令继续只接受 `.qwidget` / `.xml`。
+#[tauri::command]
+pub fn read_widget_data_text(path: String) -> Result<String, String> {
+    let path = PathBuf::from(path);
+    if !is_data_text_file(&path) {
+        return Err(
+            "仅支持 .json / .txt / .xml / .md / .csv / .log / .yaml / .toml 数据文件".to_string(),
+        );
+    }
+    let len = std::fs::metadata(&path)
+        .map_err(|e| format!("读取数据文件失败: {e}"))?
+        .len();
+    if len > MAX_WIDGET_FILE_BYTES {
+        return Err("数据文件超过 1MB".to_string());
+    }
+    std::fs::read_to_string(&path).map_err(|e| format!("读取数据文件失败: {e}"))
 }
 
 #[derive(Serialize)]
@@ -136,11 +166,22 @@ pub async fn run_widget_command(
     timeout_ms: Option<u64>,
 ) -> Result<WidgetCommandOutput, String> {
     let timeout = Duration::from_millis(timeout_ms.unwrap_or(10_000).clamp(1_000, 60_000));
-    let mut cmd = if cfg!(windows) {
+    #[cfg(windows)]
+    let mut cmd = {
         let mut cmd = tokio::process::Command::new("cmd");
         cmd.arg("/C").arg(&command);
+        use std::os::windows::process::CommandExt;
+        cmd.as_std_mut().creation_flags(0x08000000);
         cmd
-    } else {
+    };
+    #[cfg(unix)]
+    let mut cmd = {
+        let mut cmd = tokio::process::Command::new("sh");
+        cmd.arg("-c").arg(&command);
+        cmd
+    };
+    #[cfg(not(any(windows, unix)))]
+    let mut cmd = {
         let mut cmd = tokio::process::Command::new("sh");
         cmd.arg("-c").arg(&command);
         cmd

@@ -127,7 +127,7 @@ export const ELEMENT_ATTRS: Record<string, readonly string[]> = {
   Binary: ['Name', 'Mime', 'Text'],
   Resource: ['Name', 'Type', 'Mime', 'Text'],
   Triggers: [],
-  Trigger: ['Event', 'Function', 'Action', 'Control', 'Data', 'Interval', 'Once', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'PluginId', 'Method', 'Arguments'],
+  Trigger: ['Event', 'Function', 'Action', 'Control', 'Data', 'Interval', 'Once', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method', 'Arguments'],
   Function: ['Name', 'Timeout'],
   Struct: ['Name'],
   Field: ['Name', 'Type'],

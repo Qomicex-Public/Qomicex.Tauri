@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog'
 import {
@@ -182,7 +182,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
   const [previewInputs, setPreviewInputs] = useState<Record<string, unknown>>({})
   const [previewResults, setPreviewResults] = useState<Record<string, Record<string, unknown>>>({})
   const [appVersion, setAppVersion] = useState<string | null>(null)
-  const previewUrls = useRef(new Set<string>())
+  const [previewResources, setPreviewResources] = useState<Record<string, unknown>>({})
 
   useEffect(() => {
     if (!open) return
@@ -208,14 +208,6 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, widgetId])
 
-  useEffect(() => {
-    const urls = previewUrls.current
-    return () => {
-      for (const url of urls) URL.revokeObjectURL(url)
-      urls.clear()
-    }
-  }, [])
-
   const parsed = useMemo(() => {
     try {
       return { doc: parseWidgetXml(xml), error: null as WidgetError | null }
@@ -224,6 +216,19 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
     }
   }, [xml])
   const doc = parsed.doc
+
+  useEffect(() => {
+    if (!doc) {
+      setPreviewResources({})
+      return
+    }
+    const urls: string[] = []
+    const resources = parseResourceEntries(doc.resources, (url) => urls.push(url))
+    setPreviewResources(resources)
+    return () => {
+      for (const url of urls) URL.revokeObjectURL(url)
+    }
+  }, [doc])
 
   const hosts = useMemo(() => {
     if (!doc) return []
@@ -257,11 +262,6 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
     }
   }, [sampleJson])
 
-  const previewResources = useMemo(
-    () => (doc ? parseResourceEntries(doc.resources, (url) => previewUrls.current.add(url)) : {}),
-    [doc],
-  )
-
   const previewScope = useMemo(() => {
     if (!sample) return null
     const dataRoot = sample.Data && typeof sample.Data === 'object' && !Array.isArray(sample.Data)
@@ -288,14 +288,24 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
   }
 
   const ensureRiskAccepted = async (): Promise<boolean> => {
-    if (localStorage.getItem(RISK_KEY) === '1') return true
+    try {
+      if (localStorage.getItem(RISK_KEY) === '1') return true
+    } catch {
+      /* 存储不可用时按未确认处理 */
+    }
     const accepted = await choose(
       t('dashboard.custom.riskMessage'),
       t('dashboard.custom.riskConfirm'),
       t('dashboard.custom.cancel'),
       t('dashboard.custom.riskTitle'),
     )
-    if (accepted) localStorage.setItem(RISK_KEY, '1')
+    if (accepted) {
+      try {
+        localStorage.setItem(RISK_KEY, '1')
+      } catch {
+        /* 写入失败时仅本次生效 */
+      }
+    }
     return accepted
   }
 
@@ -383,7 +393,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
         xml,
         sourceUrl: normalizedSource,
         sourcePath: sourcePath || undefined,
-        hosts: [...confirmed],
+        hosts: hosts.filter((host) => confirmed.has(host)),
         lastChecked: changed ? Date.now() : def?.lastChecked,
       })
       if (changed) clearData(widgetId)
@@ -394,7 +404,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
         xml,
         sourceUrl: normalizedSource,
         sourcePath: sourcePath || undefined,
-        hosts: [...confirmed],
+        hosts: hosts.filter((host) => confirmed.has(host)),
       })
     }
     onClose()

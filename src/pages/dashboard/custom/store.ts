@@ -73,7 +73,9 @@ function loadCache(): DataCache {
 export function pruneDataCache(cache: DataCache): DataCache {
   const entries: Array<{ widgetKey: string; name: string; at: number; size: number }> = []
   for (const [widgetKey, sources] of Object.entries(cache)) {
+    if (!sources || typeof sources !== 'object') continue
     for (const [name, entry] of Object.entries(sources)) {
+      if (!entry || typeof entry !== 'object') continue
       entries.push({
         widgetKey,
         name,
@@ -111,7 +113,13 @@ function persistCache(cache: DataCache): void {
 }
 
 const initialDefs = loadDefs()
-const initialCache = pruneDataCache(loadCache())
+const initialCache = (() => {
+  try {
+    return pruneDataCache(loadCache())
+  } catch {
+    return {}
+  }
+})()
 
 export const useCustomWidgetStore = create<CustomWidgetState>((set, get) => ({
   defs: initialDefs,
@@ -135,6 +143,7 @@ export const useCustomWidgetStore = create<CustomWidgetState>((set, get) => ({
     const dataCache = { ...get().dataCache }
     delete dataCache[id]
     persistCache(dataCache)
+    clearBinaries(id)
     set({ defs, dataCache })
   },
 
@@ -154,6 +163,7 @@ export const useCustomWidgetStore = create<CustomWidgetState>((set, get) => ({
     const dataCache = { ...get().dataCache }
     delete dataCache[widgetKey]
     persistCache(dataCache)
+    clearBinaries(widgetKey)
     set({ dataCache })
   },
 }))
@@ -181,4 +191,11 @@ export function getBinary(key: string): BinaryValue | undefined {
 
 export function setBinary(key: string, value: BinaryValue): void {
   binaryCache.set(key, value)
+}
+
+export function clearBinaries(widgetKey: string): void {
+  const prefix = `${widgetKey}:`
+  for (const key of binaryCache.keys()) {
+    if (key.startsWith(prefix)) binaryCache.delete(key)
+  }
 }

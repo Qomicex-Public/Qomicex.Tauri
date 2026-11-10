@@ -359,6 +359,9 @@ function parseResources(el: Element, ctx: ParseCtx): void {
   validateAttrs('Resources', attrs)
   assertNoText(el)
   for (const child of children) {
+    if (!['String', 'Bool', 'Number', 'Binary', 'Resource'].includes(child.tagName)) {
+      throw new WidgetError('invalidResource', `Resources 内不允许 ${child.tagName}`)
+    }
     const split = readElement(child)
     applyProperties(child.tagName, split.attrs, split.propertyElements)
     validateAttrs(child.tagName, split.attrs)
@@ -541,8 +544,7 @@ function parseUsing(el: Element, ctx: ParseCtx): UsingNode {
   if (ctx.usingCount > WIDGET_LIMITS.maxNestedInstances) {
     throw new WidgetError('invalidUsing', `嵌套实例超过 ${WIDGET_LIMITS.maxNestedInstances} 个`)
   }
-  const argsEl = propertyElements.get('Arguments')
-  const argumentsJson = argsEl ? (argsEl.textContent ?? '').trim() : undefined
+  const argumentsJson = attr(attrs, 'Arguments')?.trim() || undefined
   if (refUrl) ctx.nestedUrls.push(refUrl)
   return {
     kind: 'using',
