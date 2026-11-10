@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use qomicex_core::core::GameCore;
 use qomicex_core::models::auth::{AuthMode, AuthOptions};
 use qomicex_core::models::installer::ModLoaderType;
+use qomicex_core::models::java::JavaSearchMode;
 use qomicex_core::models::launch::{JavaOptions, LaunchOptions};
 use qomicex_core::models::version_metadata::{CompleteVersionMetadata, JavaVersion};
 use qomicex_downloader::{DownloadEvent, DownloadTask, TaskId, TaskState};
@@ -2115,7 +2116,9 @@ pub(crate) async fn resolve_java_path(
     };
     // merged（Quick 扫描 + 下载目录 + 自定义注册）而非 scan_quick：
     // 向导/启动前自动下载的 Java 经 add_custom 注册，只在 merged 列表中可见。
-    let java_results = java::merged_java_runtimes(core).await;
+    // 传入 game_dir 才能覆盖 `{gameDir}/runtime` 里的运行时。
+    let java_results =
+        java::merged_java_runtimes(core, JavaSearchMode::Quick, Some(game_dir)).await;
     if java_results.is_empty() {
         return Err("未找到可用的 Java 运行时，请在实例设置中指定 Java 路径".to_string());
     }
