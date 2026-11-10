@@ -42,7 +42,7 @@ import type { ActionName } from './schema.ts'
 import type { UsingNode, WidgetNode } from './types.ts'
 import { parseWidgetXml } from './xml.ts'
 
-const HELP_URL = 'https://github.com/Qomicex-Public/Qomicex.Tauri/blob/main/docs/junsi-dev-docs/6-UI/组件设计/主页自定义组件-XML语法.md'
+const HELP_URL = 'https://docs.qomicex.top/guide/custom-widget/syntax'
 const RISK_KEY = 'qomicex.dashboard.customRisk.v1'
 
 function collectActions(nodes: WidgetNode[], out = new Set<ActionName>()): Set<ActionName> {
