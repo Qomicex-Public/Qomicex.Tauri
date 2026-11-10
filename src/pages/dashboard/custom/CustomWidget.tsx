@@ -228,7 +228,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
 
     const stale = doc.datas.filter((source) => {
       const entry = cache?.[source.name]
-      const fresh = entry && (source.refresh <= 0 || now - entry.at <= source.refresh * 1000)
+      const fresh = entry && source.refresh > 0 && now - entry.at <= source.refresh * 1000
       if (fresh) {
         next[source.name] = entry.json
         changed = true
@@ -325,7 +325,10 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
         workingDirectory: cwd,
         timeoutMs: timeout,
       })
-      setResults((prev) => ({ ...prev, Command: result as unknown as Record<string, unknown> }))
+      setResults((prev) => ({
+        ...prev,
+        Command: { ExitCode: result.exitCode, Stdout: result.stdout, Stderr: result.stderr },
+      }))
     },
     callPlugin: async (pluginId: string, method: string, args: unknown) => {
       if (preview) throw new Error(t('dashboard.custom.previewBlocked'))
@@ -516,7 +519,7 @@ function NestedUsing({ node, chain, parentScope, parentAllowedHosts, onSnapshot,
   const { t } = useI18n()
   const defs = useCustomWidgetStore((s) => s.defs)
   const local = node.name ? defs.filter((item) => item.name === node.name) : []
-  const [remoteXml, setRemoteXml] = useState<string | null>(node.url ? getRemoteWidget(node.url) : null)
+  const [remoteXml, setRemoteXml] = useState<string | null>(node.url ? getRemoteWidget(node.url, node.refresh ? node.refresh * 1000 : undefined) : null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -528,7 +531,7 @@ function NestedUsing({ node, chain, parentScope, parentAllowedHosts, onSnapshot,
       return
     }
     let cancelled = false
-    const cached = getRemoteWidget(url)
+    const cached = getRemoteWidget(url, node.refresh ? node.refresh * 1000 : undefined)
     if (cached) {
       setRemoteXml(cached)
       return
@@ -543,7 +546,7 @@ function NestedUsing({ node, chain, parentScope, parentAllowedHosts, onSnapshot,
         if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause))
       })
     return () => { cancelled = true }
-  }, [node.url, chain, t])
+  }, [node.url, node.refresh, chain, t])
 
   if (chain.length >= WIDGET_LIMITS.maxNestedDepth) {
     return <WidgetErrorBox message={t('dashboard.custom.nestedTooDeep')} />

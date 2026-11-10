@@ -161,10 +161,10 @@ export const useCustomWidgetStore = create<CustomWidgetState>((set, get) => ({
 // 远程嵌套组件 XML 缓存（内存）。按 URL + 6h TTL 复用。
 const remoteWidgets = new Map<string, { xml: string; at: number }>()
 
-export function getRemoteWidget(url: string): string | null {
+export function getRemoteWidget(url: string, ttlMs: number = WIDGET_LIMITS.updateTtlMs): string | null {
   const hit = remoteWidgets.get(url)
   if (!hit) return null
-  if (Date.now() - hit.at > WIDGET_LIMITS.updateTtlMs) return null
+  if (Date.now() - hit.at > ttlMs) return null
   return hit.xml
 }
 
