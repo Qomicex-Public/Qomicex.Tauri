@@ -15,6 +15,8 @@ import { DashboardProvider, useDashboard, DEFAULT_WIDGETS } from './dashboard/co
 import type { WidgetId, WidgetLayoutItem } from './dashboard/context.tsx'
 import { WidgetGrid, type WidgetEntry } from './dashboard/WidgetGrid.tsx'
 import { WatermarkWidget, AccountWidget, InstanceWidget, AnnouncementWidget } from './dashboard/widgets.tsx'
+import { CustomWidget } from './dashboard/custom/CustomWidget.tsx'
+import { useCustomWidgetStore } from './dashboard/custom/store.ts'
 
 function DashboardContent() {
   const { t } = useI18n()
@@ -22,6 +24,7 @@ function DashboardContent() {
   // 订阅槽位注册表：插件运行时可向 dashboard:widgets 追加入口（addMenuItem），
   // 只依赖 plugins 会漏掉这类更新
   const dashboardWidgets = useSlotContent('dashboard:widgets')
+  const customWidgets = useCustomWidgetStore((s) => s.defs)
   const { layout, setLayout, editing, setEditing, showMicrosoftReauth, setShowMicrosoftReauth, defaultAccount, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useDashboard()
 
   const widgets = useMemo<WidgetEntry[]>(() => {
@@ -40,8 +43,14 @@ function DashboardContent() {
         </div>
       ),
     }))
-    return [...staticEntries, ...pluginEntries]
-  }, [plugins, t, dashboardWidgets])
+    const customEntries: WidgetEntry[] = customWidgets.map((def) => ({
+      id: `custom:${def.id}` as WidgetId,
+      label: def.name,
+      literal: true,
+      node: <CustomWidget def={def} />,
+    }))
+    return [...staticEntries, ...customEntries, ...pluginEntries]
+  }, [plugins, t, dashboardWidgets, customWidgets])
 
   useEffect(() => {
     const known = new Set<string>(widgets.map(w => w.id))
@@ -51,10 +60,17 @@ function DashboardContent() {
     // 清掉隐藏项会导致插件激活后按 missing 重新追加（用户隐藏的组件每次启动复活）
     // 插件项（plugin:*）也不算 stale：同理，槽位注册晚于本 effect 首跑，
     // 提前清理会把用户摆好的插件组件位置重置（随后按默认位置重新追加，#86）
-    const stale = layout.some(it => !it.hidden && (typeof it.i !== 'string' || !it.i.startsWith('plugin:')) && !known.has(it.i))
+    const stale = layout.some(it =>
+      (typeof it.i === 'string' && it.i.startsWith('custom:') && !known.has(it.i)) ||
+      (!it.hidden && (typeof it.i !== 'string' || !it.i.startsWith('plugin:')) && !known.has(it.i))
+    )
     if (missing.length === 0 && !stale) return
     // plugin:* 保留：同上，等插件激活后自然对上（卸载插件的残留项不渲染、无 UI 影响）
-    const cleaned = layout.filter(it => known.has(it.i) || it.hidden || (typeof it.i === 'string' && it.i.startsWith('plugin:')))
+    const cleaned = layout.filter(it =>
+      typeof it.i === 'string' && it.i.startsWith('custom:')
+        ? known.has(it.i)
+        : known.has(it.i) || it.hidden || (typeof it.i === 'string' && it.i.startsWith('plugin:'))
+    )
     // 追加位置只按可渲染条目算：不可见的 plugin:* 残留不参与，避免新组件被挤到空隙下方
     let y = cleaned.filter(it => !it.hidden && known.has(it.i)).reduce((m, it) => Math.max(m, it.y + it.h), 0)
     const appended: WidgetLayoutItem[] = missing.map(w => {

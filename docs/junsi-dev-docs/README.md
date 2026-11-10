@@ -130,6 +130,7 @@
 - [ADR-126：插件权限用户层收窄与 proxyFetch 出网白名单](1-决策记录/ADR-126-插件权限用户层收窄与-proxyFetch-出网白名单.md)
 - [ADR-127：整合包解压按目标盘剩余空间封顶、越界条目整包失败并只回滚本次新建文件（issue #12）](1-决策记录/ADR-127-整合包解压按目标盘剩余空间封顶-越界条目整包失败并只回滚本次新建文件-issue-12.md)
 - [ADR-128：资源收藏导入导出（本地 JSON，合并/覆盖）](1-决策记录/ADR-128-资源收藏导入导出-本地-JSON-合并-覆盖-.md)
+- [ADR-129：主页自定义 XML 组件（QWidget）与在线数据/更新](1-决策记录/ADR-129-主页自定义-XML-组件-QWidget-与在线数据-更新.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 
