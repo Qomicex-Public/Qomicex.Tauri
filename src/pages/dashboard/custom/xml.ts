@@ -855,7 +855,9 @@ function parseCheckBox(el: Element): CheckBoxNode {
     kind: 'checkBox',
     name: requiredAttr(attrs, 'CheckBox', 'Name').trim(),
     text: attr(attrs, 'Text'),
-    checked: boolAttr(attrs, 'CheckBox', 'Checked', false),
+    checked: attr(attrs, 'Checked')?.includes('{')
+      ? attr(attrs, 'Checked')!
+      : boolAttr(attrs, 'CheckBox', 'Checked', false),
     onChange: parseOnChange(attrs, 'CheckBox'),
     ...baseNode('CheckBox', attrs),
   }

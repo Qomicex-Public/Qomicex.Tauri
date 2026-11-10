@@ -377,7 +377,11 @@ function TextBoxControl({ node, ctx }: { node: TextBoxNode; ctx: RenderContext }
 }
 
 function CheckBoxControl({ node, ctx }: { node: CheckBoxNode; ctx: RenderContext }) {
-  const checked = ctx.inputs[node.name] !== undefined ? !!ctx.inputs[node.name] : node.checked
+  const checked = ctx.inputs[node.name] !== undefined
+    ? !!ctx.inputs[node.name]
+    : typeof node.checked === 'boolean'
+      ? node.checked
+      : isTruthy(resolvePath(ctx.scope, node.checked))
   return (
     <label style={attachedStyle(node)} className="flex items-center gap-2 text-sm">
       <Checkbox

@@ -150,6 +150,8 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     return () => {
       for (const url of urls) URL.revokeObjectURL(url)
       urls.clear()
+      sandboxRef.current?.destroy()
+      sandboxRef.current = null
     }
   }, [])
 
@@ -275,7 +277,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
         Notify: (message, type) => notify(message, type as 'info' | 'error' | 'success' | undefined),
         OpenUrl: (url) => {
           if (!url.startsWith('https://')) return
-          void openExternalUrl(url)
+          void openExternalUrl(url).catch(() => {})
         },
         Navigate: (path) => navigate(path),
         Log: (message) => console.warn('[widget]', message),
@@ -321,7 +323,8 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
       if (preview) throw new Error(t('dashboard.custom.previewBlocked'))
       const registry = (window as unknown as { __pluginRegistry?: { call: (id: string, method: string, args: unknown[]) => Promise<unknown> } }).__pluginRegistry
       if (!registry) throw new Error('Plugin registry unavailable')
-      const value = await registry.call(pluginId, method, Array.isArray(args) ? args : [args])
+      const list = args === undefined ? [] : Array.isArray(args) ? args : [args]
+      const value = await registry.call(pluginId, method, list)
       setResults((prev) => ({ ...prev, PluginApi: { Value: value } }))
     },
     scope: { ...scope, Inputs: inputsRef.current },

@@ -147,7 +147,7 @@ export interface CheckBoxNode extends NodeBase {
   kind: 'checkBox'
   name: string
   text?: Bindable
-  checked: boolean
+  checked: boolean | Bindable
   onChange?: ActionSpec
 }
 
