@@ -42,7 +42,7 @@ import type { ActionName } from './schema.ts'
 import type { UsingNode, WidgetNode } from './types.ts'
 import { parseWidgetXml } from './xml.ts'
 
-const HELP_URL = 'https://docs.qomicex.top/guide/custom-widget/syntax'
+const HELP_BASE = 'https://docs.qomicex.top'
 const RISK_KEY = 'qomicex.dashboard.customRisk.v1'
 
 function collectActions(nodes: WidgetNode[], out = new Set<ActionName>()): Set<ActionName> {
@@ -158,7 +158,7 @@ interface WidgetEditorDialogProps {
 }
 
 export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDialogProps) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const { choose, confirm, error: showError } = useMessageBox()
   const defs = useCustomWidgetStore((s) => s.defs)
   const addDef = useCustomWidgetStore((s) => s.addDef)
@@ -651,7 +651,11 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
               <Button size="sm" variant="outline" onClick={onExportFile} disabled={!doc || busy !== null}>
                 {t('dashboard.custom.exportFile')}
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => void openExternalUrl(HELP_URL)}>
+              <Button size="sm" variant="ghost" onClick={() => void openExternalUrl(
+                lang.startsWith('en')
+                  ? `${HELP_BASE}/en/guide/custom-widget/syntax`
+                  : `${HELP_BASE}/guide/custom-widget/syntax`,
+              )}>
                 {t('dashboard.custom.help')}
               </Button>
             </div>
