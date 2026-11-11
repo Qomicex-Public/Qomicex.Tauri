@@ -39,7 +39,7 @@ import { linter, lintGutter, type Diagnostic } from '@codemirror/lint'
 import { javascript } from '@codemirror/lang-javascript'
 import { xml } from '@codemirror/lang-xml'
 import { tags } from '@lezer/highlight'
-import { ELEMENT_ATTRS, NODE_ATTRS } from '../schema.ts'
+import { ELEMENT_ATTRS, NODE_ATTRS, attributeValues } from '../schema.ts'
 import type { CustomWidgetDef } from '../store.ts'
 import { parseWidgetXml } from '../xml.ts'
 import { transpileScript } from '../script/transpile.ts'
@@ -63,6 +63,7 @@ export interface MountEditorOptions {
   language: 'xml' | 'ts'
   getDefs: () => CustomWidgetDef[]
   getTsContext: () => TsCompletionContext
+  getSampleData: () => unknown
   onChange: (value: string) => void
   onSave?: () => void
   onStatus?: (status: EditorStatus) => void
@@ -73,27 +74,6 @@ export interface EditorHandle {
   focus: () => void
   insertCompletion: (label: string) => void
   destroy: () => void
-}
-
-const VALUE_SUGGESTIONS: Record<string, string[]> = {
-  Size: ['Xs', 'Sm', 'Md', 'Lg', 'Xl', '2Xl'],
-  Weight: ['Normal', 'Medium', 'Semibold', 'Bold'],
-  Color: ['Default', 'Muted', 'Primary', 'Destructive'],
-  Align: ['Start', 'Center', 'End', 'Stretch'],
-  Justify: ['Start', 'Center', 'End', 'Between'],
-  Variant: ['Default', 'Secondary', 'Outline', 'Ghost', 'Destructive', 'Link'],
-  Direction: ['Row', 'Column'],
-  Background: ['Transparent', 'Card', 'Muted', 'Primary'],
-  Radius: ['None', 'Sm', 'Md', 'Lg', 'Full'],
-  Type: ['Json', 'Text', 'Xml', 'Binary', 'Audio', 'Video', 'String', 'Bool', 'Number', 'DateTime'],
-  Source: ['Url', 'File', 'Curseforge', 'Modrinth', 'Ftb'],
-  Folder: ['Game', 'Logs', 'Data', 'Screenshots'],
-  To: ['Instances', 'Downloads', 'Accounts', 'ResourceCenter', 'Settings', 'Connect', 'Running'],
-  Event: ['Loaded', 'DataChanged', 'Click', 'Timer'],
-  OnClick: ['Launch', 'SetDefaultInstance', 'OpenInstance', 'Navigate', 'OpenUrl', 'OpenFolder', 'Copy', 'SelectAccount', 'Install', 'Refresh', 'CallFunction', 'RunCommand', 'PluginApi'],
-  OnChange: ['Launch', 'SetDefaultInstance', 'OpenInstance', 'Navigate', 'OpenUrl', 'OpenFolder', 'Copy', 'SelectAccount', 'Install', 'Refresh', 'CallFunction', 'RunCommand', 'PluginApi'],
-  Action: ['Launch', 'SetDefaultInstance', 'OpenInstance', 'Navigate', 'OpenUrl', 'OpenFolder', 'Copy', 'SelectAccount', 'Install', 'Refresh', 'CallFunction', 'RunCommand', 'PluginApi'],
-  Category: ['Mod', 'Modpack', 'Shader', 'Resourcepack', 'Datapack', 'Save'],
 }
 
 const BOOL_ATTRS = new Set(['Controls', 'AutoPlay', 'Loop', 'Muted', 'Multiline', 'Password', 'ReadOnly', 'Checked', 'Once', 'Rounded', 'Border', 'Wrap'])
@@ -112,6 +92,7 @@ function attributeCompletion(name: string): Completion {
         changes: { from, to, insert },
         selection: { anchor: from + name.length + 2 },
       })
+      startCompletion(view)
     },
   }
 }
@@ -131,66 +112,138 @@ function knownNames(text: string, defs: CustomWidgetDef[]) {
   }
 }
 
-function bindingCompletion(context: CompletionContext, text: string): CompletionResult | null {
+function keysOf(value: unknown): string[] {
+  if (Array.isArray(value)) return value.length > 0 ? ['0'] : []
+  if (!value || typeof value !== 'object') return []
+  return Object.keys(value as Record<string, unknown>)
+}
+
+function sampleRoot(sample: unknown, namespace: string): unknown {
+  if (!sample || typeof sample !== 'object' || Array.isArray(sample)) return undefined
+  const record = sample as Record<string, unknown>
+  if (Object.prototype.hasOwnProperty.call(record, namespace)) return record[namespace]
+  return namespace === 'Data' ? record : undefined
+}
+
+function samplePath(sample: unknown, namespace: string, parts: string[]): unknown {
+  let current = sampleRoot(sample, namespace)
+  for (const part of parts) {
+    if (current === null || current === undefined || typeof current !== 'object') return undefined
+    if (Array.isArray(current)) {
+      if (!/^\d+$/.test(part)) return undefined
+      current = current[Number(part)]
+    } else {
+      if (!Object.prototype.hasOwnProperty.call(current, part)) return undefined
+      current = (current as Record<string, unknown>)[part]
+    }
+  }
+  return current
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))]
+}
+
+function bindingCompletion(context: CompletionContext, text: string, sample: unknown): CompletionResult | null {
   const before = text.slice(0, context.pos)
   const match = before.match(/\{([\w.-]*)$/)
   if (!match) return null
   const prefix = match[1]
-  const start = context.pos - prefix.length
   const parts = prefix.split('.')
+  const start = context.pos - (parts[parts.length - 1] ?? '').length
   const names = knownNames(text, [])
   const options: Completion[] = []
   const push = (values: string[], type: Completion['type']) => {
-    for (const value of values) options.push(completionOption(value, type))
+    for (const value of unique(values)) options.push(completionOption(value, type))
   }
   if (parts.length === 1) {
-    push(['Data', 'Resources', 'Inputs', 'Results', 'Children', 'State'], 'namespace')
-  } else if (parts[0] === 'Data') {
-    push(names.data, 'variable')
-  } else if (parts[0] === 'Resources') {
-    push(names.resources, 'variable')
-  } else if (parts[0] === 'Inputs') {
-    push(names.inputs, 'variable')
-  } else if (parts[0] === 'Results') {
-    push(names.functions, 'function')
-  } else if (parts[0] === 'Children') {
-    push(names.aliases, 'variable')
+    push(['Data', 'Resources', 'Inputs', 'Results', 'Children', 'Size', 'State'], 'namespace')
+  } else if (parts[0] === 'Size') {
+    push(['Width', 'Height', 'PixelWidth', 'PixelHeight'], 'property')
   } else if (parts[0] === 'State') {
     push(['Loading', 'Error'], 'property')
+  } else if (['Data', 'Resources', 'Inputs', 'Results', 'Children'].includes(parts[0])) {
+    const namespace = parts[0]
+    if (parts.length === 2) {
+      const firstLevel = namespace === 'Data'
+        ? names.data
+        : namespace === 'Resources'
+          ? names.resources
+          : namespace === 'Inputs'
+            ? names.inputs
+            : namespace === 'Results'
+              ? names.functions
+              : names.aliases
+      push([...firstLevel, ...keysOf(sampleRoot(sample, namespace))], 'variable')
+    } else {
+      push(keysOf(samplePath(sample, namespace, parts.slice(1))), 'property')
+    }
   }
   if (options.length === 0) return null
   return { from: start, options, validFor: /^[\w.-]*$/ }
 }
 
-function xmlCompletion(context: CompletionContext, getDefs: () => CustomWidgetDef[]): CompletionResult {
+function valueContext(before: string): { tag: string; attr: string; prefix: string } | null {
+  const lt = before.lastIndexOf('<')
+  if (lt < 0) return null
+  const fragment = before.slice(lt)
+  if (fragment.includes('>')) return null
+  const tagMatch = fragment.match(/^<([A-Za-z][\w.]*)/)
+  if (!tagMatch) return null
+  const attrMatch = fragment.match(/([A-Za-z][\w.]*)\s*=\s*(["'])([^"']*)$/)
+  if (!attrMatch) return null
+  return { tag: tagMatch[1], attr: attrMatch[1].split('.').pop() ?? attrMatch[1], prefix: attrMatch[3] }
+}
+
+function normalizeTag(tag: string): string {
+  return tag.startsWith('Widget.') ? tag.slice('Widget.'.length) : tag
+}
+
+function attributeValueSuggestions(tag: string, attr: string, text: string, defs: CustomWidgetDef[]): string[] {
+  const names = knownNames(text, defs)
+  if (attr === 'Function') return unique(names.functions)
+  if (attr === 'Control') return unique(names.inputs)
+  if (attr === 'Data') return unique(names.data)
+  if (attr === 'Name' && normalizeTag(tag) === 'Using') return unique(names.widgets)
+  if (attr === 'Url' || attr === 'UpdateUrl') return ['https://']
+  const fromSchema = attributeValues(normalizeTag(tag), attr)
+  if (fromSchema) return [...fromSchema]
+  if (BOOL_ATTRS.has(attr)) return ['True', 'False']
+  return []
+}
+
+function xmlCompletion(
+  context: CompletionContext,
+  getDefs: () => CustomWidgetDef[],
+  getSampleData: () => unknown,
+): CompletionResult {
   const text = context.state.doc.toString()
   const defs = getDefs()
+  const before = text.slice(0, context.pos)
+  let sample: unknown
+  try {
+    sample = getSampleData()
+  } catch {
+    sample = undefined
+  }
 
-  const binding = bindingCompletion(context, text)
+  const binding = bindingCompletion(context, text, sample)
   if (binding) return binding
 
-  const before = text.slice(0, context.pos)
-  const valueMatch = before.match(/([A-Za-z.]+)\s*=\s*["'][^"']*$/)
-  if (valueMatch) {
-    const attr = valueMatch[1].split('.').pop() ?? ''
-    const word = context.matchBefore(/[\w-]*/)
-    if (!word || (word.from === word.to && !context.explicit)) return { from: context.pos, options: [] }
-    const names = knownNames(text, defs)
-    let values: string[] = VALUE_SUGGESTIONS[attr] ?? []
-    if (attr === 'Name') values = [...names.widgets, ...names.inputs, ...names.data]
-    if (attr === 'Function') values = names.functions
-    if (attr === 'Control') values = names.inputs
-    if (attr === 'Data') values = names.data
-    if (BOOL_ATTRS.has(attr)) values = ['True', 'False']
-    if (attr === 'Url' || attr === 'UpdateUrl') values = ['https://']
-    const options = values.map((value) => completionOption(value, attr === 'Url' ? 'text' : 'enum'))
-    return { from: word.from, options, validFor: /^[\w-]*$/ }
+  const value = valueContext(before)
+  if (value) {
+    const values = attributeValueSuggestions(value.tag, value.attr, text, defs)
+    return {
+      from: context.pos - value.prefix.length,
+      options: values.map((item) => completionOption(item, value.attr === 'Url' ? 'text' : 'enum')),
+      validFor: /^[^"']*$/,
+    }
   }
 
   const openTag = before.match(/<([A-Za-z][\w.]*)\s+[^<>]*$/)
   if (openTag) {
     const tag = openTag[1]
-    const attrs = ELEMENT_ATTRS[tag] ?? []
+    const attrs = ELEMENT_ATTRS[normalizeTag(tag)] ?? []
     const word = context.matchBefore(/[\w.-]*/)
     const options = [
       ...attrs.map((attr) => attributeCompletion(attr)),
@@ -327,7 +380,8 @@ function tsCompletion(context: CompletionContext, getContext: () => TsCompletion
     Resources: ctx.resources,
     Data: ctx.data,
     Results: ctx.functions,
-    Host: ['Notify', 'OpenUrl', 'Navigate', 'Log'],
+    Size: ['Width', 'Height', 'PixelWidth', 'PixelHeight'],
+    Host: ['Notify', 'OpenUrl', 'Navigate', 'Log', 'GetSize', 'SetProperty', 'GetProperty', 'Invoke'],
   } as Record<string, string[]>)[match[1]]
   if (!values) return null
   const start = context.pos - match[2].length
@@ -397,6 +451,7 @@ export function mountEditor(parent: HTMLElement, options: MountEditorOptions): E
   const onStatusRef = { current: options.onStatus }
   const getDefs = options.getDefs
   const getTsContext = options.getTsContext
+  const getSampleData = options.getSampleData
 
   const extensions = [
     lineNumbers(),
@@ -451,7 +506,7 @@ export function mountEditor(parent: HTMLElement, options: MountEditorOptions): E
       xml(),
       xmlSlashCloseTag(),
       autocompletion({
-        override: [(context) => xmlCompletion(context, getDefs)],
+        override: [(context) => xmlCompletion(context, getDefs, getSampleData)],
         selectOnOpen: true,
         activateOnTyping: true,
         defaultKeymap: true,

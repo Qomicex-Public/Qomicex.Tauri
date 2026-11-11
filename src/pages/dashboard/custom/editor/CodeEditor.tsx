@@ -11,6 +11,7 @@ interface CodeEditorProps {
   language: 'xml' | 'ts'
   getDefs: () => CustomWidgetDef[]
   getTsContext: () => TsCompletionContext
+  getSampleData: () => unknown
   onChange: (value: string) => void
   onSave?: () => void
   onStatus?: (status: EditorStatus) => void
@@ -22,6 +23,7 @@ export function CodeEditor({
   language,
   getDefs,
   getTsContext,
+  getSampleData,
   onChange,
   onSave,
   onStatus,
@@ -29,11 +31,11 @@ export function CodeEditor({
 }: CodeEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<EditorHandle | null>(null)
-  const callbacks = useRef({ value, onChange, onSave, onStatus, getDefs, getTsContext })
+  const callbacks = useRef({ value, onChange, onSave, onStatus, getDefs, getTsContext, getSampleData })
   const [loadError, setLoadError] = useState(false)
 
   useEffect(() => {
-    callbacks.current = { value, onChange, onSave, onStatus, getDefs, getTsContext }
+    callbacks.current = { value, onChange, onSave, onStatus, getDefs, getTsContext, getSampleData }
   })
 
   useEffect(() => {
@@ -46,6 +48,7 @@ export function CodeEditor({
         language,
         getDefs: () => callbacks.current.getDefs(),
         getTsContext: () => callbacks.current.getTsContext(),
+        getSampleData: () => callbacks.current.getSampleData(),
         onChange: (next) => callbacks.current.onChange(next),
         onSave: () => callbacks.current.onSave?.(),
         onStatus: (status) => callbacks.current.onStatus?.(status),

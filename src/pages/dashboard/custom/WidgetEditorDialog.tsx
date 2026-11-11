@@ -597,6 +597,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
                   language="xml"
                   getDefs={() => defs}
                   getTsContext={() => tsContext}
+                  getSampleData={() => sample}
                   onChange={(value) => setXml(value)}
                   onSave={() => { void onSave() }}
                   onStatus={(value) => setStatus(value)}
@@ -634,6 +635,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
                       language="ts"
                       getDefs={() => defs}
                       getTsContext={() => tsContext}
+                      getSampleData={() => sample}
                       onChange={onScriptChange}
                       onSave={() => { void onSave() }}
                       onStatus={(value) => setStatus(value)}

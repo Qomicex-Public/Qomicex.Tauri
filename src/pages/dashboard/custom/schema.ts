@@ -168,6 +168,112 @@ export const ATTACHED_ATTRS = ['Grid.Row', 'Grid.Column', 'Grid.RowSpan', 'Grid.
 /** 所有节点通用：Target 供脚本定位，Visible 控制显隐。 */
 export const NODE_ATTRS = ['Target', 'Visible', 'When'] as const
 
+/** 属性值补全表：按元素 + 属性；文档和编辑器共用同一份枚举。 */
+export const ATTRIBUTE_VALUES: Record<string, Record<string, readonly string[]>> = {
+  '*': {
+    Visible: ['True', 'False'],
+    When: ['Size.Width &lt;= 1', 'Size.Width &gt;= 2', 'Size.PixelWidth &lt; 420'],
+  },
+  Input: {
+    Type: FIELD_TYPES,
+    Required: ['True', 'False'],
+  },
+  Output: {
+    Type: FIELD_TYPES,
+  },
+  Data: {
+    Type: DATA_TYPES,
+    Source: DATA_SOURCES,
+  },
+  Resource: {
+    Type: FIELD_TYPES,
+  },
+  Field: {
+    Type: FIELD_TYPES,
+  },
+  Trigger: {
+    Event: TRIGGER_EVENTS,
+    OnClick: ACTION_NAMES,
+    Action: ACTION_NAMES,
+    To: NAV_TARGETS,
+    Folder: FOLDER_TARGETS,
+    Source: INSTALL_SOURCES,
+    Category: INSTALL_CATEGORIES,
+    Once: ['True', 'False'],
+  },
+  Button: {
+    Size: BUTTON_SIZES,
+    Variant: BUTTON_VARIANTS,
+    OnClick: ACTION_NAMES,
+    To: NAV_TARGETS,
+    Folder: FOLDER_TARGETS,
+    Source: INSTALL_SOURCES,
+    Category: INSTALL_CATEGORIES,
+  },
+  Link: {
+    OnClick: ACTION_NAMES,
+    To: NAV_TARGETS,
+  },
+  TextBox: {
+    Multiline: ['True', 'False'],
+    Password: ['True', 'False'],
+    ReadOnly: ['True', 'False'],
+    OnChange: ACTION_NAMES,
+  },
+  CheckBox: {
+    Checked: ['True', 'False'],
+    OnChange: ACTION_NAMES,
+  },
+  Slider: {
+    OnChange: ACTION_NAMES,
+  },
+  Select: {
+    OnChange: ACTION_NAMES,
+  },
+  Text: {
+    Size: TEXT_SIZES,
+    Weight: TEXT_WEIGHTS,
+    Color: TEXT_COLORS,
+    Align: ALIGN_VALUES,
+  },
+  Container: {
+    Direction: ['Row', 'Column'],
+    Align: ALIGN_VALUES,
+    Justify: JUSTIFY_VALUES,
+    Border: ['True', 'False'],
+    Background: BACKGROUND_VALUES,
+    Radius: RADIUS_VALUES,
+  },
+  Row: {
+    Align: ALIGN_VALUES,
+    Justify: JUSTIFY_VALUES,
+    Wrap: ['True', 'False'],
+  },
+  Column: {
+    Align: ALIGN_VALUES,
+    Justify: JUSTIFY_VALUES,
+    Wrap: ['True', 'False'],
+  },
+  Grid: {
+    Align: ALIGN_VALUES,
+    Justify: JUSTIFY_VALUES,
+  },
+  Image: {
+    Rounded: ['True', 'False'],
+  },
+  Media: {
+    Type: MEDIA_TYPES,
+    Controls: ['True', 'False'],
+    AutoPlay: ['True', 'False'],
+    Loop: ['True', 'False'],
+    Muted: ['True', 'False'],
+  },
+}
+
+export function attributeValues(tag: string, attr: string): readonly string[] | undefined {
+  return ATTRIBUTE_VALUES[tag]?.[attr] ?? ATTRIBUTE_VALUES['*']?.[attr]
+}
+
 /**
  * ContentProperty 映射：标签之间的文本等价于给这个属性赋值。
  * 容器/集合类元素（Container/Row/Grid/Tabs/Resources 等）的内容是子元素，不在表内。
