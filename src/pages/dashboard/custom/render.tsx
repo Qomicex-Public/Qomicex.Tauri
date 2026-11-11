@@ -14,12 +14,13 @@ import {
   resolvePath,
   stringifyBinding,
 } from './schema.ts'
-import { convertBackValue, convertValue, exactBinding } from './converters.ts'
+import { convertBackValue, convertMultiValue, convertValue, exactBinding } from './converters.ts'
 import { evaluateWhen } from './responsive.ts'
 import type { BindingOptions } from './converters.ts'
 import type {
   ActionSpec,
   AnimationSpec,
+  BindingSpec,
   ButtonNode,
   CheckBoxNode,
   ColorPickerNode,
@@ -386,6 +387,7 @@ function animationValues(animations: AnimationSpec[]): {
 export function animationClass(animations?: AnimationSpec[]): string | undefined {
   if (!animations || animations.length === 0) return undefined
   const classes = ['w-anim-override']
+  if (animations.some((animation) => animation.trigger === 'Loaded')) classes.push('w-anim-loaded')
   if (animations.some((animation) => animation.trigger === 'Hover')) classes.push('w-anim-hover')
   if (animations.some((animation) => animation.trigger === 'Click')) classes.push('w-anim-click')
   return classes.join(' ')
@@ -399,12 +401,11 @@ export function animationStyle(animations?: AnimationSpec[]): CSSProperties | un
   const style: Record<string, string | number> = {}
   if (loaded.length > 0) {
     const values = animationValues(loaded)
-    style.animationName = values.name
-    style.animationDuration = values.duration
-    style.animationDelay = values.delay
-    style.animationTimingFunction = values.easing
-    style.animationIterationCount = values.iteration
-    style.animationFillMode = 'both'
+    style['--w-anim-loaded-name'] = values.name
+    style['--w-anim-loaded-duration'] = values.duration
+    style['--w-anim-loaded-delay'] = values.delay
+    style['--w-anim-loaded-easing'] = values.easing
+    style['--w-anim-loaded-iteration'] = values.iteration
   }
   if (hover.length > 0) {
     const values = animationValues(hover)
@@ -428,9 +429,13 @@ export function animationStyle(animations?: AnimationSpec[]): CSSProperties | un
       style['--w-anim-x'] = animation.direction === 'Left' ? `${-distance}px` : animation.direction === 'Right' ? `${distance}px` : '0px'
       style['--w-anim-y'] = animation.direction === 'Top' ? `${-distance}px` : animation.direction === 'Bottom' ? `${distance}px` : '0px'
     }
-    if (animation.kind === 'fade' || animation.kind === 'scale') {
-      if (animation.from !== undefined) style['--w-anim-from'] = animation.from
-      if (animation.to !== undefined) style['--w-anim-to'] = animation.to
+    if (animation.kind === 'fade') {
+      if (animation.from !== undefined) style['--w-anim-fade-from'] = animation.from
+      if (animation.to !== undefined) style['--w-anim-fade-to'] = animation.to
+    }
+    if (animation.kind === 'scale') {
+      if (animation.from !== undefined) style['--w-anim-scale-from'] = animation.from
+      if (animation.to !== undefined) style['--w-anim-scale-to'] = animation.to
     }
     if (animation.kind === 'rotate') {
       if (animation.from !== undefined) style['--w-anim-rotate-from'] = `${animation.from}deg`
@@ -786,19 +791,42 @@ function renderMedia(node: MediaNode, ctx: RenderContext): ReactNode {
     : <audio {...common} style={{ ...nodeStyle(node), width: '100%', maxHeight: 320 }} />
 }
 
+function bindingSource(binding: BindingSpec, ctx: RenderContext): unknown[] {
+  return binding.paths
+    ? binding.paths.map((path) => resolvePath(ctx.scope, path))
+    : [resolvePath(ctx.scope, binding.path ?? '')]
+}
+
+function bindingDisplay(binding: BindingSpec, ctx: RenderContext, targetType = 'string'): unknown {
+  const values = bindingSource(binding, ctx)
+  const options = { ...ctx.bindingOptions, targetType }
+  return binding.paths
+    ? convertMultiValue(values, binding.converter, binding.parameter, options, ctx.scope)
+    : convertValue(values[0], binding.converter, binding.parameter, options, ctx.scope)
+}
+
+function bindingInputName(binding: BindingSpec, fallback: string): string {
+  const path = binding.path ?? binding.paths?.[0] ?? ''
+  const parts = path.split('.')
+  return parts[0] === 'Inputs' && parts[1] ? parts[1] : fallback
+}
+
 function TextBoxControl({ node, ctx }: { node: TextBoxNode; ctx: RenderContext }) {
   const binding = node.value ? exactBinding(node.value) : null
-  const bound = binding?.path ? resolvePath(ctx.scope, binding.path) : undefined
-  const raw = ctx.inputs[node.name] !== undefined ? ctx.inputs[node.name] : bound
+  const local = ctx.inputs[node.name]
+  const source = binding ? bindingDisplay(binding, ctx) : undefined
   const value = binding
-    ? stringifyBinding(convertValue(raw, binding.converter, binding.parameter, ctx.bindingOptions, ctx.scope))
-    : ctx.inputs[node.name] !== undefined
-      ? String(ctx.inputs[node.name] ?? '')
+    ? binding.mode === 'OneWayToSource'
+      ? stringifyBinding(local)
+      : stringifyBinding(source)
+    : local !== undefined
+      ? String(local ?? '')
       : node.value ? interpolate(node.value, ctx.scope, ctx.bindingOptions) : ''
   const setValue = (next: string) => {
     if (binding) {
+      if (binding.mode === 'OneWay') return
       const converted = convertBackValue(next, binding.converter, binding.parameter, ctx.bindingOptions, ctx.scope)
-      if (converted !== undefined) ctx.setInput(node.name, converted)
+      if (converted !== undefined) ctx.setInput(bindingInputName(binding, node.name), converted)
       return
     }
     ctx.setInput(node.name, next)
@@ -838,12 +866,12 @@ function TextBoxControl({ node, ctx }: { node: TextBoxNode; ctx: RenderContext }
 
 function CheckBoxControl({ node, ctx }: { node: CheckBoxNode; ctx: RenderContext }) {
   const binding = typeof node.checked === 'string' ? exactBinding(node.checked) : null
-  const bound = binding?.path ? resolvePath(ctx.scope, binding.path) : undefined
-  const raw = ctx.inputs[node.name] !== undefined ? ctx.inputs[node.name] : bound
+  const local = ctx.inputs[node.name]
+  const source = binding ? bindingDisplay(binding, ctx, 'boolean') : undefined
   const checked = binding
-    ? isTruthy(convertValue(raw, binding.converter, binding.parameter, ctx.bindingOptions, ctx.scope))
-    : ctx.inputs[node.name] !== undefined
-      ? !!ctx.inputs[node.name]
+    ? isTruthy(binding.mode === 'OneWayToSource' ? local : source)
+    : local !== undefined
+      ? !!local
       : typeof node.checked === 'boolean'
         ? node.checked
         : isTruthy(resolvePath(ctx.scope, node.checked))
@@ -853,8 +881,10 @@ function CheckBoxControl({ node, ctx }: { node: CheckBoxNode; ctx: RenderContext
         checked={checked}
         onCheckedChange={(value) => {
           if (binding) {
-            const converted = convertBackValue(value, binding.converter, binding.parameter, ctx.bindingOptions, ctx.scope)
-            if (converted !== undefined) ctx.setInput(node.name, converted)
+            if (binding.mode !== 'OneWay') {
+              const converted = convertBackValue(value, binding.converter, binding.parameter, ctx.bindingOptions, ctx.scope)
+              if (converted !== undefined) ctx.setInput(bindingInputName(binding, node.name), converted)
+            }
           } else {
             ctx.setInput(node.name, value === true)
           }
@@ -867,7 +897,10 @@ function CheckBoxControl({ node, ctx }: { node: CheckBoxNode; ctx: RenderContext
 }
 
 function SliderControl({ node, ctx }: { node: SliderNode; ctx: RenderContext }) {
-  const value = ctx.inputs[node.name] !== undefined ? Number(ctx.inputs[node.name]) : node.value
+  const binding = typeof node.value === 'string' ? exactBinding(node.value) : null
+  const local = ctx.inputs[node.name]
+  const source = binding ? bindingDisplay(binding, ctx, 'number') : node.value
+  const value = Number(binding?.mode === 'OneWayToSource' ? local : local ?? source) || 0
   return (
     <input
       type="range"
@@ -878,7 +911,14 @@ function SliderControl({ node, ctx }: { node: SliderNode; ctx: RenderContext }) 
       step={node.step}
       style={nodeStyle(node)}
       onChange={(e) => {
-        ctx.setInput(node.name, Number(e.target.value))
+        if (binding) {
+          if (binding.mode !== 'OneWay') {
+            const converted = convertBackValue(Number(e.target.value), binding.converter, binding.parameter, ctx.bindingOptions, ctx.scope)
+            if (converted !== undefined) ctx.setInput(bindingInputName(binding, node.name), converted)
+          }
+        } else {
+          ctx.setInput(node.name, Number(e.target.value))
+        }
         ctx.onAction(node.onChange)
       }}
       className={cn('w-full accent-primary', animationClass(node.animations))}

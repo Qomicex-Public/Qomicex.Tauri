@@ -98,6 +98,20 @@ function asString(value: unknown): string {
   }
 }
 
+function parseLocaleNumber(value: unknown, locale: string): number | undefined {
+  const raw = asString(value).trim()
+  if (!raw) return undefined
+  const direct = Number(raw)
+  if (Number.isFinite(direct)) return direct
+  const parts = new Intl.NumberFormat(locale).formatToParts(12345.6)
+  const group = parts.find((part) => part.type === 'group')?.value ?? ''
+  const decimal = parts.find((part) => part.type === 'decimal')?.value ?? '.'
+  let normalized = group ? raw.split(group).join('') : raw
+  normalized = normalized.replace(/[\s\u00a0\u202f]/g, '').replace(decimal, '.')
+  const parsed = Number(normalized)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
 function parseBool(value: unknown): boolean {
   if (typeof value === 'boolean') return value
   if (value === 1 || value === '1' || value === 'true' || value === 'True') return true
@@ -221,8 +235,7 @@ export function convertBackValue(
   }
   if (converter.type === 'String') return asString(value)
   if (converter.type === 'Number' || converter.type === 'Format') {
-    const number = Number(value)
-    return Number.isFinite(number) ? number : undefined
+    return parseLocaleNumber(value, options.locale ?? 'en-US')
   }
   if (converter.type === 'Bool' || converter.type === 'BoolToVisibility') {
     return converter.type === 'BoolToVisibility' ? value === 'Visible' : parseBool(value)

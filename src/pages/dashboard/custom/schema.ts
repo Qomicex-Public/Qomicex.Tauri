@@ -19,6 +19,8 @@ export const WIDGET_LIMITS = {
   updateTtlMs: 6 * 60 * 60 * 1000,
   maxNestedDepth: 5,
   maxNestedInstances: 20,
+  maxConverters: 32,
+  maxMapEntries: 64,
   maxScriptBytes: 64 * 1024,
   defaultScriptTimeoutMs: 3000,
   maxScriptTimeoutMs: 10000,

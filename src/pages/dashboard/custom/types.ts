@@ -199,7 +199,7 @@ export interface CheckBoxNode extends NodeBase {
 export interface SliderNode extends NodeBase {
   kind: 'slider'
   name: string
-  value: number
+  value: number | Bindable
   min: number
   max: number
   step: number

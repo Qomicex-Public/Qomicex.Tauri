@@ -583,8 +583,8 @@
 
 /* QWidget 用户声明动画：只接管当前节点的默认 transition；Effect 不影响动画。 */
 @keyframes qwidget-fade {
-  from { opacity: var(--w-anim-from, 0); }
-  to { opacity: var(--w-anim-to, 1); }
+  from { opacity: var(--w-anim-fade-from, 0); }
+  to { opacity: var(--w-anim-fade-to, 1); }
 }
 
 @keyframes qwidget-slide {
@@ -599,14 +599,8 @@
 }
 
 @keyframes qwidget-scale {
-  from {
-    opacity: 0;
-    transform: scale(var(--w-anim-from, 0.96));
-  }
-  to {
-    opacity: 1;
-    transform: scale(var(--w-anim-to, 1));
-  }
+  from { transform: scale(var(--w-anim-scale-from, 0.96)); }
+  to { transform: scale(var(--w-anim-scale-to, 1)); }
 }
 
 @keyframes qwidget-rotate {
@@ -626,6 +620,15 @@
 
 .w-anim-override {
   transition: none !important;
+}
+
+.w-anim-loaded {
+  animation-name: var(--w-anim-loaded-name);
+  animation-duration: var(--w-anim-loaded-duration);
+  animation-delay: var(--w-anim-loaded-delay);
+  animation-timing-function: var(--w-anim-loaded-easing);
+  animation-iteration-count: var(--w-anim-loaded-iteration);
+  animation-fill-mode: both;
 }
 
 .w-anim-hover:hover {

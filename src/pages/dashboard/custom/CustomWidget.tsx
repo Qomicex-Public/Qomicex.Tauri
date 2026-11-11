@@ -353,6 +353,9 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
             return
           }
         }
+        if (cancelled) return
+        const currentDef = useCustomWidgetStore.getState().defs.find((item) => item.id === def.id)
+        if (!currentDef || currentDef.xml !== def.xml) return
         const hosts = collectAutoHosts({
           datas: next.datas,
           updateUrl: next.updateUrl,
@@ -440,7 +443,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   )
 
   const bindingOptions = useMemo(
-    () => ({ converters: doc?.converters ?? [], locale: lang }),
+    () => ({ converters: doc?.converters ?? [], locale: lang, targetType: 'string' }),
     [doc, lang],
   )
 

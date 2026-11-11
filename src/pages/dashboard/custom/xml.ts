@@ -80,6 +80,7 @@ import type {
   WidgetNode,
 } from './types.ts'
 import { validateWhen } from './responsive.ts'
+import { parseBinding } from './converters.ts'
 
 interface ParseCtx {
   nodes: number
@@ -692,6 +693,9 @@ function parseConverters(el: Element, ctx: ParseCtx): void {
   assertNoText(el)
   for (const child of children) {
     if (child.tagName !== 'Converter') throw new WidgetError('invalidConverter', `Converters 内不允许 ${child.tagName}`)
+    if (ctx.converters.length >= WIDGET_LIMITS.maxConverters) throw new WidgetError('tooManyNodes')
+    ctx.nodes += 1
+    if (ctx.nodes > WIDGET_LIMITS.maxNodes) throw new WidgetError('tooManyNodes')
     const split = readElement(child)
     validateAttrs('Converter', split.attrs)
     const name = requiredAttr(split.attrs, 'Converter', 'Name').trim()
@@ -703,6 +707,9 @@ function parseConverters(el: Element, ctx: ParseCtx): void {
       if (mapEntry.tagName !== 'MapEntry' || type !== 'Map') {
         throw new WidgetError('invalidConverter', `${name} 不允许子元素 ${mapEntry.tagName}`)
       }
+      if (map.length >= WIDGET_LIMITS.maxMapEntries) throw new WidgetError('invalidConverter', `${name} 的 MapEntry 超过上限`)
+      ctx.nodes += 1
+      if (ctx.nodes > WIDGET_LIMITS.maxNodes) throw new WidgetError('tooManyNodes')
       const entry = readElement(mapEntry)
       validateAttrs('MapEntry', entry.attrs)
       if (entry.children.length > 0) throw new WidgetError('invalidConverter', 'MapEntry 不能包含子元素')
@@ -1297,7 +1304,9 @@ function parseSlider(el: Element): SliderNode {
   return {
     kind: 'slider',
     name: requiredAttr(attrs, 'Slider', 'Name').trim(),
-    value: numberAttr(attrs, 'Slider', 'Value', -1_000_000, 1_000_000, 0),
+    value: isBound(attr(attrs, 'Value') ?? '')
+      ? attr(attrs, 'Value')!
+      : numberAttr(attrs, 'Slider', 'Value', -1_000_000, 1_000_000, 0),
     min: numberAttr(attrs, 'Slider', 'Min', -1_000_000, 1_000_000, 0),
     max: numberAttr(attrs, 'Slider', 'Max', -1_000_000, 1_000_000, 100),
     step: numberAttr(attrs, 'Slider', 'Step', 0.000001, 1_000_000, 1),
@@ -1537,6 +1546,28 @@ function collectTargets(nodes: WidgetNode[], out = new Set<string>()): void {
 }
 
 /** 解析并严格校验组件 XML；任何未知元素/属性都直接失败。 */
+function validateConverterReferences(value: unknown, names: Set<string>, seen = new Set<unknown>()): void {
+  if (typeof value === 'string') {
+    for (const match of value.matchAll(/\{([^{}]+)\}/g)) {
+      const binding = parseBinding(`{${match[1]}}`)
+      if (binding?.converter && !names.has(binding.converter)) {
+        throw new WidgetError('invalidConverter', `未知 Converter ${binding.converter}`)
+      }
+    }
+    return
+  }
+  if (!value || typeof value !== 'object' || seen.has(value)) return
+  seen.add(value)
+  if (Array.isArray(value)) {
+    for (const item of value) validateConverterReferences(item, names, seen)
+    return
+  }
+  for (const [key, item] of Object.entries(value)) {
+    if (key === 'script' || key === 'convertScript' || key === 'convertBackScript') continue
+    validateConverterReferences(item, names, seen)
+  }
+}
+
 export function parseWidgetXml(xml: string): WidgetDocument {
   assertSafeXml(xml)
   const doc = new DOMParser().parseFromString(xml, 'application/xml')
@@ -1621,7 +1652,7 @@ export function parseWidgetXml(xml: string): WidgetDocument {
   collectTargets(nodes)
   validatePages(ctx, nodes)
 
-  return {
+  const result: WidgetDocument = {
     name,
     version,
     author: attr(rootSplit.attrs, 'Author')?.trim() || undefined,
@@ -1642,6 +1673,8 @@ export function parseWidgetXml(xml: string): WidgetDocument {
     staticMediaUrls: ctx.staticMediaUrls,
     nestedUrls: [...new Set(ctx.nestedUrls)],
   }
+  validateConverterReferences(result, new Set(ctx.converters.map((converter) => converter.name)))
+  return result
 }
 
 /** 收集函数脚本的可补全上下文（编辑器使用）。 */
