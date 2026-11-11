@@ -528,6 +528,7 @@ function renderMedia(node: MediaNode, ctx: RenderContext): ReactNode {
     autoPlay: node.autoPlay,
     loop: node.loop,
     muted: node.muted,
+    volume: node.volume,
     className: 'w-full max-w-full rounded-md',
     style: { maxHeight: 320 },
   }
