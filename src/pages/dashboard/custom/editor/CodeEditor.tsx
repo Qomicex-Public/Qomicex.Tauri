@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { cn } from '../../../../components/ui'
 import type { CustomWidgetDef } from '../store.ts'
 import type { EditorHandle, EditorStatus, TsCompletionContext } from './create-editor.ts'
@@ -69,20 +69,6 @@ export function CodeEditor({
     handleRef.current?.setValue(value)
   }, [value])
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'Tab' && event.key !== 'Enter') return
-    const tooltip = hostRef.current?.querySelector('.cm-tooltip-autocomplete')
-    if (!tooltip) return
-    const items = tooltip.querySelectorAll('li')
-    if (items.length === 0) return
-    const selected = (tooltip.querySelector('li[aria-selected="true"]') ?? items[0]) as HTMLElement
-    const label = selected.querySelector('.cm-completionLabel')?.textContent ?? selected.textContent ?? ''
-    if (!label) return
-    event.preventDefault()
-    event.stopPropagation()
-    handleRef.current?.insertCompletion(label.trim())
-  }
-
   if (loadError) {
     return (
       <textarea
@@ -107,7 +93,6 @@ export function CodeEditor({
   return (
     <div
       ref={hostRef}
-      onKeyDownCapture={handleKeyDown}
       style={{ height: 'min(420px, 45vh)' }}
       className={cn(
         'overflow-hidden rounded-md border border-input bg-background/60 text-xs shadow-sm focus-within:ring-1 focus-within:ring-ring',

@@ -133,9 +133,42 @@ pub struct WidgetBinaryFile {
 }
 
 /// 读取本地二进制数据（图片/音频/视频）。路径由组件 XML 声明，前端展示解析结果。
+fn is_binary_media_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "png"
+                    | "jpg"
+                    | "jpeg"
+                    | "gif"
+                    | "webp"
+                    | "svg"
+                    | "bmp"
+                    | "ico"
+                    | "avif"
+                    | "mp3"
+                    | "wav"
+                    | "ogg"
+                    | "m4a"
+                    | "aac"
+                    | "opus"
+                    | "flac"
+                    | "mp4"
+                    | "m4v"
+                    | "mov"
+                    | "webm"
+            )
+        })
+}
+
 #[tauri::command]
 pub fn read_widget_binary(path: String) -> Result<WidgetBinaryFile, String> {
     let path = PathBuf::from(path);
+    if !is_binary_media_file(&path) {
+        return Err("仅支持图片/音频/视频文件".to_string());
+    }
     let size = std::fs::metadata(&path)
         .map_err(|e| format!("读取文件失败: {e}"))?
         .len();
@@ -204,6 +237,22 @@ pub async fn run_widget_command(
         }
         Ok(Err(error)) => Err(format!("命令执行失败: {error}")),
         Err(_) => Err("命令执行超时".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_binary_media_file;
+    use std::path::Path;
+
+    #[test]
+    fn binary_media_extension_whitelist() {
+        assert!(is_binary_media_file(Path::new("cover.PNG")));
+        assert!(is_binary_media_file(Path::new("track.mp3")));
+        assert!(is_binary_media_file(Path::new("clip.webm")));
+        assert!(!is_binary_media_file(Path::new("id_rsa")));
+        assert!(!is_binary_media_file(Path::new("Cookies.sqlite")));
+        assert!(!is_binary_media_file(Path::new("widget.qwidget")));
     }
 }
 

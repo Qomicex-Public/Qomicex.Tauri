@@ -564,7 +564,8 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
       const dynamic = isBound(source.url ?? '') || isBound(source.path ?? '')
       if (force || dynamic) return true
       const entry = cache?.[source.name]
-      const fresh = entry && source.refresh > 0 && now - entry.at <= source.refresh * 1000
+      const freshWindow = Math.max(0, source.refresh * 1000 - 5000)
+      const fresh = entry && source.refresh > 0 && now - entry.at < freshWindow
       if (fresh) {
         next[source.name] = entry.json
         changed = true

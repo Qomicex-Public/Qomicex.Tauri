@@ -72,7 +72,6 @@ export interface MountEditorOptions {
 export interface EditorHandle {
   setValue: (value: string) => void
   focus: () => void
-  insertCompletion: (label: string) => void
   destroy: () => void
 }
 
@@ -546,35 +545,6 @@ export function mountEditor(parent: HTMLElement, options: MountEditorOptions): E
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } })
     },
     focus: () => view.focus(),
-    insertCompletion: (label: string) => {
-      const pos = view.state.selection.main.head
-      const start = Math.max(0, pos - 500)
-      const before = view.state.sliceDoc(start, pos)
-      if (options.language !== 'xml') {
-        const word = before.match(/[\w$]*$/)?.[0] ?? ''
-        const from = pos - word.length
-        view.dispatch({
-          changes: { from, to: pos, insert: label },
-          selection: { anchor: from + label.length },
-          userEvent: 'input.complete',
-        })
-        view.focus()
-        return
-      }
-      const word = before.match(/[\w.:-]*$/)?.[0] ?? ''
-      const from = pos - word.length
-      const fragment = before.slice(before.lastIndexOf('<'))
-      const inTag = /^<[A-Za-z][\w.:-]*(\s|$)/.test(fragment) && !fragment.includes('>')
-      const quoted = (fragment.match(/"/g)?.length ?? 0) % 2 === 1
-      const isValue = quoted || /\{[\w.:-]*$/.test(before)
-      const insert = inTag && !isValue && !/^<[A-Za-z][\w.:-]*$/.test(fragment) ? `${label}=""` : label
-      view.dispatch({
-        changes: { from, to: pos, insert },
-        selection: { anchor: from + insert.length - (inTag && !isValue && !/^<[A-Za-z][\w.:-]*$/.test(fragment) ? 1 : 0) },
-        userEvent: 'input.complete',
-      })
-      view.focus()
-    },
     destroy: () => view.destroy(),
   }
 }
