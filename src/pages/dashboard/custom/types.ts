@@ -12,6 +12,7 @@ import type {
   INSTALL_SOURCES,
   NavTarget,
   TRIGGER_EVENTS,
+  TtlSpec,
 } from './schema.ts'
 
 export type Bindable = string
@@ -145,6 +146,7 @@ export interface ButtonNode extends NodeBase {
   variant: 'Default' | 'Secondary' | 'Outline' | 'Ghost' | 'Destructive' | 'Link'
   size: 'Sm' | 'Md' | 'Lg'
   onClick?: ActionSpec
+  shortcuts?: string[]
 }
 
 export interface ImageNode extends NodeBase {
@@ -218,6 +220,7 @@ export interface LinkNode extends NodeBase {
   text: Bindable
   url?: Bindable
   onClick?: ActionSpec
+  shortcuts?: string[]
 }
 
 export interface FilePickerNode extends NodeBase {
@@ -347,6 +350,8 @@ export interface WidgetDocument {
   author?: string
   description?: string
   updateUrl?: string
+  updateTtl?: TtlSpec
+  refreshTtl?: TtlSpec
   launcherVersion?: string
   inputs: InputDecl[]
   outputs: OutputDecl[]

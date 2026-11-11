@@ -24,6 +24,7 @@ import {
   isBound,
   isSafeHttpsUrl,
   isVersionRequirement,
+  parseTtlSpec,
   sanitizeAlias,
   validateIdentifier,
   type ActionName,
@@ -413,14 +414,15 @@ function parseData(el: Element, ctx: ParseCtx): void {
   const type = enumAttr(attrs, 'Data', 'Type', DATA_TYPES, 'Json')!
   const source = enumAttr(attrs, 'Data', 'Source', DATA_SOURCES, 'Url')!
   const refresh = intAttr(attrs, 'Data', 'Refresh', 0, 86400, 3600)
+  const async = boolAttr(attrs, 'Data', 'Async', true)
   const mime = attr(attrs, 'Mime')?.trim() || undefined
   if (source === 'Url') {
     const url = requiredAttr(attrs, 'Data', 'Url')
     if (!isBound(url) && !isSafeHttpsUrl(url)) throw new WidgetError('invalidUrl', `Data@Url=${url}`)
-    ctx.datas.push({ name, type, source, url, refresh, mime })
+    ctx.datas.push({ name, type, source, url, refresh, mime, async })
   } else {
     const path = requiredAttr(attrs, 'Data', 'Path')
-    ctx.datas.push({ name, type, source, path, refresh, mime })
+    ctx.datas.push({ name, type, source, path, refresh, mime, async })
   }
   ctx.names.add(`data:${name}`)
 }
@@ -977,8 +979,41 @@ function parseText(el: Element): TextNode {
   }
 }
 
+function parseShortcutKeys(el: Element): string[] {
+  const { children } = readElement(el)
+  const parts: string[] = []
+  for (const child of children) {
+    if (child.tagName !== 'ShortcutKey') throw new WidgetError('invalidAttribute', `ShortcutKeys 内不允许 ${child.tagName}`)
+    const split = readElement(child)
+    validateAttrs('ShortcutKey', split.attrs)
+    parts.push(requiredAttr(split.attrs, 'ShortcutKey', 'Key').trim())
+  }
+  const modifiers = new Set<string>()
+  let main: string | null = null
+  for (const part of parts) {
+    for (const token of part.split('+').map((item) => item.trim()).filter(Boolean)) {
+      const lower = token.toLowerCase()
+      if (lower === 'ctrl' || lower === 'control') modifiers.add('ctrl')
+      else if (lower === 'alt') modifiers.add('alt')
+      else if (lower === 'shift') modifiers.add('shift')
+      else if (lower === 'meta' || lower === 'cmd' || lower === 'command') modifiers.add('meta')
+      else {
+        if (main) throw new WidgetError('invalidAttribute', 'ShortcutKeys 只能有一个主键')
+        if (!/^([a-z0-9]|f([1-9]|1[0-2])|enter|space|escape|tab|backspace|delete|arrow(up|down|left|right))$/i.test(token)) {
+          throw new WidgetError('invalidAttribute', `ShortcutKey=${token}`)
+        }
+        main = lower
+      }
+    }
+  }
+  if (!main) throw new WidgetError('invalidAttribute', 'ShortcutKeys 缺少主键')
+  return [`${[...modifiers].sort().join('+')}${modifiers.size ? '+' : ''}${main}`]
+}
+
 function parseButton(el: Element): ButtonNode {
   const { attrs, propertyElements, children } = readElement(el)
+  const shortcutEl = propertyElements.get('ShortcutKeys')
+  if (shortcutEl) propertyElements.delete('ShortcutKeys')
   applyProperties('Button', attrs, propertyElements)
   applyContentProperty('Button', attrs, el, children)
   validateAttrs('Button', attrs)
@@ -998,6 +1033,7 @@ function parseButton(el: Element): ButtonNode {
     variant: enumAttr(attrs, 'Button', 'Variant', ['Default', 'Secondary', 'Outline', 'Ghost', 'Destructive', 'Link'] as const, 'Default')!,
     size: enumAttr(attrs, 'Button', 'Size', ['Sm', 'Md', 'Lg'] as const, 'Md')!,
     onClick,
+    shortcuts: shortcutEl ? parseShortcutKeys(shortcutEl) : undefined,
     ...baseNode('Button', attrs),
   }
 }
@@ -1140,6 +1176,8 @@ function parseProgress(el: Element): ProgressNode {
 
 function parseLink(el: Element): LinkNode {
   const { attrs, propertyElements, children } = readElement(el)
+  const shortcutEl = propertyElements.get('ShortcutKeys')
+  if (shortcutEl) propertyElements.delete('ShortcutKeys')
   applyProperties('Link', attrs, propertyElements)
   applyContentProperty('Link', attrs, el, children)
   validateAttrs('Link', attrs)
@@ -1153,6 +1191,7 @@ function parseLink(el: Element): LinkNode {
     text: requiredAttr(attrs, 'Link', 'Text'),
     url,
     onClick,
+    shortcuts: shortcutEl ? parseShortcutKeys(shortcutEl) : undefined,
     ...baseNode('Link', attrs),
   }
 }
@@ -1354,6 +1393,8 @@ export function parseWidgetXml(xml: string): WidgetDocument {
   if (launcherVersion && !isVersionRequirement(launcherVersion)) {
     throw new WidgetError('invalidAttribute', `Widget@LauncherVersion=${launcherVersion}`)
   }
+  const updateTtl = attr(rootSplit.attrs, 'UpdateTTL')?.trim() ? parseTtlSpec(attr(rootSplit.attrs, 'UpdateTTL')!) : undefined
+  const refreshTtl = attr(rootSplit.attrs, 'RefreshTTL')?.trim() ? parseTtlSpec(attr(rootSplit.attrs, 'RefreshTTL')!) : undefined
 
   const ctx: ParseCtx = {
     nodes: 0,
@@ -1412,6 +1453,8 @@ export function parseWidgetXml(xml: string): WidgetDocument {
     author: attr(rootSplit.attrs, 'Author')?.trim() || undefined,
     description: attr(rootSplit.attrs, 'Description')?.trim() || undefined,
     updateUrl,
+    updateTtl,
+    refreshTtl,
     launcherVersion,
     inputs: ctx.inputs,
     outputs: ctx.outputs,

@@ -120,17 +120,19 @@ export const DATA_TYPES = ['Json', 'Text', 'Xml', 'Binary'] as const
 export const DATA_SOURCES = ['Url', 'File'] as const
 export const MEDIA_TYPES = ['Audio', 'Video'] as const
 export const DIALOG_SIZES = ['Sm', 'Md', 'Lg', 'Xl', 'Full'] as const
+export const TTL_VALUES = ['Default', 'Immediately', 'PreLaunch', 'PreLoad', 'None'] as const
+export type TtlSpec = number | (typeof TTL_VALUES)[number]
 export const TRIGGER_EVENTS = ['Loaded', 'DataChanged', 'Click', 'Timer', 'Resize'] as const
 export const FIELD_TYPES = ['String', 'Number', 'Bool', 'DateTime', 'Json', 'Binary'] as const
 
 /** 元素 → 允许属性。未知元素/属性一律解析失败。 */
 export const ELEMENT_ATTRS: Record<string, readonly string[]> = {
-  Widget: ['Name', 'Version', 'Author', 'Description', 'UpdateUrl', 'LauncherVersion'],
+  Widget: ['Name', 'Version', 'Author', 'Description', 'UpdateUrl', 'LauncherVersion', 'UpdateTTL', 'RefreshTTL'],
   'Widget.Inputs': [],
   Input: ['Name', 'Type', 'Required', 'Default'],
   'Widget.Outputs': [],
   Output: ['Name', 'Type', 'Source'],
-  Data: ['Name', 'Type', 'Source', 'Url', 'Path', 'Mime', 'Refresh'],
+  Data: ['Name', 'Type', 'Source', 'Url', 'Path', 'Mime', 'Refresh', 'Async'],
   Resources: [],
   String: ['Name', 'Text'],
   Bool: ['Name', 'Text'],
@@ -140,6 +142,7 @@ export const ELEMENT_ATTRS: Record<string, readonly string[]> = {
   Triggers: [],
   Trigger: ['Event', 'Function', 'Action', 'Control', 'Data', 'Interval', 'Once', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method', 'Arguments'],
   Function: ['Name', 'Timeout'],
+  ShortcutKey: ['Key'],
   Struct: ['Name'],
   Field: ['Name', 'Type'],
   Container: ['Direction', 'Gap', 'Padding', 'Align', 'Justify', 'Border', 'Background', 'Radius', 'Content'],
@@ -177,9 +180,14 @@ export const ATTACHED_ATTRS = ['Grid.Row', 'Grid.Column', 'Grid.RowSpan', 'Grid.
 export const NODE_ATTRS = ['Target', 'Visible', 'When'] as const
 
 /** 属性值补全表：按元素 + 属性；文档和编辑器共用同一份枚举。 */
-export const ATTRIBUTE_VALUES: Record<string, Record<string, readonly string[]>> = {  '*': {
+export const ATTRIBUTE_VALUES: Record<string, Record<string, readonly string[]>> = {
+  '*': {
     Visible: ['True', 'False'],
     When: ['Size.Width &lt;= 1', 'Size.Width &gt;= 2', 'Size.PixelWidth &lt; 420'],
+  },
+  Widget: {
+    UpdateTTL: TTL_VALUES,
+    RefreshTTL: TTL_VALUES,
   },
   Input: {
     Type: FIELD_TYPES,
@@ -191,6 +199,7 @@ export const ATTRIBUTE_VALUES: Record<string, Record<string, readonly string[]>>
   Data: {
     Type: DATA_TYPES,
     Source: DATA_SOURCES,
+    Async: ['True', 'False'],
   },
   Resource: {
     Type: [...FIELD_TYPES, 'Page'],
@@ -440,6 +449,16 @@ export function isBound(value: string): boolean {
   return value.includes('{')
 }
 
+export function parseTtlSpec(raw: string): TtlSpec {
+  const value = raw.trim()
+  if ((TTL_VALUES as readonly string[]).includes(value)) return value as TtlSpec
+  if (/^\d+$/.test(value)) {
+    const seconds = Number(value)
+    if (seconds <= 86400) return seconds
+  }
+  throw new WidgetError('invalidAttribute', `TTL=${raw}`)
+}
+
 export function validateIdentifier(name: string, label: string): void {
   if (!IDENTIFIER.test(name)) {
     throw new WidgetError('invalidName', `${label}: ${name}`)
@@ -494,6 +513,7 @@ export interface DataSourceSpec {
   path?: string
   mime?: string
   refresh: number
+  async: boolean
 }
 
 /** 组件会自动出网的目标主机：数据源、更新源、嵌套组件、静态图片/媒体。 */

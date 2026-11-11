@@ -40,6 +40,7 @@ import type {
   ActionSpec,
   TriggerNode,
   UsingNode,
+  PageNode,
   WidgetDocument,
   WidgetNode,
   WidgetSizeInfo,
@@ -52,6 +53,23 @@ export interface ChildSnapshot {
   Results?: Record<string, unknown>
   Outputs?: Record<string, unknown>
   State: { Loading: boolean; Error: boolean }
+}
+
+const preLaunchUpdateDone = new Set<string>()
+const preLaunchRefreshDone = new Set<string>()
+
+type TtlMode =
+  | { type: 'interval'; ms: number }
+  | { type: 'mount' }
+  | { type: 'launch' }
+  | { type: 'none' }
+
+function ttlMode(spec: WidgetDocument['updateTtl'] | undefined, fallbackMs: number): TtlMode {
+  if (spec === undefined || spec === 'Default') return { type: 'interval', ms: fallbackMs }
+  if (spec === 'None') return { type: 'none' }
+  if (spec === 'Immediately' || spec === 'PreLoad') return { type: 'mount' }
+  if (spec === 'PreLaunch') return { type: 'launch' }
+  return { type: 'interval', ms: Math.max(0, spec * 1000) }
 }
 
 interface CustomWidgetProps {
@@ -120,16 +138,68 @@ function resolveActionValue(value: string, scope: Record<string, unknown>): stri
   })
 }
 
-function dataScopeOf(data: Record<string, unknown>, sources: WidgetDocument['datas']): Record<string, unknown> {
+function dataScopeOf(
+  data: Record<string, unknown>,
+  sources: WidgetDocument['datas'],
+  status: Record<string, 'Loading' | 'Completed' | 'Error'>,
+): Record<string, unknown> {
   const root: Record<string, unknown> = {}
+  const statusMap: Record<string, 'Loading' | 'Completed' | 'Error'> = {}
   for (const source of sources) {
     const value = data[source.name]
     root[source.name] = value
+    statusMap[source.name] = status[source.name] ?? 'Loading'
     if (source.name === 'Data' && value && typeof value === 'object' && !Array.isArray(value)) {
       Object.assign(root, value as Record<string, unknown>)
     }
   }
+  if (sources.length > 0) root.Status = statusMap
   return root
+}
+
+interface ShortcutBinding {
+  keys: string
+  action?: ActionSpec
+  control?: string
+}
+
+function collectShortcuts(
+  nodes: PageNode[],
+  out: ShortcutBinding[],
+): void {
+  for (const node of nodes) {
+    if (node.kind === 'button' || node.kind === 'link') {
+      for (const keys of node.shortcuts ?? []) {
+        const action = node.onClick
+          ?? (node.kind === 'link' && node.url ? { name: 'OpenUrl' as const, args: { Url: node.url } } : undefined)
+        out.push({ keys, action, control: node.name })
+      }
+    }
+    switch (node.kind) {
+      case 'container':
+      case 'row':
+      case 'column':
+      case 'grid':
+      case 'if':
+      case 'dialog':
+        collectShortcuts(node.children, out)
+        break
+      case 'tabs':
+        for (const tab of node.children) collectShortcuts(tab.children, out)
+        break
+      case 'tabItem':
+        collectShortcuts(node.children, out)
+        break
+      case 'list':
+        if (node.item?.child) collectShortcuts([node.item.child], out)
+        break
+      case 'listItem':
+        if (node.child) collectShortcuts([node.child], out)
+        break
+      default:
+        break
+    }
+  }
 }
 
 export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, preview = false }: CustomWidgetProps) {
@@ -160,6 +230,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   const overridesRef = useRef<Record<string, Record<string, unknown>>>({})
   const [openDialogs, setOpenDialogs] = useState<Set<string>>(new Set())
   const [data, setData] = useState<Record<string, unknown>>({})
+  const [dataStatus, setDataStatus] = useState<Record<string, 'Loading' | 'Completed' | 'Error'>>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [tick, setTick] = useState(0)
@@ -175,6 +246,8 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   const lastInitialInputs = useRef('')
   const rootRef = useRef<HTMLDivElement>(null)
   const sizeRef = useRef<WidgetSizeInfo>({ Width: 0, Height: 0, PixelWidth: 0, PixelHeight: 0 })
+  const updateMountRef = useRef<string | null>(null)
+  const refreshMountRef = useRef<string | null>(null)
   const executeFunctionRef = useRef<(name: string, trigger: TriggerNode) => void>(() => {})
   const runtimeRef = useRef<{
     setProperty: (target: string, property: string, value: unknown) => Promise<unknown>
@@ -219,8 +292,19 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     if (!doc) return
     const updateUrl = doc.updateUrl ?? def.sourceUrl
     if (!updateUrl) return
+    const mode = ttlMode(doc.updateTtl, WIDGET_LIMITS.updateTtlMs)
+    if (mode.type === 'none') return
     const now = Date.now()
-    if (now - (def.lastChecked ?? 0) < WIDGET_LIMITS.updateTtlMs) return
+    if (mode.type === 'interval' && now - (def.lastChecked ?? 0) < mode.ms) return
+    if (mode.type === 'mount') {
+      const key = def.id
+      if (updateMountRef.current === key) return
+      updateMountRef.current = key
+    }
+    if (mode.type === 'launch') {
+      if (preLaunchUpdateDone.has(def.id)) return
+      preLaunchUpdateDone.add(def.id)
+    }
     const controller = new AbortController()
     let cancelled = false
     void fetchWidgetUrl(updateUrl, controller.signal)
@@ -317,7 +401,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     const named: Record<string, unknown> = { ...data }
     return {
       ...named,
-      Data: dataScopeOf(data, doc?.datas ?? []),
+      Data: dataScopeOf(data, doc?.datas ?? [], dataStatus),
       Resources: resources,
       Inputs: inputs,
       Results: results,
@@ -325,7 +409,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
       Size: size,
       State: { Loading: loading, Error: !!error },
     }
-  }, [data, doc, resources, inputs, results, children, size, loading, error])
+  }, [data, doc, resources, inputs, results, children, size, dataStatus, loading, error])
 
   const outputs = useMemo(
     () => (doc ? resolveOutputValues(doc.outputs, (source) => resolvePath(scope, source)) : {}),
@@ -472,6 +556,16 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
       return true
     })
     if (changed) setData(next)
+    const statuses: Record<string, 'Loading' | 'Completed' | 'Error'> = {}
+    const staleNames = new Set(stale.map((source) => source.name))
+    for (const source of doc.datas) {
+      statuses[source.name] = staleNames.has(source.name)
+        ? 'Loading'
+        : next[source.name] !== undefined
+          ? 'Completed'
+          : 'Loading'
+    }
+    setDataStatus(statuses)
     if (stale.length === 0) {
       setLoading(false)
       setError(null)
@@ -495,6 +589,11 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
       if (cancelled) return
       setLoading(false)
       const failed = items.filter((item) => item.status === 'rejected')
+      const finalStatuses = { ...statuses }
+      items.forEach((item, index) => {
+        finalStatuses[stale[index].name] = item.status === 'rejected' ? 'Error' : 'Completed'
+      })
+      setDataStatus(finalStatuses)
       setError(failed.length > 0 ? 'data' : null)
       if (Object.keys(fetched).length > 0) {
         setData((prev) => ({ ...prev, ...fetched }))
@@ -648,6 +747,33 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     }
   }, [actionContext, ensureCommandTrusted, scope, showError, t])
 
+  useEffect(() => {
+    if (!doc) return
+    const bindings: ShortcutBinding[] = []
+    collectShortcuts(doc.nodes, bindings)
+    for (const page of Object.values(doc.pages)) collectShortcuts(page, bindings)
+    if (bindings.length === 0) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat) return
+      const target = event.target
+      if (target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"]')) return
+      const key = event.key === ' ' ? 'space' : event.key.toLowerCase()
+      const modifiers = [
+        event.altKey ? 'alt' : '',
+        event.ctrlKey ? 'ctrl' : '',
+        event.metaKey ? 'meta' : '',
+        event.shiftKey ? 'shift' : '',
+      ].filter(Boolean).sort()
+      const combo = `${modifiers.length ? `${modifiers.join('+')}+` : ''}${key}`
+      const binding = bindings.find((item) => item.keys === combo)
+      if (!binding) return
+      event.preventDefault()
+      void executeAction(binding.action, binding.control)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [doc, executeAction])
+
   const invoke = useCallback(async (target: string, method: string, args: unknown[]): Promise<unknown> => {
     if (!doc) throw new Error('组件未加载')
     const node = findNodeByTarget(doc.nodes, target)
@@ -740,6 +866,32 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     }, 0)
     return () => clearTimeout(timer)
   }, [doc, def.id, def.xml])
+
+  // RefreshTTL：按配置重新拉取数据，保留 Inputs / Dialog / Tab 等组件状态。
+  useEffect(() => {
+    if (!doc || preview) return
+    const mode = doc.refreshTtl === undefined ? ({ type: 'none' } as const) : ttlMode(doc.refreshTtl, 0)
+    if (mode.type === 'none') return
+    const refresh = () => {
+      forceRefreshRef.current = true
+      setTick((value) => value + 1)
+    }
+    if (mode.type === 'interval') {
+      if (mode.ms <= 0) return
+      const timer = setInterval(refresh, mode.ms)
+      return () => clearInterval(timer)
+    }
+    if (mode.type === 'mount') {
+      const key = def.id
+      if (refreshMountRef.current === key) return
+      refreshMountRef.current = key
+      refresh()
+      return
+    }
+    if (preLaunchRefreshDone.has(def.id)) return
+    preLaunchRefreshDone.add(def.id)
+    refresh()
+  }, [doc, def.id, def.xml, preview])
 
   // 尺寸变化后防抖触发 Resize；首次尺寸只记录，交给 Loaded 处理初始布局。
   useEffect(() => {

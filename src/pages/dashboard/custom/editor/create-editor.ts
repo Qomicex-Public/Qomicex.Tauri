@@ -168,7 +168,7 @@ function bindingCompletion(context: CompletionContext, text: string, sample: unk
     const namespace = parts[0]
     if (parts.length === 2) {
       const firstLevel = namespace === 'Data'
-        ? names.data
+        ? ['Status', ...names.data]
         : namespace === 'Resources'
           ? names.resources
           : namespace === 'Inputs'
@@ -177,6 +177,8 @@ function bindingCompletion(context: CompletionContext, text: string, sample: unk
               ? names.functions
               : names.aliases
       push([...firstLevel, ...keysOf(sampleRoot(sample, namespace))], 'variable')
+    } else if (namespace === 'Data' && parts[1] === 'Status') {
+      push([...names.data, ...keysOf(sampleRoot(sample, namespace))], 'property')
     } else {
       push(keysOf(samplePath(sample, namespace, parts.slice(1))), 'property')
     }
