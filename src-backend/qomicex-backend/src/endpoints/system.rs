@@ -222,6 +222,7 @@ async fn sysinfo(State(state): State<SharedState>) -> ApiResult<Json<SystemInfoR
         git_commit,
         memory: total as i64,
         available_memory: avail as i64,
+        app_version: state.app_version.clone(),
         data_dir: state.data_dir.to_string_lossy().into_owned(),
     }))
 }

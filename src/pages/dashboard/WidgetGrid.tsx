@@ -11,6 +11,8 @@ import { Button, Tooltip } from '../../components/ui'
 import { useDashboard, DEFAULT_WIDGETS, WidgetSizeProvider } from './context.tsx'
 import type { WidgetId } from './context.tsx'
 import { useI18n } from '../../i18n/index.tsx'
+import { useCustomWidgetStore } from './custom/store.ts'
+import { WidgetEditorDialog } from './custom/WidgetEditorDialog.tsx'
 
 const COLS = 4
 const ROW_HEIGHT = 72
@@ -20,17 +22,23 @@ const DRAG_CLICK_SLOP = 4
 export interface WidgetEntry {
   id: WidgetId
   label: string
+  /** label 是用户起的名字而不是 i18n key（自定义组件）。 */
+  literal?: boolean
   node: React.ReactNode
 }
 
 export function WidgetGrid({ widgets }: { widgets: WidgetEntry[] }) {
   const { t } = useI18n()
   const { layout, setLayout, editing, setEditing, hiddenWidgets, hideWidget, restoreWidget, resetLayout } = useDashboard()
+  const customDefs = useCustomWidgetStore((s) => s.defs)
   const [addPanelOpen, setAddPanelOpen] = useState(false)
+  const [editor, setEditor] = useState<{ open: boolean; id: string | null }>({ open: false, id: null })
   const dragStartRef = useRef<{ x: number; y: number; consumed: boolean } | null>(null)
   const { containerRef, width, mounted } = useContainerWidth()
   const [areaH, setAreaH] = useState(0)
   const areaRef = useRef<HTMLDivElement>(null)
+
+  const labelOf = (entry: WidgetEntry) => (entry.literal ? entry.label : t(entry.label))
 
   useLayoutEffect(() => {
     const el = areaRef.current
@@ -90,7 +98,7 @@ export function WidgetGrid({ widgets }: { widgets: WidgetEntry[] }) {
           </div>
           <div className="flex flex-wrap items-center gap-1">
             {hiddenEntries.map(w => (
-              <Tooltip key={w.id} content={t(w.label)}>
+              <Tooltip key={w.id} content={labelOf(w)}>
                 <button
                   onClick={() => restoreWidget(w.id)}
                   className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -127,10 +135,37 @@ export function WidgetGrid({ widgets }: { widgets: WidgetEntry[] }) {
                 className="rounded-lg border border-border/40 px-3 py-1.5 text-xs hover:bg-accent"
               >
                 <Plus className="mr-1 inline h-3 w-3" />
-                {t(w.label)}
+                {labelOf(w)}
               </button>
             )) : (
               <p className="text-xs text-muted-foreground/60">{t('dashboard.allWidgetsVisible')}</p>
+            )}
+          </div>
+
+          <div className="mt-4 border-t border-border/30 pt-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
+                {t('dashboard.custom.section')}
+              </p>
+              <Button size="sm" variant="outline" onClick={() => setEditor({ open: true, id: null })}>
+                <Plus className="mr-1 h-3 w-3" />
+                {t('dashboard.custom.add')}
+              </Button>
+            </div>
+            {customDefs.length === 0 ? (
+              <p className="text-xs text-muted-foreground/60">{t('dashboard.custom.empty')}</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {customDefs.map(def => (
+                  <button
+                    key={def.id}
+                    onClick={() => setEditor({ open: true, id: def.id })}
+                    className="rounded-lg border border-border/40 px-3 py-1.5 text-xs hover:bg-accent"
+                  >
+                    {def.name}
+                  </button>
+                ))}
+              </div>
             )}
           </div>
         </div>
@@ -186,6 +221,12 @@ export function WidgetGrid({ widgets }: { widgets: WidgetEntry[] }) {
           )}
         </div>
       </div>
+
+      <WidgetEditorDialog
+        open={editor.open}
+        widgetId={editor.id}
+        onClose={() => setEditor({ open: false, id: null })}
+      />
     </div>
   )
 }

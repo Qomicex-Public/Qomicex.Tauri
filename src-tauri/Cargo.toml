@@ -35,6 +35,7 @@ tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 semver = "1"
+base64 = "0.22"
 
 # WASM 插件网关的运行时。loongarch64 上不可用，见下方 target 段的说明。
 [target.'cfg(not(target_arch = "loongarch64"))'.dependencies]

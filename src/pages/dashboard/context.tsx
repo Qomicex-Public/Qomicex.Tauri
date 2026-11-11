@@ -17,6 +17,7 @@ export type WidgetId =
   | 'instance'
   | 'launch'
   | `plugin:${string}`
+  | `custom:${string}`
 
 export interface WidgetLayoutItem {
   i: string

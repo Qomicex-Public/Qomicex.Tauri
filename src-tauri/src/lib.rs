@@ -354,6 +354,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             dialog_cmd::pick_dialog,
+            dialog_cmd::read_widget_file,
+            dialog_cmd::write_widget_file,
+            dialog_cmd::read_widget_data_text,
+            dialog_cmd::read_widget_binary,
+            dialog_cmd::run_widget_command,
             ipc::ipc_ping,
             ipc::ipc_stream,
             ipc::ipc_stream_abort,

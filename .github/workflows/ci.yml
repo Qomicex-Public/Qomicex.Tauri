@@ -174,6 +174,8 @@ jobs:
       - run: pnpm run test:deep-link
       # 拖放安装的当前实例解析与置顶排序（issue #326）。同样编译真实源码断言。
       - run: pnpm run test:drop-instance-route
+      # QWidget schema 回归：绑定路径、URL 白名单、ContentProperty、动作表与版本比较。
+      - run: pnpm run test:widget-schema
       # 步骤名 i18n 覆盖护栏：后端安装管线里的 step id 必须在 downloads.steps 有词条，
       # 否则下载中心卡片直接显示 `downloads.steps.<id>` 键名（Technic Solder 期3 漏过 4 个）。
       - run: pnpm run test:i18n-steps

@@ -423,7 +423,7 @@ fn spawn_downloader_log_forward(dm: &Arc<DownloadManager>) {
 /// - `off` → `(None, true)`：不使用代理（连系统代理也禁用）
 /// - `system` → `(None, false)`：使用系统代理（reqwest 默认行为）
 /// - `http`/`socks5` → `(Some(url), false)`：使用自定义代理（`proxy()` 会自动禁掉系统代理）
-fn proxy_settings(settings: &SettingsResponse) -> (Option<String>, bool) {
+pub(crate) fn proxy_settings(settings: &SettingsResponse) -> (Option<String>, bool) {
     let host = settings.proxy_host.trim();
     let custom = match settings.proxy_mode.as_str() {
         "http" if !host.is_empty() => Some(format!("http://{host}")),

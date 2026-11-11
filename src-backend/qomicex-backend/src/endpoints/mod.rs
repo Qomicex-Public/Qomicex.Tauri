@@ -31,4 +31,5 @@ pub mod system;
 pub mod telemetry;
 pub mod update;
 pub mod version;
+pub mod widgets;
 pub mod world_view;
