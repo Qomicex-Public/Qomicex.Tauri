@@ -15,6 +15,7 @@ import {
   INSTALL_CATEGORIES,
   INSTALL_SOURCES,
   NAV_TARGETS,
+  NODE_ATTRS,
   TRIGGER_EVENTS,
   WIDGET_LIMITS,
   WidgetError,
@@ -123,7 +124,9 @@ function applyProperties(
       throw new WidgetError('invalidAttribute', `${tag}.${name} 不能包含子元素`)
     }
     if (!(ELEMENT_ATTRS[tag] ?? []).includes(name)) {
-      throw new WidgetError('unknownAttribute', `${tag}.${name}`)
+      if (!(NODE_ATTRS as readonly string[]).includes(name)) {
+        throw new WidgetError('unknownAttribute', `${tag}.${name}`)
+      }
     }
     if (attrs.has(name)) throw new WidgetError('duplicateProperty', `${tag}.${name}`)
     const preserve = name === 'Arguments' || name === 'Script'
@@ -161,7 +164,7 @@ function applyContentProperty(
 }
 
 function validateAttrs(tag: string, attrs: Map<string, string>): void {
-  const allowed = new Set<string>([...(ELEMENT_ATTRS[tag] ?? []), ...ATTACHED_ATTRS])
+  const allowed = new Set<string>([...(ELEMENT_ATTRS[tag] ?? []), ...ATTACHED_ATTRS, ...NODE_ATTRS])
   for (const name of attrs.keys()) {
     if (!allowed.has(name)) throw new WidgetError('unknownAttribute', `${tag}@${name}`)
   }
@@ -553,7 +556,7 @@ function parseUsing(el: Element, ctx: ParseCtx): UsingNode {
     as,
     refresh: attrs.has('Refresh') ? intAttr(attrs, 'Using', 'Refresh', 60, 86400) : undefined,
     argumentsJson,
-    attached: parseAttached(attrs),
+    ...baseNode('Using', attrs),
   }
 }
 
@@ -624,14 +627,14 @@ function parseNode(el: Element, ctx: ParseCtx, depth: number): WidgetNode {
       const { attrs, propertyElements } = readElement(el)
       applyProperties('Divider', attrs, propertyElements)
       validateAttrs('Divider', attrs)
-      return { kind: 'divider', attached: parseAttached(attrs) }
+      return { kind: 'divider', ...baseNode('Divider', attrs) }
     }
     case 'Spacer': {
       const { attrs, propertyElements, children } = readElement(el)
       applyProperties('Spacer', attrs, propertyElements)
       applyContentProperty('Spacer', attrs, el, children)
       validateAttrs('Spacer', attrs)
-      return { kind: 'spacer', size: intAttr(attrs, 'Spacer', 'Size', 0, 96, 8), attached: parseAttached(attrs) } satisfies SpacerNode
+      return { kind: 'spacer', size: intAttr(attrs, 'Spacer', 'Size', 0, 96, 8), ...baseNode('Spacer', attrs) } satisfies SpacerNode
     }
     case 'Widget':
       throw new WidgetError('root', 'Widget 不能嵌套')
@@ -663,7 +666,7 @@ function parseContainer(el: Element, ctx: ParseCtx, depth: number): ContainerNod
     background: enumAttr(attrs, 'Container', 'Background', ['Transparent', 'Card', 'Muted', 'Primary'] as const, 'Card')!,
     radius: enumAttr(attrs, 'Container', 'Radius', ['None', 'Sm', 'Md', 'Lg', 'Full'] as const, 'Lg')!,
     children: parseChildren(el, ctx, depth + 1),
-    attached: parseAttached(attrs),
+    ...baseNode('Container', attrs),
   }
 }
 
@@ -675,7 +678,7 @@ function parseRowColumn(el: Element, ctx: ParseCtx, depth: number): RowNode | Co
     ...layoutAttrs(attrs, el.tagName),
     wrap: boolAttr(attrs, el.tagName, 'Wrap', false),
     children: parseChildren(el, ctx, depth + 1),
-    attached: parseAttached(attrs),
+    ...baseNode(el.tagName, attrs),
   }
   return el.tagName === 'Row' ? { kind: 'row', ...common } : { kind: 'column', ...common }
 }
@@ -689,7 +692,7 @@ function parseGrid(el: Element, ctx: ParseCtx, depth: number): GridNode {
     columns: intAttr(attrs, 'Grid', 'Columns', 1, 6),
     ...layoutAttrs(attrs, 'Grid'),
     children: parseChildren(el, ctx, depth + 1),
-    attached: parseAttached(attrs),
+    ...baseNode('Grid', attrs),
   }
 }
 
@@ -708,9 +711,12 @@ function parseTabs(el: Element, ctx: ParseCtx, depth: number): TabsNode {
     const split = readElement(child)
     applyProperties('TabItem', split.attrs, split.propertyElements)
     validateAttrs('TabItem', split.attrs)
+    const meta = baseNode('TabItem', split.attrs)
     children.push({
       kind: 'tabItem',
       title: requiredAttr(split.attrs, 'TabItem', 'Title'),
+      target: meta.target,
+      visible: meta.visible,
       children: parseChildren(child, ctx, depth + 2),
     })
   }
@@ -719,7 +725,7 @@ function parseTabs(el: Element, ctx: ParseCtx, depth: number): TabsNode {
     kind: 'tabs',
     defaultIndex: intAttr(attrs, 'Tabs', 'Default', 0, children.length - 1, 0),
     children,
-    attached: parseAttached(attrs),
+    ...baseNode('Tabs', attrs),
   }
 }
 
@@ -743,7 +749,13 @@ function parseList(el: Element, ctx: ParseCtx, depth: number): ListNode {
   }
   assertNoText(itemEl)
   ctx.nodes += 1
-  const item: ListItemNode = { kind: 'listItem', child: parseNode(itemSplit.children[0], ctx, depth + 2) }
+  const itemMeta = baseNode('ListItem', itemSplit.attrs)
+  const item: ListItemNode = {
+    kind: 'listItem',
+    target: itemMeta.target,
+    visible: itemMeta.visible,
+    child: parseNode(itemSplit.children[0], ctx, depth + 2),
+  }
   return {
     kind: 'list',
     items,
@@ -751,7 +763,7 @@ function parseList(el: Element, ctx: ParseCtx, depth: number): ListNode {
     gap: intAttr(attrs, 'List', 'Gap', 0, 8, 0),
     emptyText: attr(attrs, 'EmptyText') || undefined,
     item,
-    attached: parseAttached(attrs),
+    ...baseNode('List', attrs),
   }
 }
 
@@ -763,12 +775,18 @@ function parseIf(el: Element, ctx: ParseCtx, depth: number): IfNode {
     kind: 'if',
     test: validatePath(requiredAttr(attrs, 'If', 'Test'), 'If@Test'),
     children: parseChildren(el, ctx, depth + 1),
-    attached: parseAttached(attrs),
+    ...baseNode('If', attrs),
   }
 }
 
 function baseNode(_tag: string, attrs: Map<string, string>) {
-  return { attached: parseAttached(attrs) }
+  const target = attr(attrs, 'Target')?.trim() || undefined
+  if (target) validateIdentifier(target, `${_tag}@Target`)
+  return {
+    attached: parseAttached(attrs),
+    target,
+    visible: attrs.has('Visible') ? boolAttr(attrs, _tag, 'Visible', true) : undefined,
+  }
 }
 
 function parseText(el: Element): TextNode {
@@ -997,6 +1015,42 @@ function parseColorPicker(el: Element): ColorPickerNode {
   }
 }
 
+function collectTargets(nodes: WidgetNode[], out = new Set<string>()): void {
+  for (const node of nodes) {
+    if (node.target) {
+      if (out.has(node.target)) throw new WidgetError('invalidAttribute', `Target 重复: ${node.target}`)
+      out.add(node.target)
+    }
+    switch (node.kind) {
+      case 'container':
+      case 'row':
+      case 'column':
+      case 'grid':
+      case 'if':
+        collectTargets(node.children, out)
+        break
+      case 'tabs':
+        for (const tab of node.children) {
+          if (tab.target) {
+            if (out.has(tab.target)) throw new WidgetError('invalidAttribute', `Target 重复: ${tab.target}`)
+            out.add(tab.target)
+          }
+          collectTargets(tab.children, out)
+        }
+        break
+      case 'list':
+        if (node.item.target) {
+          if (out.has(node.item.target)) throw new WidgetError('invalidAttribute', `Target 重复: ${node.item.target}`)
+          out.add(node.item.target)
+        }
+        collectTargets([node.item.child], out)
+        break
+      default:
+        break
+    }
+  }
+}
+
 /** 解析并严格校验组件 XML；任何未知元素/属性都直接失败。 */
 export function parseWidgetXml(xml: string): WidgetDocument {
   assertSafeXml(xml)
@@ -1062,6 +1116,8 @@ export function parseWidgetXml(xml: string): WidgetDocument {
         break
     }
   }
+
+  collectTargets(nodes)
 
   return {
     name,

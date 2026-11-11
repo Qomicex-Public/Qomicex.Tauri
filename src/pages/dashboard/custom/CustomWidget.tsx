@@ -13,13 +13,15 @@ import {
   collectAutoHosts,
   compareVersions,
   hostOf,
+  interpolate,
   interpolateDeep,
+  resolvePath,
   WIDGET_LIMITS,
   WidgetError,
 } from './schema.ts'
 import { makeBinaryValue, mimeFromPath, parseResourceEntries, parseXmlValue, readLocalBinary, readLocalText, resolveDataPath } from './binary.ts'
 import { getLauncherVersion } from './launcher-version.ts'
-import { renderNodes, type RenderContext } from './render.tsx'
+import { renderNodes, applyNodeOverrides, propertyField, type RenderContext } from './render.tsx'
 import { runFunction as executeFunction } from './script/functions.ts'
 import { ScriptSandbox } from './script/sandbox.ts'
 import {
@@ -35,6 +37,7 @@ import type {
   TriggerNode,
   UsingNode,
   WidgetDocument,
+  WidgetNode,
 } from './types.ts'
 import { parseWidgetXml } from './xml.ts'
 
@@ -51,6 +54,55 @@ interface CustomWidgetProps {
   initialInputs?: Record<string, unknown>
   onSnapshot?: (snapshot: ChildSnapshot) => void
   preview?: boolean
+}
+
+function findNodeByTarget(nodes: WidgetNode[], target: string): WidgetNode | null {
+  for (const node of nodes) {
+    if (node.target === target) return node
+    switch (node.kind) {
+      case 'container':
+      case 'row':
+      case 'column':
+      case 'grid':
+      case 'if':
+        {
+          const found = findNodeByTarget(node.children, target)
+          if (found) return found
+        }
+        break
+      case 'tabs':
+        for (const tab of node.children) {
+          const found = findNodeByTarget(tab.children, target)
+          if (found) return found
+        }
+        break
+      case 'list':
+        {
+          const found = findNodeByTarget([node.item.child], target)
+          if (found) return found
+        }
+        break
+      default:
+        break
+    }
+  }
+  return null
+}
+
+const NON_PROPERTY_ATTRS = new Set(['Target', 'Name', 'OnClick', 'OnChange', 'Function', 'Arguments', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method'])
+
+function nodeProperty(node: WidgetNode, property: string, scope: Record<string, unknown>, overrides: Record<string, unknown>): unknown {
+  const field = propertyField(node, property)
+  if (!field || NON_PROPERTY_ATTRS.has(property)) throw new Error(`不可读写属性: ${property}`)
+  const effective = applyNodeOverrides(node, overrides)
+  const raw = (effective as unknown as Record<string, unknown>)[field]
+  if (field === 'visible') return raw !== false
+  if (field === 'items') {
+    if (Array.isArray(raw)) return raw
+    return typeof raw === 'string' ? resolvePath(scope, raw) ?? [] : []
+  }
+  if (typeof raw === 'string') return interpolate(raw, scope)
+  return raw
 }
 
 function dataScopeOf(data: Record<string, unknown>, sources: WidgetDocument['datas']): Record<string, unknown> {
@@ -88,6 +140,8 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   inputsRef.current = inputs
   const [results, setResults] = useState<Record<string, Record<string, unknown>>>({})
   const [children, setChildren] = useState<Record<string, ChildSnapshot>>({})
+  const [overrides, setOverrides] = useState<Record<string, Record<string, unknown>>>({})
+  const overridesRef = useRef<Record<string, Record<string, unknown>>>({})
   const [data, setData] = useState<Record<string, unknown>>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -100,6 +154,11 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   const lastSnapshot = useRef('')
   const forceRefreshRef = useRef(false)
   const executeFunctionRef = useRef<(name: string, trigger: TriggerNode) => void>(() => {})
+  const runtimeRef = useRef<{
+    setProperty: (target: string, property: string, value: unknown) => Promise<unknown>
+    getProperty: (target: string, property: string) => Promise<unknown>
+    invoke: (target: string, method: string, args: unknown[]) => Promise<unknown>
+  } | null>(null)
 
   const trackUrl = useCallback((url: string) => {
     objectUrls.current.add(url)
@@ -109,6 +168,11 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     if (!initialInputs) return
     setInputs((prev) => ({ ...initialInputs, ...prev }))
   }, [initialInputs])
+
+  useEffect(() => {
+    overridesRef.current = {}
+    setOverrides({})
+  }, [def.id, def.xml])
 
   // 在线组件的静默更新：按 TTL 拉取并直接替换（按用户选择不做二次确认）。
   useEffect(() => {
@@ -186,6 +250,54 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     inputsRef.current = next
     setInputs(next)
   }, [])
+
+  const setProperty = useCallback(async (target: string, property: string, value: unknown): Promise<unknown> => {
+    if (!doc) throw new Error('组件未加载')
+    if (NON_PROPERTY_ATTRS.has(property)) throw new Error(`不可读写属性: ${property}`)
+    if (value === undefined) throw new Error(`SetProperty(${target}, ${property}) 的值不能是 undefined`)
+    const node = findNodeByTarget(doc.nodes, target)
+    if (!node) throw new Error(`找不到 Target: ${target}`)
+    const field = propertyField(node, property)
+    if (!field) throw new Error(`不可读写属性: ${property}`)
+    const normalized = field === 'visible'
+      ? value === true || value === 'true' || value === 'True'
+      : value
+    const effective = applyNodeOverrides(node, { [property]: normalized })
+    const coerced = (effective as unknown as Record<string, unknown>)[field]
+    if (
+      field === 'value'
+      || field === 'checked'
+    ) {
+      if (node.kind === 'textBox' || node.kind === 'slider' || node.kind === 'select' || node.kind === 'colorPicker' || node.kind === 'filePicker') {
+        setInput(node.name, coerced)
+      } else if (node.kind === 'checkBox' && field === 'checked') {
+        setInput(node.name, coerced)
+      }
+    }
+    const nextOverrides = {
+      ...overridesRef.current,
+      [target]: { ...(overridesRef.current[target] ?? {}), [property]: coerced },
+    }
+    overridesRef.current = nextOverrides
+    setOverrides(nextOverrides)
+    return coerced
+  }, [doc, setInput])
+
+  const getProperty = useCallback(async (target: string, property: string): Promise<unknown> => {
+    if (!doc) throw new Error('组件未加载')
+    if (NON_PROPERTY_ATTRS.has(property)) throw new Error(`不可读写属性: ${property}`)
+    const node = findNodeByTarget(doc.nodes, target)
+    if (!node) throw new Error(`找不到 Target: ${target}`)
+    const field = propertyField(node, property)
+    if (!field) throw new Error(`不可读写属性: ${property}`)
+    const nodeName = 'name' in node ? node.name : undefined
+    const currentInput = nodeName ? inputsRef.current[nodeName] : undefined
+    if (field === 'value' || field === 'checked') {
+      if (currentInput !== undefined) return currentInput
+      if (node.kind === 'checkBox' && field === 'checked') return node.checked
+    }
+    return nodeProperty(node, property, { ...scope, Inputs: inputsRef.current }, overridesRef.current[target] ?? {})
+  }, [doc, scope])
 
   const decodeData = useCallback(async (source: WidgetDocument['datas'][number], signal: AbortSignal): Promise<unknown> => {
     if (source.source === 'File') {
@@ -298,6 +410,9 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
         },
         Navigate: (path) => navigate(path),
         Log: (message) => console.warn('[widget]', message),
+        SetProperty: (target, property, value) => runtimeRef.current?.setProperty(target, property, value) ?? Promise.reject(new Error('组件运行时不可用')),
+        GetProperty: (target, property) => runtimeRef.current?.getProperty(target, property) ?? Promise.reject(new Error('组件运行时不可用')),
+        Invoke: (target, method, args) => runtimeRef.current?.invoke(target, method, args) ?? Promise.reject(new Error('组件运行时不可用')),
       })
     }
     return sandboxRef.current
@@ -378,6 +493,48 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
       showError(error instanceof Error ? error.message : String(error), t('dashboard.custom.actionFailed'))
     }
   }, [actionContext, scope, showError, t])
+
+  const invoke = useCallback(async (target: string, method: string, args: unknown[]): Promise<unknown> => {
+    if (!doc) throw new Error('组件未加载')
+    const node = findNodeByTarget(doc.nodes, target)
+    if (!node) throw new Error(`找不到 Target: ${target}`)
+    switch (method.toLowerCase()) {
+      case 'click':
+        if (node.kind !== 'button' && node.kind !== 'link') throw new Error(`Target ${target} 不是可点击控件`)
+        await executeAction(node.onClick, node.name)
+        return true
+      case 'setvalue':
+        return setProperty(target, 'Value', args[0])
+      case 'setproperty':
+        return setProperty(target, String(args[0] ?? ''), args[1])
+      case 'getproperty':
+        return getProperty(target, String(args[0] ?? ''))
+      case 'toggle':
+        if (node.kind !== 'checkBox') throw new Error(`Target ${target} 不是 CheckBox`)
+        await setProperty(target, 'Checked', !(inputsRef.current[node.name] ?? node.checked))
+        return true
+      case 'refresh':
+        forceRefreshRef.current = true
+        setTick((value) => value + 1)
+        return true
+      case 'focus':
+      case 'blur': {
+        const root = document.querySelector(`[data-widget-root="${CSS.escape(def.id)}"]`)
+        const element = root?.querySelector(`[data-widget-target="${CSS.escape(target)}"]`) as HTMLElement | null
+        if (!element) throw new Error(`Target ${target} 没有可聚焦元素`)
+        if (method.toLowerCase() === 'focus') element.focus()
+        else element.blur()
+        return true
+      }
+      default:
+        throw new Error(`未知 Invoke 方法: ${method}`)
+    }
+  }, [doc, executeAction, setProperty, getProperty, def.id])
+
+  useEffect(() => {
+    runtimeRef.current = { setProperty, getProperty, invoke }
+  }, [setProperty, getProperty, invoke])
+
   const fireTrigger = useCallback((event: string, target: string) => {
     if (!doc) return
     const now = Date.now()
@@ -487,6 +644,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     resources,
     results,
     children,
+    overrides,
     onAction: (action, control) => { void executeAction(action, control) },
     renderUsing,
     allowedHosts: new Set(def.hosts),
@@ -508,8 +666,10 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     )
   }
 
+  if (doc.nodes.length === 0) return null
+
   return (
-    <div className="h-full min-h-0 overflow-auto" data-widget-version={doc.version}>
+    <div className="h-full min-h-0 overflow-auto" data-widget-version={doc.version} data-widget-root={def.id}>
       {renderNodes(doc.nodes, renderContext)}
     </div>
   )

@@ -39,7 +39,7 @@ import { linter, lintGutter, type Diagnostic } from '@codemirror/lint'
 import { javascript } from '@codemirror/lang-javascript'
 import { xml } from '@codemirror/lang-xml'
 import { tags } from '@lezer/highlight'
-import { ELEMENT_ATTRS } from '../schema.ts'
+import { ELEMENT_ATTRS, NODE_ATTRS } from '../schema.ts'
 import type { CustomWidgetDef } from '../store.ts'
 import { parseWidgetXml } from '../xml.ts'
 import { transpileScript } from '../script/transpile.ts'
@@ -194,6 +194,7 @@ function xmlCompletion(context: CompletionContext, getDefs: () => CustomWidgetDe
     const word = context.matchBefore(/[\w.-]*/)
     const options = [
       ...attrs.map((attr) => attributeCompletion(attr)),
+      ...NODE_ATTRS.map((attr) => attributeCompletion(attr)),
       ...['Grid.Row', 'Grid.Column', 'Grid.RowSpan', 'Grid.ColumnSpan'].map((attr) => attributeCompletion(attr)),
     ]
     return { from: word?.from ?? context.pos, options, validFor: /^[\w.-]*$/ }

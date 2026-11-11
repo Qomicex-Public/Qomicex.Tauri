@@ -5,6 +5,8 @@ import { Fragment, useState, type CSSProperties, type ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Button, Checkbox, Select, SelectOption, Tabs, cn } from '../../../components/ui'
 import {
+  ELEMENT_ATTRS,
+  NODE_ATTRS,
   WIDGET_LIMITS,
   hostOf,
   interpolate,
@@ -43,6 +45,7 @@ export interface RenderRuntime {
   resources: Record<string, unknown>
   results: Record<string, unknown>
   children: Record<string, unknown>
+  overrides: Record<string, Record<string, unknown>>
   onAction: (action?: ActionSpec, control?: string) => void
   renderUsing: (node: UsingNode) => ReactNode
   allowedHosts: Set<string>
@@ -99,6 +102,167 @@ export function renderNodes(nodes: WidgetNode[], ctx: RenderContext, keyPrefix =
   ))
 }
 
+const PROPERTY_FIELD: Record<string, string> = {
+  Value: 'value',
+  Text: 'text',
+  Items: 'items',
+  Options: 'options',
+  Source: 'source',
+  Src: 'src',
+  Color: 'color',
+  Size: 'size',
+  Weight: 'weight',
+  Variant: 'variant',
+  Visible: 'visible',
+  Checked: 'checked',
+  Placeholder: 'placeholder',
+  Url: 'url',
+  Alt: 'alt',
+  W: 'w',
+  H: 'h',
+  Rounded: 'rounded',
+  Controls: 'controls',
+  AutoPlay: 'autoPlay',
+  Loop: 'loop',
+  Poster: 'poster',
+  Volume: 'volume',
+  Muted: 'muted',
+  Min: 'min',
+  Max: 'max',
+  Step: 'step',
+  Multiline: 'multiline',
+  Password: 'password',
+  ReadOnly: 'readOnly',
+  MaxLength: 'maxLength',
+  Filter: 'filter',
+  Clamp: 'clamp',
+  Align: 'align',
+  Gap: 'gap',
+  Padding: 'padding',
+  Border: 'border',
+  Background: 'background',
+  Radius: 'radius',
+  Direction: 'direction',
+  Columns: 'columns',
+  Default: 'defaultIndex',
+  Title: 'title',
+  EmptyText: 'emptyText',
+  Type: 'type',
+  As: 'as',
+  Refresh: 'refresh',
+  Description: 'description',
+}
+
+const NODE_TAG: Record<WidgetNode['kind'], string> = {
+  container: 'Container',
+  row: 'Row',
+  column: 'Column',
+  grid: 'Grid',
+  tabs: 'Tabs',
+  list: 'List',
+  if: 'If',
+  text: 'Text',
+  button: 'Button',
+  image: 'Image',
+  media: 'Media',
+  textBox: 'TextBox',
+  checkBox: 'CheckBox',
+  slider: 'Slider',
+  select: 'Select',
+  progress: 'Progress',
+  link: 'Link',
+  filePicker: 'FilePicker',
+  colorPicker: 'ColorPicker',
+  divider: 'Divider',
+  spacer: 'Spacer',
+  using: 'Using',
+}
+
+const NON_WRITABLE_PROPERTIES = new Set([
+  'target',
+  'name',
+  'onclick',
+  'onchange',
+  'function',
+  'arguments',
+  'command',
+  'workingdirectory',
+  'timeout',
+  'pluginid',
+  'method',
+  'as',
+  'refresh',
+  'kind',
+  'attached',
+  'children',
+  'item',
+  'test',
+  '__proto__',
+  'constructor',
+  'prototype',
+])
+
+function contentField(kind: WidgetNode['kind']): string | null {
+  switch (kind) {
+    case 'text':
+    case 'textBox':
+    case 'slider':
+    case 'progress':
+    case 'colorPicker':
+      return 'value'
+    case 'button':
+    case 'link':
+    case 'checkBox':
+    case 'filePicker':
+      return 'text'
+    case 'select':
+      return 'options'
+    case 'media':
+      return 'source'
+    case 'image':
+      return 'src'
+    case 'list':
+      return 'items'
+    case 'spacer':
+      return 'size'
+    default:
+      return null
+  }
+}
+
+function coerceOverride(current: unknown, value: unknown): unknown {
+  if (typeof current === 'number') {
+    const n = Number(value)
+    return Number.isFinite(n) ? n : current
+  }
+  if (typeof current === 'boolean') {
+    return value === true || value === 'True' || value === 'true'
+  }
+  return value
+}
+
+export function propertyField(node: WidgetNode, property: string): string | null {
+  const lower = property.toLowerCase()
+  if (NON_WRITABLE_PROPERTIES.has(lower)) return null
+  const tag = NODE_TAG[node.kind]
+  const attrs = ELEMENT_ATTRS[tag] ?? []
+  const writable = property === 'Content' || attrs.includes(property) || (NODE_ATTRS as readonly string[]).includes(property)
+  if (!writable) return null
+  if (property === 'Content') return contentField(node.kind)
+  return PROPERTY_FIELD[property] ?? property.charAt(0).toLowerCase() + property.slice(1)
+}
+
+export function applyNodeOverrides(node: WidgetNode, patch?: Record<string, unknown>): WidgetNode {
+  if (!patch || Object.keys(patch).length === 0) return node
+  const next: Record<string, unknown> = { ...node }
+  for (const [property, value] of Object.entries(patch)) {
+    const field = propertyField(node, property)
+    if (!field) continue
+    next[field] = coerceOverride((node as unknown as Record<string, unknown>)[field], value)
+  }
+  return next as unknown as WidgetNode
+}
+
 function isTruthy(value: unknown): boolean {
   if (Array.isArray(value)) return value.length > 0
   return value !== undefined && value !== null && value !== false && value !== '' && value !== 0
@@ -118,50 +282,52 @@ function attachedStyle(node: WidgetNode): CSSProperties | undefined {
 }
 
 function renderNode(node: WidgetNode, ctx: RenderContext): ReactNode {
-  switch (node.kind) {
+  const effective = applyNodeOverrides(node, node.target ? ctx.overrides[node.target] : undefined)
+  if (effective.visible === false) return null
+  switch (effective.kind) {
     case 'container':
-      return renderContainer(node, ctx)
+      return renderContainer(effective, ctx)
     case 'row':
     case 'column':
-      return renderRowColumn(node, ctx)
+      return renderRowColumn(effective, ctx)
     case 'grid':
-      return renderGrid(node, ctx)
+      return renderGrid(effective, ctx)
     case 'tabs':
-      return <TabsView key="tabs" node={node} ctx={ctx} />
+      return <TabsView key="tabs" node={effective} ctx={ctx} />
     case 'list':
-      return <ListView key="list" node={node} ctx={ctx} />
+      return <ListView key="list" node={effective} ctx={ctx} />
     case 'if':
-      return isTruthy(resolvePath(ctx.scope, node.test)) ? renderNodes(node.children, ctx) : null
+      return isTruthy(resolvePath(ctx.scope, effective.test)) ? renderNodes(effective.children, ctx) : null
     case 'text':
-      return renderText(node, ctx)
+      return renderText(effective, ctx)
     case 'button':
-      return renderButton(node, ctx)
+      return renderButton(effective, ctx)
     case 'image':
-      return renderImage(node, ctx)
+      return renderImage(effective, ctx)
     case 'media':
-      return renderMedia(node, ctx)
+      return renderMedia(effective, ctx)
     case 'textBox':
-      return <TextBoxControl key="textBox" node={node} ctx={ctx} />
+      return <TextBoxControl key="textBox" node={effective} ctx={ctx} />
     case 'checkBox':
-      return <CheckBoxControl key="checkBox" node={node} ctx={ctx} />
+      return <CheckBoxControl key="checkBox" node={effective} ctx={ctx} />
     case 'slider':
-      return <SliderControl key="slider" node={node} ctx={ctx} />
+      return <SliderControl key="slider" node={effective} ctx={ctx} />
     case 'select':
-      return <SelectControl key="select" node={node} ctx={ctx} />
+      return <SelectControl key="select" node={effective} ctx={ctx} />
     case 'progress':
-      return renderProgress(node, ctx)
+      return renderProgress(effective, ctx)
     case 'link':
-      return renderLink(node, ctx)
+      return renderLink(effective, ctx)
     case 'filePicker':
-      return <FilePickerControl key="filePicker" node={node} ctx={ctx} />
+      return <FilePickerControl key="filePicker" node={effective} ctx={ctx} />
     case 'colorPicker':
-      return <ColorPickerControl key="colorPicker" node={node} ctx={ctx} />
+      return <ColorPickerControl key="colorPicker" node={effective} ctx={ctx} />
     case 'divider':
       return <div key="divider" className="h-px w-full bg-border/50" />
     case 'spacer':
-      return renderSpacer(node)
+      return renderSpacer(effective)
     case 'using':
-      return ctx.renderUsing(node)
+      return ctx.renderUsing(effective)
     default:
       return null
   }
@@ -231,9 +397,11 @@ function renderGrid(node: GridNode, ctx: RenderContext): ReactNode {
 
 function TabsView({ node, ctx }: { node: TabsNode; ctx: RenderContext }) {
   const [active, setActive] = useState(String(node.defaultIndex))
-  const index = Math.min(Number(active) || 0, node.children.length - 1)
-  const current = node.children[index]
-  const tabs = node.children.map((child, i) => ({ id: String(i), label: interpolate(child.title, ctx.scope) }))
+  const visibleTabs = node.children.filter((tab) => tab.visible !== false)
+  if (visibleTabs.length === 0) return null
+  const index = Math.min(Number(active) || 0, visibleTabs.length - 1)
+  const current = visibleTabs[index]
+  const tabs = visibleTabs.map((child, i) => ({ id: String(i), label: interpolate(child.title, ctx.scope) }))
   return (
     <div style={attachedStyle(node)} className="flex min-w-0 flex-col gap-2">
       <Tabs tabs={tabs} activeTab={String(index)} onChange={setActive} />
@@ -243,7 +411,7 @@ function TabsView({ node, ctx }: { node: TabsNode; ctx: RenderContext }) {
 }
 
 function ListView({ node, ctx }: { node: ListNode; ctx: RenderContext }) {
-  const value = resolvePath(ctx.scope, node.items)
+  const value = Array.isArray(node.items) ? node.items : resolvePath(ctx.scope, node.items as string)
   const items = Array.isArray(value) ? value.slice(0, WIDGET_LIMITS.maxListItems) : []
   if (items.length === 0) {
     if (!node.emptyText) return null
@@ -251,7 +419,7 @@ function ListView({ node, ctx }: { node: ListNode; ctx: RenderContext }) {
   }
   return (
     <div style={attachedStyle(node)} className={cn('flex min-w-0 flex-col', GAP[node.gap ?? 0])}>
-      {items.map((item, index) => (
+      {node.item.visible === false ? null : items.map((item, index) => (
         <Fragment key={index}>
           {renderNode(node.item.child, {
             ...ctx,
@@ -276,7 +444,7 @@ function renderText(node: TextNode, ctx: RenderContext): ReactNode {
         node.align && TEXT_ALIGN[node.align],
       )}
     >
-      {interpolate(node.value, ctx.scope)}
+      {interpolate(node.value ?? '', ctx.scope)}
     </span>
   )
 }
@@ -285,6 +453,7 @@ function renderButton(node: ButtonNode, ctx: RenderContext): ReactNode {
   return (
     <Button
       type="button"
+      data-widget-target={node.target}
       variant={node.variant === 'Default' ? 'default' : node.variant.toLowerCase() as 'secondary' | 'outline' | 'ghost' | 'destructive' | 'link'}
       size={node.size === 'Md' ? 'default' : node.size.toLowerCase() as 'sm' | 'lg'}
       onClick={() => ctx.onAction(node.onClick, node.name)}
@@ -345,7 +514,7 @@ function TextBoxControl({ node, ctx }: { node: TextBoxNode; ctx: RenderContext }
     : node.value ? interpolate(node.value, ctx.scope) : ''
   const className = 'flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring'
   return (
-    <div style={attachedStyle(node)} className="flex flex-col gap-1">
+    <div style={attachedStyle(node)} data-widget-target={node.target} className="flex flex-col gap-1">
       {node.multiline ? (
         <textarea
           value={value}
@@ -383,7 +552,7 @@ function CheckBoxControl({ node, ctx }: { node: CheckBoxNode; ctx: RenderContext
       ? node.checked
       : isTruthy(resolvePath(ctx.scope, node.checked))
   return (
-    <label style={attachedStyle(node)} className="flex items-center gap-2 text-sm">
+    <label style={attachedStyle(node)} data-widget-target={node.target} className="flex items-center gap-2 text-sm">
       <Checkbox
         checked={checked}
         onCheckedChange={(value) => {
@@ -401,6 +570,7 @@ function SliderControl({ node, ctx }: { node: SliderNode; ctx: RenderContext }) 
   return (
     <input
       type="range"
+      data-widget-target={node.target}
       value={value}
       min={node.min}
       max={node.max}
@@ -420,10 +590,10 @@ interface SelectOptionValue {
   Value?: string | number
 }
 
-function parseOptions(raw: string, ctx: RenderContext): Array<{ label: string; value: string }> {
+function parseOptions(raw: string | unknown[], ctx: RenderContext): Array<{ label: string; value: string }> {
   let parsed: unknown
   try {
-    parsed = JSON.parse(interpolate(raw, ctx.scope))
+    parsed = Array.isArray(raw) ? raw : JSON.parse(interpolate(raw as string, ctx.scope))
   } catch {
     return []
   }
@@ -443,7 +613,7 @@ function SelectControl({ node, ctx }: { node: SelectNode; ctx: RenderContext }) 
     ? String(ctx.inputs[node.name] ?? '')
     : node.value ? interpolate(node.value, ctx.scope) : ''
   return (
-    <div style={attachedStyle(node)}>
+    <div style={attachedStyle(node)} data-widget-target={node.target}>
       <Select
         value={current}
         onChange={(value) => {
@@ -476,6 +646,7 @@ function renderLink(node: LinkNode, ctx: RenderContext): ReactNode {
   return (
     <button
       type="button"
+      data-widget-target={node.target}
       style={attachedStyle(node)}
       onClick={() => ctx.onAction(node.onClick ?? fallback, node.name)}
       className="w-fit text-left text-sm text-primary underline-offset-4 hover:underline"
@@ -502,7 +673,7 @@ function FilePickerControl({ node, ctx }: { node: FilePickerNode; ctx: RenderCon
     }
   }
   return (
-    <div style={attachedStyle(node)} className="flex flex-col gap-1">
+    <div style={attachedStyle(node)} data-widget-target={node.target} className="flex flex-col gap-1">
       <Button type="button" variant="outline" size="sm" onClick={() => void pick()}>
         {interpolate(node.text, ctx.scope)}
       </Button>
@@ -518,6 +689,7 @@ function ColorPickerControl({ node, ctx }: { node: ColorPickerNode; ctx: RenderC
   return (
     <input
       type="color"
+      data-widget-target={node.target}
       value={/^#[0-9a-f]{6}$/i.test(value) ? value : '#000000'}
       style={attachedStyle(node)}
       onChange={(e) => {

@@ -8,11 +8,16 @@
 // Navigate/Log）。超时后直接销毁 iframe，下一次调用重建。
 
 export interface ScriptHost {
-  Notify: (message: string, type?: string) => void
-  OpenUrl: (url: string) => void
-  Navigate: (path: string) => void
-  Log: (message: string) => void
+  Notify: (message: string, type?: string) => unknown | Promise<unknown>
+  OpenUrl: (url: string) => unknown | Promise<unknown>
+  Navigate: (path: string) => unknown | Promise<unknown>
+  Log: (message: string) => unknown | Promise<unknown>
+  SetProperty: (target: string, property: string, value: unknown) => unknown | Promise<unknown>
+  GetProperty: (target: string, property: string) => unknown | Promise<unknown>
+  Invoke: (target: string, method: string, args: unknown[]) => unknown | Promise<unknown>
 }
+
+const HOST_METHODS = new Set(['Notify', 'OpenUrl', 'Navigate', 'Log', 'SetProperty', 'GetProperty', 'Invoke'])
 
 export interface ScriptPayload {
   Input: unknown
@@ -39,20 +44,40 @@ const IFRAME_SRC = `<!doctype html>
     if (value === undefined) return null;
     return JSON.parse(JSON.stringify(value));
   }
+  var hostSeq = 0;
+  var hostPending = new Map();
+  function callHost(method, args) {
+    return new Promise(function (resolve, reject) {
+      var id = 'h' + (++hostSeq);
+      hostPending.set(id, { resolve: resolve, reject: reject });
+      send({ type: 'qomicex-script-host-request', requestId: id, method: method, args: args });
+    });
+  }
   var host = {
-    Notify: function (message, type) { send({ type: 'qomicex-script-host', method: 'Notify', args: [String(message), type ? String(type) : undefined] }); },
-    OpenUrl: function (url) { send({ type: 'qomicex-script-host', method: 'OpenUrl', args: [String(url)] }); },
-    Navigate: function (path) { send({ type: 'qomicex-script-host', method: 'Navigate', args: [String(path)] }); },
-    Log: function (message) { send({ type: 'qomicex-script-host', method: 'Log', args: [String(message)] }); }
+    Notify: function (message, type) { return callHost('Notify', [String(message), type ? String(type) : undefined]); },
+    OpenUrl: function (url) { return callHost('OpenUrl', [String(url)]); },
+    Navigate: function (path) { return callHost('Navigate', [String(path)]); },
+    Log: function (message) { return callHost('Log', [String(message)]); },
+    SetProperty: function (target, property, value) { return callHost('SetProperty', [String(target), String(property), value]); },
+    GetProperty: function (target, property) { return callHost('GetProperty', [String(target), String(property)]); },
+    Invoke: function (target, method, args) { return callHost('Invoke', [String(target), String(method), Array.isArray(args) ? args : (args === undefined ? [] : [args])]); }
   };
   window.addEventListener('message', function (event) {
     var data = event.data;
+    if (data && data.type === 'qomicex-script-host-result') {
+      var pending = hostPending.get(data.requestId);
+      if (!pending) return;
+      hostPending.delete(data.requestId);
+      if (data.ok) pending.resolve(data.value);
+      else pending.reject(new Error(data.error || 'Host call failed'));
+      return;
+    }
     if (!data || data.type !== 'qomicex-script-run' || typeof data.id !== 'string') return;
     var id = data.id;
     var run = async function () {
       try {
         var fn = new Function('Input', 'Inputs', 'Resources', 'Data', 'Results', 'Host',
-          '"use strict";\\n' + data.code);
+          '"use strict"; return (async () => {\\n' + data.code + '\\n})();');
         var result = await fn(data.payload.Input, data.payload.Inputs, data.payload.Resources, data.payload.Data, data.payload.Results, host);
         send({ type: 'qomicex-script-result', id: id, ok: true, result: normalize(result) });
       } catch (error) {
@@ -105,8 +130,12 @@ export class ScriptSandbox {
   private onMessage = (event: MessageEvent) => {
     if (event.source !== this.iframe?.contentWindow) return
     const data = event.data
-    if (data?.type === 'qomicex-script-host') {
-      this.handleHostCall(data.method, Array.isArray(data.args) ? data.args : [])
+    if (data?.type === 'qomicex-script-host-request') {
+      void this.handleHostRequest(
+        String(data.requestId ?? ''),
+        String(data.method ?? ''),
+        Array.isArray(data.args) ? data.args : [],
+      )
       return
     }
     if (data?.type !== 'qomicex-script-result') return
@@ -121,27 +150,32 @@ export class ScriptSandbox {
     })
   }
 
-  private handleHostCall(method: string, args: unknown[]) {
+  private async handleHostRequest(requestId: string, method: string, args: unknown[]) {
     try {
-      switch (method) {
-        case 'Notify':
-          this.host.Notify(String(args[0] ?? ''), typeof args[1] === 'string' ? args[1] : undefined)
-          break
-        case 'OpenUrl':
-          this.host.OpenUrl(String(args[0] ?? ''))
-          break
-        case 'Navigate':
-          this.host.Navigate(String(args[0] ?? ''))
-          break
-        case 'Log':
-          this.host.Log(String(args[0] ?? ''))
-          break
-        default:
-          break
-      }
-    } catch {
-      /* 宿主调用失败不打断脚本结果回传 */
+      if (!HOST_METHODS.has(method)) throw new Error(`未知 Host 方法: ${method}`)
+      const fn = (this.host as unknown as Record<string, (...values: unknown[]) => unknown>)[method]
+      if (typeof fn !== 'function') throw new Error(`未知 Host 方法: ${method}`)
+      const value = await fn.apply(this.host, args)
+      this.postHostResult(requestId, true, value)
+    } catch (error) {
+      this.postHostResult(requestId, false, undefined, error instanceof Error ? error.message : String(error))
     }
+  }
+
+  private postHostResult(requestId: string, ok: boolean, value?: unknown, error?: string) {
+    let normalized: unknown
+    try {
+      normalized = value === undefined ? null : JSON.parse(JSON.stringify(value))
+    } catch {
+      normalized = null
+    }
+    this.iframe?.contentWindow?.postMessage({
+      type: 'qomicex-script-host-result',
+      requestId,
+      ok,
+      value: normalized,
+      error,
+    }, '*')
   }
 
   async run(code: string, payload: ScriptPayload, timeoutMs: number): Promise<ScriptRunResult> {

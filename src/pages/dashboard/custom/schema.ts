@@ -161,6 +161,9 @@ export const BUTTON_BASE_ATTRS = ['Name', 'Text', 'Variant', 'Size', 'OnClick'] 
 export const LINK_BASE_ATTRS = ['Name', 'Text', 'Url', 'OnClick', 'To'] as const
 export const ATTACHED_ATTRS = ['Grid.Row', 'Grid.Column', 'Grid.RowSpan', 'Grid.ColumnSpan'] as const
 
+/** 所有节点通用：Target 供脚本定位，Visible 控制显隐。 */
+export const NODE_ATTRS = ['Target', 'Visible'] as const
+
 /**
  * ContentProperty 映射：标签之间的文本等价于给这个属性赋值。
  * 容器/集合类元素（Container/Row/Grid/Tabs/Resources 等）的内容是子元素，不在表内。

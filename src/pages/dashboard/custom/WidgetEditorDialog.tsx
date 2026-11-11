@@ -465,6 +465,9 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
       OpenUrl: () => {},
       Navigate: () => {},
       Log: (message) => console.warn('[widget-preview]', message),
+      SetProperty: async () => null,
+      GetProperty: async () => null,
+      Invoke: async () => null,
     })
     try {
       const output = await executeFunction(selectedFn, undefined, sandbox, {
@@ -486,7 +489,15 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
     if (!action || action.name !== 'CallFunction' || !doc) return
     const fn = doc.functions.find((item) => item.name === action.args.Function)
     if (!fn || !previewScope) return
-    const sandbox = new ScriptSandbox({ Notify: () => {}, OpenUrl: () => {}, Navigate: () => {}, Log: () => {} })
+    const sandbox = new ScriptSandbox({
+      Notify: () => {},
+      OpenUrl: () => {},
+      Navigate: () => {},
+      Log: () => {},
+      SetProperty: async () => null,
+      GetProperty: async () => null,
+      Invoke: async () => null,
+    })
     try {
       const output = await executeFunction(fn, action, sandbox, {
         inputs: previewInputs,
@@ -511,6 +522,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
     resources: previewResources,
     results: previewResults,
     children: {},
+    overrides: {},
     onAction: (action) => { void previewAction(action) },
     renderUsing: (node) => (
       <span className="rounded border border-dashed border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">

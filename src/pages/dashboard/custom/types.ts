@@ -30,6 +30,9 @@ export interface GridAttached {
 
 export interface NodeBase {
   attached?: GridAttached
+  /** 脚本定位键，与输入控件的 Name 分离。 */
+  target?: string
+  visible?: boolean
 }
 
 export interface LayoutAttrs {
@@ -68,6 +71,8 @@ export interface GridNode extends NodeBase, LayoutAttrs {
 export interface TabItemNode {
   kind: 'tabItem'
   title: Bindable
+  target?: string
+  visible?: boolean
   children: WidgetNode[]
 }
 
@@ -79,6 +84,8 @@ export interface TabsNode extends NodeBase {
 
 export interface ListItemNode {
   kind: 'listItem'
+  target?: string
+  visible?: boolean
   child: WidgetNode
 }
 
