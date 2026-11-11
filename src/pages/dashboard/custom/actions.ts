@@ -20,6 +20,8 @@ export interface WidgetActionContext {
   runFunction: (name: string, action: ActionSpec) => Promise<void>
   runCommand: (command: string, workingDirectory?: string, timeout?: number) => Promise<void>
   callPlugin: (pluginId: string, method: string, args: unknown) => Promise<void>
+  showDialog: (name: string) => void
+  hideDialog: (name: string) => void
   scope: Record<string, unknown>
   t: (key: string) => string
 }
@@ -125,6 +127,14 @@ export async function runWidgetAction(action: ActionSpec, ctx: WidgetActionConte
     case 'PluginApi': {
       const payload = actionArguments(action, ctx.scope)
       await ctx.callPlugin(args.PluginId, args.Method, payload)
+      return
+    }
+    case 'ShowDialog': {
+      ctx.showDialog(args.Target)
+      return
+    }
+    case 'HideDialog': {
+      ctx.hideDialog(args.Target)
       return
     }
     default:

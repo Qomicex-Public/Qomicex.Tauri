@@ -76,6 +76,8 @@ export function parseResourceEntries(
           out[entry.name] = value
           break
         }
+        case 'Page':
+          break
       }
     } catch {
       out[entry.name] = undefined

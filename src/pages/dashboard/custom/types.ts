@@ -35,6 +35,8 @@ export interface NodeBase {
   visible?: boolean
   /** 尺寸条件，如 "Size.Width <= 1"；不满足时不渲染。 */
   when?: string
+  /** 引用 Resource Type="Page" 的页面名。 */
+  contentPage?: string
 }
 
 export interface WidgetSizeInfo {
@@ -98,6 +100,7 @@ export interface TabItemNode {
   target?: string
   visible?: boolean
   when?: string
+  contentPage?: string
   children: WidgetNode[]
 }
 
@@ -112,7 +115,8 @@ export interface ListItemNode {
   target?: string
   visible?: boolean
   when?: string
-  child: WidgetNode
+  contentPage?: string
+  child?: WidgetNode
 }
 
 export interface ListNode extends NodeBase {
@@ -121,7 +125,7 @@ export interface ListNode extends NodeBase {
   as: string
   gap?: number
   emptyText?: Bindable
-  item: ListItemNode
+  item?: ListItemNode
 }
 
 export interface TextNode extends NodeBase {
@@ -235,6 +239,16 @@ export interface DividerNode extends NodeBase {
   kind: 'divider'
 }
 
+export interface DialogNode extends NodeBase {
+  kind: 'dialog'
+  name: string
+  title?: string
+  width: 'Sm' | 'Md' | 'Lg' | 'Xl' | 'Full'
+  children: WidgetNode[]
+}
+
+export type PageNode = WidgetNode | TabItemNode | ListItemNode
+
 export interface SpacerNode extends NodeBase {
   kind: 'spacer'
   size: number
@@ -275,15 +289,17 @@ export type WidgetNode =
   | FilePickerNode
   | ColorPickerNode
   | DividerNode
+  | DialogNode
   | SpacerNode
   | IfNode
   | UsingNode
 
 export interface ResourceEntry {
   name: string
-  type: 'String' | 'Bool' | 'Number' | 'Binary' | 'Json'
+  type: 'String' | 'Bool' | 'Number' | 'Binary' | 'Json' | 'Page'
   value: string
   mime?: string
+  page?: PageNode[]
 }
 
 export interface StructField {
@@ -336,6 +352,7 @@ export interface WidgetDocument {
   outputs: OutputDecl[]
   datas: DataSourceSpec[]
   resources: ResourceEntry[]
+  pages: Record<string, PageNode[]>
   functions: FunctionNode[]
   triggers: TriggerNode[]
   nodes: WidgetNode[]

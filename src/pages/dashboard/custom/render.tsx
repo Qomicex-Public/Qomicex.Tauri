@@ -3,7 +3,7 @@
 
 import { Fragment, useState, type CSSProperties, type ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Button, Checkbox, Select, SelectOption, Tabs, cn } from '../../../components/ui'
+import { Button, Checkbox, Dialog, DialogBody, DialogHeader, DialogTitle, Select, SelectOption, Tabs, cn } from '../../../components/ui'
 import {
   ELEMENT_ATTRS,
   NODE_ATTRS,
@@ -21,18 +21,22 @@ import type {
   ColorPickerNode,
   ColumnNode,
   ContainerNode,
+  DialogNode,
   FilePickerNode,
   GridNode,
   ImageNode,
   LinkNode,
   ListNode,
+  ListItemNode,
   MediaNode,
+  PageNode,
   ProgressNode,
   RowNode,
   SelectNode,
   SliderNode,
   SpacerNode,
   TabsNode,
+  TabItemNode,
   TextBoxNode,
   TextNode,
   UsingNode,
@@ -49,6 +53,10 @@ export interface RenderRuntime {
   children: Record<string, unknown>
   overrides: Record<string, Record<string, unknown>>
   size: WidgetSizeInfo
+  pages: Record<string, PageNode[]>
+  openDialogs: Set<string>
+  showDialog: (name: string) => void
+  hideDialog: (name: string) => void
   onAction: (action?: ActionSpec, control?: string) => void
   renderUsing: (node: UsingNode) => ReactNode
   allowedHosts: Set<string>
@@ -177,6 +185,7 @@ const NODE_TAG: Record<WidgetNode['kind'], string> = {
   filePicker: 'FilePicker',
   colorPicker: 'ColorPicker',
   divider: 'Divider',
+  dialog: 'Dialog',
   spacer: 'Spacer',
   using: 'Using',
 }
@@ -312,6 +321,53 @@ function attachedStyle(node: WidgetNode): CSSProperties | undefined {
   }
 }
 
+function isWidgetNode(node: PageNode): node is WidgetNode {
+  return node.kind !== 'tabItem' && node.kind !== 'listItem'
+}
+
+function pageNodes(contentPage: string | undefined, fallback: PageNode[], ctx: RenderContext): PageNode[] {
+  if (!contentPage) return fallback
+  return ctx.pages[contentPage] ?? []
+}
+
+function pageChildren(contentPage: string | undefined, fallback: WidgetNode[], ctx: RenderContext): WidgetNode[] {
+  return pageNodes(contentPage, fallback, ctx).filter(isWidgetNode)
+}
+
+function dialogWidthClass(width: DialogNode['width']): string {
+  switch (width) {
+    case 'Sm':
+      return 'max-w-sm'
+    case 'Lg':
+      return 'max-w-2xl'
+    case 'Xl':
+      return 'max-w-4xl'
+    case 'Full':
+      return 'max-w-[calc(100vw-2rem)]'
+    default:
+      return 'max-w-lg'
+  }
+}
+
+function renderDialog(node: DialogNode, ctx: RenderContext): ReactNode {
+  const content = pageChildren(node.contentPage, node.children, ctx)
+  return (
+    <Dialog
+      key={`dialog-${node.name}`}
+      open={ctx.openDialogs.has(node.name)}
+      onClose={() => ctx.hideDialog(node.name)}
+      className={dialogWidthClass(node.width)}
+    >
+      <DialogHeader onClose={() => ctx.hideDialog(node.name)}>
+        {node.title ? <DialogTitle>{interpolate(node.title, ctx.scope)}</DialogTitle> : <span />}
+      </DialogHeader>
+      <DialogBody className="max-h-[calc(100vh-7rem)] overflow-auto">
+        {renderNodes(content, ctx, `dialog-${node.name}-`)}
+      </DialogBody>
+    </Dialog>
+  )
+}
+
 function renderNode(node: WidgetNode, ctx: RenderContext, root = false): ReactNode {
   const effective = applyNodeOverrides(node, node.target ? ctx.overrides[node.target] : undefined)
   if (effective.visible === false) return null
@@ -329,7 +385,9 @@ function renderNode(node: WidgetNode, ctx: RenderContext, root = false): ReactNo
     case 'list':
       return <ListView key="list" node={effective} ctx={ctx} root={root} />
     case 'if':
-      return isTruthy(resolvePath(ctx.scope, effective.test)) ? renderNodes(effective.children, ctx, '', root) : null
+      return isTruthy(resolvePath(ctx.scope, effective.test))
+        ? renderNodes(pageChildren(effective.contentPage, effective.children, ctx), ctx, '', root)
+        : null
     case 'text':
       return renderText(effective, ctx)
     case 'button':
@@ -356,6 +414,8 @@ function renderNode(node: WidgetNode, ctx: RenderContext, root = false): ReactNo
       return <ColorPickerControl key="colorPicker" node={effective} ctx={ctx} />
     case 'divider':
       return <div key="divider" className="h-px w-full bg-border/50" />
+    case 'dialog':
+      return renderDialog(effective, ctx)
     case 'spacer':
       return renderSpacer(effective)
     case 'using':
@@ -384,7 +444,7 @@ function renderContainer(node: ContainerNode, ctx: RenderContext, root = false):
         node.justify && JUSTIFY[node.justify],
       )}
     >
-      {renderNodes(node.children, ctx)}
+      {renderNodes(pageChildren(node.contentPage, node.children, ctx), ctx)}
     </div>
   )
 }
@@ -404,7 +464,7 @@ function renderRowColumn(node: RowNode | ColumnNode, ctx: RenderContext, root = 
         node.justify && JUSTIFY[node.justify],
       )}
     >
-      {renderNodes(node.children, ctx)}
+      {renderNodes(pageChildren(node.contentPage, node.children, ctx), ctx)}
     </div>
   )
 }
@@ -423,7 +483,7 @@ function renderGrid(node: GridNode, ctx: RenderContext, root = false): ReactNode
         node.justify && JUSTIFY[node.justify],
       )}
     >
-      {node.children.map((child, index) => (
+      {pageChildren(node.contentPage, node.children, ctx).map((child, index) => (
         <div key={index} style={attachedStyle(child)} className="min-w-0">
           {renderNode(child, ctx)}
         </div>
@@ -434,7 +494,8 @@ function renderGrid(node: GridNode, ctx: RenderContext, root = false): ReactNode
 
 function TabsView({ node, ctx, root = false }: { node: TabsNode; ctx: RenderContext; root?: boolean }) {
   const [active, setActive] = useState(String(node.defaultIndex))
-  const visibleTabs = node.children.filter((tab) => tab.visible !== false && (!tab.when || evaluateWhen(tab.when, ctx.size)))
+  const tabsSource = pageNodes(node.contentPage, node.children, ctx).filter((item): item is TabItemNode => item.kind === 'tabItem')
+  const visibleTabs = tabsSource.filter((tab) => tab.visible !== false && (!tab.when || evaluateWhen(tab.when, ctx.size)))
   if (visibleTabs.length === 0) return null
   const index = Math.min(Number(active) || 0, visibleTabs.length - 1)
   const current = visibleTabs[index]
@@ -442,7 +503,9 @@ function TabsView({ node, ctx, root = false }: { node: TabsNode; ctx: RenderCont
   return (
     <div style={attachedStyle(node)} className={cn('flex min-w-0 flex-col gap-2', root && 'min-h-0 flex-1')}>
       <Tabs tabs={tabs} activeTab={String(index)} onChange={setActive} />
-      <div className={cn('min-w-0', root && 'min-h-0 flex-1 overflow-auto')}>{renderNodes(current?.children ?? [], ctx, `tab${index}-`)}</div>
+      <div className={cn('min-w-0', root && 'min-h-0 flex-1 overflow-auto')}>
+        {renderNodes(pageChildren(current?.contentPage, current?.children ?? [], ctx), ctx, `tab${index}-`)}
+      </div>
     </div>
   )
 }
@@ -450,15 +513,19 @@ function TabsView({ node, ctx, root = false }: { node: TabsNode; ctx: RenderCont
 function ListView({ node, ctx, root = false }: { node: ListNode; ctx: RenderContext; root?: boolean }) {
   const value = Array.isArray(node.items) ? node.items : resolvePath(ctx.scope, node.items as string)
   const items = Array.isArray(value) ? value.slice(0, WIDGET_LIMITS.maxListItems) : []
+  const sourceItem = node.item
+    ?? pageNodes(node.contentPage, [], ctx).find((candidate): candidate is ListItemNode => candidate.kind === 'listItem')
   if (items.length === 0) {
     if (!node.emptyText) return null
     return <span className="text-xs text-muted-foreground">{interpolate(node.emptyText, ctx.scope)}</span>
   }
+  if (!sourceItem || sourceItem.visible === false || (sourceItem.when && !evaluateWhen(sourceItem.when, ctx.size))) return null
+  const itemNodes = pageChildren(sourceItem.contentPage, sourceItem.child ? [sourceItem.child] : [], ctx)
   return (
     <div style={attachedStyle(node)} className={cn('flex min-w-0 flex-col', GAP[node.gap ?? 0], root && 'min-h-0 flex-1 overflow-auto')}>
-      {node.item.visible === false || (node.item.when && !evaluateWhen(node.item.when, ctx.size)) ? null : items.map((item, index) => (
+      {items.map((item, index) => (
         <Fragment key={index}>
-          {renderNode(node.item.child, {
+          {renderNodes(itemNodes, {
             ...ctx,
             scope: { ...ctx.scope, [node.as]: item, Index: index },
           })}

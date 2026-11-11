@@ -39,6 +39,8 @@ export const ACTION_NAMES = [
   'CallFunction',
   'RunCommand',
   'PluginApi',
+  'ShowDialog',
+  'HideDialog',
 ] as const
 export type ActionName = (typeof ACTION_NAMES)[number]
 
@@ -56,6 +58,8 @@ export const ACTION_ARGS: Record<ActionName, readonly string[]> = {
   CallFunction: ['Function', 'Arguments'],
   RunCommand: ['Command', 'WorkingDirectory', 'Timeout'],
   PluginApi: ['PluginId', 'Method', 'Arguments'],
+  ShowDialog: ['Target'],
+  HideDialog: ['Target'],
 }
 
 export const ACTION_REQUIRED: Record<ActionName, readonly string[]> = {
@@ -72,6 +76,8 @@ export const ACTION_REQUIRED: Record<ActionName, readonly string[]> = {
   CallFunction: ['Function'],
   RunCommand: ['Command'],
   PluginApi: ['PluginId', 'Method'],
+  ShowDialog: ['Target'],
+  HideDialog: ['Target'],
 }
 
 export const NAV_TARGETS = [
@@ -113,6 +119,7 @@ export const RADIUS_VALUES = ['None', 'Sm', 'Md', 'Lg', 'Full'] as const
 export const DATA_TYPES = ['Json', 'Text', 'Xml', 'Binary'] as const
 export const DATA_SOURCES = ['Url', 'File'] as const
 export const MEDIA_TYPES = ['Audio', 'Video'] as const
+export const DIALOG_SIZES = ['Sm', 'Md', 'Lg', 'Xl', 'Full'] as const
 export const TRIGGER_EVENTS = ['Loaded', 'DataChanged', 'Click', 'Timer', 'Resize'] as const
 export const FIELD_TYPES = ['String', 'Number', 'Bool', 'DateTime', 'Json', 'Binary'] as const
 
@@ -135,15 +142,16 @@ export const ELEMENT_ATTRS: Record<string, readonly string[]> = {
   Function: ['Name', 'Timeout'],
   Struct: ['Name'],
   Field: ['Name', 'Type'],
-  Container: ['Direction', 'Gap', 'Padding', 'Align', 'Justify', 'Border', 'Background', 'Radius'],
-  Row: ['Gap', 'Padding', 'Align', 'Justify', 'Wrap'],
-  Column: ['Gap', 'Padding', 'Align', 'Justify', 'Wrap'],
-  Grid: ['Columns', 'Gap', 'Padding', 'Align', 'Justify'],
-  Tabs: ['Default'],
-  TabItem: ['Title'],
-  List: ['Items', 'As', 'Gap', 'EmptyText'],
-  ListItem: [],
-  If: ['Test'],
+  Container: ['Direction', 'Gap', 'Padding', 'Align', 'Justify', 'Border', 'Background', 'Radius', 'Content'],
+  Row: ['Gap', 'Padding', 'Align', 'Justify', 'Wrap', 'Content'],
+  Column: ['Gap', 'Padding', 'Align', 'Justify', 'Wrap', 'Content'],
+  Grid: ['Columns', 'Gap', 'Padding', 'Align', 'Justify', 'Content'],
+  Tabs: ['Default', 'Content'],
+  TabItem: ['Title', 'Content'],
+  List: ['Items', 'As', 'Gap', 'EmptyText', 'Content'],
+  ListItem: ['Content'],
+  If: ['Test', 'Content'],
+  Dialog: ['Name', 'Title', 'Width', 'Size', 'Content'],
   Text: ['Value', 'Size', 'Weight', 'Color', 'Clamp', 'Align'],
   Button: ['Name', 'Text', 'Variant', 'Size', 'OnClick', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Function', 'Arguments', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method'],
   Image: ['Src', 'Alt', 'W', 'H', 'Rounded'],
@@ -169,8 +177,7 @@ export const ATTACHED_ATTRS = ['Grid.Row', 'Grid.Column', 'Grid.RowSpan', 'Grid.
 export const NODE_ATTRS = ['Target', 'Visible', 'When'] as const
 
 /** 属性值补全表：按元素 + 属性；文档和编辑器共用同一份枚举。 */
-export const ATTRIBUTE_VALUES: Record<string, Record<string, readonly string[]>> = {
-  '*': {
+export const ATTRIBUTE_VALUES: Record<string, Record<string, readonly string[]>> = {  '*': {
     Visible: ['True', 'False'],
     When: ['Size.Width &lt;= 1', 'Size.Width &gt;= 2', 'Size.PixelWidth &lt; 420'],
   },
@@ -186,15 +193,19 @@ export const ATTRIBUTE_VALUES: Record<string, Record<string, readonly string[]>>
     Source: DATA_SOURCES,
   },
   Resource: {
-    Type: FIELD_TYPES,
+    Type: [...FIELD_TYPES, 'Page'],
+  },
+  Dialog: {
+    Width: DIALOG_SIZES,
+    Size: DIALOG_SIZES,
   },
   Field: {
     Type: FIELD_TYPES,
   },
   Trigger: {
     Event: TRIGGER_EVENTS,
-    OnClick: ACTION_NAMES,
-    Action: ACTION_NAMES,
+    OnClick: ACTION_NAMES.filter((name) => name !== 'ShowDialog' && name !== 'HideDialog'),
+    Action: ACTION_NAMES.filter((name) => name !== 'ShowDialog' && name !== 'HideDialog'),
     To: NAV_TARGETS,
     Folder: FOLDER_TARGETS,
     Source: INSTALL_SOURCES,
@@ -204,31 +215,31 @@ export const ATTRIBUTE_VALUES: Record<string, Record<string, readonly string[]>>
   Button: {
     Size: BUTTON_SIZES,
     Variant: BUTTON_VARIANTS,
-    OnClick: ACTION_NAMES,
+    OnClick: ACTION_NAMES.filter((name) => name !== 'ShowDialog' && name !== 'HideDialog'),
     To: NAV_TARGETS,
     Folder: FOLDER_TARGETS,
     Source: INSTALL_SOURCES,
     Category: INSTALL_CATEGORIES,
   },
   Link: {
-    OnClick: ACTION_NAMES,
+    OnClick: ACTION_NAMES.filter((name) => name !== 'ShowDialog' && name !== 'HideDialog'),
     To: NAV_TARGETS,
   },
   TextBox: {
     Multiline: ['True', 'False'],
     Password: ['True', 'False'],
     ReadOnly: ['True', 'False'],
-    OnChange: ACTION_NAMES,
+    OnChange: ACTION_NAMES.filter((name) => name !== 'ShowDialog' && name !== 'HideDialog'),
   },
   CheckBox: {
     Checked: ['True', 'False'],
-    OnChange: ACTION_NAMES,
+    OnChange: ACTION_NAMES.filter((name) => name !== 'ShowDialog' && name !== 'HideDialog'),
   },
   Slider: {
-    OnChange: ACTION_NAMES,
+    OnChange: ACTION_NAMES.filter((name) => name !== 'ShowDialog' && name !== 'HideDialog'),
   },
   Select: {
-    OnChange: ACTION_NAMES,
+    OnChange: ACTION_NAMES.filter((name) => name !== 'ShowDialog' && name !== 'HideDialog'),
   },
   Text: {
     Size: TEXT_SIZES,
@@ -314,6 +325,7 @@ export type WidgetErrorCode =
   | 'invalidAction'
   | 'invalidUrl'
   | 'invalidPath'
+  | 'invalidPage'
   | 'listTemplate'
   | 'tabsTemplate'
   | 'listItemRoot'

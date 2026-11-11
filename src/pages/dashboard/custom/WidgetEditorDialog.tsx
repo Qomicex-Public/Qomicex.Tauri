@@ -65,13 +65,14 @@ function collectActions(nodes: WidgetNode[], out = new Set<ActionName>()): Set<A
       case 'column':
       case 'grid':
       case 'if':
+      case 'dialog':
         collectActions(node.children, out)
         break
       case 'tabs':
         for (const tab of node.children) collectActions(tab.children, out)
         break
       case 'list':
-        collectActions([node.item.child], out)
+        if (node.item?.child) collectActions([node.item.child], out)
         break
       default:
         break
@@ -96,13 +97,14 @@ function collectInputNames(nodes: WidgetNode[], out = new Set<string>()): Set<st
       case 'column':
       case 'grid':
       case 'if':
+      case 'dialog':
         collectInputNames(node.children, out)
         break
       case 'tabs':
         for (const tab of node.children) collectInputNames(tab.children, out)
         break
       case 'list':
-        collectInputNames([node.item.child], out)
+        if (node.item?.child) collectInputNames([node.item.child], out)
         break
       default:
         break
@@ -122,13 +124,14 @@ function collectUsing(nodes: WidgetNode[], out: UsingNode[] = []): UsingNode[] {
       case 'column':
       case 'grid':
       case 'if':
+      case 'dialog':
         collectUsing(node.children, out)
         break
       case 'tabs':
         for (const tab of node.children) collectUsing(tab.children, out)
         break
       case 'list':
-        collectUsing([node.item.child], out)
+        if (node.item?.child) collectUsing([node.item.child], out)
         break
       default:
         break
@@ -532,6 +535,10 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
     children: {},
     overrides: {},
     size: { Width: 2, Height: 2, PixelWidth: 0, PixelHeight: 0 },
+    pages: doc?.pages ?? {},
+    openDialogs: new Set<string>(),
+    showDialog: () => {},
+    hideDialog: () => {},
     onAction: (action) => { void previewAction(action) },
     renderUsing: (node) => (
       <span className="rounded border border-dashed border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">

@@ -9,6 +9,7 @@ import {
   CONTENT_PROPERTY,
   DATA_SOURCES,
   DATA_TYPES,
+  DIALOG_SIZES,
   ELEMENT_ATTRS,
   FIELD_TYPES,
   FOLDER_TARGETS,
@@ -35,6 +36,7 @@ import type {
   ColorPickerNode,
   ColumnNode,
   ContainerNode,
+  DialogNode,
   FilePickerNode,
   FunctionNode,
   FunctionInput,
@@ -49,6 +51,7 @@ import type {
   ListNode,
   MediaNode,
   OutputDecl,
+  PageNode,
   ProgressNode,
   ResourceEntry,
   RowNode,
@@ -81,6 +84,7 @@ interface ParseCtx {
   names: Set<string>
   inputs: InputDecl[]
   outputs: OutputDecl[]
+  pages: Map<string, PageNode[]>
 }
 
 interface SplitElement {
@@ -274,6 +278,13 @@ function validatePath(value: string, label: string): string {
   return path
 }
 
+function parsePageReference(value: string): string {
+  const raw = value.trim().replace(/^\{(.*)\}$/s, '$1').trim()
+  const name = raw.startsWith('Resources.') ? raw.slice('Resources.'.length) : raw
+  validateIdentifier(name, `Content=${value}`)
+  return name
+}
+
 function parseAttached(attrs: Map<string, string>): GridAttached | undefined {
   const attached: GridAttached = {}
   let any = false
@@ -297,6 +308,13 @@ function parseAttached(attrs: Map<string, string>): GridAttached | undefined {
 }
 
 function parseAction(attrs: Map<string, string>, tag: string, actionName: string): ActionSpec {
+  const dialog = actionName.trim().replace(/^\{(.*)\}$/s, '$1').match(/^([A-Za-z_][A-Za-z0-9_-]*)\.(Show|Hide)$/)
+  if (dialog) {
+    return {
+      name: dialog[2] === 'Show' ? 'ShowDialog' : 'HideDialog',
+      args: { Target: dialog[1] },
+    }
+  }
   if (!(ACTION_NAMES as readonly string[]).includes(actionName)) {
     throw new WidgetError('invalidAction', `${tag}@OnClick=${actionName}`)
   }
@@ -407,7 +425,7 @@ function parseData(el: Element, ctx: ParseCtx): void {
   ctx.names.add(`data:${name}`)
 }
 
-function parseResources(el: Element, ctx: ParseCtx): void {
+function parseResources(el: Element, ctx: ParseCtx, depth: number): void {
   const { attrs, children } = readElement(el)
   validateAttrs('Resources', attrs)
   assertNoText(el)
@@ -418,12 +436,22 @@ function parseResources(el: Element, ctx: ParseCtx): void {
     const split = readElement(child)
     applyProperties(child.tagName, split.attrs, split.propertyElements)
     validateAttrs(child.tagName, split.attrs)
-    if (Array.from(child.children).length > 0) {
-      throw new WidgetError('invalidResource', `${child.tagName} 不能包含子元素`)
-    }
     const name = requiredAttr(split.attrs, child.tagName, 'Name').trim()
     validateIdentifier(name, `${child.tagName}@Name`)
     if (ctx.names.has(`resource:${name}`)) throw new WidgetError('invalidResource', `重复资源 ${name}`)
+    if (child.tagName === 'Resource' && split.attrs.get('Type')?.trim() === 'Page') {
+      if (Array.from(child.childNodes).some((node) => node.nodeType === 3 && node.textContent?.trim())) {
+        throw new WidgetError('invalidResource', `Page ${name} 不能包含直接文本`)
+      }
+      const page = parsePageChildren(child, ctx, depth + 1)
+      ctx.resources.push({ name, type: 'Page', value: '', page })
+      ctx.pages.set(name, page)
+      ctx.names.add(`resource:${name}`)
+      continue
+    }
+    if (Array.from(child.children).length > 0) {
+      throw new WidgetError('invalidResource', `${child.tagName} 不能包含子元素`)
+    }
     let type: ResourceEntry['type']
     let value = (attr(split.attrs, 'Text') ?? child.textContent ?? '').trim()
     let mime: string | undefined
@@ -649,6 +677,8 @@ function parseNode(el: Element, ctx: ParseCtx, depth: number): WidgetNode {
       throw new WidgetError('listTemplate', 'ListItem 只能作为 List 的直接子元素')
     case 'If':
       return parseIf(el, ctx, depth)
+    case 'Dialog':
+      return parseDialog(el, ctx, depth)
     case 'Text':
       return parseText(el)
     case 'Button':
@@ -705,9 +735,11 @@ function layoutAttrs(attrs: Map<string, string>, tag: string) {
 }
 
 function parseContainer(el: Element, ctx: ParseCtx, depth: number): ContainerNode {
-  const { attrs, propertyElements } = readElement(el)
+  const { attrs, propertyElements, children: childEls } = readElement(el)
   applyProperties('Container', attrs, propertyElements)
   validateAttrs('Container', attrs)
+  const meta = baseNode('Container', attrs)
+  if (meta.contentPage && childEls.length > 0) throw new WidgetError('invalidAttribute', 'Container 不能同时使用 Content 和子元素')
   return {
     kind: 'container',
     ...layoutAttrs(attrs, 'Container'),
@@ -715,35 +747,101 @@ function parseContainer(el: Element, ctx: ParseCtx, depth: number): ContainerNod
     border: boolAttr(attrs, 'Container', 'Border', true),
     background: enumAttr(attrs, 'Container', 'Background', ['Transparent', 'Card', 'Muted', 'Primary'] as const, 'Card')!,
     radius: enumAttr(attrs, 'Container', 'Radius', ['None', 'Sm', 'Md', 'Lg', 'Full'] as const, 'Lg')!,
-    children: parseChildren(el, ctx, depth + 1),
-    ...baseNode('Container', attrs),
+    children: meta.contentPage ? [] : parseChildren(el, ctx, depth + 1),
+    ...meta,
   }
 }
 
 function parseRowColumn(el: Element, ctx: ParseCtx, depth: number): RowNode | ColumnNode {
-  const { attrs, propertyElements } = readElement(el)
+  const { attrs, propertyElements, children: childEls } = readElement(el)
   applyProperties(el.tagName, attrs, propertyElements)
   validateAttrs(el.tagName, attrs)
+  const meta = baseNode(el.tagName, attrs)
+  if (meta.contentPage && childEls.length > 0) throw new WidgetError('invalidAttribute', `${el.tagName} 不能同时使用 Content 和子元素`)
   const common = {
     ...layoutAttrs(attrs, el.tagName),
     wrap: boolAttr(attrs, el.tagName, 'Wrap', false),
-    children: parseChildren(el, ctx, depth + 1),
-    ...baseNode(el.tagName, attrs),
+    children: meta.contentPage ? [] : parseChildren(el, ctx, depth + 1),
+    ...meta,
   }
   return el.tagName === 'Row' ? { kind: 'row', ...common } : { kind: 'column', ...common }
 }
 
 function parseGrid(el: Element, ctx: ParseCtx, depth: number): GridNode {
-  const { attrs, propertyElements } = readElement(el)
+  const { attrs, propertyElements, children: childEls } = readElement(el)
   applyProperties('Grid', attrs, propertyElements)
   validateAttrs('Grid', attrs)
+  const meta = baseNode('Grid', attrs)
+  if (meta.contentPage && childEls.length > 0) throw new WidgetError('invalidAttribute', 'Grid 不能同时使用 Content 和子元素')
   return {
     kind: 'grid',
     columns: intAttr(attrs, 'Grid', 'Columns', 1, 6),
     ...layoutAttrs(attrs, 'Grid'),
-    children: parseChildren(el, ctx, depth + 1),
-    ...baseNode('Grid', attrs),
+    children: meta.contentPage ? [] : parseChildren(el, ctx, depth + 1),
+    ...meta,
   }
+}
+
+function parseTabItem(el: Element, ctx: ParseCtx, depth: number): TabItemNode {
+  const split = readElement(el)
+  applyProperties('TabItem', split.attrs, split.propertyElements)
+  validateAttrs('TabItem', split.attrs)
+  const meta = baseNode('TabItem', split.attrs)
+  if (meta.contentPage && split.children.length > 0) throw new WidgetError('invalidAttribute', 'TabItem 不能同时使用 Content 和子元素')
+  return {
+    kind: 'tabItem',
+    title: requiredAttr(split.attrs, 'TabItem', 'Title'),
+    target: meta.target,
+    visible: meta.visible,
+    when: meta.when,
+    contentPage: meta.contentPage,
+    children: meta.contentPage ? [] : parseChildren(el, ctx, depth + 1),
+  }
+}
+
+function parseListItem(el: Element, ctx: ParseCtx, depth: number): ListItemNode {
+  const split = readElement(el)
+  applyProperties('ListItem', split.attrs, split.propertyElements)
+  validateAttrs('ListItem', split.attrs)
+  const meta = baseNode('ListItem', split.attrs)
+  if (meta.contentPage && split.children.length > 0) throw new WidgetError('invalidAttribute', 'ListItem 不能同时使用 Content 和子元素')
+  if (!meta.contentPage && split.children.length !== 1) {
+    throw new WidgetError('listItemRoot', 'ListItem 必须且只能包含一个根元素')
+  }
+  assertNoText(el)
+  return {
+    kind: 'listItem',
+    target: meta.target,
+    visible: meta.visible,
+    when: meta.when,
+    contentPage: meta.contentPage,
+    child: meta.contentPage ? undefined : parseNode(split.children[0], ctx, depth + 1),
+  }
+}
+
+function parsePageChildren(el: Element, ctx: ParseCtx, depth: number): PageNode[] {
+  if (depth > WIDGET_LIMITS.maxDepth) throw new WidgetError('tooDeep', el.tagName)
+  assertNoText(el)
+  const { children } = readElement(el)
+  const nodes: PageNode[] = []
+  for (const child of children) {
+    ctx.nodes += 1
+    if (ctx.nodes > WIDGET_LIMITS.maxNodes) throw new WidgetError('tooManyNodes')
+    if (child.tagName === 'Data') {
+      parseData(child, ctx)
+      continue
+    }
+    if (child.tagName === 'TabItem') {
+      nodes.push(parseTabItem(child, ctx, depth + 1))
+      continue
+    }
+    if (child.tagName === 'ListItem') {
+      nodes.push(parseListItem(child, ctx, depth + 1))
+      continue
+    }
+    nodes.push(parseNode(child, ctx, depth))
+  }
+  return nodes
 }
 
 function parseTabs(el: Element, ctx: ParseCtx, depth: number): TabsNode {
@@ -752,31 +850,24 @@ function parseTabs(el: Element, ctx: ParseCtx, depth: number): TabsNode {
   validateAttrs('Tabs', attrs)
   assertNoText(el)
   if (depth + 1 > WIDGET_LIMITS.maxDepth) throw new WidgetError('tooDeep', el.tagName)
+  const meta = baseNode('Tabs', attrs)
   const { children: childEls } = readElement(el)
+  if (meta.contentPage && childEls.length > 0) throw new WidgetError('invalidAttribute', 'Tabs 不能同时使用 Content 和子元素')
   const children: TabItemNode[] = []
-  for (const child of childEls) {
-    ctx.nodes += 1
-    if (ctx.nodes > WIDGET_LIMITS.maxNodes) throw new WidgetError('tooManyNodes')
-    if (child.tagName !== 'TabItem') throw new WidgetError('tabsTemplate', `Tabs 内不允许 ${child.tagName}`)
-    const split = readElement(child)
-    applyProperties('TabItem', split.attrs, split.propertyElements)
-    validateAttrs('TabItem', split.attrs)
-    const meta = baseNode('TabItem', split.attrs)
-    children.push({
-      kind: 'tabItem',
-      title: requiredAttr(split.attrs, 'TabItem', 'Title'),
-      target: meta.target,
-      visible: meta.visible,
-      when: meta.when,
-      children: parseChildren(child, ctx, depth + 2),
-    })
+  if (!meta.contentPage) {
+    for (const child of childEls) {
+      ctx.nodes += 1
+      if (ctx.nodes > WIDGET_LIMITS.maxNodes) throw new WidgetError('tooManyNodes')
+      if (child.tagName !== 'TabItem') throw new WidgetError('tabsTemplate', `Tabs 内不允许 ${child.tagName}`)
+      children.push(parseTabItem(child, ctx, depth + 1))
+    }
+    if (children.length === 0) throw new WidgetError('tabsTemplate', 'Tabs 至少需要一个 TabItem')
   }
-  if (children.length === 0) throw new WidgetError('tabsTemplate', 'Tabs 至少需要一个 TabItem')
   return {
     kind: 'tabs',
-    defaultIndex: intAttr(attrs, 'Tabs', 'Default', 0, children.length - 1, 0),
+    defaultIndex: intAttr(attrs, 'Tabs', 'Default', 0, Math.max(0, children.length - 1), 0),
     children,
-    ...baseNode('Tabs', attrs),
+    ...meta,
   }
 }
 
@@ -788,25 +879,15 @@ function parseList(el: Element, ctx: ParseCtx, depth: number): ListNode {
   const items = validatePath(requiredAttr(attrs, 'List', 'Items'), 'List@Items')
   const as = attr(attrs, 'As')?.trim() || 'item'
   validateIdentifier(as, 'List@As')
-  if (childEls.length !== 1 || childEls[0].tagName !== 'ListItem') {
-    throw new WidgetError('listTemplate', 'List 必须且只能包含一个 ListItem')
-  }
-  const itemEl = childEls[0]
-  const itemSplit = readElement(itemEl)
-  applyProperties('ListItem', itemSplit.attrs, itemSplit.propertyElements)
-  validateAttrs('ListItem', itemSplit.attrs)
-  if (itemSplit.children.length !== 1) {
-    throw new WidgetError('listItemRoot', 'ListItem 必须且只能包含一个根元素')
-  }
-  assertNoText(itemEl)
-  ctx.nodes += 1
-  const itemMeta = baseNode('ListItem', itemSplit.attrs)
-  const item: ListItemNode = {
-    kind: 'listItem',
-    target: itemMeta.target,
-    visible: itemMeta.visible,
-    when: itemMeta.when,
-    child: parseNode(itemSplit.children[0], ctx, depth + 2),
+  const meta = baseNode('List', attrs)
+  if (meta.contentPage && childEls.length > 0) throw new WidgetError('invalidAttribute', 'List 不能同时使用 Content 和子元素')
+  let item: ListItemNode | undefined
+  if (!meta.contentPage) {
+    if (childEls.length !== 1 || childEls[0].tagName !== 'ListItem') {
+      throw new WidgetError('listTemplate', 'List 必须且只能包含一个 ListItem')
+    }
+    ctx.nodes += 1
+    item = parseListItem(childEls[0], ctx, depth + 1)
   }
   return {
     kind: 'list',
@@ -815,19 +896,46 @@ function parseList(el: Element, ctx: ParseCtx, depth: number): ListNode {
     gap: intAttr(attrs, 'List', 'Gap', 0, 8, 0),
     emptyText: attr(attrs, 'EmptyText') || undefined,
     item,
-    ...baseNode('List', attrs),
+    ...meta,
   }
 }
 
 function parseIf(el: Element, ctx: ParseCtx, depth: number): IfNode {
-  const { attrs, propertyElements } = readElement(el)
+  const { attrs, propertyElements, children: childEls } = readElement(el)
   applyProperties('If', attrs, propertyElements)
   validateAttrs('If', attrs)
+  const meta = baseNode('If', attrs)
+  if (meta.contentPage && childEls.length > 0) throw new WidgetError('invalidAttribute', 'If 不能同时使用 Content 和子元素')
   return {
     kind: 'if',
     test: validatePath(requiredAttr(attrs, 'If', 'Test'), 'If@Test'),
-    children: parseChildren(el, ctx, depth + 1),
-    ...baseNode('If', attrs),
+    children: meta.contentPage ? [] : parseChildren(el, ctx, depth + 1),
+    ...meta,
+  }
+}
+
+function parseDialog(el: Element, ctx: ParseCtx, depth: number): DialogNode {
+  const { attrs, propertyElements, children: childEls } = readElement(el)
+  applyProperties('Dialog', attrs, propertyElements)
+  validateAttrs('Dialog', attrs)
+  const meta = baseNode('Dialog', attrs)
+  const name = requiredAttr(attrs, 'Dialog', 'Name').trim()
+  validateIdentifier(name, 'Dialog@Name')
+  if (ctx.names.has(`dialog:${name}`)) throw new WidgetError('invalidAttribute', `Dialog 重复: ${name}`)
+  ctx.names.add(`dialog:${name}`)
+  if (meta.contentPage && childEls.length > 0) throw new WidgetError('invalidAttribute', 'Dialog 不能同时使用 Content 和子元素')
+  const width = (attrs.has('Width')
+    ? enumAttr(attrs, 'Dialog', 'Width', DIALOG_SIZES, 'Md')
+    : attrs.has('Size')
+      ? enumAttr(attrs, 'Dialog', 'Size', DIALOG_SIZES, 'Md')
+      : 'Md') ?? 'Md'
+  return {
+    kind: 'dialog',
+    name,
+    title: attr(attrs, 'Title'),
+    width,
+    children: meta.contentPage ? [] : parseChildren(el, ctx, depth + 1),
+    ...meta,
   }
 }
 
@@ -848,6 +956,7 @@ function baseNode(_tag: string, attrs: Map<string, string>) {
     target,
     visible: attrs.has('Visible') ? boolAttr(attrs, _tag, 'Visible', true) : undefined,
     when,
+    contentPage: attr(attrs, 'Content')?.trim() ? parsePageReference(attr(attrs, 'Content')!) : undefined,
   }
 }
 
@@ -1077,6 +1186,109 @@ function parseColorPicker(el: Element): ColorPickerNode {
   }
 }
 
+function collectPageRefs(nodes: PageNode[], out: Set<string>): void {
+  for (const node of nodes) {
+    if (node.contentPage) out.add(node.contentPage)
+    switch (node.kind) {
+      case 'container':
+      case 'row':
+      case 'column':
+      case 'grid':
+      case 'if':
+      case 'dialog':
+        collectPageRefs(node.children, out)
+        break
+      case 'tabs':
+        for (const tab of node.children) {
+          if (tab.contentPage) out.add(tab.contentPage)
+          collectPageRefs(tab.children, out)
+        }
+        break
+      case 'tabItem':
+        collectPageRefs(node.children, out)
+        break
+      case 'list':
+        if (node.item?.contentPage) out.add(node.item.contentPage)
+        if (node.item?.child) collectPageRefs([node.item.child], out)
+        break
+      case 'listItem':
+        if (node.child) collectPageRefs([node.child], out)
+        break
+      default:
+        break
+    }
+  }
+}
+
+function validatePageUsage(nodes: PageNode[], ctx: ParseCtx): void {
+  for (const node of nodes) {
+    switch (node.kind) {
+      case 'tabs':
+        if (node.contentPage) {
+          const page = ctx.pages.get(node.contentPage) ?? []
+          if (page.length === 0 || page.some((item) => item.kind !== 'tabItem')) {
+            throw new WidgetError('invalidPage', `${node.contentPage} 必须是 Tabs 的 Page`)
+          }
+        }
+        for (const tab of node.children) validatePageUsage(tab.children, ctx)
+        break
+      case 'list':
+        if (node.contentPage) {
+          const page = ctx.pages.get(node.contentPage) ?? []
+          const items = page.filter((item) => item.kind === 'listItem')
+          if (page.length !== 1 || items.length !== 1) {
+            throw new WidgetError('invalidPage', `${node.contentPage} 必须包含一个 ListItem`)
+          }
+        }
+        if (node.item?.child) validatePageUsage([node.item.child], ctx)
+        break
+      case 'container':
+      case 'row':
+      case 'column':
+      case 'grid':
+      case 'if':
+      case 'dialog':
+        validatePageUsage(node.children, ctx)
+        break
+      case 'tabItem':
+        validatePageUsage(node.children, ctx)
+        break
+      case 'listItem':
+        if (node.child) validatePageUsage([node.child], ctx)
+        break
+      default:
+        break
+    }
+  }
+}
+
+function validatePages(ctx: ParseCtx, rootNodes: WidgetNode[]): void {
+  const refs = new Set<string>()
+  collectPageRefs(rootNodes, refs)
+  collectPageRefs([...ctx.pages.values()].flat(), refs)
+  for (const name of refs) {
+    if (!ctx.pages.has(name)) throw new WidgetError('invalidPage', name)
+  }
+  validatePageUsage(rootNodes, ctx)
+  for (const page of ctx.pages.values()) validatePageUsage(page, ctx)
+  const visiting = new Set<string>()
+  const visited = new Set<string>()
+  const visit = (name: string) => {
+    if (visited.has(name)) return
+    if (visiting.has(name)) throw new WidgetError('invalidPage', `循环引用 ${name}`)
+    visiting.add(name)
+    const refsInPage = new Set<string>()
+    collectPageRefs(ctx.pages.get(name) ?? [], refsInPage)
+    for (const ref of refsInPage) {
+      if (!ctx.pages.has(ref)) throw new WidgetError('invalidPage', ref)
+      visit(ref)
+    }
+    visiting.delete(name)
+    visited.add(name)
+  }
+  for (const name of ctx.pages.keys()) visit(name)
+}
+
 function collectTargets(nodes: WidgetNode[], out = new Set<string>()): void {
   for (const node of nodes) {
     if (node.target) {
@@ -1089,6 +1301,7 @@ function collectTargets(nodes: WidgetNode[], out = new Set<string>()): void {
       case 'column':
       case 'grid':
       case 'if':
+      case 'dialog':
         collectTargets(node.children, out)
         break
       case 'tabs':
@@ -1101,11 +1314,13 @@ function collectTargets(nodes: WidgetNode[], out = new Set<string>()): void {
         }
         break
       case 'list':
-        if (node.item.target) {
-          if (out.has(node.item.target)) throw new WidgetError('invalidAttribute', `Target 重复: ${node.item.target}`)
-          out.add(node.item.target)
+        if (node.item) {
+          if (node.item.target) {
+            if (out.has(node.item.target)) throw new WidgetError('invalidAttribute', `Target 重复: ${node.item.target}`)
+            out.add(node.item.target)
+          }
+          if (node.item.child) collectTargets([node.item.child], out)
         }
-        collectTargets([node.item.child], out)
         break
       default:
         break
@@ -1153,6 +1368,7 @@ export function parseWidgetXml(xml: string): WidgetDocument {
     names: new Set(),
     inputs: [],
     outputs: [],
+    pages: new Map(),
   }
   const nodes: WidgetNode[] = []
   for (const child of rootSplit.children) {
@@ -1163,7 +1379,7 @@ export function parseWidgetXml(xml: string): WidgetDocument {
         parseData(child, ctx)
         break
       case 'Resources':
-        parseResources(child, ctx)
+        parseResources(child, ctx, 1)
         break
       case 'Triggers':
         parseTriggers(child, ctx)
@@ -1188,6 +1404,7 @@ export function parseWidgetXml(xml: string): WidgetDocument {
   }
 
   collectTargets(nodes)
+  validatePages(ctx, nodes)
 
   return {
     name,
@@ -1200,6 +1417,7 @@ export function parseWidgetXml(xml: string): WidgetDocument {
     outputs: ctx.outputs,
     datas: ctx.datas,
     resources: ctx.resources,
+    pages: Object.fromEntries(ctx.pages),
     functions: ctx.functions,
     triggers: ctx.triggers,
     nodes,

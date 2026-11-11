@@ -71,6 +71,7 @@ function findNodeByTarget(nodes: WidgetNode[], target: string): WidgetNode | nul
       case 'column':
       case 'grid':
       case 'if':
+      case 'dialog':
         {
           const found = findNodeByTarget(node.children, target)
           if (found) return found
@@ -84,7 +85,7 @@ function findNodeByTarget(nodes: WidgetNode[], target: string): WidgetNode | nul
         break
       case 'list':
         {
-          const found = findNodeByTarget([node.item.child], target)
+          const found = node.item?.child ? findNodeByTarget([node.item.child], target) : null
           if (found) return found
         }
         break
@@ -157,6 +158,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   const [children, setChildren] = useState<Record<string, ChildSnapshot>>({})
   const [overrides, setOverrides] = useState<Record<string, Record<string, unknown>>>({})
   const overridesRef = useRef<Record<string, Record<string, unknown>>>({})
+  const [openDialogs, setOpenDialogs] = useState<Set<string>>(new Set())
   const [data, setData] = useState<Record<string, unknown>>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -209,6 +211,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   useEffect(() => {
     overridesRef.current = {}
     setOverrides({})
+    setOpenDialogs(new Set())
   }, [def.id, def.xml])
 
   // 在线组件更新：纯数据/布局静默替换；可执行内容变化时确认。
@@ -333,6 +336,18 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     const next = { ...inputsRef.current, [name]: value }
     inputsRef.current = next
     setInputs(next)
+  }, [])
+
+  const showDialog = useCallback((name: string) => {
+    setOpenDialogs((prev) => new Set(prev).add(name))
+  }, [])
+
+  const hideDialog = useCallback((name: string) => {
+    setOpenDialogs((prev) => {
+      const next = new Set(prev)
+      next.delete(name)
+      return next
+    })
   }, [])
 
   const setProperty = useCallback(async (target: string, property: string, value: unknown): Promise<unknown> => {
@@ -560,11 +575,14 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
       const value = await registry.call(pluginId, method, list)
       setResults((prev) => ({ ...prev, PluginApi: { Value: value } }))
     },
+    showDialog,
+    hideDialog,
     scope: { ...scope, Inputs: inputsRef.current },
     t,
-  }), [defaultInstance, launch, refresh, resolveAccountCheck, notify, navigate, sandbox, doc, resources, data, results, scope, size, preview, def, t])
+  }), [defaultInstance, launch, refresh, resolveAccountCheck, notify, navigate, sandbox, doc, resources, data, results, scope, size, preview, def, t, showDialog, hideDialog])
 
-  const ensureCommandTrusted = useCallback(async (    rawCommand: string | undefined,
+  const ensureCommandTrusted = useCallback(async (
+    rawCommand: string | undefined,
     rawWorkingDirectory: string | undefined,
     command: string | undefined,
     workingDirectory: string | undefined,
@@ -800,6 +818,10 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     children,
     overrides,
     size,
+    pages: doc?.pages ?? {},
+    openDialogs,
+    showDialog,
+    hideDialog,
     onAction: (action, control) => { void executeAction(action, control) },
     renderUsing,
     allowedHosts: new Set(def.hosts),

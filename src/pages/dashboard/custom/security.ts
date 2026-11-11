@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import type { ActionSpec, TriggerNode, WidgetDocument, WidgetNode } from './types.ts'
+import type { ActionSpec, PageNode, TriggerNode, WidgetDocument, WidgetNode } from './types.ts'
 
 export interface ExecutableAction {
   name: string
@@ -16,7 +16,7 @@ function pushAction(action: ActionSpec | undefined, out: ExecutableAction[]): vo
   out.push({ name: action.name, args: { ...action.args } })
 }
 
-function walkNode(node: WidgetNode, out: ExecutableAction[]): void {
+function walkNode(node: WidgetNode | PageNode, out: ExecutableAction[]): void {
   switch (node.kind) {
     case 'button':
     case 'link':
@@ -34,13 +34,20 @@ function walkNode(node: WidgetNode, out: ExecutableAction[]): void {
     case 'column':
     case 'grid':
     case 'if':
+    case 'dialog':
       for (const child of node.children) walkNode(child, out)
       break
     case 'tabs':
       for (const tab of node.children) for (const child of tab.children) walkNode(child, out)
       break
+    case 'tabItem':
+      for (const child of node.children) walkNode(child, out)
+      break
     case 'list':
-      walkNode(node.item.child, out)
+      if (node.item?.child) walkNode(node.item.child, out)
+      break
+    case 'listItem':
+      if (node.child) walkNode(node.child, out)
       break
     default:
       break
@@ -50,6 +57,7 @@ function walkNode(node: WidgetNode, out: ExecutableAction[]): void {
 export function executableActions(doc: WidgetDocument): ExecutableAction[] {
   const out: ExecutableAction[] = []
   for (const node of doc.nodes) walkNode(node, out)
+  for (const page of Object.values(doc.pages)) for (const node of page) walkNode(node, out)
   for (const trigger of doc.triggers) pushAction(trigger.action, out)
   return out
 }

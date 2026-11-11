@@ -108,6 +108,8 @@ function knownNames(text: string, defs: CustomWidgetDef[]) {
     functions: tagged(text, /<Function\b[^>]*\bName\s*=\s*"([^"]+)"/g),
     inputs: tagged(text, /<(?:TextBox|CheckBox|Slider|Select|FilePicker|ColorPicker|Button|Link)\b[^>]*\bName\s*=\s*"([^"]+)"/g),
     aliases: tagged(text, /<Widget\.Using\b[^>]*\bAs\s*=\s*"([^"]+)"/g),
+    pages: tagged(text, /<Resource\b(?=[^>]*\bType\s*=\s*"Page")[^>]*\bName\s*=\s*"([^"]+)"/g),
+    dialogs: tagged(text, /<Dialog\b[^>]*\bName\s*=\s*"([^"]+)"/g),
     widgets: defs.map((def) => def.name),
   }
 }
@@ -204,6 +206,13 @@ function attributeValueSuggestions(tag: string, attr: string, text: string, defs
   if (attr === 'Function') return unique(names.functions)
   if (attr === 'Control') return unique(names.inputs)
   if (attr === 'Data') return unique(names.data)
+  if (attr === 'Content') return unique(names.pages.map((name) => `{${name}}`))
+  if (attr === 'OnClick' || attr === 'OnChange' || attr === 'Action') {
+    return unique([
+      ...attributeValues(normalizeTag(tag), attr) ?? [],
+      ...names.dialogs.flatMap((name) => [`{${name}.Show}`, `{${name}.Hide}`]),
+    ])
+  }
   if (attr === 'Name' && normalizeTag(tag) === 'Using') return unique(names.widgets)
   if (attr === 'Url' || attr === 'UpdateUrl') return ['https://']
   const fromSchema = attributeValues(normalizeTag(tag), attr)
