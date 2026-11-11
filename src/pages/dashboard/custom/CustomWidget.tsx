@@ -21,7 +21,7 @@ import {
 } from './schema.ts'
 import { makeBinaryValue, mimeFromPath, parseResourceEntries, parseXmlValue, readLocalBinary, readLocalText, resolveDataPath } from './binary.ts'
 import { getLauncherVersion } from './launcher-version.ts'
-import { renderNodes, applyNodeOverrides, propertyField, type RenderContext } from './render.tsx'
+import { renderNodes, applyNodeOverrides, contentProperty, propertyField, type RenderContext } from './render.tsx'
 import { runFunction as executeFunction } from './script/functions.ts'
 import { ScriptSandbox } from './script/sandbox.ts'
 import {
@@ -259,10 +259,11 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     if (!node) throw new Error(`找不到 Target: ${target}`)
     const field = propertyField(node, property)
     if (!field) throw new Error(`不可读写属性: ${property}`)
+    const storedProperty = property === 'Content' ? (contentProperty(node) ?? property) : property
     const normalized = field === 'visible'
       ? value === true || value === 'true' || value === 'True'
       : value
-    const effective = applyNodeOverrides(node, { [property]: normalized })
+    const effective = applyNodeOverrides(node, { [storedProperty]: normalized })
     const coerced = (effective as unknown as Record<string, unknown>)[field]
     if (
       field === 'value'
@@ -276,7 +277,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     }
     const nextOverrides = {
       ...overridesRef.current,
-      [target]: { ...(overridesRef.current[target] ?? {}), [property]: coerced },
+      [target]: { ...(overridesRef.current[target] ?? {}), [storedProperty]: coerced },
     }
     overridesRef.current = nextOverrides
     setOverrides(nextOverrides)

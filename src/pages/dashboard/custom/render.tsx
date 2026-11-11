@@ -230,6 +230,34 @@ function contentField(kind: WidgetNode['kind']): string | null {
   }
 }
 
+export function contentProperty(node: WidgetNode): string | null {
+  switch (node.kind) {
+    case 'text':
+    case 'textBox':
+    case 'slider':
+    case 'progress':
+    case 'colorPicker':
+      return 'Value'
+    case 'button':
+    case 'link':
+    case 'checkBox':
+    case 'filePicker':
+      return 'Text'
+    case 'select':
+      return 'Options'
+    case 'media':
+      return 'Source'
+    case 'image':
+      return 'Src'
+    case 'list':
+      return 'Items'
+    case 'spacer':
+      return 'Size'
+    default:
+      return null
+  }
+}
+
 function coerceOverride(current: unknown, value: unknown): unknown {
   if (typeof current === 'number') {
     const n = Number(value)
