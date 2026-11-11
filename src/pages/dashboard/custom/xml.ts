@@ -17,6 +17,7 @@ import {
   INSTALL_SOURCES,
   NAV_TARGETS,
   NODE_ATTRS,
+  NODE_TAGS,
   TRIGGER_EVENTS,
   WIDGET_LIMITS,
   WidgetError,
@@ -138,7 +139,7 @@ function applyProperties(
       throw new WidgetError('invalidAttribute', `${tag}.${name} 不能包含子元素`)
     }
     if (!(ELEMENT_ATTRS[tag] ?? []).includes(name)) {
-      if (!(NODE_ATTRS as readonly string[]).includes(name)) {
+      if (!(NODE_TAGS.has(tag) && (NODE_ATTRS as readonly string[]).includes(name))) {
         throw new WidgetError('unknownAttribute', `${tag}.${name}`)
       }
     }
@@ -178,7 +179,11 @@ function applyContentProperty(
 }
 
 function validateAttrs(tag: string, attrs: Map<string, string>): void {
-  const allowed = new Set<string>([...(ELEMENT_ATTRS[tag] ?? []), ...ATTACHED_ATTRS, ...NODE_ATTRS])
+  const allowed = new Set<string>([
+    ...(ELEMENT_ATTRS[tag] ?? []),
+    ...ATTACHED_ATTRS,
+    ...(NODE_TAGS.has(tag) ? NODE_ATTRS : []),
+  ])
   for (const name of attrs.keys()) {
     if (!allowed.has(name)) throw new WidgetError('unknownAttribute', `${tag}@${name}`)
   }
@@ -369,6 +374,7 @@ function parseInputs(el: Element, ctx: ParseCtx): void {
     if (child.tagName !== 'Input') throw new WidgetError('invalidAttribute', `Widget.Inputs 内不允许 ${child.tagName}`)
     if (ctx.inputs.length >= 32) throw new WidgetError('tooManyNodes')
     const split = readElement(child)
+    applyProperties('Input', split.attrs, split.propertyElements)
     validateAttrs('Input', split.attrs)
     if (split.children.length > 0) throw new WidgetError('invalidAttribute', 'Input 不能包含子元素')
     const name = requiredAttr(split.attrs, 'Input', 'Name').trim()
@@ -391,10 +397,14 @@ function parseOutputs(el: Element, ctx: ParseCtx): void {
     if (child.tagName !== 'Output') throw new WidgetError('invalidAttribute', `Widget.Outputs 内不允许 ${child.tagName}`)
     if (ctx.outputs.length >= 32) throw new WidgetError('tooManyNodes')
     const split = readElement(child)
+    applyProperties('Output', split.attrs, split.propertyElements)
     validateAttrs('Output', split.attrs)
     if (split.children.length > 0) throw new WidgetError('invalidAttribute', 'Output 不能包含子元素')
     const name = requiredAttr(split.attrs, 'Output', 'Name').trim()
     validateIdentifier(name, 'Output@Name')
+    if (['__proto__', 'constructor', 'prototype'].includes(name)) {
+      throw new WidgetError('invalidAttribute', `Output@Name=${name}`)
+    }
     if (ctx.outputs.some((item) => item.name === name)) throw new WidgetError('invalidAttribute', `Output 重复: ${name}`)
     ctx.outputs.push({
       name,
@@ -457,7 +467,12 @@ function parseResources(el: Element, ctx: ParseCtx, depth: number): void {
       throw new WidgetError('invalidResource', `${child.tagName} 不能包含子元素`)
     }
     let type: ResourceEntry['type']
-    let value = (attr(split.attrs, 'Text') ?? child.textContent ?? '').trim()
+    const textAttr = attr(split.attrs, 'Text')
+    const textContent = (child.textContent ?? '').trim()
+    if (textAttr !== undefined && textContent) {
+      throw new WidgetError('duplicateProperty', `${child.tagName}@Text`)
+    }
+    let value = (textAttr ?? textContent).trim()
     let mime: string | undefined
     if (child.tagName === 'Resource') {
       type = enumAttr(split.attrs, 'Resource', 'Type', ['String', 'Bool', 'Number', 'Binary', 'Json'] as const, 'String')!
@@ -1007,11 +1022,11 @@ function baseNode(_tag: string, attrs: Map<string, string>) {
   if (target) validateIdentifier(target, `${_tag}@Target`)
   const rawWhen = attr(attrs, 'When')?.trim()
   let when: string | undefined
-  if (rawWhen) {
+  if (attrs.has('When')) {
     try {
-      when = validateWhen(rawWhen)
+      when = validateWhen(rawWhen ?? '')
     } catch {
-      throw new WidgetError('invalidAttribute', `${_tag}@When=${rawWhen}`)
+      throw new WidgetError('invalidAttribute', `${_tag}@When=${rawWhen ?? ''}`)
     }
   }
   return {

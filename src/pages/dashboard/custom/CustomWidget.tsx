@@ -222,7 +222,16 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   }, [def.xml])
   const doc = parsed.doc
 
-  const [inputs, setInputs] = useState<Record<string, unknown>>(initialInputs ?? {})
+  const inputResolution = useMemo(() => {
+    try {
+      return { values: resolveInputValues(doc?.inputs ?? [], initialInputs), error: null as string | null }
+    } catch (cause) {
+      return { values: {}, error: cause instanceof Error ? cause.message : String(cause) }
+    }
+  }, [doc, initialInputs])
+  const resolvedInputs = inputResolution.values
+
+  const [inputs, setInputs] = useState<Record<string, unknown>>(resolvedInputs)
   const inputsRef = useRef(inputs)
   inputsRef.current = inputs
   const [results, setResults] = useState<Record<string, Record<string, unknown>>>({})
@@ -241,11 +250,13 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   const objectUrls = useRef(new Set<string>())
   const sandboxRef = useRef<ScriptSandbox | null>(null)
   const triggerRate = useRef<number[]>([])
+  const timerFiredRef = useRef<Set<string>>(new Set())
   const loadedRef = useRef<string | null>(null)
   const lastResizeRef = useRef<string | null>(null)
   const lastSnapshot = useRef('')
   const forceRefreshRef = useRef(false)
   const lastInitialInputs = useRef('')
+  const lastInitialInputKeys = useRef<string[]>([])
   const rootRef = useRef<HTMLDivElement>(null)
   const sizeRef = useRef<WidgetSizeInfo>({ Width: 0, Height: 0, PixelWidth: 0, PixelHeight: 0 })
   const updateMountRef = useRef<string | null>(null)
@@ -263,25 +274,30 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   }, [])
 
   useEffect(() => {
-    if (!initialInputs) return
+    if (!initialInputs && !doc?.inputs.length) return
     let signature: string
     try {
-      signature = JSON.stringify(initialInputs)
+      signature = JSON.stringify(resolvedInputs)
     } catch {
       signature = String(Date.now())
     }
     if (signature === lastInitialInputs.current) return
     lastInitialInputs.current = signature
     try {
-      const current = Object.fromEntries(Object.keys(initialInputs).map((key) => [key, inputsRef.current[key]]))
+      const current = Object.fromEntries(Object.keys(resolvedInputs).map((key) => [key, inputsRef.current[key]]))
       if (signature === JSON.stringify(current)) return
     } catch {
       /* 输入不可序列化时仍继续应用 */
     }
-    const next = { ...inputsRef.current, ...initialInputs }
+    const next = { ...inputsRef.current }
+    for (const key of lastInitialInputKeys.current) {
+      if (!(key in resolvedInputs)) delete next[key]
+    }
+    for (const [key, value] of Object.entries(resolvedInputs)) next[key] = value
+    lastInitialInputKeys.current = Object.keys(resolvedInputs)
     inputsRef.current = next
     setInputs(next)
-  }, [initialInputs])
+  }, [initialInputs, doc, resolvedInputs])
 
   useEffect(() => {
     overridesRef.current = {}
@@ -512,6 +528,8 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     if (!source.url) throw new Error('数据源缺少 Url')
     const url = interpolate(source.url, inputScope)
     if (!isSafeHttpsUrl(url)) throw new Error(`数据源 Url 无效: ${url}`)
+    const host = hostOf(url)
+    if (!host || !def.hosts.includes(host)) throw new Error(`数据源域名未确认: ${host ?? url}`)
     const response = await fetchWidgetUrl(url, signal, {
       binary: source.type === 'Binary',
       timeoutMs: 20_000,
@@ -526,7 +544,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     if (source.type === 'Xml') return parseXmlValue(response.body)
     if (source.type === 'Json') return JSON.parse(response.body)
     return response.body
-  }, [def.id, def.sourcePath, trackUrl])
+  }, [def.id, def.sourcePath, def.hosts, trackUrl])
 
   useEffect(() => {
     if (!doc || doc.datas.length === 0) return
@@ -807,7 +825,9 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
       case 'focus':
       case 'blur': {
         const root = document.querySelector(`[data-widget-root="${CSS.escape(def.id)}"]`)
-        const element = root?.querySelector(`[data-widget-target="${CSS.escape(target)}"]`) as HTMLElement | null
+        const holder = root?.querySelector(`[data-widget-target="${CSS.escape(target)}"]`) as HTMLElement | null
+        const focusable = 'input,textarea,select,button,[tabindex]'
+        const element = (holder?.matches(focusable) ? holder : holder?.querySelector(focusable)) as HTMLElement | null
         if (!element) throw new Error(`Target ${target} 没有可聚焦元素`)
         if (method.toLowerCase() === 'focus') element.focus()
         else element.blur()
@@ -843,7 +863,6 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   }, [doc, executeAction, applyEffects])
 
   const fireTriggerRef = useRef(fireTrigger)
-  fireTriggerRef.current = fireTrigger
 
   const executeFunctionByName = useCallback(async (name: string, trigger: TriggerNode) => {
     const fn = doc?.functions.find((item) => item.name === name)
@@ -862,12 +881,16 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
       showError(error instanceof Error ? error.message : String(error), t('dashboard.custom.functionFailed'))
     }
   }, [doc, sandbox, resources, data, results, scope, size, showError, t])
-  executeFunctionRef.current = executeFunctionByName
+
+  useEffect(() => {
+    fireTriggerRef.current = fireTrigger
+    executeFunctionRef.current = executeFunctionByName
+  }, [fireTrigger, executeFunctionByName])
 
   // Loaded 触发器：每次组件挂载/XML 变化后执行一次。
   useEffect(() => {
     if (!doc) return
-    const key = `${def.id}:${def.xml.length}`
+    const key = `${def.id}:${def.xml}`
     if (loadedRef.current === key) return
     const timer = setTimeout(() => {
       loadedRef.current = key
@@ -920,21 +943,24 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   useEffect(() => {
     if (!doc || preview) return
     const timers: Array<ReturnType<typeof setInterval>> = []
-    for (const trigger of doc.triggers) {
-      if (trigger.event !== 'Timer') continue
-      let fired = false
+    doc.triggers.forEach((trigger, index) => {
+      if (trigger.event !== 'Timer') return
+      const key = `${def.id}:${index}:${def.xml}`
+      if (trigger.once && timerFiredRef.current.has(key)) return
       const timer = setInterval(() => {
-        if (trigger.once && fired) return
-        fired = true
+        if (trigger.once) {
+          if (timerFiredRef.current.has(key)) return
+          timerFiredRef.current.add(key)
+        }
         if (trigger.function) void executeFunctionByName(trigger.function, trigger)
         else if (trigger.action) void executeAction(trigger.action)
       }, trigger.interval ?? 60000)
       timers.push(timer)
-    }
+    })
     return () => {
       for (const timer of timers) clearInterval(timer)
     }
-  }, [doc, preview, executeFunctionByName, executeAction])
+  }, [doc, preview, executeFunctionByName, executeAction, def.id, def.xml])
 
   // 父组件只读快照。
   useEffect(() => {
@@ -997,6 +1023,10 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     )
   }
 
+  if (inputResolution.error) {
+    return <WidgetErrorBox message={`${t('dashboard.custom.invalidArguments')}: ${inputResolution.error}`} />
+  }
+
   if (doc.launcherVersion && launcherVersion && compareVersions(launcherVersion, doc.launcherVersion) < 0) {
     return (
       <WidgetErrorBox
@@ -1040,6 +1070,7 @@ function NestedUsing({ node, chain, parentScope, parentAllowedHosts, onSnapshot,
   const [remoteXml, setRemoteXml] = useState<string | null>(node.url ? getRemoteWidget(node.url, node.refresh ? node.refresh * 1000 : undefined) : null)
   const [error, setError] = useState<string | null>(null)
   const mountedAt = useRef(Date.now())
+  const childDefCache = useRef<{ key: string; def: CustomWidgetDef } | null>(null)
 
   useEffect(() => {
     if (!node.url) return
@@ -1138,12 +1169,14 @@ function NestedUsing({ node, chain, parentScope, parentAllowedHosts, onSnapshot,
   const childHosts = new Set([
     ...parentAllowedHosts,
     ...(localDef?.hosts ?? []),
-    ...collectAutoHosts({
-      datas: childDoc.datas,
-      updateUrl: childDoc.updateUrl,
-      staticMediaUrls: childDoc.staticMediaUrls,
-      nestedUrls: childDoc.nestedUrls,
-    }),
+    ...(localDef
+      ? collectAutoHosts({
+          datas: childDoc.datas,
+          updateUrl: childDoc.updateUrl,
+          staticMediaUrls: childDoc.staticMediaUrls,
+          nestedUrls: childDoc.nestedUrls,
+        })
+      : []),
   ])
   let args: Record<string, unknown> | undefined
   if (node.argumentsJson) {
@@ -1175,15 +1208,30 @@ function NestedUsing({ node, chain, parentScope, parentAllowedHosts, onSnapshot,
     })
   }
 
-  const childDef: CustomWidgetDef = {
-    id: localDef?.id ?? `remote:${node.url}`,
-    name: localDef?.name ?? childDoc.name,
+  const childHostsList = [...childHosts].sort()
+  const childDefKey = JSON.stringify([
+    localDef?.id ?? `remote:${node.url}`,
+    localDef?.name ?? childDoc.name,
     xml,
-    sourceUrl: node.url ?? localDef?.sourceUrl,
-    sourcePath: localDef?.sourcePath,
-    hosts: [...childHosts],
-    lastChecked: mountedAt.current,
+    node.url ?? localDef?.sourceUrl,
+    localDef?.sourcePath,
+    childHostsList,
+  ])
+  if (childDefCache.current?.key !== childDefKey) {
+    childDefCache.current = {
+      key: childDefKey,
+      def: {
+        id: localDef?.id ?? `remote:${node.url}`,
+        name: localDef?.name ?? childDoc.name,
+        xml,
+        sourceUrl: node.url ?? localDef?.sourceUrl,
+        sourcePath: localDef?.sourcePath,
+        hosts: childHostsList,
+        lastChecked: mountedAt.current,
+      },
+    }
   }
+  const childDef = childDefCache.current!.def
 
   return (
     <CustomWidget

@@ -185,6 +185,34 @@ export const ATTACHED_ATTRS = ['Grid.Row', 'Grid.Column', 'Grid.RowSpan', 'Grid.
 /** 所有节点通用：Target 供脚本定位，Visible 控制显隐。 */
 export const NODE_ATTRS = ['Target', 'Visible', 'When'] as const
 
+export const NODE_TAGS = new Set([
+  'Container',
+  'Row',
+  'Column',
+  'Grid',
+  'Tabs',
+  'TabItem',
+  'List',
+  'ListItem',
+  'If',
+  'Text',
+  'Button',
+  'Image',
+  'Media',
+  'TextBox',
+  'CheckBox',
+  'Slider',
+  'Select',
+  'Progress',
+  'Link',
+  'FilePicker',
+  'ColorPicker',
+  'Divider',
+  'Spacer',
+  'Dialog',
+  'Using',
+])
+
 /** 属性值补全表：按元素 + 属性；文档和编辑器共用同一份枚举。 */
 export const ATTRIBUTE_VALUES: Record<string, Record<string, readonly string[]>> = {
   '*': {
@@ -481,7 +509,7 @@ export function sanitizeAlias(raw: string): string {
 
 /** 宽松 semver：1 / 1.2 / 1.2.3 / 1.2.3-beta.1。 */
 export function isVersionRequirement(value: string): boolean {
-  return /^\d+(\.\d+){0,2}([-.][0-9A-Za-z.-]+)?$/.test(value.trim())
+  return /^\d+(\.\d+){0,2}(-[0-9A-Za-z.-]+)?$/.test(value.trim())
 }
 
 /** 比较主版本号，返回 <0 / 0 / >0；预发布后缀按字符串比较。 */

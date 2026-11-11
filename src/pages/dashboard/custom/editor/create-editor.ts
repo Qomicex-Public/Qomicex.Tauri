@@ -550,6 +550,17 @@ export function mountEditor(parent: HTMLElement, options: MountEditorOptions): E
       const pos = view.state.selection.main.head
       const start = Math.max(0, pos - 500)
       const before = view.state.sliceDoc(start, pos)
+      if (options.language !== 'xml') {
+        const word = before.match(/[\w$]*$/)?.[0] ?? ''
+        const from = pos - word.length
+        view.dispatch({
+          changes: { from, to: pos, insert: label },
+          selection: { anchor: from + label.length },
+          userEvent: 'input.complete',
+        })
+        view.focus()
+        return
+      }
       const word = before.match(/[\w.:-]*$/)?.[0] ?? ''
       const from = pos - word.length
       const fragment = before.slice(before.lastIndexOf('<'))

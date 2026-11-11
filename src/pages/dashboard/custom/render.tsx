@@ -623,7 +623,7 @@ function isPlayableSrc(src: string): boolean {
 function renderImage(node: ImageNode, ctx: RenderContext): ReactNode {
   const src = interpolate(node.src, ctx.scope)
   if (!isPlayableSrc(src)) return null
-  if (src.startsWith('https://')) {
+  if (!src.startsWith('blob:') && !src.startsWith('data:')) {
     const host = hostOf(src)
     if (!host || !ctx.allowedHosts.has(host)) return null
   }
@@ -642,23 +642,37 @@ function renderImage(node: ImageNode, ctx: RenderContext): ReactNode {
 function renderMedia(node: MediaNode, ctx: RenderContext): ReactNode {
   const source = interpolate(node.source, ctx.scope)
   if (!isPlayableSrc(source)) return null
-  if (source.startsWith('https://')) {
+  if (!source.startsWith('blob:') && !source.startsWith('data:')) {
     const host = hostOf(source)
     if (!host || !ctx.allowedHosts.has(host)) return null
   }
   const video = node.type === 'Video'
+  const mediaRef = (element: HTMLMediaElement | null) => {
+    if (element && node.volume !== undefined) element.volume = node.volume
+  }
+  let poster: string | undefined
+  if (node.poster) {
+    const candidate = interpolate(node.poster, ctx.scope)
+    if (isPlayableSrc(candidate)) {
+      if (candidate.startsWith('blob:') || candidate.startsWith('data:')) poster = candidate
+      else {
+        const host = hostOf(candidate)
+        if (host && ctx.allowedHosts.has(host)) poster = candidate
+      }
+    }
+  }
   const common = {
     src: source,
     controls: node.controls,
     autoPlay: node.autoPlay,
     loop: node.loop,
     muted: node.muted,
-    volume: node.volume,
+    ref: mediaRef,
     className: 'w-full max-w-full rounded-md',
     style: { ...nodeStyle(node), maxHeight: 320 },
   }
   return video
-    ? <video {...common} poster={node.poster ? interpolate(node.poster, ctx.scope) : undefined} />
+    ? <video {...common} poster={poster} />
     : <audio {...common} style={{ width: '100%' }} />
 }
 

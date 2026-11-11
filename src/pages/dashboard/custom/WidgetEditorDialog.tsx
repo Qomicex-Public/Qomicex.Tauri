@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog'
 import {
@@ -40,7 +40,7 @@ import { useCustomWidgetStore } from './store.ts'
 import { WIDGET_TEMPLATE } from './template.ts'
 import { getLauncherVersion } from './launcher-version.ts'
 import type { ActionName } from './schema.ts'
-import type { UsingNode, WidgetNode } from './types.ts'
+import type { UsingNode, WidgetNode, WidgetSizeInfo } from './types.ts'
 import { parseWidgetXml } from './xml.ts'
 
 const HELP_BASE = 'https://docs.qomicex.top'
@@ -187,6 +187,8 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
   const [previewResults, setPreviewResults] = useState<Record<string, Record<string, unknown>>>({})
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [previewResources, setPreviewResources] = useState<Record<string, unknown>>({})
+  const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 })
+  const previewRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -220,6 +222,23 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
     }
   }, [xml])
   const doc = parsed.doc
+
+  useEffect(() => {
+    if (!open) return
+    const element = previewRef.current
+    if (!element) return
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect
+      if (!rect) return
+      setPreviewSize((prev) => {
+        const width = Math.round(rect.width)
+        const height = Math.round(rect.height)
+        return prev.width === width && prev.height === height ? prev : { width, height }
+      })
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [open, tab, doc])
 
   useEffect(() => {
     if (!doc) {
@@ -264,6 +283,13 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
     }
   }, [sampleJson])
 
+  const previewWidgetSize = useMemo<WidgetSizeInfo>(() => ({
+    Width: 2,
+    Height: 2,
+    PixelWidth: previewSize.width,
+    PixelHeight: previewSize.height,
+  }), [previewSize])
+
   const previewScope = useMemo(() => {
     if (!sample) return null
     const dataRoot = sample.Data && typeof sample.Data === 'object' && !Array.isArray(sample.Data)
@@ -276,10 +302,10 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
       Inputs: previewInputs,
       Results: previewResults,
       Children: {},
-      Size: { Width: 2, Height: 2, PixelWidth: 0, PixelHeight: 0 },
+      Size: previewWidgetSize,
       State: { Loading: false, Error: false },
     }
-  }, [sample, previewResources, previewInputs, previewResults])
+  }, [sample, previewResources, previewInputs, previewResults, previewWidgetSize])
 
   const setHost = (host: string, checked: boolean) => {
     setConfirmed((prev) => {
@@ -474,7 +500,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
       OpenUrl: () => {},
       Navigate: () => {},
       Log: (message) => console.warn('[widget-preview]', message),
-      GetSize: async () => null,
+      GetSize: async () => previewWidgetSize,
       SetProperty: async () => null,
       GetProperty: async () => null,
       Invoke: async () => null,
@@ -504,7 +530,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
       OpenUrl: () => {},
       Navigate: () => {},
       Log: () => {},
-      GetSize: async () => null,
+      GetSize: async () => previewWidgetSize,
       SetProperty: async () => null,
       GetProperty: async () => null,
       Invoke: async () => null,
@@ -535,7 +561,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
     children: {},
     overrides: {},
     effects: {},
-    size: { Width: 2, Height: 2, PixelWidth: 0, PixelHeight: 0 },
+    size: previewWidgetSize,
     pages: doc?.pages ?? {},
     openDialogs: new Set<string>(),
     showDialog: () => {},
@@ -700,7 +726,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
                   {doc ? t('dashboard.custom.valid') : t('dashboard.custom.invalid')}
                 </span>
               </div>
-              <div className="max-h-[320px] min-h-[140px] overflow-auto rounded-lg border border-border/50 bg-background/40 p-3">
+              <div ref={previewRef} className="max-h-[320px] min-h-[140px] overflow-auto rounded-lg border border-border/50 bg-background/40 p-3">
                 {doc && renderContext
                   ? renderNodes(doc.nodes, renderContext)
                   : parsed.error && (

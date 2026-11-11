@@ -64,7 +64,7 @@ export function resolveInputValues(decls: InputDecl[], args?: Record<string, unk
   }
   const out: Record<string, unknown> = {}
   for (const decl of decls) {
-    const raw = provided[decl.name]
+    const raw = Object.prototype.hasOwnProperty.call(provided, decl.name) ? provided[decl.name] : undefined
     if (raw === undefined && decl.default === undefined) {
       if (decl.required) throw new Error(`缺少必填输入: ${decl.name}`)
       continue

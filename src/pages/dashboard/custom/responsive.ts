@@ -13,12 +13,18 @@ interface Term {
 }
 
 const TERM = /^(?:Size\.)?(Width|Height|PixelWidth|PixelHeight)\s*(<=|>=|==|!=|<|>)\s*(-?\d+(?:\.\d+)?)$/i
+const FIELDS: Record<string, Field> = {
+  width: 'Width',
+  height: 'Height',
+  pixelwidth: 'PixelWidth',
+  pixelheight: 'PixelHeight',
+}
 
 function parseTerm(raw: string): Term {
   const match = raw.trim().match(TERM)
   if (!match) throw new Error(`无效尺寸条件: ${raw}`)
   return {
-    field: match[1] as Field,
+    field: FIELDS[match[1].toLowerCase()],
     operator: match[2] as Operator,
     value: Number(match[3]),
   }
