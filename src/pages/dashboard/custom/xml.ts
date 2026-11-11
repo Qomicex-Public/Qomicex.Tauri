@@ -38,6 +38,7 @@ import type {
   ColumnNode,
   ContainerNode,
   DialogNode,
+  EffectSpec,
   FilePickerNode,
   FunctionNode,
   FunctionInput,
@@ -126,6 +127,7 @@ function applyProperties(
   propertyElements: Map<string, Element>,
 ): void {
   for (const [name, el] of propertyElements) {
+    if (name === 'Effects') continue
     if ((ATTACHED_ATTRS as readonly string[]).includes(name)) {
       if (Array.from(el.children).length > 0) throw new WidgetError('invalidAttribute', `${tag}.${name}`)
       if (attrs.has(name)) throw new WidgetError('duplicateProperty', `${tag}.${name}`)
@@ -488,8 +490,10 @@ function parseTriggers(el: Element, ctx: ParseCtx): void {
     if (!event) throw new WidgetError('missingAttribute', 'Trigger@Event')
     const functionName = attr(split.attrs, 'Function')?.trim()
     const actionName = attr(split.attrs, 'Action')?.trim()
+    const effectsEl = split.propertyElements.get('Effects')
+    const effects = effectsEl ? parseEffects(effectsEl) : undefined
     if (functionName && actionName) throw new WidgetError('invalidTrigger', 'Function 与 Action 只能二选一')
-    if (!functionName && !actionName) throw new WidgetError('invalidTrigger', 'Trigger 需要 Function 或 Action')
+    if (!functionName && !actionName && !effects) throw new WidgetError('invalidTrigger', 'Trigger 需要 Function、Action 或 Effects')
 
     let action: ActionSpec | undefined
     if (actionName) {
@@ -512,6 +516,8 @@ function parseTriggers(el: Element, ctx: ParseCtx): void {
       data: attr(split.attrs, 'Data')?.trim() || undefined,
       interval: event === 'Timer' ? intAttr(split.attrs, 'Trigger', 'Interval', 1000, 3600000, 60000) : undefined,
       once: boolAttr(split.attrs, 'Trigger', 'Once', false),
+      target: attr(split.attrs, 'Target')?.trim() || undefined,
+      effects,
     }
     if (event === 'Click' && !trigger.control) throw new WidgetError('invalidTrigger', 'Click 需要 Control')
     if (event === 'DataChanged' && !trigger.data) throw new WidgetError('invalidTrigger', 'DataChanged 需要 Data')
@@ -657,7 +663,60 @@ function parseChildren(el: Element, ctx: ParseCtx, depth: number): WidgetNode[] 
   return nodes
 }
 
+function parseEffects(el: Element): EffectSpec[] {
+  const { attrs, children } = readElement(el)
+  validateAttrs('Effects', attrs)
+  assertNoText(el)
+  const effects: EffectSpec[] = []
+  for (const child of children) {
+    if (child.children.length > 0) throw new WidgetError('invalidAttribute', `${child.tagName} 不能包含子元素`)
+    const split = readElement(child)
+    validateAttrs(child.tagName, split.attrs)
+    switch (child.tagName) {
+      case 'ShadowEffect': {
+        const color = (attr(split.attrs, 'Color') ?? 'Black').trim()
+        if (!/^[#A-Za-z0-9(),.%\s-]+$/.test(color)) {
+          throw new WidgetError('invalidAttribute', `ShadowEffect@Color=${color}`)
+        }
+        effects.push({
+          kind: 'shadow',
+          radius: numberAttr(split.attrs, 'ShadowEffect', 'Radius', 0, 100, 5),
+          color,
+          offsetX: numberAttr(split.attrs, 'ShadowEffect', 'OffsetX', -100, 100, 0),
+          offsetY: numberAttr(split.attrs, 'ShadowEffect', 'OffsetY', -100, 100, 0),
+          spread: numberAttr(split.attrs, 'ShadowEffect', 'Spread', 0, 100, 0),
+          inset: boolAttr(split.attrs, 'ShadowEffect', 'Inset', false),
+        })
+        break
+      }
+      case 'BlurEffect':
+        effects.push({ kind: 'blur', radius: numberAttr(split.attrs, 'BlurEffect', 'Radius', 0, 100, 5) })
+        break
+      case 'OpacityEffect':
+        effects.push({ kind: 'opacity', value: numberAttr(split.attrs, 'OpacityEffect', 'Value', 0, 1, 1) })
+        break
+      case 'ScaleEffect':
+        effects.push({ kind: 'scale', value: numberAttr(split.attrs, 'ScaleEffect', 'Value', 0, 10, 1) })
+        break
+      case 'RotateEffect':
+        effects.push({ kind: 'rotate', angle: numberAttr(split.attrs, 'RotateEffect', 'Angle', -360, 360, 0) })
+        break
+      default:
+        throw new WidgetError('unknownElement', `Effects 内不允许 ${child.tagName}`)
+    }
+  }
+  return effects
+}
+
 function parseNode(el: Element, ctx: ParseCtx, depth: number): WidgetNode {
+  const node = parseNodeInner(el, ctx, depth)
+  const { propertyElements } = readElement(el)
+  const effects = propertyElements.get('Effects')
+  if (effects) node.effects = parseEffects(effects)
+  return node
+}
+
+function parseNodeInner(el: Element, ctx: ParseCtx, depth: number): WidgetNode {
   switch (el.tagName) {
     case 'Widget.Using':
     case 'Using':
@@ -797,6 +856,7 @@ function parseTabItem(el: Element, ctx: ParseCtx, depth: number): TabItemNode {
     visible: meta.visible,
     when: meta.when,
     contentPage: meta.contentPage,
+    effects: split.propertyElements.get('Effects') ? parseEffects(split.propertyElements.get('Effects')!) : undefined,
     children: meta.contentPage ? [] : parseChildren(el, ctx, depth + 1),
   }
 }
@@ -817,6 +877,7 @@ function parseListItem(el: Element, ctx: ParseCtx, depth: number): ListItemNode 
     visible: meta.visible,
     when: meta.when,
     contentPage: meta.contentPage,
+    effects: split.propertyElements.get('Effects') ? parseEffects(split.propertyElements.get('Effects')!) : undefined,
     child: meta.contentPage ? undefined : parseNode(split.children[0], ctx, depth + 1),
   }
 }

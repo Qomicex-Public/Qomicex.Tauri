@@ -22,6 +22,7 @@ import type {
   ColumnNode,
   ContainerNode,
   DialogNode,
+  EffectSpec,
   FilePickerNode,
   GridNode,
   ImageNode,
@@ -52,6 +53,7 @@ export interface RenderRuntime {
   results: Record<string, unknown>
   children: Record<string, unknown>
   overrides: Record<string, Record<string, unknown>>
+  effects: Record<string, EffectSpec[]>
   size: WidgetSizeInfo
   pages: Record<string, PageNode[]>
   openDialogs: Set<string>
@@ -308,6 +310,48 @@ function isTruthy(value: unknown): boolean {
   return value !== undefined && value !== null && value !== false && value !== '' && value !== 0
 }
 
+export function effectStyle(effects?: EffectSpec[]): CSSProperties | undefined {
+  if (!effects || effects.length === 0) return undefined
+  const shadows: string[] = []
+  const filters: string[] = []
+  const transforms: string[] = []
+  let opacity: number | undefined
+  for (const effect of effects) {
+    switch (effect.kind) {
+      case 'shadow':
+        shadows.push(
+          `${effect.inset ? 'inset ' : ''}${effect.offsetX}px ${effect.offsetY}px ${effect.radius}px ${effect.spread}px ${effect.color}`,
+        )
+        break
+      case 'blur':
+        filters.push(`blur(${effect.radius}px)`)
+        break
+      case 'opacity':
+        opacity = effect.value
+        break
+      case 'scale':
+        transforms.push(`scale(${effect.value})`)
+        break
+      case 'rotate':
+        transforms.push(`rotate(${effect.angle}deg)`)
+        break
+    }
+  }
+  const style: CSSProperties = {}
+  if (shadows.length > 0) style.boxShadow = shadows.join(', ')
+  if (filters.length > 0) style.filter = filters.join(' ')
+  if (transforms.length > 0) style.transform = transforms.join(' ')
+  if (opacity !== undefined) style.opacity = opacity
+  return style
+}
+
+function nodeStyle(node: WidgetNode): CSSProperties | undefined {
+  const attached = attachedStyle(node)
+  const effects = effectStyle(node.effects)
+  if (attached && effects) return { ...attached, ...effects }
+  return attached ?? effects
+}
+
 function attachedStyle(node: WidgetNode): CSSProperties | undefined {
   const attached = node.attached
   if (!attached) return undefined
@@ -361,7 +405,7 @@ function renderDialog(node: DialogNode, ctx: RenderContext): ReactNode {
       <DialogHeader onClose={() => ctx.hideDialog(node.name)}>
         {node.title ? <DialogTitle>{interpolate(node.title, ctx.scope)}</DialogTitle> : <span />}
       </DialogHeader>
-      <DialogBody className="max-h-[calc(100vh-7rem)] overflow-auto">
+      <DialogBody style={effectStyle(node.effects)} className="max-h-[calc(100vh-7rem)] overflow-auto">
         {renderNodes(content, ctx, `dialog-${node.name}-`)}
       </DialogBody>
     </Dialog>
@@ -370,6 +414,8 @@ function renderDialog(node: DialogNode, ctx: RenderContext): ReactNode {
 
 function renderNode(node: WidgetNode, ctx: RenderContext, root = false): ReactNode {
   const effective = applyNodeOverrides(node, node.target ? ctx.overrides[node.target] : undefined)
+  const effects = effective.target ? ctx.effects[effective.target] : undefined
+  if (effects !== undefined) effective.effects = effects
   if (effective.visible === false) return null
   if (effective.when && !evaluateWhen(effective.when, ctx.size)) return null
   switch (effective.kind) {
@@ -413,7 +459,7 @@ function renderNode(node: WidgetNode, ctx: RenderContext, root = false): ReactNo
     case 'colorPicker':
       return <ColorPickerControl key="colorPicker" node={effective} ctx={ctx} />
     case 'divider':
-      return <div key="divider" className="h-px w-full bg-border/50" />
+      return <div key="divider" style={effectStyle(effective.effects)} className="h-px w-full bg-border/50" />
     case 'dialog':
       return renderDialog(effective, ctx)
     case 'spacer':
@@ -430,7 +476,7 @@ function renderNode(node: WidgetNode, ctx: RenderContext, root = false): ReactNo
 function renderContainer(node: ContainerNode, ctx: RenderContext, root = false): ReactNode {
   return (
     <div
-      style={attachedStyle(node)}
+      style={nodeStyle(node)}
       className={cn(
         'flex min-w-0',
         root && 'min-h-0 flex-1',
@@ -452,7 +498,7 @@ function renderContainer(node: ContainerNode, ctx: RenderContext, root = false):
 function renderRowColumn(node: RowNode | ColumnNode, ctx: RenderContext, root = false): ReactNode {
   return (
     <div
-      style={attachedStyle(node)}
+      style={nodeStyle(node)}
       className={cn(
         'flex min-w-0',
         root && 'min-h-0 flex-1',
@@ -472,7 +518,7 @@ function renderRowColumn(node: RowNode | ColumnNode, ctx: RenderContext, root = 
 function renderGrid(node: GridNode, ctx: RenderContext, root = false): ReactNode {
   return (
     <div
-      style={attachedStyle(node)}
+      style={nodeStyle(node)}
       className={cn(
         'grid min-w-0',
         root && 'min-h-0 flex-1',
@@ -501,9 +547,9 @@ function TabsView({ node, ctx, root = false }: { node: TabsNode; ctx: RenderCont
   const current = visibleTabs[index]
   const tabs = visibleTabs.map((child, i) => ({ id: String(i), label: interpolate(child.title, ctx.scope) }))
   return (
-    <div style={attachedStyle(node)} className={cn('flex min-w-0 flex-col gap-2', root && 'min-h-0 flex-1')}>
+    <div style={nodeStyle(node)} className={cn('flex min-w-0 flex-col gap-2', root && 'min-h-0 flex-1')}>
       <Tabs tabs={tabs} activeTab={String(index)} onChange={setActive} />
-      <div className={cn('min-w-0', root && 'min-h-0 flex-1 overflow-auto')}>
+      <div className={cn('min-w-0', root && 'min-h-0 flex-1 overflow-auto')} style={effectStyle(current?.effects)}>
         {renderNodes(pageChildren(current?.contentPage, current?.children ?? [], ctx), ctx, `tab${index}-`)}
       </div>
     </div>
@@ -522,13 +568,15 @@ function ListView({ node, ctx, root = false }: { node: ListNode; ctx: RenderCont
   if (!sourceItem || sourceItem.visible === false || (sourceItem.when && !evaluateWhen(sourceItem.when, ctx.size))) return null
   const itemNodes = pageChildren(sourceItem.contentPage, sourceItem.child ? [sourceItem.child] : [], ctx)
   return (
-    <div style={attachedStyle(node)} className={cn('flex min-w-0 flex-col', GAP[node.gap ?? 0], root && 'min-h-0 flex-1 overflow-auto')}>
+    <div style={nodeStyle(node)} className={cn('flex min-w-0 flex-col', GAP[node.gap ?? 0], root && 'min-h-0 flex-1 overflow-auto')}>
       {items.map((item, index) => (
         <Fragment key={index}>
-          {renderNodes(itemNodes, {
-            ...ctx,
-            scope: { ...ctx.scope, [node.as]: item, Index: index },
-          })}
+          <div style={effectStyle(sourceItem.effects)} className="min-w-0">
+            {renderNodes(itemNodes, {
+              ...ctx,
+              scope: { ...ctx.scope, [node.as]: item, Index: index },
+            })}
+          </div>
         </Fragment>
       ))}
     </div>
@@ -538,7 +586,7 @@ function ListView({ node, ctx, root = false }: { node: ListNode; ctx: RenderCont
 function renderText(node: TextNode, ctx: RenderContext): ReactNode {
   return (
     <span
-      style={attachedStyle(node)}
+      style={nodeStyle(node)}
       className={cn(
         'block min-w-0 whitespace-pre-wrap break-words',
         TEXT_SIZE[node.size],
@@ -558,6 +606,7 @@ function renderButton(node: ButtonNode, ctx: RenderContext): ReactNode {
     <Button
       type="button"
       data-widget-target={node.target}
+      style={nodeStyle(node)}
       variant={node.variant === 'Default' ? 'default' : node.variant.toLowerCase() as 'secondary' | 'outline' | 'ghost' | 'destructive' | 'link'}
       size={node.size === 'Md' ? 'default' : node.size.toLowerCase() as 'sm' | 'lg'}
       onClick={() => ctx.onAction(node.onClick, node.name)}
@@ -584,7 +633,7 @@ function renderImage(node: ImageNode, ctx: RenderContext): ReactNode {
       alt={node.alt ?? ''}
       loading="lazy"
       referrerPolicy="no-referrer"
-      style={{ width: node.w, height: node.h }}
+      style={{ ...nodeStyle(node), width: node.w, height: node.h }}
       className={cn('object-cover', node.rounded && 'rounded-md', node.w === undefined && 'w-full', node.h === undefined && 'h-auto')}
     />
   )
@@ -606,7 +655,7 @@ function renderMedia(node: MediaNode, ctx: RenderContext): ReactNode {
     muted: node.muted,
     volume: node.volume,
     className: 'w-full max-w-full rounded-md',
-    style: { maxHeight: 320 },
+    style: { ...nodeStyle(node), maxHeight: 320 },
   }
   return video
     ? <video {...common} poster={node.poster ? interpolate(node.poster, ctx.scope) : undefined} />
@@ -619,7 +668,7 @@ function TextBoxControl({ node, ctx }: { node: TextBoxNode; ctx: RenderContext }
     : node.value ? interpolate(node.value, ctx.scope) : ''
   const className = 'flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring'
   return (
-    <div style={attachedStyle(node)} data-widget-target={node.target} className="flex flex-col gap-1">
+    <div style={nodeStyle(node)} data-widget-target={node.target} className="flex flex-col gap-1">
       {node.multiline ? (
         <textarea
           value={value}
@@ -657,7 +706,7 @@ function CheckBoxControl({ node, ctx }: { node: CheckBoxNode; ctx: RenderContext
       ? node.checked
       : isTruthy(resolvePath(ctx.scope, node.checked))
   return (
-    <label style={attachedStyle(node)} data-widget-target={node.target} className="flex items-center gap-2 text-sm">
+    <label style={nodeStyle(node)} data-widget-target={node.target} className="flex items-center gap-2 text-sm">
       <Checkbox
         checked={checked}
         onCheckedChange={(value) => {
@@ -680,7 +729,7 @@ function SliderControl({ node, ctx }: { node: SliderNode; ctx: RenderContext }) 
       min={node.min}
       max={node.max}
       step={node.step}
-      style={attachedStyle(node)}
+      style={nodeStyle(node)}
       onChange={(e) => {
         ctx.setInput(node.name, Number(e.target.value))
         ctx.onAction(node.onChange)
@@ -718,7 +767,7 @@ function SelectControl({ node, ctx }: { node: SelectNode; ctx: RenderContext }) 
     ? String(ctx.inputs[node.name] ?? '')
     : node.value ? interpolate(node.value, ctx.scope) : ''
   return (
-    <div style={attachedStyle(node)} data-widget-target={node.target}>
+    <div style={nodeStyle(node)} data-widget-target={node.target}>
       <Select
         value={current}
         onChange={(value) => {
@@ -738,7 +787,7 @@ function renderProgress(node: ProgressNode, ctx: RenderContext): ReactNode {
   const value = Number(interpolate(node.value, ctx.scope)) || 0
   const percent = Math.max(0, Math.min(100, (value / (node.max || 100)) * 100))
   return (
-    <div style={attachedStyle(node)} className="h-2 w-full overflow-hidden rounded-full bg-muted">
+    <div style={nodeStyle(node)} className="h-2 w-full overflow-hidden rounded-full bg-muted">
       <div className="h-full bg-primary transition-[width]" style={{ width: `${percent}%` }} />
     </div>
   )
@@ -752,7 +801,7 @@ function renderLink(node: LinkNode, ctx: RenderContext): ReactNode {
     <button
       type="button"
       data-widget-target={node.target}
-      style={attachedStyle(node)}
+      style={nodeStyle(node)}
       onClick={() => ctx.onAction(node.onClick ?? fallback, node.name)}
       className="w-fit text-left text-sm text-primary underline-offset-4 hover:underline"
     >
@@ -778,7 +827,7 @@ function FilePickerControl({ node, ctx }: { node: FilePickerNode; ctx: RenderCon
     }
   }
   return (
-    <div style={attachedStyle(node)} data-widget-target={node.target} className="flex flex-col gap-1">
+    <div style={nodeStyle(node)} data-widget-target={node.target} className="flex flex-col gap-1">
       <Button type="button" variant="outline" size="sm" onClick={() => void pick()}>
         {interpolate(node.text, ctx.scope)}
       </Button>
@@ -796,7 +845,7 @@ function ColorPickerControl({ node, ctx }: { node: ColorPickerNode; ctx: RenderC
       type="color"
       data-widget-target={node.target}
       value={/^#[0-9a-f]{6}$/i.test(value) ? value : '#000000'}
-      style={attachedStyle(node)}
+      style={nodeStyle(node)}
       onChange={(e) => {
         ctx.setInput(node.name, e.target.value)
         ctx.onAction(node.onChange)
@@ -807,5 +856,5 @@ function ColorPickerControl({ node, ctx }: { node: ColorPickerNode; ctx: RenderC
 }
 
 function renderSpacer(node: SpacerNode): ReactNode {
-  return <div className="shrink-0" style={{ ...attachedStyle(node), width: node.size, height: node.size }} />
+  return <div className="shrink-0" style={{ ...nodeStyle(node), width: node.size, height: node.size }} />
 }

@@ -140,9 +140,15 @@ export const ELEMENT_ATTRS: Record<string, readonly string[]> = {
   Binary: ['Name', 'Mime', 'Text'],
   Resource: ['Name', 'Type', 'Mime', 'Text'],
   Triggers: [],
-  Trigger: ['Event', 'Function', 'Action', 'Control', 'Data', 'Interval', 'Once', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method', 'Arguments'],
+  Trigger: ['Event', 'Function', 'Action', 'Control', 'Data', 'Interval', 'Once', 'Target', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method', 'Arguments'],
   Function: ['Name', 'Timeout'],
   ShortcutKey: ['Key'],
+  Effects: [],
+  ShadowEffect: ['Radius', 'Color', 'OffsetX', 'OffsetY', 'Spread', 'Inset'],
+  BlurEffect: ['Radius'],
+  OpacityEffect: ['Value'],
+  ScaleEffect: ['Value'],
+  RotateEffect: ['Angle'],
   Struct: ['Name'],
   Field: ['Name', 'Type'],
   Container: ['Direction', 'Gap', 'Padding', 'Align', 'Justify', 'Border', 'Background', 'Radius', 'Content'],
@@ -207,6 +213,9 @@ export const ATTRIBUTE_VALUES: Record<string, Record<string, readonly string[]>>
   Dialog: {
     Width: DIALOG_SIZES,
     Size: DIALOG_SIZES,
+  },
+  ShadowEffect: {
+    Inset: ['True', 'False'],
   },
   Field: {
     Type: FIELD_TYPES,

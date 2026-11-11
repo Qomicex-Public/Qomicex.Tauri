@@ -41,6 +41,7 @@ import type {
   TriggerNode,
   UsingNode,
   PageNode,
+  EffectSpec,
   WidgetDocument,
   WidgetNode,
   WidgetSizeInfo,
@@ -228,6 +229,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   const [children, setChildren] = useState<Record<string, ChildSnapshot>>({})
   const [overrides, setOverrides] = useState<Record<string, Record<string, unknown>>>({})
   const overridesRef = useRef<Record<string, Record<string, unknown>>>({})
+  const [effectOverrides, setEffectOverrides] = useState<Record<string, EffectSpec[]>>({})
   const [openDialogs, setOpenDialogs] = useState<Set<string>>(new Set())
   const [data, setData] = useState<Record<string, unknown>>({})
   const [dataStatus, setDataStatus] = useState<Record<string, 'Loading' | 'Completed' | 'Error'>>({})
@@ -284,6 +286,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   useEffect(() => {
     overridesRef.current = {}
     setOverrides({})
+    setEffectOverrides({})
     setOpenDialogs(new Set())
   }, [def.id, def.xml])
 
@@ -432,6 +435,10 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
       next.delete(name)
       return next
     })
+  }, [])
+
+  const applyEffects = useCallback((target: string, effects: EffectSpec[]) => {
+    setEffectOverrides((prev) => ({ ...prev, [target]: effects }))
   }, [])
 
   const setProperty = useCallback(async (target: string, property: string, value: unknown): Promise<unknown> => {
@@ -825,13 +832,15 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
       if (event === 'Click' && trigger.control !== target) continue
       if (event === 'DataChanged' && trigger.data !== target) continue
       triggerRate.current.push(now)
+      const effectTarget = trigger.target ?? (event === 'Click' ? target : undefined)
+      if (trigger.effects && effectTarget) applyEffects(effectTarget, trigger.effects)
       if (trigger.function) {
         executeFunctionRef.current(trigger.function, trigger)
       } else if (trigger.action) {
         void executeAction(trigger.action)
       }
     }
-  }, [doc, executeAction])
+  }, [doc, executeAction, applyEffects])
 
   const fireTriggerRef = useRef(fireTrigger)
   fireTriggerRef.current = fireTrigger
@@ -969,6 +978,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     results,
     children,
     overrides,
+    effects: effectOverrides,
     size,
     pages: doc?.pages ?? {},
     openDialogs,

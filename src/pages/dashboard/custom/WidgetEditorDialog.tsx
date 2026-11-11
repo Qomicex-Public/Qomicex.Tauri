@@ -534,6 +534,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
     results: previewResults,
     children: {},
     overrides: {},
+    effects: {},
     size: { Width: 2, Height: 2, PixelWidth: 0, PixelHeight: 0 },
     pages: doc?.pages ?? {},
     openDialogs: new Set<string>(),

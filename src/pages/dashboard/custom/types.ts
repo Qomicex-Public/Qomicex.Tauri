@@ -38,6 +38,7 @@ export interface NodeBase {
   when?: string
   /** 引用 Resource Type="Page" 的页面名。 */
   contentPage?: string
+  effects?: EffectSpec[]
 }
 
 export interface WidgetSizeInfo {
@@ -102,6 +103,7 @@ export interface TabItemNode {
   visible?: boolean
   when?: string
   contentPage?: string
+  effects?: EffectSpec[]
   children: WidgetNode[]
 }
 
@@ -117,6 +119,7 @@ export interface ListItemNode {
   visible?: boolean
   when?: string
   contentPage?: string
+  effects?: EffectSpec[]
   child?: WidgetNode
 }
 
@@ -252,6 +255,13 @@ export interface DialogNode extends NodeBase {
 
 export type PageNode = WidgetNode | TabItemNode | ListItemNode
 
+export type EffectSpec =
+  | { kind: 'shadow'; radius: number; color: string; offsetX: number; offsetY: number; spread: number; inset: boolean }
+  | { kind: 'blur'; radius: number }
+  | { kind: 'opacity'; value: number }
+  | { kind: 'scale'; value: number }
+  | { kind: 'rotate'; angle: number }
+
 export interface SpacerNode extends NodeBase {
   kind: 'spacer'
   size: number
@@ -342,6 +352,8 @@ export interface TriggerNode {
   data?: string
   interval?: number
   once: boolean
+  target?: string
+  effects?: EffectSpec[]
 }
 
 export interface WidgetDocument {
