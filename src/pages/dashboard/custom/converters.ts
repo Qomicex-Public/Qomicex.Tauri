@@ -119,7 +119,11 @@ function formatNumber(value: unknown, format: string | undefined, parameter: str
 }
 
 function formatDate(value: unknown, format: string | undefined, locale: string): string {
-  const date = value instanceof Date ? value : new Date(String(value))
+  const date = value instanceof Date
+    ? value
+    : typeof value === 'number'
+      ? new Date(value)
+      : new Date(String(value))
   if (Number.isNaN(date.getTime())) return asString(value)
   if (!format) return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
   const parts: Record<string, string> = {
@@ -174,8 +178,10 @@ export function convertValue(
         return asString(value)
       case 'Format':
         return formatNumber(value, converter.format, parameter, options.locale ?? 'en-US')
-      case 'Map':
-        return converter.map?.find((entry) => entry.from === asString(value))?.to ?? value
+      case 'Map': {
+        const text = asString(value)
+        return converter.map?.find((entry) => entry.from === text || entry.from.toLowerCase() === text.toLowerCase())?.to ?? value
+      }
       case 'BoolToVisibility':
         return parseBool(value) ? 'Visible' : 'Collapsed'
       case 'Upper':
@@ -222,7 +228,8 @@ export function convertBackValue(
     return converter.type === 'BoolToVisibility' ? value === 'Visible' : parseBool(value)
   }
   if (converter.type === 'Map') {
-    return converter.map?.find((entry) => entry.to === asString(value))?.from ?? value
+    const text = asString(value)
+    return converter.map?.find((entry) => entry.to === text || entry.to.toLowerCase() === text.toLowerCase())?.from ?? value
   }
   return value
 }

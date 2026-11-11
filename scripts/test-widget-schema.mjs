@@ -94,6 +94,11 @@ try {
     'Visible',
   )
   check(
+    'Binding Map 布尔大小写',
+    schema.interpolate('{Binding flag, Converter=Label}', { flag: true }, { converters: converterList }),
+    '开',
+  )
+  check(
     'MultiBinding Join',
     schema.interpolate('{MultiBinding Paths="first|last", Converter=Join, ConverterParameter=" "}', { first: 'A', last: 'B' }, { converters: converterList }),
     'A B',
