@@ -580,3 +580,66 @@
   cursor: grabbing;
   z-index: 50;
 }
+
+/* QWidget 用户声明动画：只接管当前节点的默认 transition；Effect 不影响动画。 */
+@keyframes qwidget-fade {
+  from { opacity: var(--w-anim-from, 0); }
+  to { opacity: var(--w-anim-to, 1); }
+}
+
+@keyframes qwidget-slide {
+  from {
+    opacity: 0;
+    transform: translate3d(var(--w-anim-x, 0px), var(--w-anim-y, 8px), 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes qwidget-scale {
+  from {
+    opacity: 0;
+    transform: scale(var(--w-anim-from, 0.96));
+  }
+  to {
+    opacity: 1;
+    transform: scale(var(--w-anim-to, 1));
+  }
+}
+
+@keyframes qwidget-rotate {
+  from { transform: rotate(var(--w-anim-rotate-from, 0deg)); }
+  to { transform: rotate(var(--w-anim-rotate-to, 360deg)); }
+}
+
+@keyframes qwidget-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+}
+
+@keyframes qwidget-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.w-anim-override {
+  transition: none !important;
+}
+
+.w-anim-hover:hover {
+  animation-name: var(--w-anim-hover-name);
+  animation-duration: var(--w-anim-hover-duration);
+  animation-delay: var(--w-anim-hover-delay);
+  animation-timing-function: var(--w-anim-hover-easing);
+  animation-iteration-count: var(--w-anim-hover-iteration);
+}
+
+.w-anim-click:active {
+  animation-name: var(--w-anim-click-name);
+  animation-duration: var(--w-anim-click-duration);
+  animation-delay: var(--w-anim-click-delay);
+  animation-timing-function: var(--w-anim-click-easing);
+  animation-iteration-count: var(--w-anim-click-iteration);
+}

@@ -12,10 +12,14 @@ import {
   interpolate,
   isSafeHttpsUrl,
   resolvePath,
+  stringifyBinding,
 } from './schema.ts'
+import { convertBackValue, convertValue, exactBinding } from './converters.ts'
 import { evaluateWhen } from './responsive.ts'
+import type { BindingOptions } from './converters.ts'
 import type {
   ActionSpec,
+  AnimationSpec,
   ButtonNode,
   CheckBoxNode,
   ColorPickerNode,
@@ -54,6 +58,7 @@ export interface RenderRuntime {
   children: Record<string, unknown>
   overrides: Record<string, Record<string, unknown>>
   effects: Record<string, EffectSpec[]>
+  bindingOptions: BindingOptions
   size: WidgetSizeInfo
   pages: Record<string, PageNode[]>
   openDialogs: Set<string>
@@ -345,11 +350,102 @@ export function effectStyle(effects?: EffectSpec[]): CSSProperties | undefined {
   return style
 }
 
+const ANIMATION_NAME: Record<string, string> = {
+  fade: 'qwidget-fade',
+  slide: 'qwidget-slide',
+  scale: 'qwidget-scale',
+  rotate: 'qwidget-rotate',
+  pulse: 'qwidget-pulse',
+  spin: 'qwidget-spin',
+}
+
+const EASING_CSS: Record<string, string> = {
+  Linear: 'linear',
+  Ease: 'ease',
+  EaseIn: 'ease-in',
+  EaseOut: 'ease-out',
+  EaseInOut: 'ease-in-out',
+}
+
+function animationValues(animations: AnimationSpec[]): {
+  name: string
+  duration: string
+  delay: string
+  easing: string
+  iteration: string
+} {
+  return {
+    name: animations.map((animation) => ANIMATION_NAME[animation.kind]).join(', '),
+    duration: animations.map((animation) => `${animation.duration}ms`).join(', '),
+    delay: animations.map((animation) => `${animation.delay}ms`).join(', '),
+    easing: animations.map((animation) => EASING_CSS[animation.easing] ?? 'ease').join(', '),
+    iteration: animations.map((animation) => animation.repeat === 'Infinite' ? 'infinite' : String(animation.repeat)).join(', '),
+  }
+}
+
+export function animationClass(animations?: AnimationSpec[]): string | undefined {
+  if (!animations || animations.length === 0) return undefined
+  const classes = ['w-anim-override']
+  if (animations.some((animation) => animation.trigger === 'Hover')) classes.push('w-anim-hover')
+  if (animations.some((animation) => animation.trigger === 'Click')) classes.push('w-anim-click')
+  return classes.join(' ')
+}
+
+export function animationStyle(animations?: AnimationSpec[]): CSSProperties | undefined {
+  if (!animations || animations.length === 0) return undefined
+  const loaded = animations.filter((animation) => animation.trigger === 'Loaded')
+  const hover = animations.filter((animation) => animation.trigger === 'Hover')
+  const click = animations.filter((animation) => animation.trigger === 'Click')
+  const style: Record<string, string | number> = {}
+  if (loaded.length > 0) {
+    const values = animationValues(loaded)
+    style.animationName = values.name
+    style.animationDuration = values.duration
+    style.animationDelay = values.delay
+    style.animationTimingFunction = values.easing
+    style.animationIterationCount = values.iteration
+    style.animationFillMode = 'both'
+  }
+  if (hover.length > 0) {
+    const values = animationValues(hover)
+    style['--w-anim-hover-name'] = values.name
+    style['--w-anim-hover-duration'] = values.duration
+    style['--w-anim-hover-delay'] = values.delay
+    style['--w-anim-hover-easing'] = values.easing
+    style['--w-anim-hover-iteration'] = values.iteration
+  }
+  if (click.length > 0) {
+    const values = animationValues(click)
+    style['--w-anim-click-name'] = values.name
+    style['--w-anim-click-duration'] = values.duration
+    style['--w-anim-click-delay'] = values.delay
+    style['--w-anim-click-easing'] = values.easing
+    style['--w-anim-click-iteration'] = values.iteration
+  }
+  for (const animation of animations) {
+    if (animation.kind === 'slide') {
+      const distance = animation.distance ?? 8
+      style['--w-anim-x'] = animation.direction === 'Left' ? `${-distance}px` : animation.direction === 'Right' ? `${distance}px` : '0px'
+      style['--w-anim-y'] = animation.direction === 'Top' ? `${-distance}px` : animation.direction === 'Bottom' ? `${distance}px` : '0px'
+    }
+    if (animation.kind === 'fade' || animation.kind === 'scale') {
+      if (animation.from !== undefined) style['--w-anim-from'] = animation.from
+      if (animation.to !== undefined) style['--w-anim-to'] = animation.to
+    }
+    if (animation.kind === 'rotate') {
+      if (animation.from !== undefined) style['--w-anim-rotate-from'] = `${animation.from}deg`
+      if (animation.to !== undefined) style['--w-anim-rotate-to'] = `${animation.to}deg`
+    }
+  }
+  return style as CSSProperties
+}
+
 function nodeStyle(node: WidgetNode): CSSProperties | undefined {
   const attached = attachedStyle(node)
   const effects = effectStyle(node.effects)
-  if (attached && effects) return { ...attached, ...effects }
-  return attached ?? effects
+  const animations = animationStyle(node.animations)
+  if (attached || effects || animations) return { ...attached, ...effects, ...animations }
+  return undefined
 }
 
 function attachedStyle(node: WidgetNode): CSSProperties | undefined {
@@ -403,9 +499,12 @@ function renderDialog(node: DialogNode, ctx: RenderContext): ReactNode {
       className={dialogWidthClass(node.width)}
     >
       <DialogHeader onClose={() => ctx.hideDialog(node.name)}>
-        {node.title ? <DialogTitle>{interpolate(node.title, ctx.scope)}</DialogTitle> : <span />}
+        {node.title ? <DialogTitle>{interpolate(node.title, ctx.scope, ctx.bindingOptions)}</DialogTitle> : <span />}
       </DialogHeader>
-      <DialogBody style={effectStyle(node.effects)} className="max-h-[calc(100vh-7rem)] overflow-auto">
+      <DialogBody
+        style={{ ...effectStyle(node.effects), ...animationStyle(node.animations) }}
+        className={cn('max-h-[calc(100vh-7rem)] overflow-auto', animationClass(node.animations))}
+      >
         {renderNodes(content, ctx, `dialog-${node.name}-`)}
       </DialogBody>
     </Dialog>
@@ -459,14 +558,14 @@ function renderNode(node: WidgetNode, ctx: RenderContext, root = false): ReactNo
     case 'colorPicker':
       return <ColorPickerControl key="colorPicker" node={effective} ctx={ctx} />
     case 'divider':
-      return <div key="divider" style={effectStyle(effective.effects)} className="h-px w-full bg-border/50" />
+      return <div key="divider" style={{ ...effectStyle(effective.effects), ...animationStyle(effective.animations) }} className={cn('h-px w-full bg-border/50', animationClass(effective.animations))} />
     case 'dialog':
       return renderDialog(effective, ctx)
     case 'spacer':
       return renderSpacer(effective)
     case 'using':
       return root
-        ? <div className="flex min-h-0 flex-1 flex-col">{ctx.renderUsing(effective)}</div>
+        ? <div style={nodeStyle(effective)} className={cn('flex min-h-0 flex-1 flex-col', animationClass(effective.animations))}>{ctx.renderUsing(effective)}</div>
         : ctx.renderUsing(effective)
     default:
       return null
@@ -479,6 +578,7 @@ function renderContainer(node: ContainerNode, ctx: RenderContext, root = false):
       style={nodeStyle(node)}
       className={cn(
         'flex min-w-0',
+        animationClass(node.animations),
         root && 'min-h-0 flex-1',
         node.direction === 'Row' ? 'flex-row' : 'flex-col',
         node.border && 'border border-border/40',
@@ -501,6 +601,7 @@ function renderRowColumn(node: RowNode | ColumnNode, ctx: RenderContext, root = 
       style={nodeStyle(node)}
       className={cn(
         'flex min-w-0',
+        animationClass(node.animations),
         root && 'min-h-0 flex-1',
         node.kind === 'row' ? 'flex-row' : 'flex-col',
         node.wrap ? 'flex-wrap' : 'flex-nowrap',
@@ -521,6 +622,7 @@ function renderGrid(node: GridNode, ctx: RenderContext, root = false): ReactNode
       style={nodeStyle(node)}
       className={cn(
         'grid min-w-0',
+        animationClass(node.animations),
         root && 'min-h-0 flex-1',
         GRID_COLS[node.columns],
         GAP[node.gap ?? 0],
@@ -545,11 +647,14 @@ function TabsView({ node, ctx, root = false }: { node: TabsNode; ctx: RenderCont
   if (visibleTabs.length === 0) return null
   const index = Math.min(Number(active) || 0, visibleTabs.length - 1)
   const current = visibleTabs[index]
-  const tabs = visibleTabs.map((child, i) => ({ id: String(i), label: interpolate(child.title, ctx.scope) }))
+  const tabs = visibleTabs.map((child, i) => ({ id: String(i), label: interpolate(child.title, ctx.scope, ctx.bindingOptions) }))
   return (
-    <div style={nodeStyle(node)} className={cn('flex min-w-0 flex-col gap-2', root && 'min-h-0 flex-1')}>
+    <div style={nodeStyle(node)} className={cn('flex min-w-0 flex-col gap-2', animationClass(node.animations), root && 'min-h-0 flex-1')}>
       <Tabs tabs={tabs} activeTab={String(index)} onChange={setActive} />
-      <div className={cn('min-w-0', root && 'min-h-0 flex-1 overflow-auto')} style={effectStyle(current?.effects)}>
+      <div
+        className={cn('min-w-0', animationClass(current?.animations), root && 'min-h-0 flex-1 overflow-auto')}
+        style={{ ...effectStyle(current?.effects), ...animationStyle(current?.animations) }}
+      >
         {renderNodes(pageChildren(current?.contentPage, current?.children ?? [], ctx), ctx, `tab${index}-`)}
       </div>
     </div>
@@ -563,15 +668,18 @@ function ListView({ node, ctx, root = false }: { node: ListNode; ctx: RenderCont
     ?? pageNodes(node.contentPage, [], ctx).find((candidate): candidate is ListItemNode => candidate.kind === 'listItem')
   if (items.length === 0) {
     if (!node.emptyText) return null
-    return <span className="text-xs text-muted-foreground">{interpolate(node.emptyText, ctx.scope)}</span>
+    return <span className="text-xs text-muted-foreground">{interpolate(node.emptyText, ctx.scope, ctx.bindingOptions)}</span>
   }
   if (!sourceItem || sourceItem.visible === false || (sourceItem.when && !evaluateWhen(sourceItem.when, ctx.size))) return null
   const itemNodes = pageChildren(sourceItem.contentPage, sourceItem.child ? [sourceItem.child] : [], ctx)
   return (
-    <div style={nodeStyle(node)} className={cn('flex min-w-0 flex-col', GAP[node.gap ?? 0], root && 'min-h-0 flex-1 overflow-auto')}>
+    <div style={nodeStyle(node)} className={cn('flex min-w-0 flex-col', animationClass(node.animations), GAP[node.gap ?? 0], root && 'min-h-0 flex-1 overflow-auto')}>
       {items.map((item, index) => (
         <Fragment key={index}>
-          <div style={effectStyle(sourceItem.effects)} className="min-w-0">
+          <div
+            style={{ ...effectStyle(sourceItem.effects), ...animationStyle(sourceItem.animations) }}
+            className={cn('min-w-0', animationClass(sourceItem.animations))}
+          >
             {renderNodes(itemNodes, {
               ...ctx,
               scope: { ...ctx.scope, [node.as]: item, Index: index },
@@ -589,6 +697,7 @@ function renderText(node: TextNode, ctx: RenderContext): ReactNode {
       style={nodeStyle(node)}
       className={cn(
         'block min-w-0 whitespace-pre-wrap break-words',
+        animationClass(node.animations),
         TEXT_SIZE[node.size],
         TEXT_WEIGHT[node.weight],
         TEXT_COLOR[node.color],
@@ -596,7 +705,7 @@ function renderText(node: TextNode, ctx: RenderContext): ReactNode {
         node.align && TEXT_ALIGN[node.align],
       )}
     >
-      {interpolate(node.value ?? '', ctx.scope)}
+      {interpolate(node.value ?? '', ctx.scope, ctx.bindingOptions)}
     </span>
   )
 }
@@ -606,12 +715,13 @@ function renderButton(node: ButtonNode, ctx: RenderContext): ReactNode {
     <Button
       type="button"
       data-widget-target={node.target}
+      className={animationClass(node.animations)}
       style={nodeStyle(node)}
       variant={node.variant === 'Default' ? 'default' : node.variant.toLowerCase() as 'secondary' | 'outline' | 'ghost' | 'destructive' | 'link'}
       size={node.size === 'Md' ? 'default' : node.size.toLowerCase() as 'sm' | 'lg'}
       onClick={() => ctx.onAction(node.onClick, node.name)}
     >
-      {interpolate(node.text, ctx.scope)}
+      {interpolate(node.text, ctx.scope, ctx.bindingOptions)}
     </Button>
   )
 }
@@ -621,7 +731,7 @@ function isPlayableSrc(src: string): boolean {
 }
 
 function renderImage(node: ImageNode, ctx: RenderContext): ReactNode {
-  const src = interpolate(node.src, ctx.scope)
+  const src = interpolate(node.src, ctx.scope, ctx.bindingOptions)
   if (!isPlayableSrc(src)) return null
   if (!src.startsWith('blob:') && !src.startsWith('data:')) {
     const host = hostOf(src)
@@ -634,13 +744,13 @@ function renderImage(node: ImageNode, ctx: RenderContext): ReactNode {
       loading="lazy"
       referrerPolicy="no-referrer"
       style={{ ...nodeStyle(node), width: node.w, height: node.h }}
-      className={cn('object-cover', node.rounded && 'rounded-md', node.w === undefined && 'w-full', node.h === undefined && 'h-auto')}
+      className={cn('object-cover', animationClass(node.animations), node.rounded && 'rounded-md', node.w === undefined && 'w-full', node.h === undefined && 'h-auto')}
     />
   )
 }
 
 function renderMedia(node: MediaNode, ctx: RenderContext): ReactNode {
-  const source = interpolate(node.source, ctx.scope)
+  const source = interpolate(node.source, ctx.scope, ctx.bindingOptions)
   if (!isPlayableSrc(source)) return null
   if (!source.startsWith('blob:') && !source.startsWith('data:')) {
     const host = hostOf(source)
@@ -652,7 +762,7 @@ function renderMedia(node: MediaNode, ctx: RenderContext): ReactNode {
   }
   let poster: string | undefined
   if (node.poster) {
-    const candidate = interpolate(node.poster, ctx.scope)
+    const candidate = interpolate(node.poster, ctx.scope, ctx.bindingOptions)
     if (isPlayableSrc(candidate)) {
       if (candidate.startsWith('blob:') || candidate.startsWith('data:')) poster = candidate
       else {
@@ -668,29 +778,42 @@ function renderMedia(node: MediaNode, ctx: RenderContext): ReactNode {
     loop: node.loop,
     muted: node.muted,
     ref: mediaRef,
-    className: 'w-full max-w-full rounded-md',
+    className: cn('w-full max-w-full rounded-md', animationClass(node.animations)),
     style: { ...nodeStyle(node), maxHeight: 320 },
   }
   return video
     ? <video {...common} poster={poster} />
-    : <audio {...common} style={{ width: '100%' }} />
+    : <audio {...common} style={{ ...nodeStyle(node), width: '100%', maxHeight: 320 }} />
 }
 
 function TextBoxControl({ node, ctx }: { node: TextBoxNode; ctx: RenderContext }) {
-  const value = ctx.inputs[node.name] !== undefined
-    ? String(ctx.inputs[node.name] ?? '')
-    : node.value ? interpolate(node.value, ctx.scope) : ''
+  const binding = node.value ? exactBinding(node.value) : null
+  const bound = binding?.path ? resolvePath(ctx.scope, binding.path) : undefined
+  const raw = ctx.inputs[node.name] !== undefined ? ctx.inputs[node.name] : bound
+  const value = binding
+    ? stringifyBinding(convertValue(raw, binding.converter, binding.parameter, ctx.bindingOptions, ctx.scope))
+    : ctx.inputs[node.name] !== undefined
+      ? String(ctx.inputs[node.name] ?? '')
+      : node.value ? interpolate(node.value, ctx.scope, ctx.bindingOptions) : ''
+  const setValue = (next: string) => {
+    if (binding) {
+      const converted = convertBackValue(next, binding.converter, binding.parameter, ctx.bindingOptions, ctx.scope)
+      if (converted !== undefined) ctx.setInput(node.name, converted)
+      return
+    }
+    ctx.setInput(node.name, next)
+  }
   const className = 'flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring'
   return (
-    <div style={nodeStyle(node)} data-widget-target={node.target} className="flex flex-col gap-1">
+    <div style={nodeStyle(node)} data-widget-target={node.target} className={cn('flex flex-col gap-1', animationClass(node.animations))}>
       {node.multiline ? (
         <textarea
           value={value}
-          placeholder={node.placeholder ? interpolate(node.placeholder, ctx.scope) : undefined}
+          placeholder={node.placeholder ? interpolate(node.placeholder, ctx.scope, ctx.bindingOptions) : undefined}
           readOnly={node.readOnly}
           maxLength={node.maxLength}
           onChange={(e) => {
-            ctx.setInput(node.name, e.target.value)
+            setValue(e.target.value)
             ctx.onAction(node.onChange)
           }}
           className={cn(className, 'min-h-[72px] resize-y')}
@@ -699,11 +822,11 @@ function TextBoxControl({ node, ctx }: { node: TextBoxNode; ctx: RenderContext }
         <input
           type={node.password ? 'password' : 'text'}
           value={value}
-          placeholder={node.placeholder ? interpolate(node.placeholder, ctx.scope) : undefined}
+          placeholder={node.placeholder ? interpolate(node.placeholder, ctx.scope, ctx.bindingOptions) : undefined}
           readOnly={node.readOnly}
           maxLength={node.maxLength}
           onChange={(e) => {
-            ctx.setInput(node.name, e.target.value)
+            setValue(e.target.value)
             ctx.onAction(node.onChange)
           }}
           className={className}
@@ -714,21 +837,31 @@ function TextBoxControl({ node, ctx }: { node: TextBoxNode; ctx: RenderContext }
 }
 
 function CheckBoxControl({ node, ctx }: { node: CheckBoxNode; ctx: RenderContext }) {
-  const checked = ctx.inputs[node.name] !== undefined
-    ? !!ctx.inputs[node.name]
-    : typeof node.checked === 'boolean'
-      ? node.checked
-      : isTruthy(resolvePath(ctx.scope, node.checked))
+  const binding = typeof node.checked === 'string' ? exactBinding(node.checked) : null
+  const bound = binding?.path ? resolvePath(ctx.scope, binding.path) : undefined
+  const raw = ctx.inputs[node.name] !== undefined ? ctx.inputs[node.name] : bound
+  const checked = binding
+    ? isTruthy(convertValue(raw, binding.converter, binding.parameter, ctx.bindingOptions, ctx.scope))
+    : ctx.inputs[node.name] !== undefined
+      ? !!ctx.inputs[node.name]
+      : typeof node.checked === 'boolean'
+        ? node.checked
+        : isTruthy(resolvePath(ctx.scope, node.checked))
   return (
-    <label style={nodeStyle(node)} data-widget-target={node.target} className="flex items-center gap-2 text-sm">
+    <label style={nodeStyle(node)} data-widget-target={node.target} className={cn('flex items-center gap-2 text-sm', animationClass(node.animations))}>
       <Checkbox
         checked={checked}
         onCheckedChange={(value) => {
-          ctx.setInput(node.name, value === true)
+          if (binding) {
+            const converted = convertBackValue(value, binding.converter, binding.parameter, ctx.bindingOptions, ctx.scope)
+            if (converted !== undefined) ctx.setInput(node.name, converted)
+          } else {
+            ctx.setInput(node.name, value === true)
+          }
           ctx.onAction(node.onChange)
         }}
       />
-      {node.text ? interpolate(node.text, ctx.scope) : null}
+      {node.text ? interpolate(node.text, ctx.scope, ctx.bindingOptions) : null}
     </label>
   )
 }
@@ -748,7 +881,7 @@ function SliderControl({ node, ctx }: { node: SliderNode; ctx: RenderContext }) 
         ctx.setInput(node.name, Number(e.target.value))
         ctx.onAction(node.onChange)
       }}
-      className="w-full accent-primary"
+      className={cn('w-full accent-primary', animationClass(node.animations))}
     />
   )
 }
@@ -761,7 +894,7 @@ interface SelectOptionValue {
 function parseOptions(raw: string | unknown[], ctx: RenderContext): Array<{ label: string; value: string }> {
   let parsed: unknown
   try {
-    parsed = Array.isArray(raw) ? raw : JSON.parse(interpolate(raw as string, ctx.scope))
+    parsed = Array.isArray(raw) ? raw : JSON.parse(interpolate(raw as string, ctx.scope, ctx.bindingOptions))
   } catch {
     return []
   }
@@ -779,9 +912,9 @@ function SelectControl({ node, ctx }: { node: SelectNode; ctx: RenderContext }) 
   const options = parseOptions(node.options, ctx)
   const current = ctx.inputs[node.name] !== undefined
     ? String(ctx.inputs[node.name] ?? '')
-    : node.value ? interpolate(node.value, ctx.scope) : ''
+    : node.value ? interpolate(node.value, ctx.scope, ctx.bindingOptions) : ''
   return (
-    <div style={nodeStyle(node)} data-widget-target={node.target}>
+    <div style={nodeStyle(node)} data-widget-target={node.target} className={animationClass(node.animations)}>
       <Select
         value={current}
         onChange={(value) => {
@@ -798,10 +931,10 @@ function SelectControl({ node, ctx }: { node: SelectNode; ctx: RenderContext }) 
 }
 
 function renderProgress(node: ProgressNode, ctx: RenderContext): ReactNode {
-  const value = Number(interpolate(node.value, ctx.scope)) || 0
+  const value = Number(interpolate(node.value, ctx.scope, ctx.bindingOptions)) || 0
   const percent = Math.max(0, Math.min(100, (value / (node.max || 100)) * 100))
   return (
-    <div style={nodeStyle(node)} className="h-2 w-full overflow-hidden rounded-full bg-muted">
+    <div style={nodeStyle(node)} className={cn('h-2 w-full overflow-hidden rounded-full bg-muted', animationClass(node.animations))}>
       <div className="h-full bg-primary transition-[width]" style={{ width: `${percent}%` }} />
     </div>
   )
@@ -817,9 +950,9 @@ function renderLink(node: LinkNode, ctx: RenderContext): ReactNode {
       data-widget-target={node.target}
       style={nodeStyle(node)}
       onClick={() => ctx.onAction(node.onClick ?? fallback, node.name)}
-      className="w-fit text-left text-sm text-primary underline-offset-4 hover:underline"
+      className={cn('w-fit text-left text-sm text-primary underline-offset-4 hover:underline', animationClass(node.animations))}
     >
-      {interpolate(node.text, ctx.scope)}
+      {interpolate(node.text, ctx.scope, ctx.bindingOptions)}
     </button>
   )
 }
@@ -827,7 +960,7 @@ function renderLink(node: LinkNode, ctx: RenderContext): ReactNode {
 function FilePickerControl({ node, ctx }: { node: FilePickerNode; ctx: RenderContext }) {
   const value = ctx.inputs[node.name] !== undefined
     ? String(ctx.inputs[node.name] ?? '')
-    : node.value ? interpolate(node.value, ctx.scope) : ''
+    : node.value ? interpolate(node.value, ctx.scope, ctx.bindingOptions) : ''
   const pick = async () => {
     try {
       if (!(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) return
@@ -841,9 +974,9 @@ function FilePickerControl({ node, ctx }: { node: FilePickerNode; ctx: RenderCon
     }
   }
   return (
-    <div style={nodeStyle(node)} data-widget-target={node.target} className="flex flex-col gap-1">
+    <div style={nodeStyle(node)} data-widget-target={node.target} className={cn('flex flex-col gap-1', animationClass(node.animations))}>
       <Button type="button" variant="outline" size="sm" onClick={() => void pick()}>
-        {interpolate(node.text, ctx.scope)}
+        {interpolate(node.text, ctx.scope, ctx.bindingOptions)}
       </Button>
       <span className="truncate font-mono text-[11px] text-muted-foreground">{value}</span>
     </div>
@@ -853,7 +986,7 @@ function FilePickerControl({ node, ctx }: { node: FilePickerNode; ctx: RenderCon
 function ColorPickerControl({ node, ctx }: { node: ColorPickerNode; ctx: RenderContext }) {
   const value = ctx.inputs[node.name] !== undefined
     ? String(ctx.inputs[node.name] ?? '')
-    : node.value ? interpolate(node.value, ctx.scope) : '#000000'
+    : node.value ? interpolate(node.value, ctx.scope, ctx.bindingOptions) : '#000000'
   return (
     <input
       type="color"
@@ -864,11 +997,11 @@ function ColorPickerControl({ node, ctx }: { node: ColorPickerNode; ctx: RenderC
         ctx.setInput(node.name, e.target.value)
         ctx.onAction(node.onChange)
       }}
-      className="h-8 w-12 cursor-pointer rounded border border-input bg-background p-0.5"
+      className={cn('h-8 w-12 cursor-pointer rounded border border-input bg-background p-0.5', animationClass(node.animations))}
     />
   )
 }
 
 function renderSpacer(node: SpacerNode): ReactNode {
-  return <div className="shrink-0" style={{ ...nodeStyle(node), width: node.size, height: node.size }} />
+  return <div className={cn('shrink-0', animationClass(node.animations))} style={{ ...nodeStyle(node), width: node.size, height: node.size }} />
 }

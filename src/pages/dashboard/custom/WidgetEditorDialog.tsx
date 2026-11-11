@@ -561,6 +561,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
     children: {},
     overrides: {},
     effects: {},
+    bindingOptions: { converters: doc?.converters ?? [], locale: lang },
     size: previewWidgetSize,
     pages: doc?.pages ?? {},
     openDialogs: new Set<string>(),

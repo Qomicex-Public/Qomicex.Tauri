@@ -68,7 +68,15 @@ export function executableActions(doc: WidgetDocument): ExecutableAction[] {
  */
 export function executableFingerprint(doc: WidgetDocument): string {
   const actions = executableActions(doc)
-  if (actions.length === 0) return ''
+  const converters = doc.converters
+    .filter((converter) => converter.convertScript || converter.convertBackScript)
+    .map((converter) => ({
+      name: converter.name,
+      type: converter.type,
+      convert: converter.convertScript,
+      convertBack: converter.convertBackScript,
+    }))
+  if (actions.length === 0 && converters.length === 0) return ''
   const triggers: Array<Pick<TriggerNode, 'event' | 'function' | 'control' | 'data' | 'interval' | 'once'>> =
     doc.triggers.map(({ event, function: fn, control, data, interval, once }) => ({
       event,
@@ -80,6 +88,7 @@ export function executableFingerprint(doc: WidgetDocument): string {
     }))
   return JSON.stringify({
     actions,
+    converters,
     functions: doc.functions.map((fn) => ({ name: fn.name, script: fn.script, timeout: fn.timeout })),
     triggers,
   })

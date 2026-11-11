@@ -47,6 +47,64 @@
 - `{Children.<As>.Inputs/Data/Results/State}`
 - `{State.Loading}` / `{State.Error}`
 
+WPF 风格绑定：
+
+```xml
+<Text Value="{Binding Data.news.title, Converter=Upper}" />
+<TextBox Value="{Binding Inputs.price, Converter=Money, ConverterParameter='N2', Mode=TwoWay}" />
+<Text Value="{MultiBinding Paths='Inputs.first|Inputs.last', Converter=Join, ConverterParameter=' '}" />
+```
+
+- `Converter` 引用 `<Widget.Converters>` 里的 `Converter.Name`
+- `ConverterParameter` 可选，支持单引号或双引号
+- `Mode`：`OneWay`（默认）/ `TwoWay` / `OneWayToSource`
+- `Path` 仍是现有绑定路径；`{Data.foo}` 等旧写法继续可用
+- `MultiBinding` 的 `Paths` 用 `|` 分隔
+
+## Converters
+
+```xml
+<Widget.Converters>
+  <Converter Name="Upper" Type="Upper" />
+  <Converter Name="Money" Type="Format" Format="N2" />
+  <Converter Name="Visible" Type="BoolToVisibility" />
+  <Converter Name="Label" Type="Map">
+    <MapEntry From="True" To="开" />
+    <MapEntry From="False" To="关" />
+  </Converter>
+  <Converter Name="Double" Type="Script">
+    <Converter.Convert>return Number(value) * 2</Converter.Convert>
+    <Converter.ConvertBack>return Number(value) / 2</Converter.ConvertBack>
+  </Converter>
+</Widget.Converters>
+```
+
+内置 `Type`：`String` / `Number` / `Bool` / `DateTime` / `Json` / `Format` / `Map` / `BoolToVisibility` / `Upper` / `Lower` / `Join` / `Script`。
+
+- `Format`：数字按 `Format` 或 `ConverterParameter` 格式化，如 `N2`
+- `DateTime`：按 `Format` 输出日期，支持 `yyyy` / `MM` / `dd` / `HH` / `mm` / `ss`
+- `Map`：按 `From` 精确匹配，未命中返回原值
+- `Join`：多值按 `ConverterParameter`（默认 `, `）连接
+- `Script`：`Convert` 必填，`ConvertBack` 可选；参数为 `value` / `values` / `parameter` / `targetType` / `culture` / `scope`
+- 脚本异常返回 `undefined`，不会中断渲染；远程组件的脚本 Converter 会进入可执行指纹确认
+
+## Animations
+
+```xml
+<Button.Animations>
+  <FadeIn Duration="180" Delay="0" Easing="EaseOut" Trigger="Loaded" />
+  <ScaleTo Duration="120" From="0.96" To="1" Trigger="Hover" />
+  <Pulse Duration="600" Repeat="Infinite" Trigger="Click" />
+</Button.Animations>
+```
+
+- 元素：`FadeIn` / `SlideIn` / `ScaleTo` / `RotateTo` / `Pulse` / `Spin`
+- `Duration` / `Delay` 毫秒；`Easing`：`Linear` / `Ease` / `EaseIn` / `EaseOut` / `EaseInOut`
+- `Repeat`：数字或 `Infinite`；`Trigger`：`Loaded` / `Hover` / `Click`
+- `SlideIn` 支持 `Direction`（`Left` / `Right` / `Top` / `Bottom`）和 `Distance`
+- `FadeIn` / `ScaleTo` 支持 `From` / `To`；`RotateTo` 使用角度
+- 声明 `Animations` 只接管该节点的默认 transition；声明 `Effects` 只接管 Effect，两者互不影响
+
 ## Data
 
 ```xml
