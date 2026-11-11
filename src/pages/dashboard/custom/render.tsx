@@ -13,6 +13,7 @@ import {
   isSafeHttpsUrl,
   resolvePath,
 } from './schema.ts'
+import { evaluateWhen } from './responsive.ts'
 import type {
   ActionSpec,
   ButtonNode,
@@ -36,6 +37,7 @@ import type {
   TextNode,
   UsingNode,
   WidgetNode,
+  WidgetSizeInfo,
 } from './types.ts'
 
 export interface RenderRuntime {
@@ -46,6 +48,7 @@ export interface RenderRuntime {
   results: Record<string, unknown>
   children: Record<string, unknown>
   overrides: Record<string, Record<string, unknown>>
+  size: WidgetSizeInfo
   onAction: (action?: ActionSpec, control?: string) => void
   renderUsing: (node: UsingNode) => ReactNode
   allowedHosts: Set<string>
@@ -96,9 +99,9 @@ const GRID_COLS: Record<number, string> = {
   4: 'grid-cols-4', 5: 'grid-cols-5', 6: 'grid-cols-6',
 }
 
-export function renderNodes(nodes: WidgetNode[], ctx: RenderContext, keyPrefix = ''): ReactNode[] {
+export function renderNodes(nodes: WidgetNode[], ctx: RenderContext, keyPrefix = '', root = false): ReactNode[] {
   return nodes.map((node, index) => (
-    <Fragment key={`${keyPrefix}${index}`}>{renderNode(node, ctx)}</Fragment>
+    <Fragment key={`${keyPrefix}${index}`}>{renderNode(node, ctx, root)}</Fragment>
   ))
 }
 
@@ -309,23 +312,24 @@ function attachedStyle(node: WidgetNode): CSSProperties | undefined {
   }
 }
 
-function renderNode(node: WidgetNode, ctx: RenderContext): ReactNode {
+function renderNode(node: WidgetNode, ctx: RenderContext, root = false): ReactNode {
   const effective = applyNodeOverrides(node, node.target ? ctx.overrides[node.target] : undefined)
   if (effective.visible === false) return null
+  if (effective.when && !evaluateWhen(effective.when, ctx.size)) return null
   switch (effective.kind) {
     case 'container':
-      return renderContainer(effective, ctx)
+      return renderContainer(effective, ctx, root)
     case 'row':
     case 'column':
-      return renderRowColumn(effective, ctx)
+      return renderRowColumn(effective, ctx, root)
     case 'grid':
-      return renderGrid(effective, ctx)
+      return renderGrid(effective, ctx, root)
     case 'tabs':
-      return <TabsView key="tabs" node={effective} ctx={ctx} />
+      return <TabsView key="tabs" node={effective} ctx={ctx} root={root} />
     case 'list':
-      return <ListView key="list" node={effective} ctx={ctx} />
+      return <ListView key="list" node={effective} ctx={ctx} root={root} />
     case 'if':
-      return isTruthy(resolvePath(ctx.scope, effective.test)) ? renderNodes(effective.children, ctx) : null
+      return isTruthy(resolvePath(ctx.scope, effective.test)) ? renderNodes(effective.children, ctx, '', root) : null
     case 'text':
       return renderText(effective, ctx)
     case 'button':
@@ -355,18 +359,21 @@ function renderNode(node: WidgetNode, ctx: RenderContext): ReactNode {
     case 'spacer':
       return renderSpacer(effective)
     case 'using':
-      return ctx.renderUsing(effective)
+      return root
+        ? <div className="flex min-h-0 flex-1 flex-col">{ctx.renderUsing(effective)}</div>
+        : ctx.renderUsing(effective)
     default:
       return null
   }
 }
 
-function renderContainer(node: ContainerNode, ctx: RenderContext): ReactNode {
+function renderContainer(node: ContainerNode, ctx: RenderContext, root = false): ReactNode {
   return (
     <div
       style={attachedStyle(node)}
       className={cn(
         'flex min-w-0',
+        root && 'min-h-0 flex-1',
         node.direction === 'Row' ? 'flex-row' : 'flex-col',
         node.border && 'border border-border/40',
         BACKGROUND[node.background],
@@ -382,12 +389,13 @@ function renderContainer(node: ContainerNode, ctx: RenderContext): ReactNode {
   )
 }
 
-function renderRowColumn(node: RowNode | ColumnNode, ctx: RenderContext): ReactNode {
+function renderRowColumn(node: RowNode | ColumnNode, ctx: RenderContext, root = false): ReactNode {
   return (
     <div
       style={attachedStyle(node)}
       className={cn(
         'flex min-w-0',
+        root && 'min-h-0 flex-1',
         node.kind === 'row' ? 'flex-row' : 'flex-col',
         node.wrap ? 'flex-wrap' : 'flex-nowrap',
         GAP[node.gap ?? 0],
@@ -401,12 +409,13 @@ function renderRowColumn(node: RowNode | ColumnNode, ctx: RenderContext): ReactN
   )
 }
 
-function renderGrid(node: GridNode, ctx: RenderContext): ReactNode {
+function renderGrid(node: GridNode, ctx: RenderContext, root = false): ReactNode {
   return (
     <div
       style={attachedStyle(node)}
       className={cn(
         'grid min-w-0',
+        root && 'min-h-0 flex-1',
         GRID_COLS[node.columns],
         GAP[node.gap ?? 0],
         PADDING[node.padding ?? 0],
@@ -423,22 +432,22 @@ function renderGrid(node: GridNode, ctx: RenderContext): ReactNode {
   )
 }
 
-function TabsView({ node, ctx }: { node: TabsNode; ctx: RenderContext }) {
+function TabsView({ node, ctx, root = false }: { node: TabsNode; ctx: RenderContext; root?: boolean }) {
   const [active, setActive] = useState(String(node.defaultIndex))
-  const visibleTabs = node.children.filter((tab) => tab.visible !== false)
+  const visibleTabs = node.children.filter((tab) => tab.visible !== false && (!tab.when || evaluateWhen(tab.when, ctx.size)))
   if (visibleTabs.length === 0) return null
   const index = Math.min(Number(active) || 0, visibleTabs.length - 1)
   const current = visibleTabs[index]
   const tabs = visibleTabs.map((child, i) => ({ id: String(i), label: interpolate(child.title, ctx.scope) }))
   return (
-    <div style={attachedStyle(node)} className="flex min-w-0 flex-col gap-2">
+    <div style={attachedStyle(node)} className={cn('flex min-w-0 flex-col gap-2', root && 'min-h-0 flex-1')}>
       <Tabs tabs={tabs} activeTab={String(index)} onChange={setActive} />
-      <div className="min-w-0">{renderNodes(current?.children ?? [], ctx, `tab${index}-`)}</div>
+      <div className={cn('min-w-0', root && 'min-h-0 flex-1 overflow-auto')}>{renderNodes(current?.children ?? [], ctx, `tab${index}-`)}</div>
     </div>
   )
 }
 
-function ListView({ node, ctx }: { node: ListNode; ctx: RenderContext }) {
+function ListView({ node, ctx, root = false }: { node: ListNode; ctx: RenderContext; root?: boolean }) {
   const value = Array.isArray(node.items) ? node.items : resolvePath(ctx.scope, node.items as string)
   const items = Array.isArray(value) ? value.slice(0, WIDGET_LIMITS.maxListItems) : []
   if (items.length === 0) {
@@ -446,8 +455,8 @@ function ListView({ node, ctx }: { node: ListNode; ctx: RenderContext }) {
     return <span className="text-xs text-muted-foreground">{interpolate(node.emptyText, ctx.scope)}</span>
   }
   return (
-    <div style={attachedStyle(node)} className={cn('flex min-w-0 flex-col', GAP[node.gap ?? 0])}>
-      {node.item.visible === false ? null : items.map((item, index) => (
+    <div style={attachedStyle(node)} className={cn('flex min-w-0 flex-col', GAP[node.gap ?? 0], root && 'min-h-0 flex-1 overflow-auto')}>
+      {node.item.visible === false || (node.item.when && !evaluateWhen(node.item.when, ctx.size)) ? null : items.map((item, index) => (
         <Fragment key={index}>
           {renderNode(node.item.child, {
             ...ctx,

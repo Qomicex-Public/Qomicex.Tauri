@@ -274,6 +274,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
       Inputs: previewInputs,
       Results: previewResults,
       Children: {},
+      Size: { Width: 2, Height: 2, PixelWidth: 0, PixelHeight: 0 },
       State: { Loading: false, Error: false },
     }
   }, [sample, previewResources, previewInputs, previewResults])
@@ -465,6 +466,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
       OpenUrl: () => {},
       Navigate: () => {},
       Log: (message) => console.warn('[widget-preview]', message),
+      GetSize: async () => null,
       SetProperty: async () => null,
       GetProperty: async () => null,
       Invoke: async () => null,
@@ -494,6 +496,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
       OpenUrl: () => {},
       Navigate: () => {},
       Log: () => {},
+      GetSize: async () => null,
       SetProperty: async () => null,
       GetProperty: async () => null,
       Invoke: async () => null,
@@ -523,6 +526,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
     results: previewResults,
     children: {},
     overrides: {},
+    size: { Width: 2, Height: 2, PixelWidth: 0, PixelHeight: 0 },
     onAction: (action) => { void previewAction(action) },
     renderUsing: (node) => (
       <span className="rounded border border-dashed border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">

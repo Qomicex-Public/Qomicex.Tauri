@@ -66,6 +66,7 @@ import type {
   WidgetDocument,
   WidgetNode,
 } from './types.ts'
+import { validateWhen } from './responsive.ts'
 
 interface ParseCtx {
   nodes: number
@@ -766,6 +767,7 @@ function parseTabs(el: Element, ctx: ParseCtx, depth: number): TabsNode {
       title: requiredAttr(split.attrs, 'TabItem', 'Title'),
       target: meta.target,
       visible: meta.visible,
+      when: meta.when,
       children: parseChildren(child, ctx, depth + 2),
     })
   }
@@ -803,6 +805,7 @@ function parseList(el: Element, ctx: ParseCtx, depth: number): ListNode {
     kind: 'listItem',
     target: itemMeta.target,
     visible: itemMeta.visible,
+    when: itemMeta.when,
     child: parseNode(itemSplit.children[0], ctx, depth + 2),
   }
   return {
@@ -831,10 +834,20 @@ function parseIf(el: Element, ctx: ParseCtx, depth: number): IfNode {
 function baseNode(_tag: string, attrs: Map<string, string>) {
   const target = attr(attrs, 'Target')?.trim() || undefined
   if (target) validateIdentifier(target, `${_tag}@Target`)
+  const rawWhen = attr(attrs, 'When')?.trim()
+  let when: string | undefined
+  if (rawWhen) {
+    try {
+      when = validateWhen(rawWhen)
+    } catch {
+      throw new WidgetError('invalidAttribute', `${_tag}@When=${rawWhen}`)
+    }
+  }
   return {
     attached: parseAttached(attrs),
     target,
     visible: attrs.has('Visible') ? boolAttr(attrs, _tag, 'Visible', true) : undefined,
+    when,
   }
 }
 

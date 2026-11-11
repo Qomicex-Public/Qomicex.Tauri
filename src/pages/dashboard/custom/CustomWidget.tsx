@@ -7,7 +7,7 @@ import { useMessageBox } from '../../../components/ui'
 import { useI18n } from '../../../i18n/index.tsx'
 import { fetchWidgetUrl } from '../../../api/widgets.ts'
 import { openExternalUrl } from '../../../api/system.ts'
-import { useDashboard } from '../context.tsx'
+import { useDashboard, useWidgetSize } from '../context.tsx'
 import { runWidgetAction } from './actions.ts'
 import {
   collectAutoHosts,
@@ -41,6 +41,7 @@ import type {
   UsingNode,
   WidgetDocument,
   WidgetNode,
+  WidgetSizeInfo,
 } from './types.ts'
 import { parseWidgetXml } from './xml.ts'
 
@@ -124,6 +125,7 @@ function dataScopeOf(data: Record<string, unknown>, sources: WidgetDocument['dat
 export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, preview = false }: CustomWidgetProps) {
   const { t } = useI18n()
   const { defaultInstance, launch, refresh, resolveAccountCheck } = useDashboard()
+  const gridSize = useWidgetSize()
   const navigate = useNavigate()
   const { notify, error: showError } = useMessageBox()
   const setCachedData = useCustomWidgetStore((s) => s.setData)
@@ -150,18 +152,23 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [tick, setTick] = useState(0)
+  const [pixelSize, setPixelSize] = useState({ width: 0, height: 0 })
   const [launcherVersion, setLauncherVersion] = useState<string | null>(null)
   const objectUrls = useRef(new Set<string>())
   const sandboxRef = useRef<ScriptSandbox | null>(null)
   const triggerRate = useRef<number[]>([])
   const loadedRef = useRef<string | null>(null)
+  const lastResizeRef = useRef<string | null>(null)
   const lastSnapshot = useRef('')
   const forceRefreshRef = useRef(false)
   const lastInitialInputs = useRef('')
+  const rootRef = useRef<HTMLDivElement>(null)
+  const sizeRef = useRef<WidgetSizeInfo>({ Width: 0, Height: 0, PixelWidth: 0, PixelHeight: 0 })
   const executeFunctionRef = useRef<(name: string, trigger: TriggerNode) => void>(() => {})
   const runtimeRef = useRef<{
     setProperty: (target: string, property: string, value: unknown) => Promise<unknown>
     getProperty: (target: string, property: string) => Promise<unknown>
+    getSize: () => Promise<WidgetSizeInfo>
     invoke: (target: string, method: string, args: unknown[]) => Promise<unknown>
   } | null>(null)
 
@@ -253,6 +260,31 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
 
   const resources = useMemo(() => (doc ? parseResourceEntries(doc.resources, trackUrl) : {}), [doc, trackUrl])
 
+  const size = useMemo<WidgetSizeInfo>(() => ({
+    Width: gridSize.w,
+    Height: gridSize.h,
+    PixelWidth: pixelSize.width,
+    PixelHeight: pixelSize.height,
+  }), [gridSize.w, gridSize.h, pixelSize.width, pixelSize.height])
+
+  useEffect(() => {
+    sizeRef.current = size
+  }, [size])
+
+  useEffect(() => {
+    const element = rootRef.current
+    if (!element) return
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect
+      if (!rect) return
+      const width = Math.round(rect.width)
+      const height = Math.round(rect.height)
+      setPixelSize((prev) => (prev.width === width && prev.height === height ? prev : { width, height }))
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [doc])
+
   const scope = useMemo(() => {
     const named: Record<string, unknown> = { ...data }
     return {
@@ -262,9 +294,10 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
       Inputs: inputs,
       Results: results,
       Children: children,
+      Size: size,
       State: { Loading: loading, Error: !!error },
     }
-  }, [data, doc, resources, inputs, results, children, loading, error])
+  }, [data, doc, resources, inputs, results, children, size, loading, error])
 
   const outputs = useMemo(
     () => (doc ? resolveOutputValues(doc.outputs, (source) => resolvePath(scope, source)) : {}),
@@ -310,8 +343,9 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     return coerced
   }, [doc, setInput])
 
-  const getProperty = useCallback(async (target: string, property: string): Promise<unknown> => {
-    if (!doc) throw new Error('组件未加载')
+  const getSize = useCallback(async (): Promise<WidgetSizeInfo> => sizeRef.current, [])
+
+  const getProperty = useCallback(async (target: string, property: string): Promise<unknown> => {    if (!doc) throw new Error('组件未加载')
     if (NON_PROPERTY_ATTRS.has(property)) throw new Error(`不可读写属性: ${property}`)
     const node = findNodeByTarget(doc.nodes, target)
     if (!node) throw new Error(`找不到 Target: ${target}`)
@@ -444,6 +478,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
         },
         Navigate: (path) => navigate(path),
         Log: (message) => console.warn('[widget]', message),
+        GetSize: () => runtimeRef.current?.getSize() ?? Promise.reject(new Error('组件运行时不可用')),
         SetProperty: (target, property, value) => runtimeRef.current?.setProperty(target, property, value) ?? Promise.reject(new Error('组件运行时不可用')),
         GetProperty: (target, property) => runtimeRef.current?.getProperty(target, property) ?? Promise.reject(new Error('组件运行时不可用')),
         Invoke: (target, method, args) => runtimeRef.current?.invoke(target, method, args) ?? Promise.reject(new Error('组件运行时不可用')),
@@ -474,6 +509,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
         data,
         results,
         scope: { ...scope, Inputs: inputsRef.current },
+        size,
       })
       setResults((prev) => ({ ...prev, [name]: output }))
     },
@@ -501,7 +537,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     },
     scope: { ...scope, Inputs: inputsRef.current },
     t,
-  }), [defaultInstance, launch, refresh, resolveAccountCheck, notify, navigate, sandbox, doc, resources, data, results, scope, preview, def, t])
+  }), [defaultInstance, launch, refresh, resolveAccountCheck, notify, navigate, sandbox, doc, resources, data, results, scope, size, preview, def, t])
   const executeAction = useCallback(async (action: ActionSpec | undefined, control?: string) => {
     if (!action && !control) return
     if (control) fireTriggerRef.current?.('Click', control)
@@ -566,8 +602,8 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   }, [doc, executeAction, setProperty, getProperty, def.id])
 
   useEffect(() => {
-    runtimeRef.current = { setProperty, getProperty, invoke }
-  }, [setProperty, getProperty, invoke])
+    runtimeRef.current = { setProperty, getProperty, getSize, invoke }
+  }, [setProperty, getProperty, getSize, invoke])
 
   const fireTrigger = useCallback((event: string, target: string) => {
     if (!doc) return
@@ -600,12 +636,13 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
         data,
         results,
         scope: { ...scope, Inputs: inputsRef.current },
+        size,
       })
       setResults((prev) => ({ ...prev, [name]: output }))
     } catch (error) {
       showError(error instanceof Error ? error.message : String(error), t('dashboard.custom.functionFailed'))
     }
-  }, [doc, sandbox, resources, data, results, scope, showError, t])
+  }, [doc, sandbox, resources, data, results, scope, size, showError, t])
   executeFunctionRef.current = executeFunctionByName
 
   // Loaded 触发器：每次组件挂载/XML 变化后执行一次。
@@ -613,10 +650,26 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     if (!doc) return
     const key = `${def.id}:${def.xml.length}`
     if (loadedRef.current === key) return
-    loadedRef.current = key
-    const timer = setTimeout(() => fireTrigger('Loaded', ''), 0)
+    const timer = setTimeout(() => {
+      loadedRef.current = key
+      fireTriggerRef.current?.('Loaded', '')
+    }, 0)
     return () => clearTimeout(timer)
-  }, [doc, def.id, def.xml, fireTrigger])
+  }, [doc, def.id, def.xml])
+
+  // 尺寸变化后防抖触发 Resize；首次尺寸只记录，交给 Loaded 处理初始布局。
+  useEffect(() => {
+    if (!doc || preview) return
+    const signature = `${size.Width}:${size.Height}:${size.PixelWidth}:${size.PixelHeight}`
+    if (lastResizeRef.current === null) {
+      lastResizeRef.current = signature
+      return
+    }
+    if (lastResizeRef.current === signature) return
+    lastResizeRef.current = signature
+    const timer = setTimeout(() => fireTriggerRef.current?.('Resize', ''), 150)
+    return () => clearTimeout(timer)
+  }, [doc, preview, size.Width, size.Height, size.PixelWidth, size.PixelHeight])
 
   // Timer 触发器。
   useEffect(() => {
@@ -680,6 +733,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     results,
     children,
     overrides,
+    size,
     onAction: (action, control) => { void executeAction(action, control) },
     renderUsing,
     allowedHosts: new Set(def.hosts),
@@ -704,8 +758,8 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   if (doc.nodes.length === 0) return null
 
   return (
-    <div className="h-full min-h-0 overflow-auto" data-widget-version={doc.version} data-widget-root={def.id}>
-      {renderNodes(doc.nodes, renderContext)}
+    <div ref={rootRef} className="flex h-full min-h-0 flex-col overflow-auto" data-widget-version={doc.version} data-widget-root={def.id}>
+      {renderNodes(doc.nodes, renderContext, '', true)}
     </div>
   )
 }

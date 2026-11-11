@@ -33,6 +33,15 @@ export interface NodeBase {
   /** 脚本定位键，与输入控件的 Name 分离。 */
   target?: string
   visible?: boolean
+  /** 尺寸条件，如 "Size.Width <= 1"；不满足时不渲染。 */
+  when?: string
+}
+
+export interface WidgetSizeInfo {
+  Width: number
+  Height: number
+  PixelWidth: number
+  PixelHeight: number
 }
 
 export type FieldType = (typeof FIELD_TYPES)[number]
@@ -88,6 +97,7 @@ export interface TabItemNode {
   title: Bindable
   target?: string
   visible?: boolean
+  when?: string
   children: WidgetNode[]
 }
 
@@ -101,6 +111,7 @@ export interface ListItemNode {
   kind: 'listItem'
   target?: string
   visible?: boolean
+  when?: string
   child: WidgetNode
 }
 

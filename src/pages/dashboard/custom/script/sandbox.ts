@@ -12,12 +12,13 @@ export interface ScriptHost {
   OpenUrl: (url: string) => unknown | Promise<unknown>
   Navigate: (path: string) => unknown | Promise<unknown>
   Log: (message: string) => unknown | Promise<unknown>
+  GetSize: () => unknown | Promise<unknown>
   SetProperty: (target: string, property: string, value: unknown) => unknown | Promise<unknown>
   GetProperty: (target: string, property: string) => unknown | Promise<unknown>
   Invoke: (target: string, method: string, args: unknown[]) => unknown | Promise<unknown>
 }
 
-const HOST_METHODS = new Set(['Notify', 'OpenUrl', 'Navigate', 'Log', 'SetProperty', 'GetProperty', 'Invoke'])
+const HOST_METHODS = new Set(['Notify', 'OpenUrl', 'Navigate', 'Log', 'GetSize', 'SetProperty', 'GetProperty', 'Invoke'])
 
 export interface ScriptPayload {
   Input: unknown
@@ -25,6 +26,7 @@ export interface ScriptPayload {
   Resources: Record<string, unknown>
   Data: Record<string, unknown>
   Results: Record<string, unknown>
+  Size: { Width: number; Height: number; PixelWidth: number; PixelHeight: number }
 }
 
 export interface ScriptRunResult {
@@ -58,6 +60,7 @@ const IFRAME_SRC = `<!doctype html>
     OpenUrl: function (url) { return callHost('OpenUrl', [String(url)]); },
     Navigate: function (path) { return callHost('Navigate', [String(path)]); },
     Log: function (message) { return callHost('Log', [String(message)]); },
+    GetSize: function () { return callHost('GetSize', []); },
     SetProperty: function (target, property, value) { return callHost('SetProperty', [String(target), String(property), value]); },
     GetProperty: function (target, property) { return callHost('GetProperty', [String(target), String(property)]); },
     Invoke: function (target, method, args) { return callHost('Invoke', [String(target), String(method), Array.isArray(args) ? args : (args === undefined ? [] : [args])]); }
@@ -76,9 +79,9 @@ const IFRAME_SRC = `<!doctype html>
     var id = data.id;
     var run = async function () {
       try {
-        var fn = new Function('Input', 'Inputs', 'Resources', 'Data', 'Results', 'Host',
+        var fn = new Function('Input', 'Inputs', 'Resources', 'Data', 'Results', 'Size', 'Host',
           '"use strict"; return (async () => {\\n' + data.code + '\\n})();');
-        var result = await fn(data.payload.Input, data.payload.Inputs, data.payload.Resources, data.payload.Data, data.payload.Results, host);
+        var result = await fn(data.payload.Input, data.payload.Inputs, data.payload.Resources, data.payload.Data, data.payload.Results, data.payload.Size, host);
         send({ type: 'qomicex-script-result', id: id, ok: true, result: normalize(result) });
       } catch (error) {
         send({ type: 'qomicex-script-result', id: id, ok: false, error: String(error && error.stack ? error.stack : error) });

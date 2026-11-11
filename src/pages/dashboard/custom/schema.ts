@@ -113,7 +113,7 @@ export const RADIUS_VALUES = ['None', 'Sm', 'Md', 'Lg', 'Full'] as const
 export const DATA_TYPES = ['Json', 'Text', 'Xml', 'Binary'] as const
 export const DATA_SOURCES = ['Url', 'File'] as const
 export const MEDIA_TYPES = ['Audio', 'Video'] as const
-export const TRIGGER_EVENTS = ['Loaded', 'DataChanged', 'Click', 'Timer'] as const
+export const TRIGGER_EVENTS = ['Loaded', 'DataChanged', 'Click', 'Timer', 'Resize'] as const
 export const FIELD_TYPES = ['String', 'Number', 'Bool', 'DateTime', 'Json', 'Binary'] as const
 
 /** 元素 → 允许属性。未知元素/属性一律解析失败。 */
@@ -166,7 +166,7 @@ export const LINK_BASE_ATTRS = ['Name', 'Text', 'Url', 'OnClick', 'To'] as const
 export const ATTACHED_ATTRS = ['Grid.Row', 'Grid.Column', 'Grid.RowSpan', 'Grid.ColumnSpan'] as const
 
 /** 所有节点通用：Target 供脚本定位，Visible 控制显隐。 */
-export const NODE_ATTRS = ['Target', 'Visible'] as const
+export const NODE_ATTRS = ['Target', 'Visible', 'When'] as const
 
 /**
  * ContentProperty 映射：标签之间的文本等价于给这个属性赋值。

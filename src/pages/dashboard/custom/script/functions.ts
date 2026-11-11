@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { interpolateDeep } from '../schema.ts'
-import type { ActionSpec, FunctionNode, StructDef } from '../types.ts'
+import type { ActionSpec, FunctionNode, StructDef, WidgetSizeInfo } from '../types.ts'
 import type { ScriptSandbox } from './sandbox.ts'
 
 export interface FunctionContext {
@@ -11,6 +11,7 @@ export interface FunctionContext {
   data: Record<string, unknown>
   results: Record<string, unknown>
   scope: Record<string, unknown>
+  size?: WidgetSizeInfo
 }
 
 function structByName(fn: FunctionNode, name: string): StructDef | undefined {
@@ -95,6 +96,7 @@ export async function runFunction(
     Resources: ctx.resources,
     Data: ctx.data,
     Results: ctx.results,
+    Size: ctx.size ?? (ctx.scope.Size as WidgetSizeInfo | undefined) ?? { Width: 0, Height: 0, PixelWidth: 0, PixelHeight: 0 },
   }, Math.min(Math.max(fn.timeout, 100), 10000))
   if (!result.ok) throw new Error(result.error || '脚本执行失败')
   return validateOutputs(fn, result.value)
