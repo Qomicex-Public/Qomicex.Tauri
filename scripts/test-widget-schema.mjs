@@ -44,7 +44,7 @@ function throwsCode(name, fn, code) {
 try {
   execFileSync(
     process.execPath,
-    [tsc, source, '--outDir', outDir, '--module', 'commonjs', '--target', 'es2022', '--skipLibCheck'],
+    [tsc, source, '--outDir', outDir, '--module', 'commonjs', '--target', 'es2022', '--skipLibCheck', '--allowImportingTsExtensions', '--rewriteRelativeImportExtensions'],
     { stdio: 'inherit' },
   )
   const require = createRequire(import.meta.url)
@@ -69,6 +69,49 @@ try {
     '深度插值保留类型',
     schema.interpolateDeep({ age: '{in.age}', name: 'x-{in.name}', nested: ['{in.age}'] }, { in: { age: 18, name: 'A' } }),
     { age: 18, name: 'x-A', nested: [18] },
+  )
+
+  const converterList = [
+    { name: 'Money', type: 'Format', format: 'N2' },
+    { name: 'Visible', type: 'BoolToVisibility' },
+    { name: 'Label', type: 'Map', map: [{ from: 'True', to: '开' }, { from: 'False', to: '关' }] },
+    { name: 'Join', type: 'Join' },
+    { name: 'Double', type: 'Script', convertScript: 'return Number(value) * 2' },
+  ]
+  check(
+    'Binding 单值 Converter',
+    schema.interpolate('{Binding price, Converter=Money}', { price: 12.3 }, { converters: converterList, locale: 'en-US' }),
+    '12.30',
+  )
+  check(
+    'Binding 参数覆盖',
+    schema.interpolate('{Binding price, Converter=Money, ConverterParameter="N1"}', { price: 12.34 }, { converters: converterList, locale: 'en-US' }),
+    '12.3',
+  )
+  check(
+    'Binding BoolToVisibility',
+    schema.interpolate('{Binding flag, Converter=Visible}', { flag: true }, { converters: converterList }),
+    'Visible',
+  )
+  check(
+    'Binding Map 布尔大小写',
+    schema.interpolate('{Binding flag, Converter=Label}', { flag: true }, { converters: converterList }),
+    '开',
+  )
+  check(
+    'MultiBinding Join',
+    schema.interpolate('{MultiBinding Paths="first|last", Converter=Join, ConverterParameter=" "}', { first: 'A', last: 'B' }, { converters: converterList }),
+    'A B',
+  )
+  check(
+    'Binding 脚本 Converter',
+    schema.interpolate('{Binding price, Converter=Double}', { price: 4 }, { converters: converterList }),
+    '8',
+  )
+  check(
+    '精确 Binding 保留类型',
+    schema.interpolateDeep('{Binding price, Converter=Double}', { price: 4 }, { converters: converterList }),
+    8,
   )
 
   // ---- URL ----

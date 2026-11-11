@@ -1,6 +1,8 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import { convertMultiValue, convertValue, parseBinding, type BindingOptions } from './converters.ts'
+
 // QWidget v2 XML 的白名单、限制与纯函数工具。
 // 元素/属性/枚举值统一大驼峰；解析层只做 DOM 遍历，安全判定集中在这里。
 
@@ -17,6 +19,8 @@ export const WIDGET_LIMITS = {
   updateTtlMs: 6 * 60 * 60 * 1000,
   maxNestedDepth: 5,
   maxNestedInstances: 20,
+  maxConverters: 32,
+  maxMapEntries: 64,
   maxScriptBytes: 64 * 1024,
   defaultScriptTimeoutMs: 3000,
   maxScriptTimeoutMs: 10000,
@@ -124,6 +128,23 @@ export const TTL_VALUES = ['Default', 'Immediately', 'PreLaunch', 'PreLoad', 'No
 export type TtlSpec = number | (typeof TTL_VALUES)[number]
 export const TRIGGER_EVENTS = ['Loaded', 'DataChanged', 'Click', 'Timer', 'Resize'] as const
 export const FIELD_TYPES = ['String', 'Number', 'Bool', 'DateTime', 'Json', 'Binary'] as const
+export const CONVERTER_TYPES = [
+  'String',
+  'Number',
+  'Bool',
+  'DateTime',
+  'Json',
+  'Format',
+  'Map',
+  'BoolToVisibility',
+  'Upper',
+  'Lower',
+  'Join',
+  'Script',
+] as const
+export const ANIMATION_KINDS = ['FadeIn', 'SlideIn', 'ScaleTo', 'RotateTo', 'Pulse', 'Spin'] as const
+export const ANIMATION_TRIGGERS = ['Loaded', 'Hover', 'Click'] as const
+export const ANIMATION_EASINGS = ['Linear', 'Ease', 'EaseIn', 'EaseOut', 'EaseInOut'] as const
 
 /** 元素 → 允许属性。未知元素/属性一律解析失败。 */
 export const ELEMENT_ATTRS: Record<string, readonly string[]> = {
@@ -132,6 +153,17 @@ export const ELEMENT_ATTRS: Record<string, readonly string[]> = {
   Input: ['Name', 'Type', 'Required', 'Default'],
   'Widget.Outputs': [],
   Output: ['Name', 'Type', 'Source'],
+  'Widget.Converters': [],
+  Converters: [],
+  Converter: ['Name', 'Type', 'Format'],
+  MapEntry: ['From', 'To'],
+  Animations: [],
+  FadeIn: ['Duration', 'Delay', 'Easing', 'Repeat', 'Trigger', 'From', 'To'],
+  SlideIn: ['Duration', 'Delay', 'Easing', 'Repeat', 'Trigger', 'Direction', 'Distance'],
+  ScaleTo: ['Duration', 'Delay', 'Easing', 'Repeat', 'Trigger', 'From', 'To'],
+  RotateTo: ['Duration', 'Delay', 'Easing', 'Repeat', 'Trigger', 'From', 'To'],
+  Pulse: ['Duration', 'Delay', 'Easing', 'Repeat', 'Trigger'],
+  Spin: ['Duration', 'Delay', 'Easing', 'Repeat', 'Trigger'],
   Data: ['Name', 'Type', 'Source', 'Url', 'Path', 'Mime', 'Refresh', 'Async'],
   Resources: [],
   String: ['Name', 'Text'],
@@ -218,6 +250,7 @@ export const ATTRIBUTE_VALUES: Record<string, Record<string, readonly string[]>>
   '*': {
     Visible: ['True', 'False'],
     When: ['Size.Width &lt;= 1', 'Size.Width &gt;= 2', 'Size.PixelWidth &lt; 420'],
+    Animations: [],
   },
   Widget: {
     UpdateTTL: TTL_VALUES,
@@ -226,6 +259,34 @@ export const ATTRIBUTE_VALUES: Record<string, Record<string, readonly string[]>>
   Input: {
     Type: FIELD_TYPES,
     Required: ['True', 'False'],
+  },
+  Converter: {
+    Type: CONVERTER_TYPES,
+  },
+  FadeIn: {
+    Trigger: ANIMATION_TRIGGERS,
+    Easing: ANIMATION_EASINGS,
+  },
+  SlideIn: {
+    Trigger: ANIMATION_TRIGGERS,
+    Easing: ANIMATION_EASINGS,
+    Direction: ['Left', 'Right', 'Top', 'Bottom'],
+  },
+  ScaleTo: {
+    Trigger: ANIMATION_TRIGGERS,
+    Easing: ANIMATION_EASINGS,
+  },
+  RotateTo: {
+    Trigger: ANIMATION_TRIGGERS,
+    Easing: ANIMATION_EASINGS,
+  },
+  Pulse: {
+    Trigger: ANIMATION_TRIGGERS,
+    Easing: ANIMATION_EASINGS,
+  },
+  Spin: {
+    Trigger: ANIMATION_TRIGGERS,
+    Easing: ANIMATION_EASINGS,
   },
   Output: {
     Type: FIELD_TYPES,
@@ -381,6 +442,8 @@ export type WidgetErrorCode =
   | 'invalidFunction'
   | 'invalidStruct'
   | 'invalidScript'
+  | 'invalidConverter'
+  | 'invalidAnimation'
   | 'invalidUsing'
   | 'nestedTooDeep'
   | 'nestedCycle'
@@ -436,21 +499,43 @@ export function stringifyBinding(value: unknown): string {
 }
 
 /** 把 `{path}` 插值成字符串；未命中为空串。 */
-export function interpolate(template: string, scope: unknown): string {
-  return template.replace(BINDING, (_, token: string) => stringifyBinding(resolvePath(scope, token)))
+function applyBindingToken(token: string, scope: Record<string, unknown>, options: BindingOptions): unknown {
+  const binding = parseBinding(`{${token}}`)
+  if (!binding) return resolvePath(scope, token)
+  const values = binding.paths
+    ? binding.paths.map((path) => resolvePath(scope, path))
+    : [resolvePath(scope, binding.path ?? '')]
+  return binding.paths
+    ? convertMultiValue(values, binding.converter, binding.parameter, options, scope)
+    : convertValue(values[0], binding.converter, binding.parameter, options, scope)
+}
+
+export function interpolate(template: string, scope: unknown, options: BindingOptions = {}): string {
+  const root = scope && typeof scope === 'object' ? scope as Record<string, unknown> : {}
+  return template.replace(BINDING, (_, token: string) => stringifyBinding(applyBindingToken(token, root, options)))
 }
 
 /** JSON/对象参数递归插值：整个值就是一个绑定时保留原始类型。 */
-export function interpolateDeep(value: unknown, scope: unknown): unknown {
+export function interpolateDeep(value: unknown, scope: unknown, options: BindingOptions = {}): unknown {
   if (typeof value === 'string') {
+    const binding = parseBinding(value)
+    if (binding) {
+      const root = scope && typeof scope === 'object' ? scope as Record<string, unknown> : {}
+      const values = binding.paths
+        ? binding.paths.map((path) => resolvePath(root, path))
+        : [resolvePath(root, binding.path ?? '')]
+      return binding.paths
+        ? convertMultiValue(values, binding.converter, binding.parameter, options, root)
+        : convertValue(values[0], binding.converter, binding.parameter, options, root)
+    }
     const exact = value.trim().match(/^\{([^{}]+)\}$/s)
     if (exact) return resolvePath(scope, exact[1])
-    return interpolate(value, scope)
+    return interpolate(value, scope, options)
   }
-  if (Array.isArray(value)) return value.map((item) => interpolateDeep(item, scope))
+  if (Array.isArray(value)) return value.map((item) => interpolateDeep(item, scope, options))
   if (value && typeof value === 'object') {
     const out: Record<string, unknown> = {}
-    for (const [key, item] of Object.entries(value)) out[key] = interpolateDeep(item, scope)
+    for (const [key, item] of Object.entries(value)) out[key] = interpolateDeep(item, scope, options)
     return out
   }
   return value

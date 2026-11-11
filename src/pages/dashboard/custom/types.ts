@@ -39,6 +39,7 @@ export interface NodeBase {
   /** 引用 Resource Type="Page" 的页面名。 */
   contentPage?: string
   effects?: EffectSpec[]
+  animations?: AnimationSpec[]
 }
 
 export interface WidgetSizeInfo {
@@ -104,6 +105,7 @@ export interface TabItemNode {
   when?: string
   contentPage?: string
   effects?: EffectSpec[]
+  animations?: AnimationSpec[]
   children: WidgetNode[]
 }
 
@@ -120,6 +122,7 @@ export interface ListItemNode {
   when?: string
   contentPage?: string
   effects?: EffectSpec[]
+  animations?: AnimationSpec[]
   child?: WidgetNode
 }
 
@@ -196,7 +199,7 @@ export interface CheckBoxNode extends NodeBase {
 export interface SliderNode extends NodeBase {
   kind: 'slider'
   name: string
-  value: number
+  value: number | Bindable
   min: number
   max: number
   step: number
@@ -261,6 +264,55 @@ export type EffectSpec =
   | { kind: 'opacity'; value: number }
   | { kind: 'scale'; value: number }
   | { kind: 'rotate'; angle: number }
+
+export type ConverterType =
+  | 'String'
+  | 'Number'
+  | 'Bool'
+  | 'DateTime'
+  | 'Json'
+  | 'Format'
+  | 'Map'
+  | 'BoolToVisibility'
+  | 'Upper'
+  | 'Lower'
+  | 'Join'
+  | 'Script'
+
+export interface ConverterSpec {
+  name: string
+  type: ConverterType
+  format?: string
+  map?: Array<{ from: string; to: string }>
+  convertScript?: string
+  convertBackScript?: string
+}
+
+export type BindingMode = 'OneWay' | 'TwoWay' | 'OneWayToSource'
+
+export interface BindingSpec {
+  path?: string
+  paths?: string[]
+  converter?: string
+  parameter?: string
+  mode: BindingMode
+}
+
+export type AnimationKind = 'fade' | 'slide' | 'scale' | 'rotate' | 'pulse' | 'spin'
+export type AnimationTrigger = 'Loaded' | 'Hover' | 'Click'
+
+export interface AnimationSpec {
+  kind: AnimationKind
+  duration: number
+  delay: number
+  easing: string
+  repeat: number | 'Infinite'
+  trigger: AnimationTrigger
+  from?: number
+  to?: number
+  direction?: 'Left' | 'Right' | 'Top' | 'Bottom'
+  distance?: number
+}
 
 export interface SpacerNode extends NodeBase {
   kind: 'spacer'
@@ -367,6 +419,7 @@ export interface WidgetDocument {
   launcherVersion?: string
   inputs: InputDecl[]
   outputs: OutputDecl[]
+  converters: ConverterSpec[]
   datas: DataSourceSpec[]
   resources: ResourceEntry[]
   pages: Record<string, PageNode[]>

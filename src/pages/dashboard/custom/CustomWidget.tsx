@@ -9,6 +9,7 @@ import { fetchWidgetUrl } from '../../../api/widgets.ts'
 import { openExternalUrl } from '../../../api/system.ts'
 import { useDashboard, useWidgetSize } from '../context.tsx'
 import { runWidgetAction } from './actions.ts'
+import type { BindingOptions } from './converters.ts'
 import {
   collectAutoHosts,
   compareVersions,
@@ -204,7 +205,7 @@ function collectShortcuts(
 }
 
 export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, preview = false }: CustomWidgetProps) {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const { defaultInstance, launch, refresh, resolveAccountCheck } = useDashboard()
   const gridSize = useWidgetSize()
   const navigate = useNavigate()
@@ -352,6 +353,9 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
             return
           }
         }
+        if (cancelled) return
+        const currentDef = useCustomWidgetStore.getState().defs.find((item) => item.id === def.id)
+        if (!currentDef || currentDef.xml !== def.xml) return
         const hosts = collectAutoHosts({
           datas: next.datas,
           updateUrl: next.updateUrl,
@@ -436,6 +440,11 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   const outputs = useMemo(
     () => (doc ? resolveOutputValues(doc.outputs, (source) => resolvePath(scope, source)) : {}),
     [doc, scope],
+  )
+
+  const bindingOptions = useMemo(
+    () => ({ converters: doc?.converters ?? [], locale: lang, targetType: 'string' }),
+    [doc, lang],
   )
 
   const setInput = useCallback((name: string, value: unknown) => {
@@ -994,10 +1003,11 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
       chain={chain}
       parentScope={scope}
       parentAllowedHosts={new Set(def.hosts)}
+      bindingOptions={bindingOptions}
       onSnapshot={(child) => setChildren((prev) => ({ ...prev, [node.as]: child }))}
       preview={preview}
     />
-  ), [chain, scope, def.hosts, preview])
+  ), [chain, scope, def.hosts, bindingOptions, preview])
 
   const renderContext: RenderContext = {
     scope,
@@ -1009,6 +1019,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     children,
     overrides,
     effects: effectOverrides,
+    bindingOptions,
     size,
     pages: doc?.pages ?? {},
     openDialogs,
@@ -1062,11 +1073,12 @@ interface NestedUsingProps {
   chain: string[]
   parentScope: Record<string, unknown>
   parentAllowedHosts: Set<string>
+  bindingOptions: BindingOptions
   onSnapshot: (snapshot: ChildSnapshot) => void
   preview: boolean
 }
 
-function NestedUsing({ node, chain, parentScope, parentAllowedHosts, onSnapshot, preview }: NestedUsingProps) {
+function NestedUsing({ node, chain, parentScope, parentAllowedHosts, bindingOptions, onSnapshot, preview }: NestedUsingProps) {
   const { t } = useI18n()
   const { confirm } = useMessageBox()
   const defs = useCustomWidgetStore((s) => s.defs)
@@ -1186,7 +1198,7 @@ function NestedUsing({ node, chain, parentScope, parentAllowedHosts, onSnapshot,
   if (node.argumentsJson) {
     try {
       const parsed = JSON.parse(node.argumentsJson) as unknown
-      args = interpolateDeep(parsed, parentScope) as Record<string, unknown>
+      args = interpolateDeep(parsed, parentScope, bindingOptions) as Record<string, unknown>
     } catch {
       return <WidgetErrorBox message={t('dashboard.custom.invalidArguments')} />
     }

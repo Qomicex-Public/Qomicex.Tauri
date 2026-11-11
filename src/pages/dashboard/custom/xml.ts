@@ -10,6 +10,10 @@ import {
   DATA_SOURCES,
   DATA_TYPES,
   DIALOG_SIZES,
+  ANIMATION_EASINGS,
+  ANIMATION_KINDS,
+  ANIMATION_TRIGGERS,
+  CONVERTER_TYPES,
   ELEMENT_ATTRS,
   FIELD_TYPES,
   FOLDER_TARGETS,
@@ -33,8 +37,11 @@ import {
 } from './schema.ts'
 import type {
   ActionSpec,
+  AnimationSpec,
   ButtonNode,
   CheckBoxNode,
+  ConverterSpec,
+  ConverterType,
   ColorPickerNode,
   ColumnNode,
   ContainerNode,
@@ -73,10 +80,12 @@ import type {
   WidgetNode,
 } from './types.ts'
 import { validateWhen } from './responsive.ts'
+import { parseBinding } from './converters.ts'
 
 interface ParseCtx {
   nodes: number
   datas: DataSourceSpec[]
+  converters: ConverterSpec[]
   resources: ResourceEntry[]
   functions: FunctionNode[]
   triggers: TriggerNode[]
@@ -104,7 +113,7 @@ function readElement(el: Element): SplitElement {
   for (const child of Array.from(el.children)) {
     if (child.tagName === 'Widget.Using' || child.tagName === 'Using') {
       children.push(child)
-    } else if (child.tagName === 'Widget.Inputs' || child.tagName === 'Widget.Outputs') {
+    } else if (child.tagName === 'Widget.Inputs' || child.tagName === 'Widget.Outputs' || child.tagName === 'Widget.Converters') {
       children.push(child)
     } else if (child.tagName.startsWith(`${el.tagName}.`)) {
       propertyElements.set(child.tagName.slice(el.tagName.length + 1), child)
@@ -128,7 +137,7 @@ function applyProperties(
   propertyElements: Map<string, Element>,
 ): void {
   for (const [name, el] of propertyElements) {
-    if (name === 'Effects') continue
+    if (name === 'Effects' || name === 'Animations') continue
     if ((ATTACHED_ATTRS as readonly string[]).includes(name)) {
       if (Array.from(el.children).length > 0) throw new WidgetError('invalidAttribute', `${tag}.${name}`)
       if (attrs.has(name)) throw new WidgetError('duplicateProperty', `${tag}.${name}`)
@@ -678,6 +687,54 @@ function parseChildren(el: Element, ctx: ParseCtx, depth: number): WidgetNode[] 
   return nodes
 }
 
+function parseConverters(el: Element, ctx: ParseCtx): void {
+  const { attrs, children } = readElement(el)
+  validateAttrs(el.tagName, attrs)
+  assertNoText(el)
+  for (const child of children) {
+    if (child.tagName !== 'Converter') throw new WidgetError('invalidConverter', `Converters 内不允许 ${child.tagName}`)
+    if (ctx.converters.length >= WIDGET_LIMITS.maxConverters) throw new WidgetError('tooManyNodes')
+    ctx.nodes += 1
+    if (ctx.nodes > WIDGET_LIMITS.maxNodes) throw new WidgetError('tooManyNodes')
+    const split = readElement(child)
+    validateAttrs('Converter', split.attrs)
+    const name = requiredAttr(split.attrs, 'Converter', 'Name').trim()
+    validateIdentifier(name, 'Converter@Name')
+    if (ctx.names.has(`converter:${name}`)) throw new WidgetError('invalidConverter', `重复 Converter ${name}`)
+    const type = enumAttr(split.attrs, 'Converter', 'Type', CONVERTER_TYPES, 'String') as ConverterType
+    const map: Array<{ from: string; to: string }> = []
+    for (const mapEntry of split.children) {
+      if (mapEntry.tagName !== 'MapEntry' || type !== 'Map') {
+        throw new WidgetError('invalidConverter', `${name} 不允许子元素 ${mapEntry.tagName}`)
+      }
+      if (map.length >= WIDGET_LIMITS.maxMapEntries) throw new WidgetError('invalidConverter', `${name} 的 MapEntry 超过上限`)
+      ctx.nodes += 1
+      if (ctx.nodes > WIDGET_LIMITS.maxNodes) throw new WidgetError('tooManyNodes')
+      const entry = readElement(mapEntry)
+      validateAttrs('MapEntry', entry.attrs)
+      if (entry.children.length > 0) throw new WidgetError('invalidConverter', 'MapEntry 不能包含子元素')
+      map.push({
+        from: requiredAttr(entry.attrs, 'MapEntry', 'From'),
+        to: requiredAttr(entry.attrs, 'MapEntry', 'To'),
+      })
+    }
+    const convertScript = split.propertyElements.get('Convert')?.textContent?.trim() || undefined
+    const convertBackScript = split.propertyElements.get('ConvertBack')?.textContent?.trim() || undefined
+    if (type === 'Script' && !convertScript) throw new WidgetError('invalidConverter', `${name} 缺少 Convert 脚本`)
+    const bytes = new TextEncoder().encode(`${convertScript ?? ''}${convertBackScript ?? ''}`).length
+    if (bytes > WIDGET_LIMITS.maxScriptBytes) throw new WidgetError('invalidConverter', `${name} 脚本超过 64KB`)
+    ctx.converters.push({
+      name,
+      type,
+      format: attr(split.attrs, 'Format')?.trim() || undefined,
+      map: map.length > 0 ? map : undefined,
+      convertScript,
+      convertBackScript,
+    })
+    ctx.names.add(`converter:${name}`)
+  }
+}
+
 function parseEffects(el: Element): EffectSpec[] {
   const { attrs, children } = readElement(el)
   validateAttrs('Effects', attrs)
@@ -723,11 +780,52 @@ function parseEffects(el: Element): EffectSpec[] {
   return effects
 }
 
+function parseAnimations(el: Element): AnimationSpec[] {
+  const { attrs, children } = readElement(el)
+  validateAttrs('Animations', attrs)
+  assertNoText(el)
+  const animations: AnimationSpec[] = []
+  for (const child of children) {
+    if (child.children.length > 0) throw new WidgetError('invalidAnimation', `${child.tagName} 不能包含子元素`)
+    const split = readElement(child)
+    validateAttrs(child.tagName, split.attrs)
+    if (!(ANIMATION_KINDS as readonly string[]).includes(child.tagName)) {
+      throw new WidgetError('invalidAnimation', `Animations 内不允许 ${child.tagName}`)
+    }
+    const kind = child.tagName.replace('In', '').replace('To', '').toLowerCase() as AnimationSpec['kind']
+    const repeatRaw = attr(split.attrs, 'Repeat')?.trim()
+    const repeat = repeatRaw === 'Infinite'
+      ? 'Infinite'
+      : repeatRaw
+        ? intAttr(split.attrs, child.tagName, 'Repeat', 1, 100)
+        : 1
+    animations.push({
+      kind: kind === 'fade' ? 'fade' : kind === 'slide' ? 'slide' : kind === 'scale' ? 'scale' : kind === 'rotate' ? 'rotate' : kind === 'pulse' ? 'pulse' : 'spin',
+      duration: intAttr(split.attrs, child.tagName, 'Duration', 0, 10000, 300),
+      delay: intAttr(split.attrs, child.tagName, 'Delay', 0, 10000, 0),
+      easing: enumAttr(split.attrs, child.tagName, 'Easing', ANIMATION_EASINGS, 'Ease')!,
+      repeat,
+      trigger: enumAttr(split.attrs, child.tagName, 'Trigger', ANIMATION_TRIGGERS, 'Loaded')!,
+      from: split.attrs.has('From') ? numberAttr(split.attrs, child.tagName, 'From', -1000, 1000) : undefined,
+      to: split.attrs.has('To') ? numberAttr(split.attrs, child.tagName, 'To', -1000, 1000) : undefined,
+      direction: child.tagName === 'SlideIn'
+        ? enumAttr(split.attrs, child.tagName, 'Direction', ['Left', 'Right', 'Top', 'Bottom'] as const, 'Bottom')
+        : undefined,
+      distance: child.tagName === 'SlideIn'
+        ? numberAttr(split.attrs, child.tagName, 'Distance', 0, 500, 8)
+        : undefined,
+    })
+  }
+  return animations
+}
+
 function parseNode(el: Element, ctx: ParseCtx, depth: number): WidgetNode {
   const node = parseNodeInner(el, ctx, depth)
   const { propertyElements } = readElement(el)
   const effects = propertyElements.get('Effects')
   if (effects) node.effects = parseEffects(effects)
+  const animations = propertyElements.get('Animations')
+  if (animations) node.animations = parseAnimations(animations)
   return node
 }
 
@@ -872,6 +970,7 @@ function parseTabItem(el: Element, ctx: ParseCtx, depth: number): TabItemNode {
     when: meta.when,
     contentPage: meta.contentPage,
     effects: split.propertyElements.get('Effects') ? parseEffects(split.propertyElements.get('Effects')!) : undefined,
+    animations: split.propertyElements.get('Animations') ? parseAnimations(split.propertyElements.get('Animations')!) : undefined,
     children: meta.contentPage ? [] : parseChildren(el, ctx, depth + 1),
   }
 }
@@ -893,6 +992,7 @@ function parseListItem(el: Element, ctx: ParseCtx, depth: number): ListItemNode 
     when: meta.when,
     contentPage: meta.contentPage,
     effects: split.propertyElements.get('Effects') ? parseEffects(split.propertyElements.get('Effects')!) : undefined,
+    animations: split.propertyElements.get('Animations') ? parseAnimations(split.propertyElements.get('Animations')!) : undefined,
     child: meta.contentPage ? undefined : parseNode(split.children[0], ctx, depth + 1),
   }
 }
@@ -1204,7 +1304,9 @@ function parseSlider(el: Element): SliderNode {
   return {
     kind: 'slider',
     name: requiredAttr(attrs, 'Slider', 'Name').trim(),
-    value: numberAttr(attrs, 'Slider', 'Value', -1_000_000, 1_000_000, 0),
+    value: isBound(attr(attrs, 'Value') ?? '')
+      ? attr(attrs, 'Value')!
+      : numberAttr(attrs, 'Slider', 'Value', -1_000_000, 1_000_000, 0),
     min: numberAttr(attrs, 'Slider', 'Min', -1_000_000, 1_000_000, 0),
     max: numberAttr(attrs, 'Slider', 'Max', -1_000_000, 1_000_000, 100),
     step: numberAttr(attrs, 'Slider', 'Step', 0.000001, 1_000_000, 1),
@@ -1444,6 +1546,28 @@ function collectTargets(nodes: WidgetNode[], out = new Set<string>()): void {
 }
 
 /** 解析并严格校验组件 XML；任何未知元素/属性都直接失败。 */
+function validateConverterReferences(value: unknown, names: Set<string>, seen = new Set<unknown>()): void {
+  if (typeof value === 'string') {
+    for (const match of value.matchAll(/\{([^{}]+)\}/g)) {
+      const binding = parseBinding(`{${match[1]}}`)
+      if (binding?.converter && !names.has(binding.converter)) {
+        throw new WidgetError('invalidConverter', `未知 Converter ${binding.converter}`)
+      }
+    }
+    return
+  }
+  if (!value || typeof value !== 'object' || seen.has(value)) return
+  seen.add(value)
+  if (Array.isArray(value)) {
+    for (const item of value) validateConverterReferences(item, names, seen)
+    return
+  }
+  for (const [key, item] of Object.entries(value)) {
+    if (key === 'script' || key === 'convertScript' || key === 'convertBackScript') continue
+    validateConverterReferences(item, names, seen)
+  }
+}
+
 export function parseWidgetXml(xml: string): WidgetDocument {
   assertSafeXml(xml)
   const doc = new DOMParser().parseFromString(xml, 'application/xml')
@@ -1475,6 +1599,7 @@ export function parseWidgetXml(xml: string): WidgetDocument {
   const ctx: ParseCtx = {
     nodes: 0,
     datas: [],
+    converters: [],
     resources: [],
     functions: [],
     triggers: [],
@@ -1510,6 +1635,10 @@ export function parseWidgetXml(xml: string): WidgetDocument {
       case 'Widget.Outputs':
         parseOutputs(child, ctx)
         break
+      case 'Widget.Converters':
+      case 'Converters':
+        parseConverters(child, ctx)
+        break
       case 'Widget.Using':
       case 'Using':
         nodes.push(parseUsing(child, ctx))
@@ -1523,7 +1652,7 @@ export function parseWidgetXml(xml: string): WidgetDocument {
   collectTargets(nodes)
   validatePages(ctx, nodes)
 
-  return {
+  const result: WidgetDocument = {
     name,
     version,
     author: attr(rootSplit.attrs, 'Author')?.trim() || undefined,
@@ -1534,6 +1663,7 @@ export function parseWidgetXml(xml: string): WidgetDocument {
     launcherVersion,
     inputs: ctx.inputs,
     outputs: ctx.outputs,
+    converters: ctx.converters,
     datas: ctx.datas,
     resources: ctx.resources,
     pages: Object.fromEntries(ctx.pages),
@@ -1543,6 +1673,8 @@ export function parseWidgetXml(xml: string): WidgetDocument {
     staticMediaUrls: ctx.staticMediaUrls,
     nestedUrls: [...new Set(ctx.nestedUrls)],
   }
+  validateConverterReferences(result, new Set(ctx.converters.map((converter) => converter.name)))
+  return result
 }
 
 /** 收集函数脚本的可补全上下文（编辑器使用）。 */

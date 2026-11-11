@@ -105,6 +105,7 @@ function knownNames(text: string, defs: CustomWidgetDef[]) {
     data: tagged(text, /<Data\b[^>]*\bName\s*=\s*"([^"]+)"/g),
     resources: tagged(text, /<(?:String|Bool|Number|Binary|Resource)\b[^>]*\bName\s*=\s*"([^"]+)"/g),
     functions: tagged(text, /<Function\b[^>]*\bName\s*=\s*"([^"]+)"/g),
+    converters: tagged(text, /<Converter\b[^>]*\bName\s*=\s*"([^"]+)"/g),
     inputs: tagged(text, /<(?:TextBox|CheckBox|Slider|Select|FilePicker|ColorPicker|Button|Link)\b[^>]*\bName\s*=\s*"([^"]+)"/g),
     aliases: tagged(text, /<Widget\.Using\b[^>]*\bAs\s*=\s*"([^"]+)"/g),
     pages: tagged(text, /<Resource\b(?=[^>]*\bType\s*=\s*"Page")[^>]*\bName\s*=\s*"([^"]+)"/g),
@@ -148,12 +149,19 @@ function unique(values: string[]): string[] {
 
 function bindingCompletion(context: CompletionContext, text: string, sample: unknown): CompletionResult | null {
   const before = text.slice(0, context.pos)
-  const match = before.match(/\{([\w.-]*)$/)
+  const names = knownNames(text, [])
+  const converterMatch = before.match(/\bConverter\s*=\s*["']?([\w-]*)$/)
+  if (converterMatch) {
+    const options = unique(names.converters).map((name) => completionOption(name, 'variable'))
+    if (options.length === 0) return null
+    return { from: context.pos - converterMatch[1].length, options, validFor: /^[\w-]*$/ }
+  }
+  const bindingMatch = before.match(/\{\s*(?:Binding|MultiBinding)\s+(?:Paths\s*=\s*["'])?([\w.-]*)$/)
+  const match = bindingMatch ?? before.match(/\{([\w.-]*)$/)
   if (!match) return null
   const prefix = match[1]
   const parts = prefix.split('.')
   const start = context.pos - (parts[parts.length - 1] ?? '').length
-  const names = knownNames(text, [])
   const options: Completion[] = []
   const push = (values: string[], type: Completion['type']) => {
     for (const value of unique(values)) options.push(completionOption(value, type))
@@ -208,6 +216,7 @@ function attributeValueSuggestions(tag: string, attr: string, text: string, defs
   if (attr === 'Function') return unique(names.functions)
   if (attr === 'Control') return unique(names.inputs)
   if (attr === 'Data') return unique(names.data)
+  if (attr === 'Converter') return unique(names.converters)
   if (attr === 'Target') return unique(names.targets)
   if (attr === 'Content') return unique(names.pages.map((name) => `{${name}}`))
   if (attr === 'OnClick' || attr === 'OnChange' || attr === 'Action') {
