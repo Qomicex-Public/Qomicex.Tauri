@@ -233,7 +233,6 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
 
   const [inputs, setInputs] = useState<Record<string, unknown>>(resolvedInputs)
   const inputsRef = useRef(inputs)
-  inputsRef.current = inputs
   const [results, setResults] = useState<Record<string, Record<string, unknown>>>({})
   const [children, setChildren] = useState<Record<string, ChildSnapshot>>({})
   const [overrides, setOverrides] = useState<Record<string, Record<string, unknown>>>({})
@@ -272,6 +271,10 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   const trackUrl = useCallback((url: string) => {
     objectUrls.current.add(url)
   }, [])
+
+  useEffect(() => {
+    inputsRef.current = inputs
+  }, [inputs])
 
   useEffect(() => {
     if (!initialInputs && !doc?.inputs.length) return
