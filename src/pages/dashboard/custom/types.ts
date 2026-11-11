@@ -35,6 +35,21 @@ export interface NodeBase {
   visible?: boolean
 }
 
+export type FieldType = (typeof FIELD_TYPES)[number]
+
+export interface InputDecl {
+  name: string
+  type: FieldType
+  required: boolean
+  default?: string
+}
+
+export interface OutputDecl {
+  name: string
+  type: FieldType
+  source: string
+}
+
 export interface LayoutAttrs {
   gap?: number
   padding?: number
@@ -306,6 +321,8 @@ export interface WidgetDocument {
   description?: string
   updateUrl?: string
   launcherVersion?: string
+  inputs: InputDecl[]
+  outputs: OutputDecl[]
   datas: DataSourceSpec[]
   resources: ResourceEntry[]
   functions: FunctionNode[]

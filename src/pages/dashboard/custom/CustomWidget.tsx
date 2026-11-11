@@ -15,11 +15,14 @@ import {
   hostOf,
   interpolate,
   interpolateDeep,
+  isBound,
+  isSafeHttpsUrl,
   resolvePath,
   WIDGET_LIMITS,
   WidgetError,
 } from './schema.ts'
 import { makeBinaryValue, mimeFromPath, parseResourceEntries, parseXmlValue, readLocalBinary, readLocalText, resolveDataPath } from './binary.ts'
+import { resolveInputValues, resolveOutputValues } from './contract.ts'
 import { getLauncherVersion } from './launcher-version.ts'
 import { renderNodes, applyNodeOverrides, contentProperty, propertyField, type RenderContext } from './render.tsx'
 import { runFunction as executeFunction } from './script/functions.ts'
@@ -43,8 +46,9 @@ import { parseWidgetXml } from './xml.ts'
 
 export interface ChildSnapshot {
   Inputs: Record<string, unknown>
-  Data: Record<string, unknown>
-  Results: Record<string, unknown>
+  Data?: Record<string, unknown>
+  Results?: Record<string, unknown>
+  Outputs?: Record<string, unknown>
   State: { Loading: boolean; Error: boolean }
 }
 
@@ -153,6 +157,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   const loadedRef = useRef<string | null>(null)
   const lastSnapshot = useRef('')
   const forceRefreshRef = useRef(false)
+  const lastInitialInputs = useRef('')
   const executeFunctionRef = useRef<(name: string, trigger: TriggerNode) => void>(() => {})
   const runtimeRef = useRef<{
     setProperty: (target: string, property: string, value: unknown) => Promise<unknown>
@@ -166,7 +171,23 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
 
   useEffect(() => {
     if (!initialInputs) return
-    setInputs((prev) => ({ ...initialInputs, ...prev }))
+    let signature: string
+    try {
+      signature = JSON.stringify(initialInputs)
+    } catch {
+      signature = String(Date.now())
+    }
+    if (signature === lastInitialInputs.current) return
+    lastInitialInputs.current = signature
+    try {
+      const current = Object.fromEntries(Object.keys(initialInputs).map((key) => [key, inputsRef.current[key]]))
+      if (signature === JSON.stringify(current)) return
+    } catch {
+      /* 输入不可序列化时仍继续应用 */
+    }
+    const next = { ...inputsRef.current, ...initialInputs }
+    inputsRef.current = next
+    setInputs(next)
   }, [initialInputs])
 
   useEffect(() => {
@@ -245,6 +266,11 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     }
   }, [data, doc, resources, inputs, results, children, loading, error])
 
+  const outputs = useMemo(
+    () => (doc ? resolveOutputValues(doc.outputs, (source) => resolvePath(scope, source)) : {}),
+    [doc, scope],
+  )
+
   const setInput = useCallback((name: string, value: unknown) => {
     const next = { ...inputsRef.current, [name]: value }
     inputsRef.current = next
@@ -301,8 +327,10 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   }, [doc, scope])
 
   const decodeData = useCallback(async (source: WidgetDocument['datas'][number], signal: AbortSignal): Promise<unknown> => {
+    const inputScope = { Inputs: inputsRef.current }
     if (source.source === 'File') {
-      const path = resolveDataPath({ sourcePath: def.sourcePath }, source.path ?? '')
+      const rawPath = interpolate(source.path ?? '', inputScope)
+      const path = resolveDataPath({ sourcePath: def.sourcePath }, rawPath)
       if (source.type === 'Binary') {
         const file = await readLocalBinary(path)
         const value = makeBinaryValue(file.base64, source.mime || mimeFromPath(path), file.size)
@@ -317,7 +345,9 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     }
 
     if (!source.url) throw new Error('数据源缺少 Url')
-    const response = await fetchWidgetUrl(source.url, signal, {
+    const url = interpolate(source.url, inputScope)
+    if (!isSafeHttpsUrl(url)) throw new Error(`数据源 Url 无效: ${url}`)
+    const response = await fetchWidgetUrl(url, signal, {
       binary: source.type === 'Binary',
       timeoutMs: 20_000,
     })
@@ -345,7 +375,8 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     let changed = false
 
     const stale = doc.datas.filter((source) => {
-      if (force) return true
+      const dynamic = isBound(source.url ?? '') || isBound(source.path ?? '')
+      if (force || dynamic) return true
       const entry = cache?.[source.name]
       const fresh = entry && source.refresh > 0 && now - entry.at <= source.refresh * 1000
       if (fresh) {
@@ -381,7 +412,9 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
         const value = await decodeData(source, controller.signal)
         if (cancelled) return
         fetched[source.name] = value
-        if (source.type !== 'Binary') setCachedData(def.id, source.name, value)
+        if (source.type !== 'Binary' && !isBound(source.url ?? '') && !isBound(source.path ?? '')) {
+          setCachedData(def.id, source.name, value)
+        }
         fireTriggerRef.current?.('DataChanged', source.name)
       }),
     ).then((items) => {
@@ -399,7 +432,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     }
     // data 故意不进依赖：只在数据源/刷新/重试时重拉，避免 setData 触发自身
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc, def.id, tick, decodeData, setCachedData])
+  }, [doc, def.id, tick, inputs, decodeData, setCachedData])
 
   const sandbox = useCallback(() => {
     if (!sandboxRef.current) {
@@ -612,6 +645,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
       Inputs: inputs,
       Data: data,
       Results: results,
+      Outputs: outputs,
       State: { Loading: loading, Error: !!error },
     }
     let signature: string
@@ -624,7 +658,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
       lastSnapshot.current = signature
       onSnapshot(snapshot)
     }
-  }, [inputs, data, results, loading, error, onSnapshot])
+  }, [inputs, data, results, outputs, loading, error, onSnapshot])
 
   const renderUsing = useCallback((node: UsingNode) => (
     <NestedUsing
@@ -776,6 +810,26 @@ function NestedUsing({ node, chain, parentScope, parentAllowedHosts, onSnapshot,
     }
   }
 
+  let resolvedArgs: Record<string, unknown>
+  try {
+    resolvedArgs = resolveInputValues(childDoc.inputs, args)
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : String(cause)
+    return <WidgetErrorBox message={`${t('dashboard.custom.invalidArguments')}: ${detail}`} />
+  }
+
+  const publishSnapshot = (snapshot: ChildSnapshot) => {
+    if (childDoc.outputs.length === 0) {
+      onSnapshot(snapshot)
+      return
+    }
+    onSnapshot({
+      Inputs: snapshot.Inputs,
+      Outputs: snapshot.Outputs,
+      State: snapshot.State,
+    })
+  }
+
   const childDef: CustomWidgetDef = {
     id: localDef?.id ?? `remote:${node.url}`,
     name: localDef?.name ?? childDoc.name,
@@ -790,8 +844,8 @@ function NestedUsing({ node, chain, parentScope, parentAllowedHosts, onSnapshot,
     <CustomWidget
       def={childDef}
       chain={[...chain, key]}
-      initialInputs={args}
-      onSnapshot={onSnapshot}
+      initialInputs={resolvedArgs}
+      onSnapshot={publishSnapshot}
       preview={preview}
     />
   )

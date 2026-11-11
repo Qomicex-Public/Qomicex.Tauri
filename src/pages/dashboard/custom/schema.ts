@@ -119,6 +119,10 @@ export const FIELD_TYPES = ['String', 'Number', 'Bool', 'DateTime', 'Json', 'Bin
 /** 元素 → 允许属性。未知元素/属性一律解析失败。 */
 export const ELEMENT_ATTRS: Record<string, readonly string[]> = {
   Widget: ['Name', 'Version', 'Author', 'Description', 'UpdateUrl', 'LauncherVersion'],
+  'Widget.Inputs': [],
+  Input: ['Name', 'Type', 'Required', 'Default'],
+  'Widget.Outputs': [],
+  Output: ['Name', 'Type', 'Source'],
   Data: ['Name', 'Type', 'Source', 'Url', 'Path', 'Mime', 'Refresh'],
   Resources: [],
   String: ['Name', 'Text'],

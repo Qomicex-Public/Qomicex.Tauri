@@ -43,10 +43,12 @@ import type {
   GridNode,
   IfNode,
   ImageNode,
+  InputDecl,
   LinkNode,
   ListItemNode,
   ListNode,
   MediaNode,
+  OutputDecl,
   ProgressNode,
   ResourceEntry,
   RowNode,
@@ -76,6 +78,8 @@ interface ParseCtx {
   aliases: Set<string>
   usingCount: number
   names: Set<string>
+  inputs: InputDecl[]
+  outputs: OutputDecl[]
 }
 
 interface SplitElement {
@@ -91,6 +95,8 @@ function readElement(el: Element): SplitElement {
   const children: Element[] = []
   for (const child of Array.from(el.children)) {
     if (child.tagName === 'Widget.Using' || child.tagName === 'Using') {
+      children.push(child)
+    } else if (child.tagName === 'Widget.Inputs' || child.tagName === 'Widget.Outputs') {
       children.push(child)
     } else if (child.tagName.startsWith(`${el.tagName}.`)) {
       propertyElements.set(child.tagName.slice(el.tagName.length + 1), child)
@@ -333,6 +339,49 @@ function parseAction(attrs: Map<string, string>, tag: string, actionName: string
   return { name, args }
 }
 
+function parseInputs(el: Element, ctx: ParseCtx): void {
+  const { attrs, children } = readElement(el)
+  validateAttrs('Widget.Inputs', attrs)
+  assertNoText(el)
+  for (const child of children) {
+    if (child.tagName !== 'Input') throw new WidgetError('invalidAttribute', `Widget.Inputs 内不允许 ${child.tagName}`)
+    if (ctx.inputs.length >= 32) throw new WidgetError('tooManyNodes')
+    const split = readElement(child)
+    validateAttrs('Input', split.attrs)
+    if (split.children.length > 0) throw new WidgetError('invalidAttribute', 'Input 不能包含子元素')
+    const name = requiredAttr(split.attrs, 'Input', 'Name').trim()
+    validateIdentifier(name, 'Input@Name')
+    if (ctx.inputs.some((item) => item.name === name)) throw new WidgetError('invalidAttribute', `Input 重复: ${name}`)
+    ctx.inputs.push({
+      name,
+      type: enumAttr(split.attrs, 'Input', 'Type', FIELD_TYPES, 'String')!,
+      required: boolAttr(split.attrs, 'Input', 'Required', false),
+      default: attr(split.attrs, 'Default'),
+    })
+  }
+}
+
+function parseOutputs(el: Element, ctx: ParseCtx): void {
+  const { attrs, children } = readElement(el)
+  validateAttrs('Widget.Outputs', attrs)
+  assertNoText(el)
+  for (const child of children) {
+    if (child.tagName !== 'Output') throw new WidgetError('invalidAttribute', `Widget.Outputs 内不允许 ${child.tagName}`)
+    if (ctx.outputs.length >= 32) throw new WidgetError('tooManyNodes')
+    const split = readElement(child)
+    validateAttrs('Output', split.attrs)
+    if (split.children.length > 0) throw new WidgetError('invalidAttribute', 'Output 不能包含子元素')
+    const name = requiredAttr(split.attrs, 'Output', 'Name').trim()
+    validateIdentifier(name, 'Output@Name')
+    if (ctx.outputs.some((item) => item.name === name)) throw new WidgetError('invalidAttribute', `Output 重复: ${name}`)
+    ctx.outputs.push({
+      name,
+      type: enumAttr(split.attrs, 'Output', 'Type', FIELD_TYPES, 'Json')!,
+      source: validatePath(requiredAttr(split.attrs, 'Output', 'Source'), 'Output@Source'),
+    })
+  }
+}
+
 function parseData(el: Element, ctx: ParseCtx): void {
   const { attrs, propertyElements, children } = readElement(el)
   applyProperties('Data', attrs, propertyElements)
@@ -348,7 +397,7 @@ function parseData(el: Element, ctx: ParseCtx): void {
   const mime = attr(attrs, 'Mime')?.trim() || undefined
   if (source === 'Url') {
     const url = requiredAttr(attrs, 'Data', 'Url')
-    if (!isSafeHttpsUrl(url)) throw new WidgetError('invalidUrl', `Data@Url=${url}`)
+    if (!isBound(url) && !isSafeHttpsUrl(url)) throw new WidgetError('invalidUrl', `Data@Url=${url}`)
     ctx.datas.push({ name, type, source, url, refresh, mime })
   } else {
     const path = requiredAttr(attrs, 'Data', 'Path')
@@ -1089,6 +1138,8 @@ export function parseWidgetXml(xml: string): WidgetDocument {
     aliases: new Set(),
     usingCount: 0,
     names: new Set(),
+    inputs: [],
+    outputs: [],
   }
   const nodes: WidgetNode[] = []
   for (const child of rootSplit.children) {
@@ -1106,6 +1157,12 @@ export function parseWidgetXml(xml: string): WidgetDocument {
         break
       case 'Function':
         parseFunction(child, ctx)
+        break
+      case 'Widget.Inputs':
+        parseInputs(child, ctx)
+        break
+      case 'Widget.Outputs':
+        parseOutputs(child, ctx)
         break
       case 'Widget.Using':
       case 'Using':
@@ -1126,6 +1183,8 @@ export function parseWidgetXml(xml: string): WidgetDocument {
     description: attr(rootSplit.attrs, 'Description')?.trim() || undefined,
     updateUrl,
     launcherVersion,
+    inputs: ctx.inputs,
+    outputs: ctx.outputs,
     datas: ctx.datas,
     resources: ctx.resources,
     functions: ctx.functions,

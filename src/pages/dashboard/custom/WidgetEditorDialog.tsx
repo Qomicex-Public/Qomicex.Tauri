@@ -450,7 +450,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
     const struct = fn?.structs.find((item) => item.name === inputType)
     return {
       inputFields: struct?.fields.map((field) => field.name) ?? [],
-      inputs: doc ? [...collectInputNames(doc.nodes)] : [],
+      inputs: doc ? [...new Set([...collectInputNames(doc.nodes), ...doc.inputs.map((item) => item.name)])] : [],
       resources: doc?.resources.map((item) => item.name) ?? [],
       data: doc?.datas.map((item) => item.name) ?? [],
       functions: doc?.functions.map((item) => item.name) ?? [],
