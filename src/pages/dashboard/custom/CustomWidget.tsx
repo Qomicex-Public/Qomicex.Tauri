@@ -502,7 +502,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     switch (method.toLowerCase()) {
       case 'click':
         if (node.kind !== 'button' && node.kind !== 'link') throw new Error(`Target ${target} 不是可点击控件`)
-        await executeAction(node.onClick, node.name)
+        await executeAction(node.onClick ?? (node.kind === 'link' && node.url ? { name: 'OpenUrl', args: { Url: node.url } } : undefined), node.name)
         return true
       case 'setvalue':
         return setProperty(target, 'Value', args[0])
