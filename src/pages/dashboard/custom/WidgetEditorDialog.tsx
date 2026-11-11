@@ -27,6 +27,7 @@ import { parseResourceEntries, resolveDataPath, widgetBaseDir } from './binary.t
 import { renderNodes, type RenderContext } from './render.tsx'
 import { runFunction as executeFunction, type FunctionContext } from './script/functions.ts'
 import { ScriptSandbox } from './script/sandbox.ts'
+import { executableFingerprint } from './security.ts'
 import {
   WIDGET_LIMITS,
   WidgetError,
@@ -246,11 +247,9 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
   const hostsConfirmed = hosts.every((host) => confirmed.has(host))
   const canSave = !!doc && sourceValid && hostsConfirmed && !busy
   const actions = useMemo(() => (doc ? [...collectActions(doc.nodes)] : []), [doc])
-  const dangerous = useMemo(() => {
-    if (!doc) return false
-    return doc.functions.length > 0 || doc.triggers.some((trigger) => trigger.action?.name === 'RunCommand' || trigger.action?.name === 'PluginApi')
-      || actions.includes('RunCommand') || actions.includes('PluginApi')
-  }, [doc, actions])
+  const executableHash = useMemo(() => (doc ? executableFingerprint(doc) : ''), [doc])
+  const remoteSource = !!sourceUrl.trim() || !!def?.sourceUrl
+  const dangerous = remoteSource && !!executableHash
 
   const sample = useMemo(() => {
     try {
@@ -288,9 +287,10 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
     })
   }
 
-  const ensureRiskAccepted = async (): Promise<boolean> => {
+  const ensureRiskAccepted = async (fingerprint: string): Promise<boolean> => {
+    const key = `${RISK_KEY}:${fingerprint}`
     try {
-      if (localStorage.getItem(RISK_KEY) === '1') return true
+      if (localStorage.getItem(key) === '1') return true
     } catch {
       /* 存储不可用时按未确认处理 */
     }
@@ -302,7 +302,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
     )
     if (accepted) {
       try {
-        localStorage.setItem(RISK_KEY, '1')
+        localStorage.setItem(key, '1')
       } catch {
         /* 写入失败时仅本次生效 */
       }
@@ -385,8 +385,11 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
 
   const onSave = async () => {
     if (!doc || !canSave) return
-    if (dangerous && !(await ensureRiskAccepted())) return
     const normalizedSource = sourceUrl.trim() || undefined
+    const isRemote = !!normalizedSource || !!def?.sourceUrl
+    if (isRemote && executableHash && def?.executableHash !== executableHash) {
+      if (!(await ensureRiskAccepted(executableHash))) return
+    }
     if (widgetId) {
       const changed = !def || def.xml !== xml || def.sourceUrl !== normalizedSource || def.sourcePath !== (sourcePath || undefined)
       updateDef(widgetId, {
@@ -395,6 +398,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
         sourceUrl: normalizedSource,
         sourcePath: sourcePath || undefined,
         hosts: hosts.filter((host) => confirmed.has(host)),
+        executableHash: executableHash || undefined,
         lastChecked: changed ? Date.now() : def?.lastChecked,
       })
       if (changed) clearData(widgetId)
@@ -406,6 +410,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
         sourceUrl: normalizedSource,
         sourcePath: sourcePath || undefined,
         hosts: hosts.filter((host) => confirmed.has(host)),
+        executableHash: executableHash || undefined,
       })
     }
     onClose()

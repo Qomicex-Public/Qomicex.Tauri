@@ -15,6 +15,10 @@ export interface CustomWidgetDef {
   sourcePath?: string
   /** 用户已确认的可自动出网域名。 */
   hosts: string[]
+  /** 远程组件最近一次确认的可执行内容指纹。 */
+  executableHash?: string
+  /** 用户按命令哈希信任过的动态命令。 */
+  trustedCommands?: string[]
   lastChecked?: number
 }
 

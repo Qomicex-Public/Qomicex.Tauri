@@ -27,6 +27,7 @@ import { getLauncherVersion } from './launcher-version.ts'
 import { renderNodes, applyNodeOverrides, contentProperty, propertyField, type RenderContext } from './render.tsx'
 import { runFunction as executeFunction } from './script/functions.ts'
 import { ScriptSandbox } from './script/sandbox.ts'
+import { bindingRoots, commandHash, executableActions, executableFingerprint, hasExternalBinding, isCommandApproved, isExecutableApproved, approveCommand, approveExecutable, BINDING_ROOTS } from './security.ts'
 import {
   getBinary,
   getRemoteWidget,
@@ -96,8 +97,7 @@ function findNodeByTarget(nodes: WidgetNode[], target: string): WidgetNode | nul
 
 const NON_PROPERTY_ATTRS = new Set(['Target', 'Name', 'OnClick', 'OnChange', 'Function', 'Arguments', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method'])
 
-function nodeProperty(node: WidgetNode, property: string, scope: Record<string, unknown>, overrides: Record<string, unknown>): unknown {
-  const field = propertyField(node, property)
+function nodeProperty(node: WidgetNode, property: string, scope: Record<string, unknown>, overrides: Record<string, unknown>): unknown {  const field = propertyField(node, property)
   if (!field || NON_PROPERTY_ATTRS.has(property)) throw new Error(`不可读写属性: ${property}`)
   const effective = applyNodeOverrides(node, overrides)
   const raw = (effective as unknown as Record<string, unknown>)[field]
@@ -108,6 +108,15 @@ function nodeProperty(node: WidgetNode, property: string, scope: Record<string, 
   }
   if (typeof raw === 'string') return interpolate(raw, scope)
   return raw
+}
+
+function resolveActionValue(value: string, scope: Record<string, unknown>): string {
+  return value.replace(/\{([^{}]+)\}/g, (raw, token: string) => {
+    const root = token.trim().split('.')[0]
+    if (!BINDING_ROOTS.has(root)) return raw
+    const found = resolveScopeValue(scope, token)
+    return found === undefined || found === null ? '' : String(found)
+  })
 }
 
 function dataScopeOf(data: Record<string, unknown>, sources: WidgetDocument['datas']): Record<string, unknown> {
@@ -127,7 +136,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   const { defaultInstance, launch, refresh, resolveAccountCheck } = useDashboard()
   const gridSize = useWidgetSize()
   const navigate = useNavigate()
-  const { notify, error: showError } = useMessageBox()
+  const { notify, error: showError, confirm } = useMessageBox()
   const setCachedData = useCustomWidgetStore((s) => s.setData)
   const updateDef = useCustomWidgetStore((s) => s.updateDef)
   const clearData = useCustomWidgetStore((s) => s.clearData)
@@ -202,7 +211,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     setOverrides({})
   }, [def.id, def.xml])
 
-  // 在线组件的静默更新：按 TTL 拉取并直接替换（按用户选择不做二次确认）。
+  // 在线组件更新：纯数据/布局静默替换；可执行内容变化时确认。
   useEffect(() => {
     if (!doc) return
     const updateUrl = doc.updateUrl ?? def.sourceUrl
@@ -212,13 +221,28 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     const controller = new AbortController()
     let cancelled = false
     void fetchWidgetUrl(updateUrl, controller.signal)
-      .then((response) => {
+      .then(async (response) => {
         if (cancelled) return
         if (response.body === def.xml) {
           updateDef(def.id, { lastChecked: now })
           return
         }
         const next = parseWidgetXml(response.body)
+        const nextExecutable = executableFingerprint(next)
+        const currentExecutable = def.executableHash ?? executableFingerprint(doc)
+        if (nextExecutable && nextExecutable !== currentExecutable) {
+          const commands = executableActions(next)
+            .map((action) => action.args.Command ?? action.args.PluginId ?? action.name)
+            .join(' | ')
+          const accepted = await confirm(
+            `${t('dashboard.custom.riskMessage')}\n\n${commands}`,
+            t('dashboard.custom.riskTitle'),
+          )
+          if (!accepted) {
+            updateDef(def.id, { lastChecked: now })
+            return
+          }
+        }
         const hosts = collectAutoHosts({
           datas: next.datas,
           updateUrl: next.updateUrl,
@@ -230,6 +254,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
           xml: response.body,
           name: next.name,
           hosts: [...new Set([...def.hosts, ...hosts, ...(sourceHost ? [sourceHost] : [])])],
+          executableHash: nextExecutable || undefined,
           lastChecked: now,
         })
         clearData(def.id)
@@ -241,7 +266,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
       cancelled = true
       controller.abort()
     }
-  }, [doc, def, updateDef, clearData])
+  }, [doc, def, updateDef, clearData, confirm, t])
 
   useEffect(() => {
     if (!doc?.launcherVersion) return
@@ -538,6 +563,44 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     scope: { ...scope, Inputs: inputsRef.current },
     t,
   }), [defaultInstance, launch, refresh, resolveAccountCheck, notify, navigate, sandbox, doc, resources, data, results, scope, size, preview, def, t])
+
+  const ensureCommandTrusted = useCallback(async (    rawCommand: string | undefined,
+    rawWorkingDirectory: string | undefined,
+    command: string | undefined,
+    workingDirectory: string | undefined,
+  ): Promise<boolean> => {
+    const remote = !!def.sourceUrl
+    const roots = [...bindingRoots(rawCommand), ...bindingRoots(rawWorkingDirectory)]
+    const dynamic = roots.length > 0
+    if (!dynamic) {
+      if (!remote) return true
+      const fingerprint = doc ? executableFingerprint(doc) : ''
+      const key = `${def.id}:${fingerprint}`
+      if (def.executableHash === fingerprint || isExecutableApproved(key)) return true
+      const accepted = await confirm(
+        `${t('dashboard.custom.riskMessage')}\n\n${command ?? ''}`,
+        t('dashboard.custom.riskTitle'),
+      )
+      if (!accepted) return false
+      approveExecutable(key)
+      updateDef(def.id, { executableHash: fingerprint })
+      return true
+    }
+    const external = hasExternalBinding(roots) || (remote && roots.length > 0)
+    if (!external) return true
+    const hash = commandHash(command ?? '', workingDirectory)
+    const key = `${def.id}:${hash}`
+    if ((def.trustedCommands ?? []).includes(hash) || isCommandApproved(key)) return true
+    const accepted = await confirm(
+      `${t('dashboard.custom.riskMessage')}\n\n${command ?? ''}`,
+      t('dashboard.custom.riskTitle'),
+    )
+    if (!accepted) return false
+    approveCommand(key)
+    updateDef(def.id, { trustedCommands: [...(def.trustedCommands ?? []), hash].slice(-32) })
+    return true
+  }, [confirm, def, doc, t, updateDef])
+
   const executeAction = useCallback(async (action: ActionSpec | undefined, control?: string) => {
     if (!action && !control) return
     if (control) fireTriggerRef.current?.('Click', control)
@@ -545,24 +608,27 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     const rawArgs = { ...action.args }
     const resolvedArgs: Record<string, string> = {}
     for (const [key, value] of Object.entries(rawArgs)) {
-      if (
-        key === 'Arguments'
-        || (action.name === 'RunCommand' && (key === 'Command' || key === 'WorkingDirectory'))
-      ) {
+      if (key === 'Arguments') {
         resolvedArgs[key] = value
       } else {
-        resolvedArgs[key] = value.replace(/\{([^{}]+)\}/g, (_, token: string) => {
-          const found = resolveScopeValue({ ...scope, Inputs: inputsRef.current }, token)
-          return found === undefined || found === null ? '' : String(found)
-        })
+        resolvedArgs[key] = resolveActionValue(value, { ...scope, Inputs: inputsRef.current })
       }
+    }
+    if (action.name === 'RunCommand') {
+      const accepted = await ensureCommandTrusted(
+        rawArgs.Command,
+        rawArgs.WorkingDirectory,
+        resolvedArgs.Command,
+        resolvedArgs.WorkingDirectory,
+      )
+      if (!accepted) return
     }
     try {
       await runWidgetAction({ name: action.name, args: resolvedArgs }, actionContext())
     } catch (error) {
       showError(error instanceof Error ? error.message : String(error), t('dashboard.custom.actionFailed'))
     }
-  }, [actionContext, scope, showError, t])
+  }, [actionContext, ensureCommandTrusted, scope, showError, t])
 
   const invoke = useCallback(async (target: string, method: string, args: unknown[]): Promise<unknown> => {
     if (!doc) throw new Error('组件未加载')
@@ -784,6 +850,7 @@ interface NestedUsingProps {
 
 function NestedUsing({ node, chain, parentScope, parentAllowedHosts, onSnapshot, preview }: NestedUsingProps) {
   const { t } = useI18n()
+  const { confirm } = useMessageBox()
   const defs = useCustomWidgetStore((s) => s.defs)
   const local = node.name ? defs.filter((item) => item.name === node.name) : []
   const [remoteXml, setRemoteXml] = useState<string | null>(node.url ? getRemoteWidget(node.url, node.refresh ? node.refresh * 1000 : undefined) : null)
@@ -805,8 +872,48 @@ function NestedUsing({ node, chain, parentScope, parentAllowedHosts, onSnapshot,
       return
     }
     void fetchWidgetUrl(url)
-      .then((response) => {
+      .then(async (response) => {
         if (cancelled) return
+        const nextFingerprint = (() => {
+          try {
+            return executableFingerprint(parseWidgetXml(response.body))
+          } catch {
+            return ''
+          }
+        })()
+        if (nextFingerprint) {
+          const previousXml = getRemoteWidget(url, Number.MAX_SAFE_INTEGER)
+          let previousFingerprint = ''
+          if (previousXml) {
+            try {
+              previousFingerprint = executableFingerprint(parseWidgetXml(previousXml))
+            } catch {
+              previousFingerprint = ''
+            }
+          }
+          if (nextFingerprint !== previousFingerprint) {
+            const key = `remote:${url}:${nextFingerprint}`
+            if (!isExecutableApproved(key)) {
+              let commands: string
+              try {
+                commands = executableActions(parseWidgetXml(response.body))
+                  .map((action) => action.args.Command ?? action.args.PluginId ?? action.name)
+                  .join(' | ')
+              } catch {
+                commands = ''
+              }
+              const accepted = await confirm(
+                `${t('dashboard.custom.riskMessage')}\n\n${commands}`,
+                t('dashboard.custom.riskTitle'),
+              )
+              if (!accepted) {
+                setError(t('dashboard.custom.riskTitle'))
+                return
+              }
+              approveExecutable(key)
+            }
+          }
+        }
         setRemoteXml(response.body)
         setRemoteWidget(url, response.body)
       })
@@ -814,7 +921,7 @@ function NestedUsing({ node, chain, parentScope, parentAllowedHosts, onSnapshot,
         if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause))
       })
     return () => { cancelled = true }
-  }, [node.url, node.refresh, chain, t])
+  }, [node.url, node.refresh, chain, t, confirm])
 
   if (chain.length >= WIDGET_LIMITS.maxNestedDepth) {
     return <WidgetErrorBox message={t('dashboard.custom.nestedTooDeep')} />
