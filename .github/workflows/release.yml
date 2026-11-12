@@ -510,9 +510,12 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }
-      - run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm cpio xdg-utils libglib2.0-dev
+      - name: Install system dependencies
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+            rpm cpio xdg-utils libglib2.0-dev
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
       - name: Setup connector build
         id: connector
@@ -737,9 +740,12 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }
-      - run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm cpio xdg-utils libglib2.0-dev
+      - name: Install system dependencies
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+            rpm cpio xdg-utils libglib2.0-dev
       - run: node scripts/bump-version.mjs "${{ needs.setup.outputs.version }}"
       - name: Setup connector build
         id: connector
@@ -977,11 +983,12 @@ jobs:
       # loong64 原生库（libwebkit2gtk-4.1-dev 等）没有 x86_64 版本，只能从
       # loong64 源解包出 sysroot；源码级依赖用宿主 apt。
       - name: Install host build dependencies
-        run: |
-          sudo apt-get update
+        uses: ./.github/actions/apt-install
+        with:
           # rpm：tauri build --bundles deb,rpm 需要 rpmbuild；宿主未装时会在
           # 打包阶段才失败，白跑一遍交叉编译。与其余平台保持一致。
-          sudo apt-get install -y pkg-config protobuf-compiler libssl-dev libclang-dev \
+          packages: >-
+            pkg-config protobuf-compiler libssl-dev libclang-dev
             rpm xdg-utils patchelf
       - name: Fetch loong64 cross toolchain
         env:

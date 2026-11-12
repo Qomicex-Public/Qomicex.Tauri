@@ -53,16 +53,11 @@ jobs:
         with:
           pat: ${{ secrets.QOMICEX_PAT }}
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            protobuf-compiler \
-            libglib2.0-dev \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            protobuf-compiler libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+            libappindicator3-dev librsvg2-dev patchelf
       - name: Cargo test
         env:
           PROTOC: ${{ steps.connector.outputs.protoc-path }}
@@ -111,7 +106,9 @@ jobs:
             --ignore RUSTSEC-2026-0487 --ignore RUSTSEC-2026-0489 \
             --ignore RUSTSEC-2026-0490 --ignore RUSTSEC-2026-0491
       - name: Install test dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq curl
+        uses: ./.github/actions/apt-install
+        with:
+          packages: jq curl
       - name: Run API filter tests
         env:
           PROTOC: ${{ steps.connector.outputs.protoc-path }}

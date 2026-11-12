@@ -27,17 +27,11 @@ runs:
         pat: ${{ inputs.pat }}
 
     - name: Install system dependencies
-      shell: bash
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          protobuf-compiler \
-          libglib2.0-dev \
-          libgtk-3-dev \
-          libwebkit2gtk-4.1-dev \
-          libappindicator3-dev \
-          librsvg2-dev \
-          patchelf
+      uses: ./.github/actions/apt-install
+      with:
+        packages: >-
+          protobuf-compiler libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+          libappindicator3-dev librsvg2-dev patchelf
 
     - name: Cargo test
       shell: bash

@@ -1,0 +1,35 @@
+name: apt install
+description: >
+  Ubuntu 依赖安装。runner 镜像的 apt 首选 azure.archive.ubuntu.com，该节点会间歇性
+  拒连，apt 对它 Ign 重试数十分钟才降级到 archive.ubuntu.com
+  （actions/runner-images#14594，实测约 20% 的 run 中招，单步曾耗到 1.5 小时）。
+  这里给每次 apt 调用加短超时并整体重试，把数十分钟的静默挂起变成几十秒的失败重试；
+  重试通常落到健康节点。
+
+inputs:
+  packages:
+    description: '空格分隔的包名，直接传给 apt-get install'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install apt packages
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        # timeout 放在 sudo 之后：放前面只会给 sudo 发信号，apt 仍会挂着。
+        # Debian 的 http/https Acquire 超时默认无界，一并收紧。
+        APT_OPTS=(-o Acquire::Retries=2 -o Acquire::http::Timeout=10 -o Acquire::https::Timeout=10)
+        export DEBIAN_FRONTEND=noninteractive
+        for attempt in 1 2 3; do
+          if sudo timeout 180 apt-get "${APT_OPTS[@]}" update -qq &&
+             sudo timeout 420 apt-get "${APT_OPTS[@]}" install -y $PACKAGES; then
+            exit 0
+          fi
+          echo "::warning::apt 第 ${attempt}/3 次失败，15s 后重试"
+          sleep 15
+        done
+        echo "::error::apt 安装失败：Ubuntu 镜像抖动，见 actions/runner-images#14594"
+        exit 1
