@@ -170,6 +170,9 @@ WPF 风格绑定：
 
 - 仅允许 HTTPS，域名需在编辑器中确认
 - 使用 sandbox iframe，不包含 `allow-same-origin`
+- 安全参数：`Sandbox="Scripts,Forms,Popups,Downloads"`、`Loading`、`ReferrerPolicy`、`Fullscreen`
+- `Sandbox` 不开放 `same-origin` / `top-navigation` / `popups-to-escape-sandbox`
+- `_self` 链接在 iframe 内跳转；`_blank` 受 `Popups` 控制
 - 目标站点可能用 `X-Frame-Options` / CSP 拒绝嵌入
 
 ## 动态 Page

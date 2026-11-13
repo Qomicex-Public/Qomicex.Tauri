@@ -821,14 +821,24 @@ function renderWebview(node: WebviewNode, ctx: RenderContext, root = false): Rea
   if (!isSafeHttpsUrl(src)) return null
   const host = hostOf(src)
   if (!host || !ctx.allowedHosts.has(host)) return null
+  const referrerPolicy = ({
+    NoReferrer: 'no-referrer',
+    NoReferrerWhenDowngrade: 'no-referrer-when-downgrade',
+    Origin: 'origin',
+    OriginWhenCrossOrigin: 'origin-when-cross-origin',
+    SameOrigin: 'same-origin',
+    StrictOrigin: 'strict-origin',
+    StrictOriginWhenCrossOrigin: 'strict-origin-when-cross-origin',
+  } as const)[node.referrerPolicy]
   return (
     <iframe
       src={src}
       title={node.title ?? 'QWidget webview'}
-      loading="lazy"
-      referrerPolicy="no-referrer"
-      sandbox="allow-scripts allow-forms allow-popups allow-downloads"
+      loading={node.loading === 'Eager' ? 'eager' : 'lazy'}
+      referrerPolicy={referrerPolicy}
+      sandbox={node.sandbox ?? 'allow-scripts allow-forms allow-popups allow-downloads'}
       allow={node.allow ?? 'fullscreen; autoplay; encrypted-media; picture-in-picture; clipboard-write'}
+      allowFullScreen={node.fullscreen}
       style={{ ...nodeStyle(node), height: node.height }}
       className={cn('w-full max-w-full rounded-md border-0', animationClass(node.animations), root && 'max-h-full overflow-auto')}
     />

@@ -262,6 +262,10 @@ export interface WebviewNode extends NodeBase {
   height: number
   title?: string
   allow?: string
+  sandbox?: string
+  loading: 'Lazy' | 'Eager'
+  referrerPolicy: 'NoReferrer' | 'NoReferrerWhenDowngrade' | 'Origin' | 'OriginWhenCrossOrigin' | 'SameOrigin' | 'StrictOrigin' | 'StrictOriginWhenCrossOrigin'
+  fullscreen: boolean
 }
 
 export type PageNode = WidgetNode | TabItemNode | ListItemNode

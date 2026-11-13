@@ -198,7 +198,7 @@ export const ELEMENT_ATTRS: Record<string, readonly string[]> = {
   Button: ['Name', 'Text', 'Variant', 'Size', 'OnClick', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Function', 'Arguments', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method'],
   Image: ['Src', 'Alt', 'W', 'H', 'Rounded'],
   Media: ['Type', 'Source', 'Controls', 'AutoPlay', 'Loop', 'Poster', 'Volume', 'Muted'],
-  Webview: ['Src', 'Height', 'Title', 'Allow'],
+  Webview: ['Src', 'Height', 'Title', 'Allow', 'Sandbox', 'Loading', 'ReferrerPolicy', 'Fullscreen'],
   TextBox: ['Name', 'Value', 'Placeholder', 'Multiline', 'Password', 'ReadOnly', 'MaxLength', 'OnChange'],
   CheckBox: ['Name', 'Text', 'Checked', 'OnChange'],
   Slider: ['Name', 'Value', 'Min', 'Max', 'Step', 'OnChange'],
@@ -388,6 +388,20 @@ export const ATTRIBUTE_VALUES: Record<string, Record<string, readonly string[]>>
     AutoPlay: ['True', 'False'],
     Loop: ['True', 'False'],
     Muted: ['True', 'False'],
+  },
+  Webview: {
+    Loading: ['Lazy', 'Eager'],
+    ReferrerPolicy: [
+      'NoReferrer',
+      'NoReferrerWhenDowngrade',
+      'Origin',
+      'OriginWhenCrossOrigin',
+      'SameOrigin',
+      'StrictOrigin',
+      'StrictOriginWhenCrossOrigin',
+    ],
+    Fullscreen: ['True', 'False'],
+    Sandbox: ['Scripts', 'Forms', 'Popups', 'Downloads', 'Modals', 'OrientationLock', 'PointerLock', 'Presentation'],
   },
 }
 

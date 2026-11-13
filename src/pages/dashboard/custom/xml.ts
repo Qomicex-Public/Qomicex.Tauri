@@ -1259,6 +1259,27 @@ function parseMedia(el: Element, ctx: ParseCtx): MediaNode {
   }
 }
 
+const WEBVIEW_SANDBOX: Record<string, string> = {
+  Scripts: 'allow-scripts',
+  Forms: 'allow-forms',
+  Popups: 'allow-popups',
+  Downloads: 'allow-downloads',
+  Modals: 'allow-modals',
+  OrientationLock: 'allow-orientation-lock',
+  PointerLock: 'allow-pointer-lock',
+  Presentation: 'allow-presentation',
+}
+
+const WEBVIEW_REFERRER: Record<string, string> = {
+  NoReferrer: 'no-referrer',
+  NoReferrerWhenDowngrade: 'no-referrer-when-downgrade',
+  Origin: 'origin',
+  OriginWhenCrossOrigin: 'origin-when-cross-origin',
+  SameOrigin: 'same-origin',
+  StrictOrigin: 'strict-origin',
+  StrictOriginWhenCrossOrigin: 'strict-origin-when-cross-origin',
+}
+
 function parseWebview(el: Element, ctx: ParseCtx): WebviewNode {
   const { attrs, propertyElements, children } = readElement(el)
   applyProperties('Webview', attrs, propertyElements)
@@ -1271,12 +1292,29 @@ function parseWebview(el: Element, ctx: ParseCtx): WebviewNode {
   if (allow && !/^[A-Za-z0-9 ;=*.-]+$/.test(allow)) {
     throw new WidgetError('invalidAttribute', `Webview@Allow=${allow}`)
   }
+  const sandboxRaw = attr(attrs, 'Sandbox')?.trim()
+  let sandbox: string | undefined
+  if (sandboxRaw !== undefined) {
+    const tokens = sandboxRaw.split(/[\s,]+/).filter(Boolean)
+    if (tokens.length === 0) throw new WidgetError('invalidAttribute', 'Webview@Sandbox 不能为空')
+    sandbox = tokens.map((token) => {
+      const mapped = WEBVIEW_SANDBOX[token]
+      if (!mapped) throw new WidgetError('invalidAttribute', `Webview@Sandbox=${token}`)
+      return mapped
+    }).join(' ')
+  }
+  const loading = enumAttr(attrs, 'Webview', 'Loading', ['Lazy', 'Eager'] as const, 'Lazy')!
+  const referrer = enumAttr(attrs, 'Webview', 'ReferrerPolicy', Object.keys(WEBVIEW_REFERRER) as Array<keyof typeof WEBVIEW_REFERRER>, 'NoReferrer')!
   return {
     kind: 'webview',
     src,
     height: intAttr(attrs, 'Webview', 'Height', 80, 4000, 320),
     title: attr(attrs, 'Title')?.trim() || undefined,
     allow,
+    sandbox,
+    loading,
+    referrerPolicy: referrer as WebviewNode['referrerPolicy'],
+    fullscreen: boolAttr(attrs, 'Webview', 'Fullscreen', true),
     ...baseNode('Webview', attrs),
   }
 }
