@@ -435,10 +435,6 @@ const editorTheme = EditorView.theme({
     overflow: 'auto',
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
   },
-  '.cm-content': {
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
-    padding: '8px 0',
-  },
   '.cm-gutters': {
     backgroundColor: 'transparent',
     color: 'hsl(var(--muted-foreground) / 0.7)',
@@ -446,7 +442,18 @@ const editorTheme = EditorView.theme({
   },
   '.cm-activeLine': { backgroundColor: 'hsl(var(--accent) / 0.35)' },
   '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'hsl(var(--foreground))' },
-  '&.cm-focused': { outline: 'none' },
+  '&.cm-focused': {
+    outline: 'none',
+    caretColor: 'hsl(var(--foreground))',
+  },
+  '.cm-content': {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
+    padding: '8px 0',
+    caretColor: 'hsl(var(--foreground))',
+  },
+  '.cm-cursor, .cm-dropCursor': {
+    borderLeftColor: 'hsl(var(--foreground))',
+  },
   '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
     backgroundColor: 'hsl(var(--primary) / 0.25) !important',
   },
