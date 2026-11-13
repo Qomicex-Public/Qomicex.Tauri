@@ -256,6 +256,14 @@ export interface DialogNode extends NodeBase {
   children: WidgetNode[]
 }
 
+export interface WebviewNode extends NodeBase {
+  kind: 'webview'
+  src: Bindable
+  height: number
+  title?: string
+  allow?: string
+}
+
 export type PageNode = WidgetNode | TabItemNode | ListItemNode
 
 export type EffectSpec =
@@ -355,6 +363,7 @@ export type WidgetNode =
   | ColorPickerNode
   | DividerNode
   | DialogNode
+  | WebviewNode
   | SpacerNode
   | IfNode
   | UsingNode
@@ -427,6 +436,7 @@ export interface WidgetDocument {
   triggers: TriggerNode[]
   nodes: WidgetNode[]
   staticMediaUrls: string[]
+  frameUrls: string[]
   nestedUrls: string[]
 }
 

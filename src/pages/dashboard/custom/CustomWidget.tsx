@@ -47,7 +47,7 @@ import type {
   WidgetNode,
   WidgetSizeInfo,
 } from './types.ts'
-import { parseWidgetXml } from './xml.ts'
+import { parseDynamicPage, parseWidgetXml } from './xml.ts'
 
 export interface ChildSnapshot {
   Inputs: Record<string, unknown>
@@ -239,6 +239,8 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   const [overrides, setOverrides] = useState<Record<string, Record<string, unknown>>>({})
   const overridesRef = useRef<Record<string, Record<string, unknown>>>({})
   const [effectOverrides, setEffectOverrides] = useState<Record<string, EffectSpec[]>>({})
+  const [dynamicPages, setDynamicPages] = useState<Record<string, PageNode[]>>({})
+  const dynamicPagesRef = useRef<Record<string, PageNode[]>>({})
   const [openDialogs, setOpenDialogs] = useState<Set<string>>(new Set())
   const [data, setData] = useState<Record<string, unknown>>({})
   const [dataStatus, setDataStatus] = useState<Record<string, 'Loading' | 'Completed' | 'Error'>>({})
@@ -307,7 +309,11 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     overridesRef.current = {}
     setOverrides({})
     setEffectOverrides({})
+    setDynamicPages({})
+    dynamicPagesRef.current = {}
     setOpenDialogs(new Set())
+    sandboxRef.current?.destroy()
+    sandboxRef.current = null
   }, [def.id, def.xml])
 
   // 在线组件更新：纯数据/布局静默替换；可执行内容变化时确认。
@@ -360,6 +366,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
           datas: next.datas,
           updateUrl: next.updateUrl,
           staticMediaUrls: next.staticMediaUrls,
+          frameUrls: next.frameUrls,
           nestedUrls: next.nestedUrls,
         })
         const sourceHost = def.sourceUrl ? hostOf(def.sourceUrl) : null
@@ -447,6 +454,11 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     [doc, lang],
   )
 
+  const pages = useMemo(
+    () => ({ ...(doc?.pages ?? {}), ...dynamicPages }),
+    [doc, dynamicPages],
+  )
+
   const setInput = useCallback((name: string, value: unknown) => {
     const next = { ...inputsRef.current, [name]: value }
     inputsRef.current = next
@@ -468,6 +480,15 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   const applyEffects = useCallback((target: string, effects: EffectSpec[]) => {
     setEffectOverrides((prev) => ({ ...prev, [target]: effects }))
   }, [])
+
+  const setPage = useCallback((name: string, xml: string) => {
+    if (!doc) throw new Error('组件未加载')
+    const page = parseDynamicPage(xml, doc, dynamicPagesRef.current)
+    const next = { ...dynamicPagesRef.current, [name]: page }
+    dynamicPagesRef.current = next
+    setDynamicPages(next)
+    return true
+  }, [doc])
 
   const setProperty = useCallback(async (target: string, property: string, value: unknown): Promise<unknown> => {
     if (!doc) throw new Error('组件未加载')
@@ -659,10 +680,11 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
         SetProperty: (target, property, value) => runtimeRef.current?.setProperty(target, property, value) ?? Promise.reject(new Error('组件运行时不可用')),
         GetProperty: (target, property) => runtimeRef.current?.getProperty(target, property) ?? Promise.reject(new Error('组件运行时不可用')),
         Invoke: (target, method, args) => runtimeRef.current?.invoke(target, method, args) ?? Promise.reject(new Error('组件运行时不可用')),
+        SetPage: (name, xml) => setPage(name, xml),
       })
     }
     return sandboxRef.current
-  }, [navigate, notify])
+  }, [navigate, notify, setPage])
 
   const actionContext = useCallback(() => ({
     defaultInstance,
@@ -1021,7 +1043,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     effects: effectOverrides,
     bindingOptions,
     size,
-    pages: doc?.pages ?? {},
+    pages,
     openDialogs,
     showDialog,
     hideDialog,
@@ -1190,6 +1212,7 @@ function NestedUsing({ node, chain, parentScope, parentAllowedHosts, bindingOpti
           datas: childDoc.datas,
           updateUrl: childDoc.updateUrl,
           staticMediaUrls: childDoc.staticMediaUrls,
+          frameUrls: childDoc.frameUrls,
           nestedUrls: childDoc.nestedUrls,
         })
       : []),

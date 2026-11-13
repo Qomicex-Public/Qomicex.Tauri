@@ -259,6 +259,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
       datas: doc.datas,
       updateUrl: doc.updateUrl,
       staticMediaUrls: doc.staticMediaUrls,
+      frameUrls: doc.frameUrls,
       nestedUrls: doc.nestedUrls,
     })
     const sourceHost = hostOf(sourceUrl.trim())
@@ -504,6 +505,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
       SetProperty: async () => null,
       GetProperty: async () => null,
       Invoke: async () => null,
+      SetPage: async () => null,
     })
     try {
       const output = await executeFunction(selectedFn, undefined, sandbox, {
@@ -534,6 +536,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
       SetProperty: async () => null,
       GetProperty: async () => null,
       Invoke: async () => null,
+      SetPage: async () => null,
     })
     try {
       const output = await executeFunction(fn, action, sandbox, {

@@ -46,6 +46,7 @@ import type {
   TextBoxNode,
   TextNode,
   UsingNode,
+  WebviewNode,
   WidgetNode,
   WidgetSizeInfo,
 } from './types.ts'
@@ -194,6 +195,7 @@ const NODE_TAG: Record<WidgetNode['kind'], string> = {
   colorPicker: 'ColorPicker',
   divider: 'Divider',
   dialog: 'Dialog',
+  webview: 'Webview',
   spacer: 'Spacer',
   using: 'Using',
 }
@@ -546,6 +548,8 @@ function renderNode(node: WidgetNode, ctx: RenderContext, root = false): ReactNo
       return renderImage(effective, ctx, root)
     case 'media':
       return renderMedia(effective, ctx, root)
+    case 'webview':
+      return renderWebview(effective, ctx, root)
     case 'textBox':
       return <TextBoxControl key="textBox" node={effective} ctx={ctx} root={root} />
     case 'checkBox':
@@ -810,6 +814,25 @@ function bindingInputName(binding: BindingSpec, fallback: string): string {
   const path = binding.path ?? binding.paths?.[0] ?? ''
   const parts = path.split('.')
   return parts[0] === 'Inputs' && parts[1] ? parts[1] : fallback
+}
+
+function renderWebview(node: WebviewNode, ctx: RenderContext, root = false): ReactNode {
+  const src = interpolate(node.src, ctx.scope, ctx.bindingOptions)
+  if (!isSafeHttpsUrl(src)) return null
+  const host = hostOf(src)
+  if (!host || !ctx.allowedHosts.has(host)) return null
+  return (
+    <iframe
+      src={src}
+      title={node.title ?? 'QWidget webview'}
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads"
+      allow={node.allow ?? 'fullscreen; autoplay; encrypted-media; picture-in-picture; clipboard-write'}
+      style={{ ...nodeStyle(node), height: node.height }}
+      className={cn('w-full max-w-full rounded-md border-0', animationClass(node.animations), root && 'max-h-full overflow-auto')}
+    />
+  )
 }
 
 function TextBoxControl({ node, ctx, root = false }: { node: TextBoxNode; ctx: RenderContext; root?: boolean }) {
