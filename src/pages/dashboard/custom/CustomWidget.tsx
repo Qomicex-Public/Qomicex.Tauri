@@ -1053,7 +1053,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
   if (doc.nodes.length === 0) return null
 
   return (
-    <div ref={rootRef} className="flex h-full min-h-0 flex-col overflow-auto" data-widget-version={doc.version} data-widget-root={def.id}>
+    <div ref={rootRef} className="flex h-full min-h-0 flex-col overflow-hidden" data-widget-version={doc.version} data-widget-root={def.id}>
       {renderNodes(doc.nodes, renderContext, '', true)}
     </div>
   )
