@@ -158,8 +158,47 @@ WPF 风格绑定：
 | `Media` | `Type`(Audio/Video) `Source` `Controls` `AutoPlay` `Loop` `Poster` `Volume` `Muted` |
 | `FilePicker` | `Name` `Text` `Filter` `Value` |
 | `ColorPicker` | `Name` `Value` `OnChange` |
+| `Webview` | `Src` `Height` `Title` `Allow` |
 
 控件当前值进入 `{Inputs.<Name>}`；`Button`/`Link` 的 `Name` 可供 Click Trigger 使用。
+
+### Webview
+
+```xml
+<Webview Src="https://example.com/embed" Height="320" Title="公告" />
+```
+
+- 仅允许 HTTPS，域名需在编辑器中确认
+- 使用 sandbox iframe，不包含 `allow-same-origin`
+- 安全参数：`Sandbox="Scripts,Forms,Popups,Downloads"`、`Loading`、`ReferrerPolicy`、`Fullscreen`
+- `Sandbox` 不开放 `same-origin` / `top-navigation` / `popups-to-escape-sandbox`
+- `_self` 链接在 iframe 内跳转；`_blank` 受 `Popups` 控制
+- 目标站点可能用 `X-Frame-Options` / CSP 拒绝嵌入
+
+## 动态 Page
+
+先声明占位 Page，再由 Function 覆盖：
+
+```xml
+<Resources>
+  <Resource Type="Page" Name="Result" />
+</Resources>
+
+<Container Content="{Result}" />
+
+<Function Name="BuildResult">
+  <Function.Script><![CDATA[
+    await Host.SetPage('Result', `
+      <Page><Text Value="动态内容" /></Page>
+    `)
+  ]]></Function.Script>
+</Function>
+```
+
+- `Host.SetPage(name, xml)` 覆盖同名已声明 Page
+- Page XML 根必须是 `<Page>`
+- 动态 Page 不能包含 Data/Function/Trigger
+- 状态只在当前组件实例内，XML 更新或卸载后重置
 
 ## Function（TS 脚本）
 

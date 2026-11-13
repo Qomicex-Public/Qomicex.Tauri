@@ -153,6 +153,7 @@ export const ELEMENT_ATTRS: Record<string, readonly string[]> = {
   Input: ['Name', 'Type', 'Required', 'Default'],
   'Widget.Outputs': [],
   Output: ['Name', 'Type', 'Source'],
+  Page: ['Name'],
   'Widget.Converters': [],
   Converters: [],
   Converter: ['Name', 'Type', 'Format'],
@@ -197,6 +198,7 @@ export const ELEMENT_ATTRS: Record<string, readonly string[]> = {
   Button: ['Name', 'Text', 'Variant', 'Size', 'OnClick', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Function', 'Arguments', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method'],
   Image: ['Src', 'Alt', 'W', 'H', 'Rounded'],
   Media: ['Type', 'Source', 'Controls', 'AutoPlay', 'Loop', 'Poster', 'Volume', 'Muted'],
+  Webview: ['Src', 'Height', 'Title', 'Allow', 'Sandbox', 'Loading', 'ReferrerPolicy', 'Fullscreen'],
   TextBox: ['Name', 'Value', 'Placeholder', 'Multiline', 'Password', 'ReadOnly', 'MaxLength', 'OnChange'],
   CheckBox: ['Name', 'Text', 'Checked', 'OnChange'],
   Slider: ['Name', 'Value', 'Min', 'Max', 'Step', 'OnChange'],
@@ -242,6 +244,7 @@ export const NODE_TAGS = new Set([
   'Divider',
   'Spacer',
   'Dialog',
+  'Webview',
   'Using',
 ])
 
@@ -385,6 +388,20 @@ export const ATTRIBUTE_VALUES: Record<string, Record<string, readonly string[]>>
     AutoPlay: ['True', 'False'],
     Loop: ['True', 'False'],
     Muted: ['True', 'False'],
+  },
+  Webview: {
+    Loading: ['Lazy', 'Eager'],
+    ReferrerPolicy: [
+      'NoReferrer',
+      'NoReferrerWhenDowngrade',
+      'Origin',
+      'OriginWhenCrossOrigin',
+      'SameOrigin',
+      'StrictOrigin',
+      'StrictOriginWhenCrossOrigin',
+    ],
+    Fullscreen: ['True', 'False'],
+    Sandbox: ['Scripts', 'Forms', 'Popups', 'Downloads', 'Modals', 'OrientationLock', 'PointerLock', 'Presentation'],
   },
 }
 
@@ -643,6 +660,7 @@ export function collectAutoHosts(input: {
   datas: DataSourceSpec[]
   updateUrl?: string
   staticMediaUrls: string[]
+  frameUrls?: string[]
   nestedUrls: string[]
 }): string[] {
   const hosts = new Set<string>()
@@ -655,7 +673,7 @@ export function collectAutoHosts(input: {
     const host = hostOf(input.updateUrl)
     if (host) hosts.add(host)
   }
-  for (const url of [...input.staticMediaUrls, ...input.nestedUrls]) {
+  for (const url of [...input.staticMediaUrls, ...(input.frameUrls ?? []), ...input.nestedUrls]) {
     if (isBound(url)) continue
     const host = hostOf(url)
     if (host) hosts.add(host)

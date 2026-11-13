@@ -402,7 +402,7 @@ function tsCompletion(context: CompletionContext, getContext: () => TsCompletion
     Data: ctx.data,
     Results: ctx.functions,
     Size: ['Width', 'Height', 'PixelWidth', 'PixelHeight'],
-    Host: ['Notify', 'OpenUrl', 'Navigate', 'Log', 'GetSize', 'SetProperty', 'GetProperty', 'Invoke'],
+    Host: ['Notify', 'OpenUrl', 'Navigate', 'Log', 'GetSize', 'SetProperty', 'GetProperty', 'Invoke', 'SetPage'],
   } as Record<string, string[]>)[match[1]]
   if (!values) return null
   const start = context.pos - match[2].length

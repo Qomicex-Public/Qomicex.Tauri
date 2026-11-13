@@ -76,6 +76,7 @@ import type {
   TextNode,
   TriggerNode,
   UsingNode,
+  WebviewNode,
   WidgetDocument,
   WidgetNode,
 } from './types.ts'
@@ -90,6 +91,7 @@ interface ParseCtx {
   functions: FunctionNode[]
   triggers: TriggerNode[]
   staticMediaUrls: string[]
+  frameUrls: string[]
   nestedUrls: string[]
   aliases: Set<string>
   usingCount: number
@@ -861,6 +863,8 @@ function parseNodeInner(el: Element, ctx: ParseCtx, depth: number): WidgetNode {
       return parseImage(el, ctx)
     case 'Media':
       return parseMedia(el, ctx)
+    case 'Webview':
+      return parseWebview(el, ctx)
     case 'TextBox':
       return parseTextBox(el)
     case 'CheckBox':
@@ -1255,6 +1259,66 @@ function parseMedia(el: Element, ctx: ParseCtx): MediaNode {
   }
 }
 
+const WEBVIEW_SANDBOX: Record<string, string> = {
+  Scripts: 'allow-scripts',
+  Forms: 'allow-forms',
+  Popups: 'allow-popups',
+  Downloads: 'allow-downloads',
+  Modals: 'allow-modals',
+  OrientationLock: 'allow-orientation-lock',
+  PointerLock: 'allow-pointer-lock',
+  Presentation: 'allow-presentation',
+}
+
+const WEBVIEW_REFERRER: Record<string, string> = {
+  NoReferrer: 'no-referrer',
+  NoReferrerWhenDowngrade: 'no-referrer-when-downgrade',
+  Origin: 'origin',
+  OriginWhenCrossOrigin: 'origin-when-cross-origin',
+  SameOrigin: 'same-origin',
+  StrictOrigin: 'strict-origin',
+  StrictOriginWhenCrossOrigin: 'strict-origin-when-cross-origin',
+}
+
+function parseWebview(el: Element, ctx: ParseCtx): WebviewNode {
+  const { attrs, propertyElements, children } = readElement(el)
+  applyProperties('Webview', attrs, propertyElements)
+  validateAttrs('Webview', attrs)
+  if (children.length > 0) throw new WidgetError('invalidAttribute', 'Webview 不能包含子元素')
+  const src = requiredAttr(attrs, 'Webview', 'Src')
+  validateStaticUrl(src, 'Webview@Src')
+  if (!isBound(src)) ctx.frameUrls.push(src)
+  const allow = attr(attrs, 'Allow')?.trim()
+  if (allow && !/^[A-Za-z0-9 ;=*.-]+$/.test(allow)) {
+    throw new WidgetError('invalidAttribute', `Webview@Allow=${allow}`)
+  }
+  const sandboxRaw = attr(attrs, 'Sandbox')?.trim()
+  let sandbox: string | undefined
+  if (sandboxRaw !== undefined) {
+    const tokens = sandboxRaw.split(/[\s,]+/).filter(Boolean)
+    if (tokens.length === 0) throw new WidgetError('invalidAttribute', 'Webview@Sandbox 不能为空')
+    sandbox = tokens.map((token) => {
+      const mapped = WEBVIEW_SANDBOX[token]
+      if (!mapped) throw new WidgetError('invalidAttribute', `Webview@Sandbox=${token}`)
+      return mapped
+    }).join(' ')
+  }
+  const loading = enumAttr(attrs, 'Webview', 'Loading', ['Lazy', 'Eager'] as const, 'Lazy')!
+  const referrer = enumAttr(attrs, 'Webview', 'ReferrerPolicy', Object.keys(WEBVIEW_REFERRER) as Array<keyof typeof WEBVIEW_REFERRER>, 'NoReferrer')!
+  return {
+    kind: 'webview',
+    src,
+    height: intAttr(attrs, 'Webview', 'Height', 80, 4000, 320),
+    title: attr(attrs, 'Title')?.trim() || undefined,
+    allow,
+    sandbox,
+    loading,
+    referrerPolicy: referrer as WebviewNode['referrerPolicy'],
+    fullscreen: boolAttr(attrs, 'Webview', 'Fullscreen', true),
+    ...baseNode('Webview', attrs),
+  }
+}
+
 function parseOnChange(attrs: Map<string, string>, tag: string): ActionSpec | undefined {
   const raw = attr(attrs, 'OnChange')
   return raw ? parseAction(attrs, tag, raw) : undefined
@@ -1479,7 +1543,7 @@ function validatePageUsage(nodes: PageNode[], ctx: ParseCtx): void {
   }
 }
 
-function validatePages(ctx: ParseCtx, rootNodes: WidgetNode[]): void {
+function validatePages(ctx: ParseCtx, rootNodes: PageNode[]): void {
   const refs = new Set<string>()
   collectPageRefs(rootNodes, refs)
   collectPageRefs([...ctx.pages.values()].flat(), refs)
@@ -1568,6 +1632,60 @@ function validateConverterReferences(value: unknown, names: Set<string>, seen = 
   }
 }
 
+function assertDynamicPageNodes(el: Element): void {
+  for (const child of Array.from(el.children)) {
+    if (child.tagName === 'Data' || child.tagName === 'Function' || child.tagName === 'Triggers' || child.tagName === 'Resources' || child.tagName === 'Widget') {
+      throw new WidgetError('invalidPage', `动态 Page 不允许 ${child.tagName}`)
+    }
+    assertDynamicPageNodes(child)
+  }
+}
+
+export function parseDynamicPage(
+  xml: string,
+  base: Pick<WidgetDocument, 'datas' | 'converters' | 'resources' | 'functions' | 'pages' | 'inputs' | 'outputs'>,
+  pages: Record<string, PageNode[]> = {},
+): PageNode[] {
+  assertSafeXml(xml)
+  const document = new DOMParser().parseFromString(xml, 'application/xml')
+  const error = document.getElementsByTagName('parsererror')[0]
+  if (error || !document.documentElement || document.documentElement.tagName === 'parsererror') {
+    throw new WidgetError('xmlInvalid', error?.textContent?.slice(0, 300))
+  }
+  const root = document.documentElement
+  if (root.tagName !== 'Page') throw new WidgetError('root', root.tagName)
+  const rootSplit = readElement(root)
+  validateAttrs('Page', rootSplit.attrs)
+  assertNoText(root)
+  assertDynamicPageNodes(root)
+  const names = new Set<string>()
+  for (const data of base.datas) names.add(`data:${data.name}`)
+  for (const converter of base.converters) names.add(`converter:${converter.name}`)
+  for (const resource of base.resources) names.add(`resource:${resource.name}`)
+  for (const fn of base.functions) names.add(`function:${fn.name}`)
+  const ctx: ParseCtx = {
+    nodes: 0,
+    datas: base.datas,
+    converters: base.converters,
+    resources: base.resources,
+    functions: base.functions,
+    triggers: [],
+    staticMediaUrls: [],
+    frameUrls: [],
+    nestedUrls: [],
+    aliases: new Set(),
+    usingCount: 0,
+    names,
+    inputs: base.inputs,
+    outputs: base.outputs,
+    pages: new Map([...Object.entries(base.pages), ...Object.entries(pages)]),
+  }
+  const page = parsePageChildren(root, ctx, 1)
+  validatePages(ctx, page)
+  validateConverterReferences(page, new Set(ctx.converters.map((converter) => converter.name)))
+  return page
+}
+
 export function parseWidgetXml(xml: string): WidgetDocument {
   assertSafeXml(xml)
   const doc = new DOMParser().parseFromString(xml, 'application/xml')
@@ -1604,6 +1722,7 @@ export function parseWidgetXml(xml: string): WidgetDocument {
     functions: [],
     triggers: [],
     staticMediaUrls: [],
+    frameUrls: [],
     nestedUrls: [],
     aliases: new Set(),
     usingCount: 0,
@@ -1671,6 +1790,7 @@ export function parseWidgetXml(xml: string): WidgetDocument {
     triggers: ctx.triggers,
     nodes,
     staticMediaUrls: ctx.staticMediaUrls,
+    frameUrls: ctx.frameUrls,
     nestedUrls: [...new Set(ctx.nestedUrls)],
   }
   validateConverterReferences(result, new Set(ctx.converters.map((converter) => converter.name)))

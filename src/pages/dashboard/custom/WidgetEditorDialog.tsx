@@ -23,7 +23,7 @@ import { openExternalUrl } from '../../../api/system.ts'
 import { fetchWidgetUrl } from '../../../api/widgets.ts'
 import { useI18n } from '../../../i18n/index.tsx'
 import { CodeEditor } from './editor/CodeEditor.tsx'
-import { parseResourceEntries, resolveDataPath, widgetBaseDir } from './binary.ts'
+import { parseResourceEntries, parseXmlValue, resolveDataPath, widgetBaseDir } from './binary.ts'
 import { renderNodes, type RenderContext } from './render.tsx'
 import { runFunction as executeFunction, type FunctionContext } from './script/functions.ts'
 import { ScriptSandbox } from './script/sandbox.ts'
@@ -34,6 +34,7 @@ import {
   collectAutoHosts,
   compareVersions,
   hostOf,
+  interpolate,
   isSafeHttpsUrl,
 } from './schema.ts'
 import { useCustomWidgetStore } from './store.ts'
@@ -185,6 +186,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
   const [scriptResult, setScriptResult] = useState<string | null>(null)
   const [previewInputs, setPreviewInputs] = useState<Record<string, unknown>>({})
   const [previewResults, setPreviewResults] = useState<Record<string, Record<string, unknown>>>({})
+  const [previewData, setPreviewData] = useState<Record<string, unknown>>({})
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [previewResources, setPreviewResources] = useState<Record<string, unknown>>({})
   const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 })
@@ -204,6 +206,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
     setSampleJson('{\n  "Data": {}\n}')
     setPreviewInputs({})
     setPreviewResults({})
+    setPreviewData({})
     setNotice(null)
     setBusy(null)
     setTab('xml')
@@ -259,6 +262,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
       datas: doc.datas,
       updateUrl: doc.updateUrl,
       staticMediaUrls: doc.staticMediaUrls,
+      frameUrls: doc.frameUrls,
       nestedUrls: doc.nestedUrls,
     })
     const sourceHost = hostOf(sourceUrl.trim())
@@ -283,6 +287,44 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
     }
   }, [sampleJson])
 
+  useEffect(() => {
+    if (!open || !doc) {
+      setPreviewData({})
+      return
+    }
+    const controller = new AbortController()
+    let cancelled = false
+    setPreviewData({})
+    const scope = { ...(sample ?? {}), Inputs: previewInputs }
+    for (const source of doc.datas) {
+      if (source.source !== 'Url' || source.type === 'Binary' || !source.url) continue
+      const url = interpolate(source.url, scope)
+      if (!isSafeHttpsUrl(url)) continue
+      const host = hostOf(url)
+      if (!host || !confirmed.has(host)) continue
+      void fetchWidgetUrl(url, controller.signal)
+        .then((response) => {
+          if (cancelled) return
+          let value: unknown
+          try {
+            if (source.type === 'Json') value = JSON.parse(response.body)
+            else if (source.type === 'Xml') value = parseXmlValue(response.body)
+            else value = response.body
+          } catch {
+            return
+          }
+          setPreviewData((prev) => ({ ...prev, [source.name]: value }))
+        })
+        .catch(() => {
+          /* 预览数据加载失败时保留空值 */
+        })
+    }
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [open, doc, confirmed, previewInputs, sample])
+
   const previewWidgetSize = useMemo<WidgetSizeInfo>(() => ({
     Width: 2,
     Height: 2,
@@ -292,9 +334,13 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
 
   const previewScope = useMemo(() => {
     if (!sample) return null
-    const dataRoot = sample.Data && typeof sample.Data === 'object' && !Array.isArray(sample.Data)
-      ? { ...(sample.Data as Record<string, unknown>), ...sample }
-      : sample
+    const sampleData = sample.Data && typeof sample.Data === 'object' && !Array.isArray(sample.Data)
+      ? sample.Data as Record<string, unknown>
+      : {}
+    const fetchedData = previewData.Data && typeof previewData.Data === 'object' && !Array.isArray(previewData.Data)
+      ? previewData.Data as Record<string, unknown>
+      : {}
+    const dataRoot = { ...sampleData, ...sample, ...previewData, ...fetchedData }
     return {
       ...sample,
       Data: dataRoot,
@@ -305,7 +351,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
       Size: previewWidgetSize,
       State: { Loading: false, Error: false },
     }
-  }, [sample, previewResources, previewInputs, previewResults, previewWidgetSize])
+  }, [sample, previewData, previewResources, previewInputs, previewResults, previewWidgetSize])
 
   const setHost = (host: string, checked: boolean) => {
     setConfirmed((prev) => {
@@ -504,12 +550,13 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
       SetProperty: async () => null,
       GetProperty: async () => null,
       Invoke: async () => null,
+      SetPage: async () => null,
     })
     try {
       const output = await executeFunction(selectedFn, undefined, sandbox, {
         inputs: previewInputs,
         resources: previewResources,
-        data: sample ?? {},
+        data: (previewScope.Data as Record<string, unknown>) ?? {},
         results: {},
         scope: previewScope,
       } satisfies FunctionContext)
@@ -534,12 +581,13 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
       SetProperty: async () => null,
       GetProperty: async () => null,
       Invoke: async () => null,
+      SetPage: async () => null,
     })
     try {
       const output = await executeFunction(fn, action, sandbox, {
         inputs: previewInputs,
         resources: previewResources,
-        data: sample ?? {},
+        data: (previewScope.Data as Record<string, unknown>) ?? {},
         results: previewResults,
         scope: previewScope,
       })
@@ -555,7 +603,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
     scope: previewScope,
     inputs: previewInputs,
     setInput: (name, value) => setPreviewInputs((prev) => ({ ...prev, [name]: value })),
-    data: sample ?? {},
+    data: (previewScope.Data as Record<string, unknown>) ?? {},
     resources: previewResources,
     results: previewResults,
     children: {},

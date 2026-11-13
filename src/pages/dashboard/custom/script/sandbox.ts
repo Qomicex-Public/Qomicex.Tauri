@@ -16,9 +16,10 @@ export interface ScriptHost {
   SetProperty: (target: string, property: string, value: unknown) => unknown | Promise<unknown>
   GetProperty: (target: string, property: string) => unknown | Promise<unknown>
   Invoke: (target: string, method: string, args: unknown[]) => unknown | Promise<unknown>
+  SetPage: (name: string, xml: string) => unknown | Promise<unknown>
 }
 
-const HOST_METHODS = new Set(['Notify', 'OpenUrl', 'Navigate', 'Log', 'GetSize', 'SetProperty', 'GetProperty', 'Invoke'])
+const HOST_METHODS = new Set(['Notify', 'OpenUrl', 'Navigate', 'Log', 'GetSize', 'SetProperty', 'GetProperty', 'Invoke', 'SetPage'])
 
 export interface ScriptPayload {
   Input: unknown
@@ -63,7 +64,8 @@ const IFRAME_SRC = `<!doctype html>
     GetSize: function () { return callHost('GetSize', []); },
     SetProperty: function (target, property, value) { return callHost('SetProperty', [String(target), String(property), value]); },
     GetProperty: function (target, property) { return callHost('GetProperty', [String(target), String(property)]); },
-    Invoke: function (target, method, args) { return callHost('Invoke', [String(target), String(method), Array.isArray(args) ? args : (args === undefined ? [] : [args])]); }
+    Invoke: function (target, method, args) { return callHost('Invoke', [String(target), String(method), Array.isArray(args) ? args : (args === undefined ? [] : [args])]); },
+    SetPage: function (name, xml) { return callHost('SetPage', [String(name), String(xml)]); }
   };
   window.addEventListener('message', function (event) {
     var data = event.data;
