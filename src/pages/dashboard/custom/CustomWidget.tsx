@@ -362,6 +362,22 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
         if (cancelled) return
         const currentDef = useCustomWidgetStore.getState().defs.find((item) => item.id === def.id)
         if (!currentDef || currentDef.xml !== def.xml) return
+        const newFrameHosts = collectAutoHosts({
+          datas: [],
+          staticMediaUrls: [],
+          frameUrls: next.frameUrls,
+          nestedUrls: [],
+        }).filter((host) => !def.hosts.includes(host))
+        if (newFrameHosts.length > 0) {
+          const accepted = await confirm(
+            `${t('dashboard.custom.riskMessage')}\n\n${newFrameHosts.join('\n')}`,
+            t('dashboard.custom.riskTitle'),
+          )
+          if (!accepted) {
+            updateDef(def.id, { lastChecked: now })
+            return
+          }
+        }
         const hosts = collectAutoHosts({
           datas: next.datas,
           updateUrl: next.updateUrl,
@@ -483,6 +499,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
 
   const setPage = useCallback((name: string, xml: string) => {
     if (!doc) throw new Error('组件未加载')
+    if (!doc.pages[name]) throw new Error(`未声明 Page: ${name}`)
     const page = parseDynamicPage(xml, doc, dynamicPagesRef.current)
     const next = { ...dynamicPagesRef.current, [name]: page }
     dynamicPagesRef.current = next

@@ -1505,7 +1505,7 @@ function validatePageUsage(nodes: PageNode[], ctx: ParseCtx): void {
   }
 }
 
-function validatePages(ctx: ParseCtx, rootNodes: WidgetNode[]): void {
+function validatePages(ctx: ParseCtx, rootNodes: PageNode[]): void {
   const refs = new Set<string>()
   collectPageRefs(rootNodes, refs)
   collectPageRefs([...ctx.pages.values()].flat(), refs)
@@ -1594,6 +1594,15 @@ function validateConverterReferences(value: unknown, names: Set<string>, seen = 
   }
 }
 
+function assertDynamicPageNodes(el: Element): void {
+  for (const child of Array.from(el.children)) {
+    if (child.tagName === 'Data' || child.tagName === 'Function' || child.tagName === 'Triggers' || child.tagName === 'Resources' || child.tagName === 'Widget') {
+      throw new WidgetError('invalidPage', `动态 Page 不允许 ${child.tagName}`)
+    }
+    assertDynamicPageNodes(child)
+  }
+}
+
 export function parseDynamicPage(
   xml: string,
   base: Pick<WidgetDocument, 'datas' | 'converters' | 'resources' | 'functions' | 'pages' | 'inputs' | 'outputs'>,
@@ -1610,6 +1619,7 @@ export function parseDynamicPage(
   const rootSplit = readElement(root)
   validateAttrs('Page', rootSplit.attrs)
   assertNoText(root)
+  assertDynamicPageNodes(root)
   const names = new Set<string>()
   for (const data of base.datas) names.add(`data:${data.name}`)
   for (const converter of base.converters) names.add(`converter:${converter.name}`)
@@ -1632,7 +1642,10 @@ export function parseDynamicPage(
     outputs: base.outputs,
     pages: new Map([...Object.entries(base.pages), ...Object.entries(pages)]),
   }
-  return parsePageChildren(root, ctx, 1)
+  const page = parsePageChildren(root, ctx, 1)
+  validatePages(ctx, page)
+  validateConverterReferences(page, new Set(ctx.converters.map((converter) => converter.name)))
+  return page
 }
 
 export function parseWidgetXml(xml: string): WidgetDocument {
