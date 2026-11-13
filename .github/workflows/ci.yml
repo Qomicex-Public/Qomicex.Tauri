@@ -99,17 +99,14 @@ jobs:
           # 是**两份独立命令**（CI 走这里，release.yml / debug.yml 走 composite
           # action）——改 ignore 列表必须两处同时改，否则会出现「CI 绿但 Release 红」。
           #
-          # easytier fork 锁定 hickory 0.25.2（endpoint-discovery 启用 dns-resolver）：
-          # 0118 在 0.25 线无补丁版本，0119 需 0.26.1（breaking，需迁移 EasyTier4QML fork）。
-          # 0487/0489/0490/0491 同样要求 hickory >= 0.26.2，等 EasyTier4QML 升级后一起移除。
+          # hickory 已随 EasyTier4QML 76f4d17 升到 0.26.3，原先 6 条 0.25 线
+          # DNSSEC 公告（0118/0119/0487/0489/0490/0491）与 11-12 新增的 5 条
+          # （0504/0505/0511/0512/0514）都已在 0.26.3 修复，ignore 列表清空。
           #
           # 0367/0368/0369（zip extract symlink / SUID）与 0391/0398/0403/0410
           # （zstd 依赖链）已由 EasyTier4QML e8a60e6b 升级修复（zip >= 9.0.0、
           # zstd 0.14.3 / zstd-safe 8.2.0 / zstd-sys 2.1.2），无需再 ignore。
-          cd src-backend/qomicex-backend && cargo audit \
-            --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 \
-            --ignore RUSTSEC-2026-0487 --ignore RUSTSEC-2026-0489 \
-            --ignore RUSTSEC-2026-0490 --ignore RUSTSEC-2026-0491
+          cd src-backend/qomicex-backend && cargo audit
       - name: Install test dependencies
         run: sudo apt-get update && sudo apt-get install -y jq curl
       - name: Run API filter tests
