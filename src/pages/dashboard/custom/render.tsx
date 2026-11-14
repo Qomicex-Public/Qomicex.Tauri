@@ -743,10 +743,6 @@ function isPlayableSrc(src: string): boolean {
 function renderImage(node: ImageNode, ctx: RenderContext, root = false): ReactNode {
   const src = interpolate(node.src, ctx.scope, ctx.bindingOptions)
   if (!isPlayableSrc(src)) return null
-  if (!src.startsWith('blob:') && !src.startsWith('data:')) {
-    const host = hostOf(src)
-    if (!host || !ctx.allowedHosts.has(host)) return null
-  }
   return (
     <img
       src={src}
@@ -762,10 +758,6 @@ function renderImage(node: ImageNode, ctx: RenderContext, root = false): ReactNo
 function renderMedia(node: MediaNode, ctx: RenderContext, root = false): ReactNode {
   const source = interpolate(node.source, ctx.scope, ctx.bindingOptions)
   if (!isPlayableSrc(source)) return null
-  if (!source.startsWith('blob:') && !source.startsWith('data:')) {
-    const host = hostOf(source)
-    if (!host || !ctx.allowedHosts.has(host)) return null
-  }
   const video = node.type === 'Video'
   const mediaRef = (element: HTMLMediaElement | null) => {
     if (element && node.volume !== undefined) element.volume = node.volume
@@ -773,13 +765,7 @@ function renderMedia(node: MediaNode, ctx: RenderContext, root = false): ReactNo
   let poster: string | undefined
   if (node.poster) {
     const candidate = interpolate(node.poster, ctx.scope, ctx.bindingOptions)
-    if (isPlayableSrc(candidate)) {
-      if (candidate.startsWith('blob:') || candidate.startsWith('data:')) poster = candidate
-      else {
-        const host = hostOf(candidate)
-        if (host && ctx.allowedHosts.has(host)) poster = candidate
-      }
-    }
+    if (isPlayableSrc(candidate)) poster = candidate
   }
   const common = {
     src: source,
