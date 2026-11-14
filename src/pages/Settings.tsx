@@ -685,6 +685,33 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog, autoInstall, on
         </div>
       </SettingSection>
 
+      {/* Sponsors (鸣谢赞助者) */}
+      {(sponsors.length > 0 || sponsorsFailed) && (
+        <SettingSection title={t('settings.about.sponsors')} icon={<Heart className="h-4 w-4 text-destructive" />}>
+          {sponsorsFailed ? (
+            <div className="p-4 text-sm text-muted-foreground">{t('settings.about.sponsorsFailed')}</div>
+          ) : (
+            <div className="grid grid-cols-1 gap-2 p-4 sm:grid-cols-2">
+              {sponsors.map((s, i) => (
+                <div key={`${s.name}-${i}`} className="flex items-center gap-3 rounded-lg px-3 py-2">
+                  {s.avatar ? (
+                    <img src={s.avatar} alt={s.name} className="h-9 w-9 shrink-0 rounded-full object-cover" />
+                  ) : (
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">
+                      {s.name.slice(0, 1).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{s.name}</div>
+                    <div className="truncate text-xs text-muted-foreground">{t('settings.about.sponsorsAmount', { amount: `￥${s.amount}` })}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </SettingSection>
+      )}
+
       {/* Reference Projects */}      <SettingSection title={t('settings.about.referenceProjects')} icon={<BookOpen className="h-4 w-4" />}>
         <div className="p-2">
           <div className="space-y-2">
@@ -778,33 +805,6 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog, autoInstall, on
           control={<ChevronRight className="h-3 w-3 text-muted-foreground/50" />}
         />
       </SettingSection>
-
-      {/* Sponsors (鸣谢赞助者) */}
-      {(sponsors.length > 0 || sponsorsFailed) && (
-        <SettingSection title={t('settings.about.sponsors')} icon={<Heart className="h-4 w-4 text-destructive" />}>
-          {sponsorsFailed ? (
-            <div className="p-4 text-sm text-muted-foreground">{t('settings.about.sponsorsFailed')}</div>
-          ) : (
-            <div className="grid grid-cols-1 gap-2 p-4 sm:grid-cols-2">
-              {sponsors.map((s, i) => (
-                <div key={`${s.name}-${i}`} className="flex items-center gap-3 rounded-lg px-3 py-2">
-                  {s.avatar ? (
-                    <img src={s.avatar} alt={s.name} className="h-9 w-9 shrink-0 rounded-full object-cover" />
-                  ) : (
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">
-                      {s.name.slice(0, 1).toUpperCase()}
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{s.name}</div>
-                    <div className="truncate text-xs text-muted-foreground">{t('settings.about.sponsorsAmount', { amount: `￥${s.amount}` })}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </SettingSection>
-      )}
 
       <LegalDialog open={legalDialogOpen} onClose={() => setLegalDialogOpen(false)} />
       <PrivacyDialog open={privacyDialogOpen} onClose={() => setPrivacyDialogOpen(false)} />
