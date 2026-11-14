@@ -124,6 +124,11 @@ try {
   check('.local 拒绝', schema.isSafeHttpsUrl('https://a.local/a'), false)
   check('hostOf 小写', schema.hostOf('https://EXAMPLE.com/a'), 'example.com')
   check('hostOf 拒绝 http', schema.hostOf('http://example.com/a'), null)
+  check('私有 IPv4 拒绝', schema.isSafeHttpsUrl('https://127.0.0.1/a'), false)
+  check('私有 IPv4 段拒绝', schema.isSafeHttpsUrl('https://10.1.2.3/a'), false)
+  check('通配域名允许', schema.isHostAllowed('img.example.com', new Set(['*.example.com'])), true)
+  check('精确域名允许', schema.isHostAllowed('example.com', new Set(['*'])), true)
+  check('未匹配域名拒绝', schema.isHostAllowed('evil.example', new Set(['*.cdn.example'])), false)
 
   // ---- XML 预检 ----
   throwsCode('空 XML', () => schema.assertSafeXml('   '), 'xmlEmpty')
@@ -144,9 +149,10 @@ try {
       ],
       updateUrl: 'https://b.example/widget.qwidget',
       staticMediaUrls: ['https://img.example/a.png', '{State.dynamic}', 'https://a.example/a.png'],
+      imageHosts: ['*.cdn.example'],
       nestedUrls: ['https://nested.example/w.qwidget'],
     }),
-    ['a.example', 'b.example', 'img.example', 'nested.example'],
+    ['*.cdn.example', 'a.example', 'b.example', 'nested.example'],
   )
 
   // ---- 本地路径 ----

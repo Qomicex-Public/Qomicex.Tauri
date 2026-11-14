@@ -383,6 +383,7 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
           updateUrl: next.updateUrl,
           staticMediaUrls: next.staticMediaUrls,
           frameUrls: next.frameUrls,
+          imageHosts: next.imageHosts,
           nestedUrls: next.nestedUrls,
         })
         const sourceHost = def.sourceUrl ? hostOf(def.sourceUrl) : null
@@ -1230,6 +1231,7 @@ function NestedUsing({ node, chain, parentScope, parentAllowedHosts, bindingOpti
           updateUrl: childDoc.updateUrl,
           staticMediaUrls: childDoc.staticMediaUrls,
           frameUrls: childDoc.frameUrls,
+          imageHosts: childDoc.imageHosts,
           nestedUrls: childDoc.nestedUrls,
         })
       : []),

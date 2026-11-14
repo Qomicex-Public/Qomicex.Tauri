@@ -28,6 +28,7 @@ import {
   assertSafeXml,
   isBound,
   isSafeHttpsUrl,
+  isValidHostPattern,
   isVersionRequirement,
   parseTtlSpec,
   sanitizeAlias,
@@ -1686,6 +1687,15 @@ export function parseDynamicPage(
   return page
 }
 
+function parseImageHosts(raw: string | undefined): string[] {
+  if (!raw?.trim()) return []
+  const patterns = raw.split(',').map((item) => item.trim().toLowerCase()).filter(Boolean)
+  for (const pattern of patterns) {
+    if (!isValidHostPattern(pattern)) throw new WidgetError('invalidAttribute', `Widget@ImageHosts=${pattern}`)
+  }
+  return [...new Set(patterns)]
+}
+
 export function parseWidgetXml(xml: string): WidgetDocument {
   assertSafeXml(xml)
   const doc = new DOMParser().parseFromString(xml, 'application/xml')
@@ -1713,6 +1723,7 @@ export function parseWidgetXml(xml: string): WidgetDocument {
   }
   const updateTtl = attr(rootSplit.attrs, 'UpdateTTL')?.trim() ? parseTtlSpec(attr(rootSplit.attrs, 'UpdateTTL')!) : undefined
   const refreshTtl = attr(rootSplit.attrs, 'RefreshTTL')?.trim() ? parseTtlSpec(attr(rootSplit.attrs, 'RefreshTTL')!) : undefined
+  const imageHosts = parseImageHosts(attr(rootSplit.attrs, 'ImageHosts'))
 
   const ctx: ParseCtx = {
     nodes: 0,
@@ -1791,6 +1802,7 @@ export function parseWidgetXml(xml: string): WidgetDocument {
     nodes,
     staticMediaUrls: ctx.staticMediaUrls,
     frameUrls: ctx.frameUrls,
+    imageHosts,
     nestedUrls: [...new Set(ctx.nestedUrls)],
   }
   validateConverterReferences(result, new Set(ctx.converters.map((converter) => converter.name)))

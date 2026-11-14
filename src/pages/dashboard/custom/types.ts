@@ -441,6 +441,7 @@ export interface WidgetDocument {
   nodes: WidgetNode[]
   staticMediaUrls: string[]
   frameUrls: string[]
+  imageHosts: string[]
   nestedUrls: string[]
 }
 

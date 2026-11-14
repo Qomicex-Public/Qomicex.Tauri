@@ -10,6 +10,8 @@ import {
   WIDGET_LIMITS,
   hostOf,
   interpolate,
+  isBound,
+  isHostAllowed,
   isSafeHttpsUrl,
   resolvePath,
   stringifyBinding,
@@ -743,6 +745,10 @@ function isPlayableSrc(src: string): boolean {
 function renderImage(node: ImageNode, ctx: RenderContext, root = false): ReactNode {
   const src = interpolate(node.src, ctx.scope, ctx.bindingOptions)
   if (!isPlayableSrc(src)) return null
+  if (isBound(node.src) && !src.startsWith('blob:') && !src.startsWith('data:')) {
+    const host = hostOf(src)
+    if (!host || !isHostAllowed(host, ctx.allowedHosts)) return null
+  }
   return (
     <img
       src={src}
@@ -758,6 +764,10 @@ function renderImage(node: ImageNode, ctx: RenderContext, root = false): ReactNo
 function renderMedia(node: MediaNode, ctx: RenderContext, root = false): ReactNode {
   const source = interpolate(node.source, ctx.scope, ctx.bindingOptions)
   if (!isPlayableSrc(source)) return null
+  if (isBound(node.source) && !source.startsWith('blob:') && !source.startsWith('data:')) {
+    const host = hostOf(source)
+    if (!host || !isHostAllowed(host, ctx.allowedHosts)) return null
+  }
   const video = node.type === 'Video'
   const mediaRef = (element: HTMLMediaElement | null) => {
     if (element && node.volume !== undefined) element.volume = node.volume
@@ -765,7 +775,14 @@ function renderMedia(node: MediaNode, ctx: RenderContext, root = false): ReactNo
   let poster: string | undefined
   if (node.poster) {
     const candidate = interpolate(node.poster, ctx.scope, ctx.bindingOptions)
-    if (isPlayableSrc(candidate)) poster = candidate
+    if (isPlayableSrc(candidate)) {
+      if (!isBound(node.poster) || candidate.startsWith('blob:') || candidate.startsWith('data:')) {
+        poster = candidate
+      } else {
+        const host = hostOf(candidate)
+        if (host && isHostAllowed(host, ctx.allowedHosts)) poster = candidate
+      }
+    }
   }
   const common = {
     src: source,

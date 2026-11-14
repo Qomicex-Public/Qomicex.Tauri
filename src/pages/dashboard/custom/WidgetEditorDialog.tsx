@@ -263,6 +263,7 @@ export function WidgetEditorDialog({ open, widgetId, onClose }: WidgetEditorDial
       updateUrl: doc.updateUrl,
       staticMediaUrls: doc.staticMediaUrls,
       frameUrls: doc.frameUrls,
+      imageHosts: doc.imageHosts,
       nestedUrls: doc.nestedUrls,
     })
     const sourceHost = hostOf(sourceUrl.trim())
