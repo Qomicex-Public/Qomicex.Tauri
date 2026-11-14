@@ -9,9 +9,9 @@
 //! 源方法经 `qomicex_core::GameCore` 的 auth 提供方的调用路径本文件全部不涉及——
 //! 源 AccountService 完全不引用 GameCore，仅借助 CryptHelper 对 accounts.dat 加解密。
 //!
-//! 持久化：源写 `{BaseDir}/data/accounts.dat`（CryptHelper AES-GCM 加密 + base64）。
-//! 任务定案本 Rust 模块改存 `{BaseDir}/data/accounts.json`（明文 JSON），加解密暂用
-//! no-op 占位（详见 `crypt` 子模块头注释的密码学缺口说明）。
+//! 持久化：写 `{BaseDir}/data/accounts.dat`，内容是 `services::crypt` 加密后的 Base64 文本
+//! （与 CSAOT-legacy 的 `CryptHelper.EncryptToBase64` + `ProtectData` 同格式）。
+//! 早期 Rust 版本存的是明文 `accounts.json`，读取时自动迁移并删除明文文件。
 
 use std::path::PathBuf;
 
@@ -189,11 +189,11 @@ pub struct AccountService {
 }
 
 impl AccountService {
-    /// 构造（源无参构造）：`{BaseDir}/data/`，确保目录存在，`_filePath = {dataDir}/accounts.json`。
+    /// 构造（源无参构造）：`{BaseDir}/data/`，确保目录存在，`_filePath = {dataDir}/accounts.dat`。
     pub fn new() -> Result<Self, ApiError> {
         let data_dir = resolve_base_dir().join("data");
         std::fs::create_dir_all(&data_dir).map_err(ApiError::from)?;
-        let file_path = data_dir.join("accounts.json");
+        let file_path = data_dir.join("accounts.dat");
         Ok(Self {
             file_path,
             lock: Mutex::new(Inner {
@@ -373,20 +373,80 @@ impl AccountService {
         Ok(accounts)
     }
 
-    /// 写文件（源 `WriteFileAsync`）：JSON 序列化 → accounts.json。
+    /// 备份：把全部账号用口令加密成可跨机器还原的文件（Base64 文本），返回账号数。
+    pub async fn export_backup(&self, path: &std::path::Path, password: &str) -> ApiResult<usize> {
+        let mut inner = self.lock.lock().await;
+        let accounts = read_or_cached(&mut inner, &self.file_path).await?;
+        let json = serde_json::to_vec(&accounts).map_err(|e| ApiError::internal(e.to_string()))?;
+        let blob = crate::services::crypt::encrypt_with_password(&json, password)
+            .map_err(|e| ApiError::internal(e.to_string()))?;
+        tokio::fs::write(path, blob).await?;
+        Ok(accounts.len())
+    }
+
+    /// 还原：口令解密备份并**整体替换**当前账号，返回导入的账号数。
+    pub async fn import_backup(&self, path: &std::path::Path, password: &str) -> ApiResult<usize> {
+        let text = tokio::fs::read_to_string(path).await?;
+        let plain = crate::services::crypt::decrypt_with_password(&text, password)
+            .map_err(|e| ApiError::bad_request("BACKUP_DECRYPT_FAILED", e.to_string()))?;
+        let accounts: Vec<StoredAccount> = serde_json::from_slice(&plain)
+            .map_err(|_| ApiError::bad_request("BACKUP_INVALID", "备份内容不是账号列表"))?;
+
+        let mut inner = self.lock.lock().await;
+        inner.cache = Some(accounts.clone());
+        self.write_file(&accounts).await?;
+        Ok(accounts.len())
+    }
+
+    /// 写文件（源 `WriteFileAsync`）：JSON 序列化 → 加密 → Base64 文本 → accounts.dat。
     async fn write_file(&self, accounts: &[StoredAccount]) -> ApiResult<()> {
         let json = serde_json::to_vec(accounts).map_err(|e| ApiError::internal(e.to_string()))?;
-        tokio::fs::write(&self.file_path, json).await?;
+        let encrypted = crate::services::crypt::encrypt_to_base64(&json)
+            .map_err(|e| ApiError::internal(e.to_string()))?;
+        tokio::fs::write(&self.file_path, encrypted).await?;
         Ok(())
     }
 }
 
 /// 读文件（源 `ReadFileAsync`，须调用方已持有 `self.lock`）。文件缺失返回空表。
 ///
-/// 差异假设：源区分「解密失败(CryptographicException) → 置 lost+删除+重建」与
-/// 「其他异常 → 仅返回空表」。本模块无加解密，等价转译为「JSON 解析/读取失败 →
-/// 置 lost 标志、删除损坏文件并重建」（保留数据自愈意图）。
+/// 源区分「解密失败 → 置 lost + 删除 + 重建」与「其他异常 → 仅返回空表」，这里保持一致：
+/// Base64/解密/JSON 任一失败都按「密文不可用」处理。
+///
+/// 升级路径上可能同时存在两份数据：C# 版留下的加密 `accounts.dat`，和早期 Rust 版写的明文
+/// `accounts.json`。两份都按修改时间比较，取较新的那份（时间相同优先明文，因为那是上一个
+/// 发布版写出来的最新状态），避免把旧数据当成当前状态。
 async fn read_file(file_path: &std::path::Path) -> ApiResult<(Vec<StoredAccount>, bool)> {
+    let plain_path = file_path.with_file_name("accounts.json");
+
+    if prefer_plaintext(file_path, &plain_path).await {
+        if let Some(result) = migrate_plaintext(file_path, &plain_path).await {
+            return Ok(result);
+        }
+    }
+
+    let result = read_encrypted(file_path).await;
+    if result.is_ok() {
+        // 明文令牌不该长期留在磁盘上。
+        let _ = tokio::fs::remove_file(&plain_path).await;
+    }
+    result
+}
+
+async fn modified_at(path: &std::path::Path) -> Option<std::time::SystemTime> {
+    tokio::fs::metadata(path).await.ok()?.modified().ok()
+}
+
+async fn prefer_plaintext(file_path: &std::path::Path, plain_path: &std::path::Path) -> bool {
+    match (modified_at(file_path).await, modified_at(plain_path).await) {
+        (None, None) => false,
+        (None, Some(_)) => true,
+        (Some(_), None) => false,
+        (Some(encrypted), Some(plain)) => plain >= encrypted,
+    }
+}
+
+async fn read_encrypted(file_path: &std::path::Path) -> ApiResult<(Vec<StoredAccount>, bool)> {
     let content = match tokio::fs::read_to_string(file_path).await {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((Vec::new(), false)),
@@ -395,13 +455,35 @@ async fn read_file(file_path: &std::path::Path) -> ApiResult<(Vec<StoredAccount>
             return Ok((Vec::new(), true));
         }
     };
-    match serde_json::from_str::<Vec<StoredAccount>>(&content) {
-        Ok(accounts) => Ok((accounts, false)),
-        Err(_) => {
+
+    match crate::services::crypt::decrypt_from_base64(&content)
+        .ok()
+        .and_then(|plain| serde_json::from_slice::<Vec<StoredAccount>>(&plain).ok())
+    {
+        Some(accounts) => Ok((accounts, false)),
+        None => {
             let _ = tokio::fs::remove_file(file_path).await;
             Ok((Vec::new(), true))
         }
     }
+}
+
+/// 早期 Rust 版本把账号明文写成 `accounts.json`，这里一次性加密迁移并删除明文。
+/// 明文缺失或解析失败时返回 `None`，让调用方回落到加密文件。
+async fn migrate_plaintext(
+    file_path: &std::path::Path,
+    plain_path: &std::path::Path,
+) -> Option<(Vec<StoredAccount>, bool)> {
+    let content = tokio::fs::read_to_string(plain_path).await.ok()?;
+    let accounts = serde_json::from_str::<Vec<StoredAccount>>(&content).ok()?;
+
+    if let Ok(encrypted) = crate::services::crypt::encrypt_to_base64(content.as_bytes()) {
+        if tokio::fs::write(file_path, encrypted).await.is_ok() {
+            let _ = tokio::fs::remove_file(plain_path).await;
+        }
+    }
+
+    Some((accounts, false))
 }
 
 /// 取缓存，命中则克隆；否则读文件并在缓存/ lost 标志上做记录（`source._cache ?? ReadFileAsync`）。
@@ -441,17 +523,6 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
-/// 加解密占位（源 CryptHelper.cs 的简化）。
-///
-/// ⚠️ 密码学方案缺口（请主控定夺）：
-/// - 源 `CryptHelper.EncryptToBase64/DecryptFromBase64` 使用
-///   AES-GCM（TagSize=16）+ PBKDF2（SHA256, 100k iter）+ HKDF-SHA256 派生 enc/cmt 双密钥
-///   + HMAC 承诺 + 机器码派生；本模块当前为 **no-op 明文透传占位**，并未写入 accounts.json。
-/// - 若要恢复到源同等安全，推荐引入 `aes-gcm` + `hkdf` + `pbkdf2`（或单一 `ring`/`crypto`）
-///   按 CryptHelper 的 v1 头格式（version/salt/nonce/tag/commitment/len/ciphertext）实现。
-///   此占位仅保证「接口形态」与源对齐，暂不影响功能（账号文件为明文 JSON）。
-fn _crypt_placeholder_open() {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -470,6 +541,165 @@ mod tests {
             oauth_provider: None,
             oauth_refresh_token: None,
         }
+    }
+
+    #[tokio::test]
+    async fn accounts_file_is_encrypted_and_roundtrips() {
+        let dir = std::env::temp_dir().join(format!("qenc-accounts-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("accounts.dat");
+        let service = AccountService {
+            file_path: file.clone(),
+            lock: Mutex::new(Inner {
+                cache: None,
+                accounts_were_lost: false,
+            }),
+        };
+
+        let mut stored = account("Offline");
+        stored.access_token = "access-token-should-not-leak".to_string();
+        service
+            .write_file(std::slice::from_ref(&stored))
+            .await
+            .unwrap();
+
+        let raw = std::fs::read_to_string(&file).unwrap();
+        assert!(
+            !raw.contains("access-token-should-not-leak"),
+            "账号令牌不应以明文落盘"
+        );
+
+        let (loaded, lost) = read_file(&file).await.unwrap();
+        assert!(!lost);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].access_token, "access-token-should-not-leak");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn legacy_plaintext_json_is_migrated_and_removed() {
+        let dir = std::env::temp_dir().join(format!("qenc-accounts-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("accounts.dat");
+        let plain = dir.join("accounts.json");
+        let stored = account("Offline");
+        std::fs::write(&plain, serde_json::to_vec(&[stored]).unwrap()).unwrap();
+
+        let (loaded, lost) = read_file(&file).await.unwrap();
+        assert!(!lost);
+        assert_eq!(loaded.len(), 1);
+        assert!(file.exists(), "迁移后应生成加密文件");
+        assert!(!plain.exists(), "迁移后应删除明文文件");
+
+        let raw = std::fs::read_to_string(&file).unwrap();
+        assert!(!raw.contains("\"loginMethod\""));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn newer_plaintext_wins_over_older_encrypted() {
+        let dir = std::env::temp_dir().join(format!("qenc-accounts-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("accounts.dat");
+        let plain = dir.join("accounts.json");
+
+        let mut old = account("Offline");
+        old.access_token = "from-csharp-era".to_string();
+        std::fs::write(
+            &file,
+            crate::services::crypt::encrypt_to_base64(&serde_json::to_vec(&[old]).unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        let mut fresh = account("Offline");
+        fresh.access_token = "from-rust-era".to_string();
+        std::fs::write(&plain, serde_json::to_vec(&[fresh]).unwrap()).unwrap();
+
+        let (loaded, lost) = read_file(&file).await.unwrap();
+        assert!(!lost);
+        assert_eq!(loaded[0].access_token, "from-rust-era");
+        assert!(!plain.exists(), "迁移后应删除明文");
+        assert_eq!(
+            read_file(&file).await.unwrap().0[0].access_token,
+            "from-rust-era"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn newer_encrypted_wins_and_stale_plaintext_is_removed() {
+        let dir = std::env::temp_dir().join(format!("qenc-accounts-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("accounts.dat");
+        let plain = dir.join("accounts.json");
+
+        let mut stale = account("Offline");
+        stale.access_token = "stale-plaintext".to_string();
+        std::fs::write(&plain, serde_json::to_vec(&[stale]).unwrap()).unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        let mut fresh = account("Offline");
+        fresh.access_token = "current-encrypted".to_string();
+        std::fs::write(
+            &file,
+            crate::services::crypt::encrypt_to_base64(&serde_json::to_vec(&[fresh]).unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+
+        let (loaded, lost) = read_file(&file).await.unwrap();
+        assert!(!lost);
+        assert_eq!(loaded[0].access_token, "current-encrypted");
+        assert!(!plain.exists(), "过期的明文令牌应被清掉");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn backup_export_and_import_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("qenc-backup-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let service = AccountService {
+            file_path: dir.join("accounts.dat"),
+            lock: Mutex::new(Inner {
+                cache: None,
+                accounts_were_lost: false,
+            }),
+        };
+
+        let mut stored = account("Microsoft");
+        stored.refresh_token = "refresh-token-secret".to_string();
+        service
+            .write_file(std::slice::from_ref(&stored))
+            .await
+            .unwrap();
+
+        let backup = dir.join("backup.qenc");
+        assert_eq!(
+            service.export_backup(&backup, "backup-pass").await.unwrap(),
+            1
+        );
+
+        let raw = std::fs::read_to_string(&backup).unwrap();
+        assert!(!raw.contains("refresh-token-secret"), "备份必须是密文");
+
+        std::fs::remove_file(&service.file_path).unwrap();
+        assert!(read_file(&service.file_path).await.unwrap().0.is_empty());
+
+        assert_eq!(
+            service.import_backup(&backup, "backup-pass").await.unwrap(),
+            1
+        );
+        let (restored, lost) = read_file(&service.file_path).await.unwrap();
+        assert!(!lost);
+        assert_eq!(restored[0].refresh_token, "refresh-token-secret");
+
+        assert!(service.import_backup(&backup, "wrong-pass").await.is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

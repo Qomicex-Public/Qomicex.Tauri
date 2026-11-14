@@ -2,12 +2,8 @@
 default = []
 # Mirrors the C# LICENSE_REQUIRED build flag: only when enabled is the closed
 # license core (Ed25519 verify + remote check) compiled in.
-license-required = [
-  "dep:hmac",
-  "dep:pbkdf2",
-  "dep:hkdf",
-  "dep:aes-gcm",
-]
+# hmac / pbkdf2 / hkdf / aes-gcm 是账号加密（services/crypt.rs）的依赖，始终编译。
+license-required = []
 
 [package]
 name = "qomicex-backend"
@@ -55,10 +51,11 @@ open = "5"
 # --- 插件签名（ADR-050）与 License core 共用 ed25519-dalek ---
 ed25519-dalek = "2"
 sha2 = "0.10"
-hmac = { version = "0.12", optional = true }
-pbkdf2 = { version = "0.12", optional = true }
-hkdf = { version = "0.12", optional = true }
-aes-gcm = { version = "0.10", optional = true }
+hmac = "0.12"
+pbkdf2 = "0.12"
+hkdf = "0.12"
+aes-gcm = "0.10"
+getrandom = "0.2"
 base64 = "0.22"
 
 # --- Plugin system ---
@@ -89,7 +86,7 @@ qrcodegen = "1.8"
 # 仅 Windows：winreg 在非 Windows 平台编译即报 compile_error!
 # （license_core.rs board_id 的 BIOS 读取；代码已有 cfg(windows) 保护）
 winreg = "0.52"
-windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading"] }
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

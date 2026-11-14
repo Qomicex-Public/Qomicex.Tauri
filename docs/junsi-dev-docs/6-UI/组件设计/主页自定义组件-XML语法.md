@@ -17,6 +17,8 @@
 
 `Name` / `Version` 必填；`UpdateUrl` 必须是 https:443 并走代理。
 
+`ImageHosts` 用于动态 `Image` / `Media` 的 HTTPS 主机白名单，支持精确域名、`*.example.com` 和 `*`；只需确认一次。
+
 ## 命名
 
 所有元素、属性、枚举值均为大驼峰：`Text`、`Value`、`Size="Lg"`、`Weight="Bold"`、`OnClick="CallFunction"`。

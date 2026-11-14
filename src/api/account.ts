@@ -143,6 +143,16 @@ export async function checkAccountsLost(): Promise<boolean> {
   return res.lost
 }
 
+/** 备份账号到口令加密的文件；返回备份里的账号数。 */
+export function exportAccountBackup(path: string, password: string): Promise<{ accounts: number }> {
+  return post<{ accounts: number }>('/account/backup/export', { path, password })
+}
+
+/** 从口令备份还原账号（整体替换当前账号）；返回还原的账号数。 */
+export function importAccountBackup(path: string, password: string): Promise<{ accounts: number }> {
+  return post<{ accounts: number }>('/account/backup/import', { path, password })
+}
+
 const yggdrasilMetaCache = new Map<string, string>()
 
 export function getCachedMeta(serverUrl?: string | null): string {

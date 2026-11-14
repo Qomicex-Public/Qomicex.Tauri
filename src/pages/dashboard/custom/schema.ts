@@ -148,7 +148,7 @@ export const ANIMATION_EASINGS = ['Linear', 'Ease', 'EaseIn', 'EaseOut', 'EaseIn
 
 /** 元素 → 允许属性。未知元素/属性一律解析失败。 */
 export const ELEMENT_ATTRS: Record<string, readonly string[]> = {
-  Widget: ['Name', 'Version', 'Author', 'Description', 'UpdateUrl', 'LauncherVersion', 'UpdateTTL', 'RefreshTTL'],
+  Widget: ['Name', 'Version', 'Author', 'Description', 'UpdateUrl', 'LauncherVersion', 'UpdateTTL', 'RefreshTTL', 'ImageHosts'],
   'Widget.Inputs': [],
   Input: ['Name', 'Type', 'Required', 'Default'],
   'Widget.Outputs': [],
@@ -480,6 +480,31 @@ export class WidgetError extends Error {
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_-]*$/
 const BINDING = /\{([^{}]+)\}/g
 const PRIVATE_HOSTS = /^(localhost|.*\.localhost|.*\.local|.*\.internal)$/i
+const PRIVATE_IPV4 = /^(0|10|127|169\.254|192\.168|172\.(1[6-9]|2\d|3[01]))\./
+const HOST_PATTERN = /^(\*|(?:\*\.)?[A-Za-z0-9.-]+)$/
+
+function isPrivateHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  if (PRIVATE_HOSTS.test(host) || PRIVATE_IPV4.test(host)) return true
+  if (!host.includes(':')) return false
+  return host === '::1' || host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80:')
+}
+
+export function isHostAllowed(host: string, allowed: Set<string>): boolean {
+  const target = host.toLowerCase()
+  for (const pattern of allowed) {
+    const normalized = pattern.toLowerCase()
+    if (normalized === '*' || normalized === target) return true
+    if (normalized.startsWith('*.') && (target === normalized.slice(2) || target.endsWith(normalized.slice(1)))) {
+      return true
+    }
+  }
+  return false
+}
+
+export function isValidHostPattern(pattern: string): boolean {
+  return HOST_PATTERN.test(pattern)
+}
 
 /** 解析 `{a.b.0.c}`，同时兼容不带花括号的直接路径。 */
 export function resolvePath(scope: unknown, rawPath: string): unknown {
@@ -568,7 +593,7 @@ export function isSafeHttpsUrl(raw: string): boolean {
       !url.password &&
       (url.port === '' || url.port === '443') &&
       !!url.hostname &&
-      !PRIVATE_HOSTS.test(url.hostname)
+      !isPrivateHostname(url.hostname)
     )
   } catch {
     return false
@@ -576,9 +601,9 @@ export function isSafeHttpsUrl(raw: string): boolean {
 }
 
 export function hostOf(raw: string): string | null {
+  if (!isSafeHttpsUrl(raw)) return null
   try {
-    const url = new URL(raw.trim())
-    return url.protocol === 'https:' ? url.hostname.toLowerCase() : null
+    return new URL(raw.trim()).hostname.toLowerCase()
   } catch {
     return null
   }
@@ -661,6 +686,7 @@ export function collectAutoHosts(input: {
   updateUrl?: string
   staticMediaUrls: string[]
   frameUrls?: string[]
+  imageHosts?: string[]
   nestedUrls: string[]
 }): string[] {
   const hosts = new Set<string>()
@@ -673,11 +699,12 @@ export function collectAutoHosts(input: {
     const host = hostOf(input.updateUrl)
     if (host) hosts.add(host)
   }
-  for (const url of [...input.staticMediaUrls, ...(input.frameUrls ?? []), ...input.nestedUrls]) {
+  for (const url of [...(input.frameUrls ?? []), ...input.nestedUrls]) {
     if (isBound(url)) continue
     const host = hostOf(url)
     if (host) hosts.add(host)
   }
+  for (const pattern of input.imageHosts ?? []) hosts.add(pattern.toLowerCase())
   return [...hosts].sort()
 }
 
