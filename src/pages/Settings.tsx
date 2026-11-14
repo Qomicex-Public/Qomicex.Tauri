@@ -31,6 +31,7 @@ import PluginStoreTab from '../components/PluginStoreTab.tsx'
 import LicenseActivationDialog from '../components/LicenseActivationDialog.tsx'
 import { fetchLicenseStatus, getCachedLicenseStatus } from '../api/license.ts'
 import { fetchUpdatePlan, clearPendingInstall as clearPendingUpdateInstall, type UpdatePlan } from '../api/update.ts'
+import { exportAccountBackup, importAccountBackup } from '../api/account.ts'
 import { isDevBuild, resolveChannel, trainLabelKey, trainOf, channelTrainOf, UPDATE_CHANNEL_KEY } from '../lib/updateChannel.ts'
 import type { LicenseStatus } from '../api/license.ts'
 import UpdateDialog from '../components/UpdateDialog.tsx'
@@ -814,6 +815,12 @@ function AboutTab({ sysInfo, licenseStatus, onOpenLicenseDialog, autoInstall, on
 
 export default function Settings() {
   const { error: msgError, confirm: msgConfirm, notify } = useMessageBox()
+  // 账号备份 / 还原：口令只用于这次文件加解密，不写进设置。
+  const [backupMode, setBackupMode] = useState<'export' | 'import' | null>(null)
+  const [backupPath, setBackupPath] = useState('')
+  const [backupPassword, setBackupPassword] = useState('')
+  const [backupPassword2, setBackupPassword2] = useState('')
+  const [backupBusy, setBackupBusy] = useState(false)
   const { t, setLanguage } = useI18n()
   const [clearingCache, setClearingCache] = useState(false)
   const [clearingCurseForgeCache, setClearingCurseForgeCache] = useState(false)
@@ -1116,6 +1123,80 @@ export default function Settings() {
     setDownloadArch(selectedVendor.architectures[0] ?? 'x64')
   }, [selectedVendor])
 
+  function resetBackupDialog() {
+    setBackupMode(null)
+    setBackupPath('')
+    setBackupPassword('')
+    setBackupPassword2('')
+  }
+
+  function openBackupExport() {
+    setBackupPath('')
+    setBackupPassword('')
+    setBackupPassword2('')
+    setBackupMode('export')
+  }
+
+  async function openBackupImport() {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const path = await open({
+      multiple: false,
+      filters: [{ name: 'Qomicex Backup', extensions: ['qenc'] }],
+    })
+    if (typeof path !== 'string') return
+    setBackupPath(path)
+    setBackupPassword('')
+    setBackupMode('import')
+  }
+
+  async function handleBackupConfirm() {
+    if (backupPassword.length < 8) {
+      await msgError(t('settings.accountBackup.weakPassword'))
+      return
+    }
+
+    if (backupMode === 'export') {
+      if (backupPassword !== backupPassword2) {
+        await msgError(t('settings.accountBackup.passwordMismatch'))
+        return
+      }
+      if (!(await msgConfirm(t('settings.accountBackup.exportConfirm')))) return
+
+      const { save } = await import('@tauri-apps/plugin-dialog')
+      const path = await save({
+        defaultPath: `qomicex-accounts-${new Date().toISOString().slice(0, 10)}.qenc`,
+        filters: [{ name: 'Qomicex Backup', extensions: ['qenc'] }],
+      })
+      if (!path) return
+
+      setBackupBusy(true)
+      try {
+        const { accounts } = await exportAccountBackup(path, backupPassword)
+        notify(t('settings.accountBackup.exportDone', { count: accounts }), 'success')
+        resetBackupDialog()
+      } catch (e) {
+        await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : t('settings.accountBackup.failed'))
+      } finally {
+        setBackupBusy(false)
+      }
+      return
+    }
+
+    if (!backupPath) return
+    if (!(await msgConfirm(t('settings.accountBackup.importConfirm')))) return
+
+    setBackupBusy(true)
+    try {
+      const { accounts } = await importAccountBackup(backupPath, backupPassword)
+      notify(t('settings.accountBackup.importDone', { count: accounts }), 'success')
+      resetBackupDialog()
+    } catch (e) {
+      await msgError(e instanceof ApiError ? e.displayMessage : e instanceof Error ? e.message : t('settings.accountBackup.failed'))
+    } finally {
+      setBackupBusy(false)
+    }
+  }
+
   async function handleClearCache() {
     setClearingCache(true)
     try {
@@ -1141,8 +1222,7 @@ export default function Settings() {
     }
   }
 
-  async function handleClearNeoForgeCache() {
-    setClearingNeoForgeCache(true)
+  async function handleClearNeoForgeCache() {    setClearingNeoForgeCache(true)
     try {
       const { deleted } = await clearNeoForgeCache()
       notify(t('settings.launcher.neoforgeCacheCleared', { count: deleted }), 'success')
@@ -1581,6 +1661,27 @@ export default function Settings() {
                     checked={settings.ignoreSslCert === true}
                     onCheckedChange={(c) => update('ignoreSslCert', c === true)}
                   />
+                }
+              />
+            </SettingSection>
+
+            <SettingSection title={t('settings.accountBackup.title')} icon={<Key className="h-4 w-4" />}>
+              <SettingRow
+                label={t('settings.accountBackup.exportLabel')}
+                description={t('settings.accountBackup.exportDesc')}
+                control={
+                  <Button size="sm" variant="outline" onClick={openBackupExport}>
+                    {t('settings.accountBackup.exportButton')}
+                  </Button>
+                }
+              />
+              <SettingRow
+                label={t('settings.accountBackup.importLabel')}
+                description={t('settings.accountBackup.importDesc')}
+                control={
+                  <Button size="sm" variant="outline" onClick={() => { openBackupImport().catch(() => {}) }}>
+                    {t('settings.accountBackup.importButton')}
+                  </Button>
                 }
               />
             </SettingSection>
@@ -2555,6 +2656,50 @@ export default function Settings() {
             <DialogFooter>
               <Button onClick={handleStartJavaDownload} disabled={!selectedVendor || startDownloadLoading}>
                 {startDownloadLoading ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />{t('settings.java.resolving')}</> : t('settings.java.startDownload')}
+              </Button>
+            </DialogFooter>
+          </Dialog>
+
+          <Dialog
+            open={backupMode !== null}
+            onClose={() => { if (!backupBusy) resetBackupDialog() }}
+            closeOnBackdrop={!backupBusy}
+          >
+            <DialogHeader onClose={() => { if (!backupBusy) resetBackupDialog() }}>
+              <DialogTitle>
+                {t(backupMode === 'import' ? 'settings.accountBackup.importTitle' : 'settings.accountBackup.exportTitle')}
+              </DialogTitle>
+            </DialogHeader>
+            <DialogBody className="space-y-4">
+              <div className="space-y-2">
+                <Label>{t('settings.accountBackup.password')}</Label>
+                <Input
+                  type="password"
+                  value={backupPassword}
+                  onChange={(e) => setBackupPassword(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              {backupMode === 'export' && (
+                <div className="space-y-2">
+                  <Label>{t('settings.accountBackup.password2')}</Label>
+                  <Input
+                    type="password"
+                    value={backupPassword2}
+                    onChange={(e) => setBackupPassword2(e.target.value)}
+                  />
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                {t(backupMode === 'import' ? 'settings.accountBackup.importHint' : 'settings.accountBackup.exportHint')}
+              </p>
+            </DialogBody>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => resetBackupDialog()} disabled={backupBusy}>
+                {t('common.cancel')}
+              </Button>
+              <Button onClick={() => { handleBackupConfirm().catch(() => {}) }} disabled={backupBusy}>
+                {backupBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : t('settings.accountBackup.confirm')}
               </Button>
             </DialogFooter>
           </Dialog>

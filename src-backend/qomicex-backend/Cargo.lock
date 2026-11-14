@@ -3866,6 +3866,7 @@ dependencies = [
  "flate2",
  "fontdb",
  "futures",
+ "getrandom 0.2.17",
  "hkdf",
  "hmac 0.12.1",
  "http-body",

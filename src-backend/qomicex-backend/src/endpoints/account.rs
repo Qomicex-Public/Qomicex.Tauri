@@ -72,6 +72,20 @@ struct ServerUrlQuery {
     server_url: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BackupRequest {
+    /// 备份文件绝对路径（由前端文件对话框选定）。
+    path: String,
+    password: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BackupResponse {
+    accounts: usize,
+}
+
 // =====================================================================
 // Router
 // =====================================================================
@@ -86,11 +100,54 @@ pub fn router() -> Router<SharedState> {
         .route("/account/offline-uuid", get(offline_uuid))
         .route("/account/yggdrasil-meta", get(yggdrasil_meta))
         .route("/account/yggdrasil-resolve", post(yggdrasil_resolve))
+        .route("/account/backup/export", post(backup_export))
+        .route("/account/backup/import", post(backup_import))
 }
 
 // =====================================================================
 // Handlers
 // =====================================================================
+
+/// 备份/还原共用的入参校验（口令是唯一密钥，太短等于没有）。
+fn validate_backup(request: &BackupRequest) -> ApiResult<()> {
+    if request.path.trim().is_empty() {
+        return Err(ApiError::bad_request(
+            "BACKUP_PATH_REQUIRED",
+            "缺少备份文件路径",
+        ));
+    }
+    if request.password.chars().count() < 8 {
+        return Err(ApiError::bad_request(
+            "BACKUP_WEAK_PASSWORD",
+            "备份口令至少 8 个字符",
+        ));
+    }
+    Ok(())
+}
+
+async fn backup_export(
+    State(state): State<SharedState>,
+    Json(request): Json<BackupRequest>,
+) -> ApiResult<Json<BackupResponse>> {
+    validate_backup(&request)?;
+    let accounts = state
+        .account
+        .export_backup(std::path::Path::new(&request.path), &request.password)
+        .await?;
+    Ok(Json(BackupResponse { accounts }))
+}
+
+async fn backup_import(
+    State(state): State<SharedState>,
+    Json(request): Json<BackupRequest>,
+) -> ApiResult<Json<BackupResponse>> {
+    validate_backup(&request)?;
+    let accounts = state
+        .account
+        .import_backup(std::path::Path::new(&request.path), &request.password)
+        .await?;
+    Ok(Json(BackupResponse { accounts }))
+}
 
 async fn list_accounts(State(state): State<SharedState>) -> ApiResult<Json<Vec<AccountInfo>>> {
     let accounts = state.account.get_accounts().await?;
@@ -408,6 +465,25 @@ fn offline_uuid_md5(data: &[u8]) -> [u8; 16] {
     out[8..12].copy_from_slice(&c0.to_le_bytes());
     out[12..16].copy_from_slice(&d0.to_le_bytes());
     out
+}
+
+#[cfg(test)]
+mod backup_validation_tests {
+    use super::*;
+
+    fn request(path: &str, password: &str) -> BackupRequest {
+        BackupRequest {
+            path: path.to_string(),
+            password: password.to_string(),
+        }
+    }
+
+    #[test]
+    fn rejects_empty_path_and_short_password() {
+        assert!(validate_backup(&request("", "long-enough")).is_err());
+        assert!(validate_backup(&request(r"C:\a.qenc", "short")).is_err());
+        assert!(validate_backup(&request(r"C:\a.qenc", "12345678")).is_ok());
+    }
 }
 
 #[cfg(test)]
