@@ -93,7 +93,7 @@ export const SERVICES: CreditService[] = [
   { name: 'mcmod', description: '中文 Mod 数据库', url: 'https://www.mcmod.cn', icon: '/services/mcmod.png' },
   { name: 'Minecraft官网', description: 'Minecraft 官方网站,支持正版!', url: 'https://www.minecraft.net', icon: '/services/minecraft.png' },
   { name: 'xphost008', description: '为启动器开发提供了很多帮助', url: 'https://github.com/xphost008', icon: '/services/xphost008.jpg' },
-  { name: '吸管解说', description: '为启动器的 MultiMC 整合包导入适配作出了较大贡献', url: 'https://space.bilibili.com/106583578', icon: '/avatars/Strawxg.png' },
+  { name: '吸管解说', description: '为启动器的许多板块提供了良好建议和作出了较大贡献', url: 'https://space.bilibili.com/106583578', icon: '/avatars/Strawxg.png' },
   { name: 'OakChaser', description: '发现了启动器在 Mac 端的很多神秘问题，为启动器的 macOS 兼容适配提供了较大帮助', icon: '/avatars/OakChaser.png' },
   { name: '飘飘白云', description: 'bug 圣体，在测试过程中不断遇到了很多经多轮测试后仍未发现的 bug', icon: '/avatars/PiaoPiaoBaiYun.png' },
   { name: 'ECLTeam', description: '为启动器联机贡献了部分联机节点', url: 'https://www.eclteam.top/', icon: '/services/eclteam.png' },
