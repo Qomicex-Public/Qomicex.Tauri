@@ -435,11 +435,11 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
         {loading ? (
           <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
             {Array.from({ length: 6 }).map((_, i) => (
-              <Skeleton key={i} className="rounded-xl border bg-card overflow-hidden">
-                <div className="aspect-video bg-muted" />
+              <Skeleton key={i} className="glass-surface rounded-xl border border-border/60 bg-card/95 overflow-hidden">
+                <div className="aspect-video bg-foreground/10" />
                 <div className="p-3 space-y-2">
-                  <div className="h-3 w-2/3 rounded bg-muted" />
-                  <div className="h-2.5 w-1/3 rounded bg-muted" />
+                  <div className="h-3 w-2/3 rounded bg-foreground/10" />
+                  <div className="h-2.5 w-1/3 rounded bg-foreground/10" />
                 </div>
               </Skeleton>
             ))}
@@ -1071,21 +1071,21 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
               <div className={cn('flex flex-col', modViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
                 {Array.from({ length: 4 }).map((_, i) => (
                   modViewMode === 'compact' ? (
-                    <Skeleton key={i} className="flex items-center gap-3 rounded-lg border px-3 py-2">
-                      <div className="h-4 w-4 shrink-0 rounded bg-muted" />
-                      <div className="h-7 w-7 shrink-0 rounded-md bg-muted" />
-                      <div className="h-3 flex-1 rounded bg-muted" />
-                      <div className="h-5 w-9 shrink-0 rounded-full bg-muted" />
+                    <Skeleton key={i} className="glass-surface flex items-center gap-3 rounded-lg border border-border/60 bg-card px-3 py-2">
+                      <div className="h-4 w-4 shrink-0 rounded bg-foreground/10" />
+                      <div className="h-7 w-7 shrink-0 rounded-md bg-foreground/10" />
+                      <div className="h-3 flex-1 rounded bg-foreground/10" />
+                      <div className="h-5 w-9 shrink-0 rounded-full bg-foreground/10" />
                     </Skeleton>
                   ) : (
-                    <Skeleton key={i} className="flex items-center gap-4 rounded-xl border p-4">
-                      <div className="h-4 w-4 shrink-0 rounded bg-muted" />
-                      <div className="h-12 w-12 shrink-0 rounded-xl bg-muted" />
+                    <Skeleton key={i} className="glass-surface flex items-center gap-4 rounded-xl border border-border/60 bg-card p-4">
+                      <div className="h-4 w-4 shrink-0 rounded bg-foreground/10" />
+                      <div className="h-12 w-12 shrink-0 rounded-xl bg-foreground/10" />
                       <div className="flex-1 space-y-2">
-                        <div className="h-4 w-2/5 rounded bg-muted" />
-                        <div className="h-3 w-3/5 rounded bg-muted" />
+                        <div className="h-4 w-2/5 rounded bg-foreground/10" />
+                        <div className="h-3 w-3/5 rounded bg-foreground/10" />
                       </div>
-                      <div className="h-5 w-9 shrink-0 rounded-full bg-muted" />
+                      <div className="h-5 w-9 shrink-0 rounded-full bg-foreground/10" />
                     </Skeleton>
                   )
                 ))}
@@ -1371,13 +1371,13 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
         {loading ? (
           <div className={cn('flex flex-col p-4', packViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
             {Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className={cn('flex items-center border', packViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
-                <div className={cn('shrink-0 rounded bg-muted', packViewMode === 'compact' ? 'h-7 w-7 rounded-md' : 'h-12 w-12 rounded-xl')} />
+              <Skeleton key={i} className={cn('glass-surface flex items-center border border-border/60 bg-card/95', packViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
+                <div className={cn('shrink-0 rounded bg-foreground/10', packViewMode === 'compact' ? 'h-7 w-7 rounded-md' : 'h-12 w-12 rounded-xl')} />
                 <div className="flex-1 space-y-2">
-                  <div className="h-3 w-1/3 rounded bg-muted" />
-                  <div className="h-2.5 w-1/2 rounded bg-muted" />
+                  <div className="h-3 w-1/3 rounded bg-foreground/10" />
+                  <div className="h-2.5 w-1/2 rounded bg-foreground/10" />
                 </div>
-                <div className="h-6 w-7 rounded bg-muted" />
+                <div className="h-6 w-7 rounded bg-foreground/10" />
               </Skeleton>
             ))}
           </div>
@@ -1622,13 +1622,13 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
         {loading ? (
           <div className={cn('flex flex-col p-4', shaderViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
             {Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className={cn('flex items-center border', shaderViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
-                <div className={cn('shrink-0 rounded bg-muted', shaderViewMode === 'compact' ? 'h-7 w-7 rounded-md' : 'h-12 w-12 rounded-xl')} />
+              <Skeleton key={i} className={cn('glass-surface flex items-center border border-border/60 bg-card/95', shaderViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
+                <div className={cn('shrink-0 rounded bg-foreground/10', shaderViewMode === 'compact' ? 'h-7 w-7 rounded-md' : 'h-12 w-12 rounded-xl')} />
                 <div className="flex-1 space-y-2">
-                  <div className="h-3 w-1/3 rounded bg-muted" />
-                  <div className="h-2.5 w-1/2 rounded bg-muted" />
+                  <div className="h-3 w-1/3 rounded bg-foreground/10" />
+                  <div className="h-2.5 w-1/2 rounded bg-foreground/10" />
                 </div>
-                <div className="h-6 w-7 rounded bg-muted" />
+                <div className="h-6 w-7 rounded bg-foreground/10" />
               </Skeleton>
             ))}
           </div>
@@ -1873,13 +1873,13 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
         {loading ? (
           <div className={cn('flex flex-col p-4', dataPackViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
             {Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className={cn('flex items-center border', dataPackViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
-                <div className={cn('shrink-0 rounded bg-muted', dataPackViewMode === 'compact' ? 'h-7 w-7 rounded-md' : 'h-12 w-12 rounded-xl')} />
+              <Skeleton key={i} className={cn('glass-surface flex items-center border border-border/60 bg-card/95', dataPackViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
+                <div className={cn('shrink-0 rounded bg-foreground/10', dataPackViewMode === 'compact' ? 'h-7 w-7 rounded-md' : 'h-12 w-12 rounded-xl')} />
                 <div className="flex-1 space-y-2">
-                  <div className="h-3 w-1/3 rounded bg-muted" />
-                  <div className="h-2.5 w-1/2 rounded bg-muted" />
+                  <div className="h-3 w-1/3 rounded bg-foreground/10" />
+                  <div className="h-2.5 w-1/2 rounded bg-foreground/10" />
                 </div>
-                <div className="h-6 w-7 rounded bg-muted" />
+                <div className="h-6 w-7 rounded bg-foreground/10" />
               </Skeleton>
             ))}
           </div>
@@ -2387,16 +2387,16 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
           {loading ? (
             <div className="flex flex-col gap-1 p-4">
               {Array.from({ length: 3 }).map((_, i) => (
-                <Skeleton key={i} className="flex items-center gap-3 rounded-lg px-3 py-2.5">
-                  <div className="h-4 w-4 shrink-0 rounded bg-muted" />
+                <Skeleton key={i} className="glass-surface flex items-center gap-3 rounded-lg border border-border/60 bg-card/95 px-3 py-2.5">
+                  <div className="h-4 w-4 shrink-0 rounded bg-foreground/10" />
                   <div className="flex-1 space-y-1.5">
-                    <div className="h-3.5 w-1/3 rounded bg-muted" />
-                    <div className="h-2.5 w-1/4 rounded bg-muted" />
+                    <div className="h-3.5 w-1/3 rounded bg-foreground/10" />
+                    <div className="h-2.5 w-1/4 rounded bg-foreground/10" />
                   </div>
                   <div className="flex gap-1">
-                    <div className="h-7 w-7 rounded bg-muted" />
-                    <div className="h-7 w-7 rounded bg-muted" />
-                    <div className="h-7 w-7 rounded bg-muted" />
+                    <div className="h-7 w-7 rounded bg-foreground/10" />
+                    <div className="h-7 w-7 rounded bg-foreground/10" />
+                    <div className="h-7 w-7 rounded bg-foreground/10" />
                   </div>
                 </Skeleton>
               ))}
@@ -2839,10 +2839,10 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
             {Array.from({ length: 8 }).map((_, i) => (
               <Skeleton key={i} className="flex items-center gap-3">
                 <div className="flex-1 space-y-1.5">
-                  <div className="h-4 w-1/4 rounded bg-muted" />
-                  <div className="h-3 w-1/2 rounded bg-muted" />
+                  <div className="h-4 w-1/4 rounded bg-foreground/10" />
+                  <div className="h-3 w-1/2 rounded bg-foreground/10" />
                 </div>
-                <div className="h-8 w-32 rounded bg-muted" />
+                <div className="h-8 w-32 rounded bg-foreground/10" />
               </Skeleton>
             ))}
           </div>

@@ -1906,16 +1906,16 @@ export default function ResourceCenter() {
       {(view === 'search' ? (initialLoading || isReplacing) : (favoritesLoading && !favoritesLoaded)) ? (
         <div className="flex flex-col gap-3">
           {Array.from({ length: 5 }).map((_, index) => (
-            <Skeleton key={index} className="p-4">
+            <Card key={index} className="border-border/60 bg-card/95 p-4">
               <div className="flex gap-4">
-                <div className="h-16 w-16 rounded-2xl bg-muted" />
+                <Skeleton className="h-16 w-16 rounded-2xl" />
                 <div className="flex-1 space-y-3">
-                  <div className="h-5 w-1/3 rounded bg-muted" />
-                  <div className="h-4 w-3/4 rounded bg-muted" />
-                  <div className="h-4 w-1/4 rounded bg-muted" />
+                  <Skeleton className="h-5 w-1/3 rounded" />
+                  <Skeleton className="h-4 w-3/4 rounded" />
+                  <Skeleton className="h-4 w-1/4 rounded" />
                 </div>
               </div>
-            </Skeleton>
+            </Card>
           ))}
         </div>
       ) : shownError ? (

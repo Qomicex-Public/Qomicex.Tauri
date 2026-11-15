@@ -223,19 +223,19 @@ export default function PluginStoreBrowse() {
               {Array.from({ length: 6 }).map((_, i) => (
                 <Skeleton key={i} className="flex flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3">
                   <div className="flex items-start gap-3">
-                    <div className="h-10 w-10 shrink-0 rounded-lg bg-muted" />
+                    <div className="h-10 w-10 shrink-0 rounded-lg bg-foreground/10" />
                     <div className="flex-1 space-y-2">
-                      <div className="h-4 w-2/3 rounded bg-muted" />
-                      <div className="h-3 w-full rounded bg-muted" />
-                      <div className="h-3 w-4/5 rounded bg-muted" />
+                      <div className="h-4 w-2/3 rounded bg-foreground/10" />
+                      <div className="h-3 w-full rounded bg-foreground/10" />
+                      <div className="h-3 w-4/5 rounded bg-foreground/10" />
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <div className="h-5 w-10 rounded bg-muted" />
-                    <div className="h-5 w-12 rounded bg-muted" />
-                    <div className="h-5 w-8 rounded bg-muted" />
+                    <div className="h-5 w-10 rounded bg-foreground/10" />
+                    <div className="h-5 w-12 rounded bg-foreground/10" />
+                    <div className="h-5 w-8 rounded bg-foreground/10" />
                   </div>
-                  <div className="h-8 w-full rounded-md bg-muted" />
+                  <div className="h-8 w-full rounded-md bg-foreground/10" />
                 </Skeleton>
               ))}
             </div>

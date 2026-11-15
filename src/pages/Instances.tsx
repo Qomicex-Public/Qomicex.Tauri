@@ -1552,23 +1552,23 @@ export default function Instances() {
         viewMode === 'grid' ? (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {Array.from({ length: 6 }).map((_, index) => (
-              <Skeleton key={index} className="rounded-xl border bg-card p-5 text-center">
-                <div className="mx-auto mb-3 h-16 w-16 rounded-2xl bg-muted" />
-                <div className="mx-auto h-4 w-2/3 rounded bg-muted" />
-                <div className="mx-auto mt-2 h-3 w-1/3 rounded bg-muted" />
+              <Skeleton key={index} className="glass-surface rounded-xl border bg-card p-5 text-center">
+                <div className="mx-auto mb-3 h-16 w-16 rounded-2xl bg-foreground/10" />
+                <div className="mx-auto h-4 w-2/3 rounded bg-foreground/10" />
+                <div className="mx-auto mt-2 h-3 w-1/3 rounded bg-foreground/10" />
               </Skeleton>
             ))}
           </div>
         ) : (
           <div className="space-y-3">
             {Array.from({ length: 5 }).map((_, index) => (
-              <Skeleton key={index} className="flex items-center gap-4 rounded-xl border bg-card px-5 py-4">
-                <div className="h-12 w-12 shrink-0 rounded-xl bg-muted" />
+              <Skeleton key={index} className="glass-surface flex items-center gap-4 rounded-xl border bg-card px-5 py-4">
+                <div className="h-12 w-12 shrink-0 rounded-xl bg-foreground/10" />
                 <div className="flex-1 space-y-2">
-                  <div className="h-4 w-1/4 rounded bg-muted" />
+                  <div className="h-4 w-1/4 rounded bg-foreground/10" />
                   <div className="flex gap-2">
-                    <div className="h-3 w-1/6 rounded bg-muted" />
-                    <div className="h-3 w-1/8 rounded bg-muted" />
+                    <div className="h-3 w-1/6 rounded bg-foreground/10" />
+                    <div className="h-3 w-1/8 rounded bg-foreground/10" />
                   </div>
                 </div>
               </Skeleton>
