@@ -679,15 +679,35 @@ fn snapshot_existing_dir(target_dir: &Path, plugins_dir: &Path) -> Result<(), Ap
     let version = read_installed_version(target_dir).unwrap_or_else(now_o);
     let name = target_dir.file_name().unwrap_or_default().to_string_lossy();
     let bak_dir = plugins_dir.join(format!("{name}.bak-{}", safe_bak_suffix(&version)));
-    // 清除所有旧版 .bak（同一插件不同版本），保证最多一份快照
+    // 清除所有旧 .bak（同一插件不同版本，含与本次同名的），保证最多一份快照。
+    // 同名快照必须一并删：Windows 上 rename 目录到已存在的目录会失败于
+    // ERROR_DIR_NOT_EMPTY（os error 145），残留的 `{id}.bak-{当前版本}` 会让
+    // 重装/升级永久报「目录不是空的」（issue #342）。
     if let Ok(entries) = std::fs::read_dir(plugins_dir) {
         for entry in entries.flatten() {
             let fname = match entry.file_name().to_str() {
                 Some(f) => f.to_string(),
                 None => continue,
             };
-            if fname.starts_with(&format!("{name}.bak-")) && plugins_dir.join(&fname) != bak_dir {
-                let _ = std::fs::remove_dir_all(entry.path());
+            if !fname.starts_with(&format!("{name}.bak-")) {
+                continue;
+            }
+            let path = plugins_dir.join(&fname);
+            let removed = if path.is_dir() {
+                std::fs::remove_dir_all(&path)
+            } else {
+                std::fs::remove_file(&path)
+            };
+            if let Err(e) = removed {
+                // 只有同名快照删不掉会阻断后续 rename；其余旧快照不清也算成功，
+                // 代价仅是少一份更早的回滚历史。
+                if path == bak_dir {
+                    return Err(ApiError::internal(format!(
+                        "无法清理旧版本快照 {}: {e}",
+                        path.display()
+                    )));
+                }
+                tracing::warn!(path = %path.display(), "清理旧插件快照失败: {e}");
             }
         }
     }
@@ -1244,6 +1264,59 @@ mod tests {
         // 旧 .bak 已被删除，新 .bak 存在
         assert!(!bak1.is_dir());
         assert!(bak2.is_dir());
+    }
+
+    /// 回归（#342）：同版本重装/重试升级时，上一次留下的同名 `{id}.bak-{version}`
+    /// 必须先清掉再 rename。Windows 上 rename 目录到已存在目录报
+    /// ERROR_DIR_NOT_EMPTY（os error 145），此前跳过同名快照导致该插件永久装不上。
+    #[test]
+    fn snapshot_same_version_twice_succeeds() {
+        let (tmp, _guard) = make_temp_root();
+        let plugins_dir = tmp.join("plugins");
+        std::fs::create_dir_all(&plugins_dir).unwrap();
+        let target = plugins_dir.join("my.plugin");
+        for _ in 0..3 {
+            std::fs::create_dir_all(&target).unwrap();
+            std::fs::write(
+                target.join("manifest.json"),
+                r#"{"id":"my.plugin","version":"1.0.0"}"#,
+            )
+            .unwrap();
+            snapshot_existing_dir(&target, &plugins_dir).unwrap();
+            assert!(!target.is_dir());
+            assert!(plugins_dir.join("my.plugin.bak-1.0.0").is_dir());
+        }
+        // 同版本只保留一份快照
+        let baks: Vec<String> = std::fs::read_dir(&plugins_dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".bak-"))
+            .collect();
+        assert_eq!(baks, vec!["my.plugin.bak-1.0.0".to_string()]);
+    }
+
+    /// 回归（#342）端到端：同一目录连续安装 3 次（无版本变化）都必须成功。
+    #[test]
+    fn install_from_dir_repeated_same_version_succeeds() {
+        let (tmp, _guard) = make_temp_root();
+        let src = tmp.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(
+            src.join("manifest.json"),
+            r#"{"id":"com.qomicex.repeat","name":"x","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        let plugins_dir = tmp.join("plugins");
+        let store = PluginStore::with_dirs(plugins_dir.clone(), tmp.join("states.json"));
+        for round in 1..=3 {
+            let info = store
+                .install_from_dir(&src)
+                .unwrap_or_else(|e| panic!("第 {round} 次安装失败: {}", e.message))
+                .unwrap();
+            assert_eq!(info.manifest.id, "com.qomicex.repeat");
+            assert!(plugins_dir.join("com.qomicex.repeat").is_dir());
+        }
     }
 
     #[test]
