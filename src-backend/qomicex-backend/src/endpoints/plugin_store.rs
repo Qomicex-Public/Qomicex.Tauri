@@ -141,7 +141,7 @@ async fn download_info(
 async fn install(
     State(state): State<SharedState>,
     Json(req): Json<InstallRequest>,
-) -> ApiResult<Json<crate::services::plugin::PluginInfo>> {
+) -> ApiResult<Json<plugin_store::InstallOutcome>> {
     if req.slug.trim().is_empty() {
         return Err(ApiError::bad_request(
             "STORE_SLUG_REQUIRED",

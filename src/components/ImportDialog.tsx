@@ -10,6 +10,7 @@ import { Checkbox } from '../components/ui'
 import { Input } from '../components/ui'
 import { Label } from '../components/ui'
 import { Separator } from '../components/ui'
+import { Skeleton } from '../components/ui'
 import { parseModpackFileByPath, startModpackInstall, parseMultiMcFolder, startMultiMcImport, startTechnicImport } from '../api/instance.ts'
 import { ApiError } from '../api/client.ts'
 import type { ModpackParseResult, MultiMcParseResult } from '../types/index.ts'
@@ -290,23 +291,23 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
         {step === 'parsing' && (
           <div className="space-y-4">
             <div className="space-y-2">
-              <div className="h-4 w-24 animate-pulse rounded bg-muted" />
-              <div className="h-5 w-48 animate-pulse rounded bg-muted" />
+              <Skeleton className="h-4 w-24 rounded" />
+              <Skeleton className="h-5 w-48 rounded" />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <div className="h-4 w-20 animate-pulse rounded bg-muted" />
-                <div className="h-4 w-16 animate-pulse rounded bg-muted" />
+                <Skeleton className="h-4 w-20 rounded" />
+                <Skeleton className="h-4 w-16 rounded" />
               </div>
               <div className="space-y-2">
-                <div className="h-4 w-16 animate-pulse rounded bg-muted" />
-                <div className="h-4 w-20 animate-pulse rounded bg-muted" />
+                <Skeleton className="h-4 w-16 rounded" />
+                <Skeleton className="h-4 w-20 rounded" />
               </div>
             </div>
             <div className="h-px w-full bg-border" />
             <div className="space-y-2">
-              <div className="h-4 w-28 animate-pulse rounded bg-muted" />
-              <div className="h-8 w-full animate-pulse rounded bg-muted" />
+              <Skeleton className="h-4 w-28 rounded" />
+              <Skeleton className="h-8 w-full rounded" />
             </div>
             <p className="text-xs text-muted-foreground">{t('dialogs.import.parsing')}</p>
           </div>

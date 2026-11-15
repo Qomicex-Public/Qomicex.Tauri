@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { CloudDownload, Search, Star } from 'lucide-react'
 import { RotateCw as RotateCwData } from 'lucide'
 import { MorphActionIcon } from './MorphActionIcon.tsx'
-import { Button, Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Input, Select, SelectOption, Separator, useMessageBox } from './ui'
+import { Button, Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Input, Select, SelectOption, Separator, Skeleton, useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 import { PERMISSION_CATALOG } from '../plugins/types.ts'
@@ -143,9 +143,15 @@ export default function PluginStoreBrowse() {
     if (!target) return
     setInstalling(true)
     try {
-      await installStorePlugin(target.detail.slug, target.version || undefined)
+      const res = await installStorePlugin(target.detail.slug, target.version || undefined)
       await rescan()
-      notify(t('settings.plugins.store.installSuccess'), 'success')
+      const deps = res.prerequisites.map((p) => `${p.id} ${p.version}`).join(', ')
+      notify(
+        res.prerequisites.length
+          ? t('settings.plugins.store.installSuccessWithDeps', { deps })
+          : t('settings.plugins.store.installSuccess'),
+        'success'
+      )
       setTarget(null)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -215,22 +221,22 @@ export default function PluginStoreBrowse() {
           {loading ? (
             <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
               {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="animate-pulse flex flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3">
+                <Skeleton key={i} className="flex flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3">
                   <div className="flex items-start gap-3">
-                    <div className="h-10 w-10 shrink-0 rounded-lg bg-muted" />
+                    <div className="h-10 w-10 shrink-0 rounded-lg bg-foreground/10" />
                     <div className="flex-1 space-y-2">
-                      <div className="h-4 w-2/3 rounded bg-muted" />
-                      <div className="h-3 w-full rounded bg-muted" />
-                      <div className="h-3 w-4/5 rounded bg-muted" />
+                      <div className="h-4 w-2/3 rounded bg-foreground/10" />
+                      <div className="h-3 w-full rounded bg-foreground/10" />
+                      <div className="h-3 w-4/5 rounded bg-foreground/10" />
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <div className="h-5 w-10 rounded bg-muted" />
-                    <div className="h-5 w-12 rounded bg-muted" />
-                    <div className="h-5 w-8 rounded bg-muted" />
+                    <div className="h-5 w-10 rounded bg-foreground/10" />
+                    <div className="h-5 w-12 rounded bg-foreground/10" />
+                    <div className="h-5 w-8 rounded bg-foreground/10" />
                   </div>
-                  <div className="h-8 w-full rounded-md bg-muted" />
-                </div>
+                  <div className="h-8 w-full rounded-md bg-foreground/10" />
+                </Skeleton>
               ))}
             </div>
           ) : loadError ? (

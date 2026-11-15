@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw as RefreshCwData } from 'lucide'
 import { MorphActionIcon } from './MorphActionIcon.tsx'
-import { Button, Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Input, TabContent, Tabs, useMessageBox } from './ui'
+import { Button, Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Input, Skeleton, TabContent, Tabs, useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 import { PluginCard } from './PluginCard.tsx'
@@ -233,15 +233,15 @@ export default function PluginStoreManage() {
         {loading ? (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="animate-pulse flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3">
-                <div className="h-9 w-9 shrink-0 rounded-lg bg-muted" />
+              <Skeleton key={i} className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3">
+                <div className="h-9 w-9 shrink-0 rounded-lg bg-foreground/10" />
                 <div className="flex-1 space-y-2">
-                  <div className="h-4 w-1/2 rounded bg-muted" />
-                  <div className="h-3 w-2/3 rounded bg-muted" />
+                  <div className="h-4 w-1/2 rounded bg-foreground/10" />
+                  <div className="h-3 w-2/3 rounded bg-foreground/10" />
                 </div>
-                <div className="h-6 w-16 rounded bg-muted" />
-                <div className="h-6 w-6 rounded bg-muted" />
-              </div>
+                <div className="h-6 w-16 rounded bg-foreground/10" />
+                <div className="h-6 w-6 rounded bg-foreground/10" />
+              </Skeleton>
             ))}
           </div>
         ) : plugins.length === 0 ? (
