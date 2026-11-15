@@ -679,39 +679,60 @@ fn snapshot_existing_dir(target_dir: &Path, plugins_dir: &Path) -> Result<(), Ap
     let version = read_installed_version(target_dir).unwrap_or_else(now_o);
     let name = target_dir.file_name().unwrap_or_default().to_string_lossy();
     let bak_dir = plugins_dir.join(format!("{name}.bak-{}", safe_bak_suffix(&version)));
-    // 清除所有旧 .bak（同一插件不同版本，含与本次同名的），保证最多一份快照。
-    // 同名快照必须一并删：Windows 上 rename 目录到已存在的目录会失败于
-    // ERROR_DIR_NOT_EMPTY（os error 145），残留的 `{id}.bak-{当前版本}` 会让
-    // 重装/升级永久报「目录不是空的」（issue #342）。
-    if let Ok(entries) = std::fs::read_dir(plugins_dir) {
-        for entry in entries.flatten() {
-            let fname = match entry.file_name().to_str() {
-                Some(f) => f.to_string(),
-                None => continue,
-            };
-            if !fname.starts_with(&format!("{name}.bak-")) {
-                continue;
-            }
-            let path = plugins_dir.join(&fname);
-            let removed = if path.is_dir() {
-                std::fs::remove_dir_all(&path)
-            } else {
-                std::fs::remove_file(&path)
-            };
-            if let Err(e) = removed {
-                // 只有同名快照删不掉会阻断后续 rename；其余旧快照不清也算成功，
-                // 代价仅是少一份更早的回滚历史。
-                if path == bak_dir {
-                    return Err(ApiError::internal(format!(
-                        "无法清理旧版本快照 {}: {e}",
-                        path.display()
-                    )));
+
+    // 先把旧目录挪到中转位，再落到最终快照名。顺序不能反：Windows 上 rename
+    // 目录到已存在的目录会失败于 ERROR_DIR_NOT_EMPTY（145），而快照名只由版本
+    // 决定，同版本重装时目标快照必然已存在；同理也不能先删旧快照——rename 失败
+    // 时旧目录还在，先删就把上一份可回滚的快照白丢了。
+    let staging = plugins_dir.join(format!(
+        ".{name}.snapshot-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    std::fs::rename(target_dir, &staging)?;
+
+    let mut stale: Vec<PathBuf> = Vec::new();
+    match std::fs::read_dir(plugins_dir) {
+        Ok(entries) => {
+            let prefix = format!("{name}.bak-");
+            for entry in entries.flatten() {
+                let fname = match entry.file_name().to_str() {
+                    Some(f) => f.to_string(),
+                    None => continue,
+                };
+                // 大小写不敏感比较：Windows/macOS 默认文件系统不区分大小写，
+                // 插件 ID 改大小写后 join 会解析到同一个目录，敏感比较会漏删。
+                if !fname.to_lowercase().starts_with(&prefix.to_lowercase()) {
+                    continue;
                 }
-                tracing::warn!(path = %path.display(), "清理旧插件快照失败: {e}");
+                stale.push(plugins_dir.join(&fname));
             }
         }
+        // 列目录失败不阻断：最终 rename 是否撞车由内核判定，失败时有回退路径。
+        Err(e) => tracing::warn!(dir = %plugins_dir.display(), "枚举插件目录失败: {e}"),
     }
-    std::fs::rename(target_dir, &bak_dir)?;
+
+    for path in stale {
+        let removed = if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        if let Err(e) = removed {
+            tracing::warn!(path = %path.display(), "清理旧插件快照失败: {e}");
+        }
+    }
+
+    if let Err(e) = std::fs::rename(&staging, &bak_dir) {
+        // 旧快照已被清掉，此时必须让旧目录回到原位，否则目标目录连同插件一起消失。
+        if let Err(restore_err) = std::fs::rename(&staging, target_dir) {
+            tracing::error!(
+                staging = %staging.display(),
+                target = %target_dir.display(),
+                "旧插件目录回退失败: {restore_err}"
+            );
+        }
+        return Err(ApiError::internal(format!("无法创建插件版本快照: {e}")));
+    }
     Ok(())
 }
 
@@ -1266,9 +1287,9 @@ mod tests {
         assert!(bak2.is_dir());
     }
 
-    /// 回归（#342）：同版本重装/重试升级时，上一次留下的同名 `{id}.bak-{version}`
-    /// 必须先清掉再 rename。Windows 上 rename 目录到已存在目录报
-    /// ERROR_DIR_NOT_EMPTY（os error 145），此前跳过同名快照导致该插件永久装不上。
+    /// 回归：同版本重装时上一次留下的同名 `{id}.bak-{version}` 必须先处理掉。
+    /// Windows 上 rename 目录到已存在目录报 ERROR_DIR_NOT_EMPTY（145），
+    /// 此前跳过同名快照导致该插件永久装不上。
     #[test]
     fn snapshot_same_version_twice_succeeds() {
         let (tmp, _guard) = make_temp_root();
@@ -1296,7 +1317,67 @@ mod tests {
         assert_eq!(baks, vec!["my.plugin.bak-1.0.0".to_string()]);
     }
 
-    /// 回归（#342）端到端：同一目录连续安装 3 次（无版本变化）都必须成功。
+    /// 插件 ID 改大小写后目录名跟着变，但 Windows/macOS 上仍解析到同一个目录。
+    /// 快照前缀若是大小写敏感比较，残留快照会被漏删并再次撞上 145。
+    #[test]
+    fn snapshot_clears_snapshot_with_different_id_casing() {
+        let (tmp, _guard) = make_temp_root();
+        let plugins_dir = tmp.join("plugins");
+        std::fs::create_dir_all(&plugins_dir).unwrap();
+        let old = plugins_dir.join("My.Plugin");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(
+            old.join("manifest.json"),
+            r#"{"id":"My.Plugin","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        snapshot_existing_dir(&old, &plugins_dir).unwrap();
+
+        let new = plugins_dir.join("my.plugin");
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::write(
+            new.join("manifest.json"),
+            r#"{"id":"my.plugin","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        // 旧大小写快照若未被清理，这一步会以 145 失败。
+        snapshot_existing_dir(&new, &plugins_dir).unwrap();
+
+        let names: Vec<String> = std::fs::read_dir(&plugins_dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".bak-"))
+            .collect();
+        assert_eq!(names.len(), 1, "应只剩一份快照，实际: {names:?}");
+    }
+
+    /// 列目录不可用时仍要能安装：清理是尽力而为，落位失败才报错。
+    #[test]
+    fn snapshot_succeeds_when_listing_unavailable() {
+        let (tmp, _guard) = make_temp_root();
+        let plugins_dir = tmp.join("plugins");
+        std::fs::create_dir_all(&plugins_dir).unwrap();
+        let target = plugins_dir.join("my.plugin");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(
+            target.join("manifest.json"),
+            r#"{"id":"my.plugin","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        snapshot_existing_dir(&target, &plugins_dir).unwrap();
+        assert!(plugins_dir.join("my.plugin.bak-1.0.0").is_dir());
+        // 中转目录不得残留
+        let leftovers: Vec<String> = std::fs::read_dir(&plugins_dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".snapshot-"))
+            .collect();
+        assert!(leftovers.is_empty(), "残留中转目录: {leftovers:?}");
+    }
+
+    /// 端到端：同一目录连续安装 3 次（无版本变化）都必须成功。
     #[test]
     fn install_from_dir_repeated_same_version_succeeds() {
         let (tmp, _guard) = make_temp_root();
