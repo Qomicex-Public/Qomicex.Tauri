@@ -39,7 +39,7 @@ import { linter, lintGutter, type Diagnostic } from '@codemirror/lint'
 import { javascript } from '@codemirror/lang-javascript'
 import { xml } from '@codemirror/lang-xml'
 import { tags } from '@lezer/highlight'
-import { ELEMENT_ATTRS, NODE_ATTRS, attributeValues } from '../schema.ts'
+import { ELEMENT_ATTRS, NODE_ATTRS, NODE_TAGS, attributeValues } from '../schema.ts'
 import type { CustomWidgetDef } from '../store.ts'
 import { parseWidgetXml } from '../xml.ts'
 import { transpileScript } from '../script/transpile.ts'
@@ -211,6 +211,24 @@ function normalizeTag(tag: string): string {
   return tag.startsWith('Widget.') ? tag.slice('Widget.'.length) : tag
 }
 
+/** 属性元素从同一份 ELEMENT_ATTRS 派生；这里只补充非属性型的容器元素。 */
+const PROPERTY_ELEMENT_EXTRAS: Record<string, readonly string[]> = {
+  Widget: ['Inputs', 'Outputs', 'Converters'],
+  Function: ['Interface', 'Input', 'Output', 'Script'],
+  Converter: ['Convert', 'ConvertBack'],
+  Button: ['ShortcutKeys'],
+  Link: ['ShortcutKeys'],
+}
+
+function propertyElementNames(base: string): string[] {
+  const normalized = normalizeTag(base)
+  const attrs = ELEMENT_ATTRS[normalized] ?? []
+  const names = attrs.map((attr) => `${base}.${attr}`)
+  for (const extra of PROPERTY_ELEMENT_EXTRAS[normalized] ?? []) names.push(`${base}.${extra}`)
+  if (NODE_TAGS.has(normalized)) names.push(`${base}.Actions`, `${base}.Effects`, `${base}.Animations`)
+  return unique(names)
+}
+
 function attributeValueSuggestions(tag: string, attr: string, text: string, defs: CustomWidgetDef[]): string[] {
   const names = knownNames(text, defs)
   if (attr === 'Function') return unique(names.functions)
@@ -258,6 +276,16 @@ function xmlCompletion(
       from: context.pos - value.prefix.length,
       options: values.map((item) => completionOption(item, value.attr === 'Url' ? 'text' : 'enum')),
       validFor: /^[^"']*$/,
+    }
+  }
+
+  const propertyPrefix = before.match(/<([A-Za-z][\w.]*)\.$/)
+  if (propertyPrefix) {
+    const base = propertyPrefix[1]
+    return {
+      from: context.pos - base.length - 1,
+      options: propertyElementNames(base).map((name) => completionOption(name, 'property')),
+      validFor: /^[\w.-]*$/,
     }
   }
 

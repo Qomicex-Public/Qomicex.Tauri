@@ -49,6 +49,9 @@ const RISK_KEY = 'qomicex.dashboard.customRisk.v1'
 
 function collectActions(nodes: WidgetNode[], out = new Set<ActionName>()): Set<ActionName> {
   for (const node of nodes) {
+    for (const action of node.actions ?? []) {
+      if (action.action) out.add(action.action.name)
+    }
     switch (node.kind) {
       case 'button':
       case 'link':

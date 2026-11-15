@@ -170,6 +170,11 @@ try {
   check('版本比较 2.0 > 1.9.9', schema.compareVersions('2.0', '1.9.9') > 0, true)
   check('版本预发布低于正式版', schema.compareVersions('1.2.0-beta', '1.2.0') < 0, true)
 
+  // ---- 节点事件 / Webview 背景 ----
+  check('节点事件表包含键盘事件', schema.NODE_EVENTS.includes('KeyboardDown'), true)
+  check('Actions 属性元素', schema.ELEMENT_ATTRS.Actions, [])
+  check('Webview 背景枚举', schema.ATTRIBUTE_VALUES.Webview.Background, ['Default', 'Transparent'])
+
   // ---- ContentProperty ----
   check('Text ContentProperty', schema.CONTENT_PROPERTY.Text, 'Value')
   check('Button ContentProperty', schema.CONTENT_PROPERTY.Button, 'Text')

@@ -17,6 +17,9 @@ function pushAction(action: ActionSpec | undefined, out: ExecutableAction[]): vo
 }
 
 function walkNode(node: WidgetNode | PageNode, out: ExecutableAction[]): void {
+  if ('actions' in node) {
+    for (const action of node.actions ?? []) pushAction(action.action, out)
+  }
   switch (node.kind) {
     case 'button':
     case 'link':

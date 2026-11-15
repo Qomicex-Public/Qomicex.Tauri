@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { Fragment, useState, type CSSProperties, type ReactNode } from 'react'
+import { Fragment, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Button, Checkbox, Dialog, DialogBody, DialogHeader, DialogTitle, Select, SelectOption, Tabs, cn } from '../../../components/ui'
 import {
@@ -37,6 +37,7 @@ import type {
   ListNode,
   ListItemNode,
   MediaNode,
+  NodeActionSpec,
   PageNode,
   ProgressNode,
   RowNode,
@@ -520,7 +521,56 @@ function renderDialog(node: DialogNode, ctx: RenderContext): ReactNode {
   )
 }
 
+function runNodeActions(actions: NodeActionSpec[] | undefined, event: NodeActionSpec['event'], ctx: RenderContext): void {
+  for (const action of actions ?? []) {
+    if (action.event === event && action.action) ctx.onAction(action.action)
+  }
+}
+
+function NodeActionLayer({
+  actions,
+  ctx,
+  children,
+}: {
+  actions: NodeActionSpec[]
+  ctx: RenderContext
+  children: ReactNode
+}) {
+  useEffect(() => {
+    runNodeActions(actions, 'Loaded', ctx)
+    // 只在节点挂载时执行一次 Loaded 动作
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  return (
+    <div
+      style={{ display: 'contents' }}
+      onClick={() => runNodeActions(actions, 'Click', ctx)}
+      onDoubleClick={() => runNodeActions(actions, 'DoubleClick', ctx)}
+      onMouseDown={() => runNodeActions(actions, 'MouseDown', ctx)}
+      onMouseUp={() => runNodeActions(actions, 'MouseUp', ctx)}
+      onMouseOver={() => runNodeActions(actions, 'MouseOver', ctx)}
+      onMouseOut={() => runNodeActions(actions, 'MouseOut', ctx)}
+      onContextMenu={(event) => {
+        if (actions.some((action) => action.event === 'ContextMenu')) {
+          event.preventDefault()
+          runNodeActions(actions, 'ContextMenu', ctx)
+        }
+      }}
+      onKeyDown={() => runNodeActions(actions, 'KeyboardDown', ctx)}
+      onKeyUp={() => runNodeActions(actions, 'KeyboardUp', ctx)}
+    >
+      {children}
+    </div>
+  )
+}
+
 function renderNode(node: WidgetNode, ctx: RenderContext, root = false): ReactNode {
+  const rendered = renderNodeInner(node, ctx, root)
+  if (!rendered || !node.actions?.length) return rendered
+  return <NodeActionLayer actions={node.actions} ctx={ctx}>{rendered}</NodeActionLayer>
+}
+
+function renderNodeInner(node: WidgetNode, ctx: RenderContext, root = false): ReactNode {
   const effective = applyNodeOverrides(node, node.target ? ctx.overrides[node.target] : undefined)
   const effects = effective.target ? ctx.effects[effective.target] : undefined
   if (effects !== undefined) effective.effects = effects
@@ -753,9 +803,16 @@ function renderImage(node: ImageNode, ctx: RenderContext, root = false): ReactNo
     <img
       src={src}
       alt={node.alt ?? ''}
+      data-widget-target={node.target}
       loading="lazy"
       referrerPolicy="no-referrer"
-      style={{ ...nodeStyle(node), width: node.w, height: node.h }}
+      style={{
+        ...nodeStyle(node),
+        width: node.w,
+        height: node.h,
+        // react-grid-layout 默认给 img 关闭 pointer-events；有事件时恢复
+        pointerEvents: node.actions?.some((action) => action.event !== 'Loaded') ? 'auto' : undefined,
+      }}
       className={cn('object-cover', animationClass(node.animations), root && 'max-h-full max-w-full overflow-auto', node.rounded && 'rounded-md', node.w === undefined && 'w-full', node.h === undefined && 'h-auto')}
     />
   )
@@ -786,6 +843,7 @@ function renderMedia(node: MediaNode, ctx: RenderContext, root = false): ReactNo
   }
   const common = {
     src: source,
+    'data-widget-target': node.target,
     controls: node.controls,
     autoPlay: node.autoPlay,
     loop: node.loop,
@@ -842,7 +900,11 @@ function renderWebview(node: WebviewNode, ctx: RenderContext, root = false): Rea
       sandbox={node.sandbox ?? 'allow-scripts allow-forms allow-popups allow-downloads'}
       allow={node.allow ?? 'fullscreen; autoplay; encrypted-media; picture-in-picture; clipboard-write'}
       allowFullScreen={node.fullscreen}
-      style={{ ...nodeStyle(node), height: node.height }}
+      style={{
+        ...nodeStyle(node),
+        height: node.height,
+        backgroundColor: node.background === 'Transparent' ? 'transparent' : undefined,
+      }}
       className={cn('w-full max-w-full rounded-md border-0', animationClass(node.animations), root && 'max-h-full overflow-auto')}
     />
   )
