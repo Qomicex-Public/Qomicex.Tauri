@@ -1,0 +1,59 @@
+name: PR Policy
+
+# 校验 PR 标题、正文（对照 .github/PULL_REQUEST_TEMPLATE.md）与 PR 内提交信息的
+# 格式。只查格式，不查内容（不禁用词、不判措辞），避免误伤正常提交。
+# 规则来源：CONTRIBUTING.md「提交信息」、AGENTS.md §3、AI_POLICY.md「必须披露」。
+#
+# 用 pull_request_target 而不是 pull_request：后者的 workflow 文件取自 PR 分支，
+# PR 可以改掉本文件自我放行；这里不 checkout PR 代码、不执行 PR 内容、不使用
+# secrets，只通过 API 读标题/正文/提交列表，再在默认分支上跑校验脚本。
+#
+# 豁免：给 PR 打 policy: skip 标签。labeled/unlabeled 会重新触发本工作流，
+# 所以加标签后无需重新提交即可放行。
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-policy-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  policy:
+    # 引号必需：表达式里含 'policy: skip'，裸标量会被 YAML 当成映射分隔
+    if: "${{ !contains(github.event.pull_request.labels.*.name, 'policy: skip') }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      # 先验证校验器自身：规则改错时宁可这里先红，也不要拿错误规则去挡 PR
+      - name: Self-check validator
+        run: node scripts/test-pr-policy.mjs
+      - name: Collect PR payload
+        id: payload
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const commits = await github.paginate(github.rest.pulls.listCommits, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100
+            });
+            const pr = context.payload.pull_request;
+            core.setOutput('json', JSON.stringify({
+              title: pr.title,
+              body: pr.body,
+              commits: commits.map((commit) => commit.commit.message)
+            }));
+      - name: Validate title, body and commits
+        env:
+          PR_POLICY_INPUT: ${{ steps.payload.outputs.json }}
+        run: printf '%s' "$PR_POLICY_INPUT" | node scripts/pr-policy.mjs
