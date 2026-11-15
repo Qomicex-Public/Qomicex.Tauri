@@ -128,6 +128,11 @@ export async function getInstanceLogs(id: string): Promise<{ instanceId: string;
   return get(`/instance/${encodeURIComponent(id)}/logs`)
 }
 
+/** POST /api/instance/{id}/logs/export — 把日志正文写入用户选定的路径（正文由前端按当前视图拼好）。 */
+export async function exportGameLog(id: string, dest: string, content: string): Promise<void> {
+  await post(`/instance/${encodeURIComponent(id)}/logs/export`, { dest, content })
+}
+
 export async function getLaunchProgress(id: string): Promise<LaunchProgress> {
   return get<LaunchProgress>(`/instance/${id}/launch/progress`)
 }
