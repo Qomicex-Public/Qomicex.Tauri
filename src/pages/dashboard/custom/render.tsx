@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { Fragment, useState, type CSSProperties, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Button, Checkbox, Dialog, DialogBody, DialogHeader, DialogTitle, Select, SelectOption, Tabs, cn } from '../../../components/ui'
 import {
@@ -37,6 +37,7 @@ import type {
   ListNode,
   ListItemNode,
   MediaNode,
+  NodeActionSpec,
   PageNode,
   ProgressNode,
   RowNode,
@@ -520,7 +521,64 @@ function renderDialog(node: DialogNode, ctx: RenderContext): ReactNode {
   )
 }
 
+function runNodeActions(actions: NodeActionSpec[] | undefined, event: NodeActionSpec['event'], ctx: RenderContext): void {
+  for (const action of actions ?? []) {
+    if (action.event === event && action.action) ctx.onAction(action.action)
+  }
+}
+
+function NodeActionLayer({
+  actions,
+  ctx,
+  children,
+}: {
+  actions: NodeActionSpec[]
+  ctx: RenderContext
+  children: ReactNode
+}) {
+  const loadedRef = useRef(false)
+  useEffect(() => {
+    if (loadedRef.current) return
+    loadedRef.current = true
+    runNodeActions(actions, 'Loaded', ctx)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const inside = (event: { currentTarget: EventTarget; relatedTarget: EventTarget | null }) =>
+    event.relatedTarget instanceof Node && event.currentTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)
+  return (
+    <div
+      style={{ display: 'contents' }}
+      onClick={() => runNodeActions(actions, 'Click', ctx)}
+      onDoubleClick={() => runNodeActions(actions, 'DoubleClick', ctx)}
+      onMouseDown={() => runNodeActions(actions, 'MouseDown', ctx)}
+      onMouseUp={() => runNodeActions(actions, 'MouseUp', ctx)}
+      onMouseOver={(event) => {
+        if (!inside(event)) runNodeActions(actions, 'MouseOver', ctx)
+      }}
+      onMouseOut={(event) => {
+        if (!inside(event)) runNodeActions(actions, 'MouseOut', ctx)
+      }}
+      onContextMenu={(event) => {
+        if (actions.some((action) => action.event === 'ContextMenu')) {
+          event.preventDefault()
+          runNodeActions(actions, 'ContextMenu', ctx)
+        }
+      }}
+      onKeyDown={() => runNodeActions(actions, 'KeyboardDown', ctx)}
+      onKeyUp={() => runNodeActions(actions, 'KeyboardUp', ctx)}
+    >
+      {children}
+    </div>
+  )
+}
+
 function renderNode(node: WidgetNode, ctx: RenderContext, root = false): ReactNode {
+  const rendered = renderNodeInner(node, ctx, root)
+  if (!rendered || !node.actions?.length) return rendered
+  return <NodeActionLayer actions={node.actions} ctx={ctx}>{rendered}</NodeActionLayer>
+}
+
+function renderNodeInner(node: WidgetNode, ctx: RenderContext, root = false): ReactNode {
   const effective = applyNodeOverrides(node, node.target ? ctx.overrides[node.target] : undefined)
   const effects = effective.target ? ctx.effects[effective.target] : undefined
   if (effects !== undefined) effective.effects = effects
@@ -666,7 +724,11 @@ function TabsView({ node, ctx, root = false }: { node: TabsNode; ctx: RenderCont
         className={cn('min-w-0', animationClass(current?.animations), root && 'min-h-0 flex-1 overflow-auto')}
         style={{ ...effectStyle(current?.effects), ...animationStyle(current?.animations) }}
       >
-        {renderNodes(pageChildren(current?.contentPage, current?.children ?? [], ctx), ctx, `tab${index}-`)}
+        {current?.actions?.length ? (
+          <NodeActionLayer key={`tab-actions-${index}`} actions={current.actions} ctx={ctx}>
+            {renderNodes(pageChildren(current.contentPage, current.children ?? [], ctx), ctx, `tab${index}-`)}
+          </NodeActionLayer>
+        ) : renderNodes(pageChildren(current?.contentPage, current?.children ?? [], ctx), ctx, `tab${index}-`)}
       </div>
     </div>
   )
@@ -685,19 +747,24 @@ function ListView({ node, ctx, root = false }: { node: ListNode; ctx: RenderCont
   const itemNodes = pageChildren(sourceItem.contentPage, sourceItem.child ? [sourceItem.child] : [], ctx)
   return (
     <div style={nodeStyle(node)} className={cn('flex min-w-0 flex-col', animationClass(node.animations), GAP[node.gap ?? 0], root && 'min-h-0 flex-1 overflow-auto')}>
-      {items.map((item, index) => (
-        <Fragment key={index}>
-          <div
-            style={{ ...effectStyle(sourceItem.effects), ...animationStyle(sourceItem.animations) }}
-            className={cn('min-w-0', animationClass(sourceItem.animations))}
-          >
-            {renderNodes(itemNodes, {
-              ...ctx,
-              scope: { ...ctx.scope, [node.as]: item, Index: index },
-            })}
-          </div>
-        </Fragment>
-      ))}
+      {items.map((item, index) => {
+        const itemCtx = { ...ctx, scope: { ...ctx.scope, [node.as]: item, Index: index } }
+        const content = renderNodes(itemNodes, itemCtx)
+        return (
+          <Fragment key={index}>
+            <div
+              style={{ ...effectStyle(sourceItem.effects), ...animationStyle(sourceItem.animations) }}
+              className={cn('min-w-0', animationClass(sourceItem.animations))}
+            >
+              {sourceItem.actions?.length ? (
+                <NodeActionLayer key={`item-actions-${index}`} actions={sourceItem.actions} ctx={itemCtx}>
+                  {content}
+                </NodeActionLayer>
+              ) : content}
+            </div>
+          </Fragment>
+        )
+      })}
     </div>
   )
 }
@@ -753,9 +820,16 @@ function renderImage(node: ImageNode, ctx: RenderContext, root = false): ReactNo
     <img
       src={src}
       alt={node.alt ?? ''}
+      data-widget-target={node.target}
       loading="lazy"
       referrerPolicy="no-referrer"
-      style={{ ...nodeStyle(node), width: node.w, height: node.h }}
+      style={{
+        ...nodeStyle(node),
+        width: node.w,
+        height: node.h,
+        // react-grid-layout 默认给 img 关闭 pointer-events；有事件时恢复
+        pointerEvents: node.actions?.some((action) => action.event !== 'Loaded') ? 'auto' : undefined,
+      }}
       className={cn('object-cover', animationClass(node.animations), root && 'max-h-full max-w-full overflow-auto', node.rounded && 'rounded-md', node.w === undefined && 'w-full', node.h === undefined && 'h-auto')}
     />
   )
@@ -786,6 +860,7 @@ function renderMedia(node: MediaNode, ctx: RenderContext, root = false): ReactNo
   }
   const common = {
     src: source,
+    'data-widget-target': node.target,
     controls: node.controls,
     autoPlay: node.autoPlay,
     loop: node.loop,
@@ -842,7 +917,11 @@ function renderWebview(node: WebviewNode, ctx: RenderContext, root = false): Rea
       sandbox={node.sandbox ?? 'allow-scripts allow-forms allow-popups allow-downloads'}
       allow={node.allow ?? 'fullscreen; autoplay; encrypted-media; picture-in-picture; clipboard-write'}
       allowFullScreen={node.fullscreen}
-      style={{ ...nodeStyle(node), height: node.height }}
+      style={{
+        ...nodeStyle(node),
+        height: node.height,
+        backgroundColor: node.background === 'Transparent' ? 'transparent' : undefined,
+      }}
       className={cn('w-full max-w-full rounded-md border-0', animationClass(node.animations), root && 'max-h-full overflow-auto')}
     />
   )

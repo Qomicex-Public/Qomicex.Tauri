@@ -22,6 +22,25 @@ export interface ActionSpec {
   args: Record<string, string>
 }
 
+export type NodeEvent =
+  | 'Click'
+  | 'DoubleClick'
+  | 'MouseDown'
+  | 'MouseUp'
+  | 'MouseOver'
+  | 'MouseOut'
+  | 'KeyboardDown'
+  | 'KeyboardUp'
+  | 'ContextMenu'
+  | 'Loaded'
+
+export interface NodeActionSpec {
+  event: NodeEvent
+  function?: string
+  action?: ActionSpec
+  arguments?: string
+}
+
 export interface GridAttached {
   row?: number
   column?: number
@@ -40,6 +59,7 @@ export interface NodeBase {
   contentPage?: string
   effects?: EffectSpec[]
   animations?: AnimationSpec[]
+  actions?: NodeActionSpec[]
 }
 
 export interface WidgetSizeInfo {
@@ -106,6 +126,7 @@ export interface TabItemNode {
   contentPage?: string
   effects?: EffectSpec[]
   animations?: AnimationSpec[]
+  actions?: NodeActionSpec[]
   children: WidgetNode[]
 }
 
@@ -123,6 +144,7 @@ export interface ListItemNode {
   contentPage?: string
   effects?: EffectSpec[]
   animations?: AnimationSpec[]
+  actions?: NodeActionSpec[]
   child?: WidgetNode
 }
 
@@ -266,6 +288,7 @@ export interface WebviewNode extends NodeBase {
   loading: 'Lazy' | 'Eager'
   referrerPolicy: 'NoReferrer' | 'NoReferrerWhenDowngrade' | 'Origin' | 'OriginWhenCrossOrigin' | 'SameOrigin' | 'StrictOrigin' | 'StrictOriginWhenCrossOrigin'
   fullscreen: boolean
+  background: 'Default' | 'Transparent'
 }
 
 export type PageNode = WidgetNode | TabItemNode | ListItemNode

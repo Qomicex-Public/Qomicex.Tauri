@@ -172,7 +172,7 @@ WPF 风格绑定：
 
 - 仅允许 HTTPS，域名需在编辑器中确认
 - 使用 sandbox iframe，不包含 `allow-same-origin`
-- 安全参数：`Sandbox="Scripts,Forms,Popups,Downloads"`、`Loading`、`ReferrerPolicy`、`Fullscreen`
+- 安全参数：`Sandbox="Scripts,Forms,Popups,Downloads"`、`Loading`、`ReferrerPolicy`、`Fullscreen`、`Background="Transparent"`
 - `Sandbox` 不开放 `same-origin` / `top-navigation` / `popups-to-escape-sandbox`
 - `_self` 链接在 iframe 内跳转；`_blank` 受 `Popups` 控制
 - 目标站点可能用 `X-Frame-Options` / CSP 拒绝嵌入
@@ -201,6 +201,24 @@ WPF 风格绑定：
 - Page XML 根必须是 `<Page>`
 - 动态 Page 不能包含 Data/Function/Trigger
 - 状态只在当前组件实例内，XML 更新或卸载后重置
+
+## 节点 Actions
+
+所有可视节点都支持 `<Node.Actions>`：
+
+```xml
+<Image Src="{Data.Cover.Url}">
+  <Image.Actions>
+    <OnClick Function="OpenCover" />
+    <OnMouseOut Action="OpenUrl" Url="https://example.com" />
+  </Image.Actions>
+</Image>
+```
+
+- 事件：`OnClick`、`OnDoubleClick`、`OnMouseDown`、`OnMouseUp`、`OnMouseOver`、`OnMouseOut`、`OnKeyboardDown`、`OnKeyboardUp`、`OnContextMenu`、`OnLoaded`
+- 每个事件写 `Function` 或 `Action`，二选一
+- 也可写 `<Action Event="Click" ... />`
+- 键盘事件要求节点内有可聚焦元素
 
 ## Function（TS 脚本）
 

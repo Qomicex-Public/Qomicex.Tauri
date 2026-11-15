@@ -49,6 +49,9 @@ const RISK_KEY = 'qomicex.dashboard.customRisk.v1'
 
 function collectActions(nodes: WidgetNode[], out = new Set<ActionName>()): Set<ActionName> {
   for (const node of nodes) {
+    for (const action of node.actions ?? []) {
+      if (action.action) out.add(action.action.name)
+    }
     switch (node.kind) {
       case 'button':
       case 'link':
@@ -70,10 +73,16 @@ function collectActions(nodes: WidgetNode[], out = new Set<ActionName>()): Set<A
         collectActions(node.children, out)
         break
       case 'tabs':
-        for (const tab of node.children) collectActions(tab.children, out)
+        for (const tab of node.children) {
+          for (const action of tab.actions ?? []) if (action.action) out.add(action.action.name)
+          collectActions(tab.children, out)
+        }
         break
       case 'list':
-        if (node.item?.child) collectActions([node.item.child], out)
+        if (node.item) {
+          for (const action of node.item.actions ?? []) if (action.action) out.add(action.action.name)
+          if (node.item.child) collectActions([node.item.child], out)
+        }
         break
       default:
         break

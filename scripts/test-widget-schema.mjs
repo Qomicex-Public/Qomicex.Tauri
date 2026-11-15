@@ -42,13 +42,15 @@ function throwsCode(name, fn, code) {
 }
 
 try {
+  const securitySource = join(root, 'src', 'pages', 'dashboard', 'custom', 'security.ts')
   execFileSync(
     process.execPath,
-    [tsc, source, '--outDir', outDir, '--module', 'commonjs', '--target', 'es2022', '--skipLibCheck', '--allowImportingTsExtensions', '--rewriteRelativeImportExtensions'],
+    [tsc, source, securitySource, '--outDir', outDir, '--module', 'commonjs', '--target', 'es2022', '--skipLibCheck', '--allowImportingTsExtensions', '--rewriteRelativeImportExtensions'],
     { stdio: 'inherit' },
   )
   const require = createRequire(import.meta.url)
   const schema = require(join(outDir, 'schema.js'))
+  const security = require(join(outDir, 'security.js'))
 
   // ---- 绑定路径 ----
   const scope = { news: { title: 'T', items: [{ name: 'a' }, { name: 'b' }] }, index: 1 }
@@ -170,6 +172,11 @@ try {
   check('版本比较 2.0 > 1.9.9', schema.compareVersions('2.0', '1.9.9') > 0, true)
   check('版本预发布低于正式版', schema.compareVersions('1.2.0-beta', '1.2.0') < 0, true)
 
+  // ---- 节点事件 / Webview 背景 ----
+  check('节点事件表包含键盘事件', schema.NODE_EVENTS.includes('KeyboardDown'), true)
+  check('Actions 属性元素', schema.ELEMENT_ATTRS.Actions, [])
+  check('Webview 背景枚举', schema.ATTRIBUTE_VALUES.Webview.Background, ['Default', 'Transparent'])
+
   // ---- ContentProperty ----
   check('Text ContentProperty', schema.CONTENT_PROPERTY.Text, 'Value')
   check('Button ContentProperty', schema.CONTENT_PROPERTY.Button, 'Text')
@@ -192,6 +199,41 @@ try {
     assert.ok(schema.NAV_PATHS[target]?.startsWith('/'), `${target} 缺少路径`)
     checks += 1
   }
+
+  // ---- 可执行指纹 ----
+  const baseDoc = {
+    nodes: [{ kind: 'image', actions: [{ event: 'Click', action: { name: 'RunCommand', args: { Command: 'echo 1' } } }] }],
+    pages: {},
+    triggers: [],
+    converters: [],
+    functions: [],
+  }
+  const clickFingerprint = security.executableFingerprint(baseDoc)
+  const loadedFingerprint = security.executableFingerprint({
+    ...baseDoc,
+    nodes: [{ kind: 'image', actions: [{ event: 'Loaded', action: { name: 'RunCommand', args: { Command: 'echo 1' } } }] }],
+  })
+  assert.notEqual(clickFingerprint, loadedFingerprint)
+  checks += 1
+
+  const functionDoc = {
+    ...baseDoc,
+    nodes: [{ kind: 'image', actions: [{ event: 'Click', action: { name: 'CallFunction', args: { Function: 'Mark' } } }] }],
+    functions: [{ name: 'Mark', script: 'return { Value: 1 }', timeout: 1000 }],
+  }
+  const functionFingerprint = security.executableFingerprint(functionDoc)
+  const changedFunctionFingerprint = security.executableFingerprint({
+    ...functionDoc,
+    functions: [{ name: 'Mark', script: 'return { Value: 2 }', timeout: 1000 }],
+  })
+  assert.ok(functionFingerprint)
+  assert.notEqual(functionFingerprint, changedFunctionFingerprint)
+  const changedArgumentsFingerprint = security.executableFingerprint({
+    ...functionDoc,
+    nodes: [{ kind: 'image', actions: [{ event: 'Click', action: { name: 'CallFunction', args: { Function: 'Mark', Arguments: '{"id":2}' } } }] }],
+  })
+  assert.notEqual(functionFingerprint, changedArgumentsFingerprint)
+  checks += 1
 
   console.log(`\n✓ widget-schema: ${checks} 项断言通过`)
 } finally {

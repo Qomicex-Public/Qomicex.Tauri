@@ -785,14 +785,15 @@ export function CustomWidget({ def, chain = [], initialInputs, onSnapshot, previ
     if (!external) return true
     const hash = commandHash(command ?? '', workingDirectory)
     const key = `${def.id}:${hash}`
-    if ((def.trustedCommands ?? []).includes(hash) || isCommandApproved(key)) return true
+    const latestTrusted = () => useCustomWidgetStore.getState().defs.find((item) => item.id === def.id)?.trustedCommands ?? []
+    if (latestTrusted().includes(hash) || isCommandApproved(key)) return true
     const accepted = await confirm(
       `${t('dashboard.custom.riskMessage')}\n\n${command ?? ''}`,
       t('dashboard.custom.riskTitle'),
     )
     if (!accepted) return false
     approveCommand(key)
-    updateDef(def.id, { trustedCommands: [...(def.trustedCommands ?? []), hash].slice(-32) })
+    updateDef(def.id, { trustedCommands: [...new Set([...latestTrusted(), hash])].slice(-32) })
     return true
   }, [confirm, def, doc, t, updateDef])
 

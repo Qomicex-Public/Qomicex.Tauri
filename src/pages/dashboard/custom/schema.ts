@@ -127,6 +127,18 @@ export const DIALOG_SIZES = ['Sm', 'Md', 'Lg', 'Xl', 'Full'] as const
 export const TTL_VALUES = ['Default', 'Immediately', 'PreLaunch', 'PreLoad', 'None'] as const
 export type TtlSpec = number | (typeof TTL_VALUES)[number]
 export const TRIGGER_EVENTS = ['Loaded', 'DataChanged', 'Click', 'Timer', 'Resize'] as const
+export const NODE_EVENTS = [
+  'Click',
+  'DoubleClick',
+  'MouseDown',
+  'MouseUp',
+  'MouseOver',
+  'MouseOut',
+  'KeyboardDown',
+  'KeyboardUp',
+  'ContextMenu',
+  'Loaded',
+] as const
 export const FIELD_TYPES = ['String', 'Number', 'Bool', 'DateTime', 'Json', 'Binary'] as const
 export const CONVERTER_TYPES = [
   'String',
@@ -177,6 +189,18 @@ export const ELEMENT_ATTRS: Record<string, readonly string[]> = {
   Function: ['Name', 'Timeout'],
   ShortcutKey: ['Key'],
   Effects: [],
+  Actions: [],
+  Action: ['Event', 'Function', 'Arguments', 'Action', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method', 'Target', 'Effects'],
+  OnClick: ['Function', 'Arguments', 'Action', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method', 'Target'],
+  OnDoubleClick: ['Function', 'Arguments', 'Action', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method', 'Target'],
+  OnMouseDown: ['Function', 'Arguments', 'Action', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method', 'Target'],
+  OnMouseUp: ['Function', 'Arguments', 'Action', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method', 'Target'],
+  OnMouseOver: ['Function', 'Arguments', 'Action', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method', 'Target'],
+  OnMouseOut: ['Function', 'Arguments', 'Action', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method', 'Target'],
+  OnKeyboardDown: ['Function', 'Arguments', 'Action', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method', 'Target'],
+  OnKeyboardUp: ['Function', 'Arguments', 'Action', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method', 'Target'],
+  OnContextMenu: ['Function', 'Arguments', 'Action', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method', 'Target'],
+  OnLoaded: ['Function', 'Arguments', 'Action', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method', 'Target'],
   ShadowEffect: ['Radius', 'Color', 'OffsetX', 'OffsetY', 'Spread', 'Inset'],
   BlurEffect: ['Radius'],
   OpacityEffect: ['Value'],
@@ -198,7 +222,7 @@ export const ELEMENT_ATTRS: Record<string, readonly string[]> = {
   Button: ['Name', 'Text', 'Variant', 'Size', 'OnClick', 'Instance', 'To', 'Url', 'Folder', 'Value', 'ProjectId', 'Source', 'Category', 'Function', 'Arguments', 'Command', 'WorkingDirectory', 'Timeout', 'PluginId', 'Method'],
   Image: ['Src', 'Alt', 'W', 'H', 'Rounded'],
   Media: ['Type', 'Source', 'Controls', 'AutoPlay', 'Loop', 'Poster', 'Volume', 'Muted'],
-  Webview: ['Src', 'Height', 'Title', 'Allow', 'Sandbox', 'Loading', 'ReferrerPolicy', 'Fullscreen'],
+  Webview: ['Src', 'Height', 'Title', 'Allow', 'Sandbox', 'Loading', 'ReferrerPolicy', 'Fullscreen', 'Background'],
   TextBox: ['Name', 'Value', 'Placeholder', 'Multiline', 'Password', 'ReadOnly', 'MaxLength', 'OnChange'],
   CheckBox: ['Name', 'Text', 'Checked', 'OnChange'],
   Slider: ['Name', 'Value', 'Min', 'Max', 'Step', 'OnChange'],
@@ -401,6 +425,7 @@ export const ATTRIBUTE_VALUES: Record<string, Record<string, readonly string[]>>
       'StrictOriginWhenCrossOrigin',
     ],
     Fullscreen: ['True', 'False'],
+    Background: ['Default', 'Transparent'],
     Sandbox: ['Scripts', 'Forms', 'Popups', 'Downloads', 'Modals', 'OrientationLock', 'PointerLock', 'Presentation'],
   },
 }

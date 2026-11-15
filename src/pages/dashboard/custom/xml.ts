@@ -21,6 +21,7 @@ import {
   INSTALL_SOURCES,
   NAV_TARGETS,
   NODE_ATTRS,
+  NODE_EVENTS,
   NODE_TAGS,
   TRIGGER_EVENTS,
   WIDGET_LIMITS,
@@ -61,6 +62,8 @@ import type {
   ListItemNode,
   ListNode,
   MediaNode,
+  NodeActionSpec,
+  NodeEvent,
   OutputDecl,
   PageNode,
   ProgressNode,
@@ -140,7 +143,7 @@ function applyProperties(
   propertyElements: Map<string, Element>,
 ): void {
   for (const [name, el] of propertyElements) {
-    if (name === 'Effects' || name === 'Animations') continue
+    if (name === 'Effects' || name === 'Animations' || name === 'Actions') continue
     if ((ATTACHED_ATTRS as readonly string[]).includes(name)) {
       if (Array.from(el.children).length > 0) throw new WidgetError('invalidAttribute', `${tag}.${name}`)
       if (attrs.has(name)) throw new WidgetError('duplicateProperty', `${tag}.${name}`)
@@ -670,6 +673,7 @@ function parseUsing(el: Element, ctx: ParseCtx): UsingNode {
     refresh: attrs.has('Refresh') ? intAttr(attrs, 'Using', 'Refresh', 60, 86400) : undefined,
     argumentsJson,
     ...baseNode('Using', attrs),
+    actions: propertyElements.get('Actions') ? parseNodeActions(propertyElements.get('Actions')!) : undefined,
   }
 }
 
@@ -783,6 +787,56 @@ function parseEffects(el: Element): EffectSpec[] {
   return effects
 }
 
+const NODE_EVENT_TAGS: Record<string, NodeEvent> = {
+  OnClick: 'Click',
+  OnDoubleClick: 'DoubleClick',
+  OnMouseDown: 'MouseDown',
+  OnMouseUp: 'MouseUp',
+  OnMouseOver: 'MouseOver',
+  OnMouseOut: 'MouseOut',
+  OnKeyboardDown: 'KeyboardDown',
+  OnKeyboardUp: 'KeyboardUp',
+  OnContextMenu: 'ContextMenu',
+  OnLoaded: 'Loaded',
+}
+
+function parseNodeActions(el: Element): NodeActionSpec[] {
+  const { attrs, children } = readElement(el)
+  validateAttrs('Actions', attrs)
+  assertNoText(el)
+  const actions: NodeActionSpec[] = []
+  for (const child of children) {
+    const split = readElement(child)
+    const directEvent = NODE_EVENT_TAGS[child.tagName]
+    const event = directEvent ?? enumAttr(split.attrs, child.tagName, 'Event', NODE_EVENTS)
+    if (!event) throw new WidgetError('invalidAttribute', `${child.tagName} 缺少 Event`)
+    applyProperties('Trigger', split.attrs, split.propertyElements)
+    validateAttrs(child.tagName, split.attrs)
+    const functionName = attr(split.attrs, 'Function')?.trim()
+    const actionName = attr(split.attrs, 'Action')?.trim()
+    if (functionName && actionName) throw new WidgetError('invalidAttribute', `${child.tagName} 只能二选一`)
+    let action: ActionSpec | undefined
+    if (actionName) action = parseAction(split.attrs, child.tagName, actionName)
+    else if (functionName) {
+      action = {
+        name: 'CallFunction',
+        args: {
+          Function: functionName,
+          ...(split.attrs.get('Arguments') !== undefined ? { Arguments: split.attrs.get('Arguments')! } : {}),
+        },
+      }
+    }
+    if (!action) throw new WidgetError('invalidAttribute', `${child.tagName} 缺少 Function 或 Action`)
+    actions.push({
+      event,
+      function: functionName || undefined,
+      action,
+      arguments: split.attrs.get('Arguments'),
+    })
+  }
+  return actions
+}
+
 function parseAnimations(el: Element): AnimationSpec[] {
   const { attrs, children } = readElement(el)
   validateAttrs('Animations', attrs)
@@ -829,6 +883,8 @@ function parseNode(el: Element, ctx: ParseCtx, depth: number): WidgetNode {
   if (effects) node.effects = parseEffects(effects)
   const animations = propertyElements.get('Animations')
   if (animations) node.animations = parseAnimations(animations)
+  const actions = propertyElements.get('Actions')
+  if (actions) node.actions = parseNodeActions(actions)
   return node
 }
 
@@ -976,6 +1032,7 @@ function parseTabItem(el: Element, ctx: ParseCtx, depth: number): TabItemNode {
     contentPage: meta.contentPage,
     effects: split.propertyElements.get('Effects') ? parseEffects(split.propertyElements.get('Effects')!) : undefined,
     animations: split.propertyElements.get('Animations') ? parseAnimations(split.propertyElements.get('Animations')!) : undefined,
+    actions: split.propertyElements.get('Actions') ? parseNodeActions(split.propertyElements.get('Actions')!) : undefined,
     children: meta.contentPage ? [] : parseChildren(el, ctx, depth + 1),
   }
 }
@@ -998,6 +1055,7 @@ function parseListItem(el: Element, ctx: ParseCtx, depth: number): ListItemNode 
     contentPage: meta.contentPage,
     effects: split.propertyElements.get('Effects') ? parseEffects(split.propertyElements.get('Effects')!) : undefined,
     animations: split.propertyElements.get('Animations') ? parseAnimations(split.propertyElements.get('Animations')!) : undefined,
+    actions: split.propertyElements.get('Actions') ? parseNodeActions(split.propertyElements.get('Actions')!) : undefined,
     child: meta.contentPage ? undefined : parseNode(split.children[0], ctx, depth + 1),
   }
 }
@@ -1316,6 +1374,7 @@ function parseWebview(el: Element, ctx: ParseCtx): WebviewNode {
     loading,
     referrerPolicy: referrer as WebviewNode['referrerPolicy'],
     fullscreen: boolAttr(attrs, 'Webview', 'Fullscreen', true),
+    background: enumAttr(attrs, 'Webview', 'Background', ['Default', 'Transparent'] as const, 'Default')!,
     ...baseNode('Webview', attrs),
   }
 }
