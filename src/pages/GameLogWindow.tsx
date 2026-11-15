@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { openStream, createSseParser, initApiTransport, type StreamHandle } from '../api/ipc.ts'
-import { cancelLaunch, type GameLogLine } from '../api/instance.ts'
+import { cancelLaunch, exportGameLog, type GameLogLine } from '../api/instance.ts'
 import { Button, Input, Tooltip } from '../components/ui'
 import { useI18n } from '../i18n/index.tsx'
 import { cn } from '../lib/utils.ts'
@@ -40,6 +40,11 @@ const LEVEL_CLASS: Record<LogLevel, string> = {
 
 const MAX_LINES = 5000
 
+function exportStamp(d = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+}
+
 interface Line extends GameLogLine {
   id: number
   level: LogLevel
@@ -57,6 +62,10 @@ export default function GameLogWindow({ instanceId }: { instanceId: string }) {
   const [search, setSearch] = useState('')
   const [connected, setConnected] = useState(false)
   const [stopping, setStopping] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  // 3 秒内联反馈（本窗口无 MessageBoxProvider，不引提示组件）。
+  const [flashMsg, setFlashMsg] = useState<string | null>(null)
+  const flashTimerRef = useRef<number | null>(null)
   const [visible, setVisible] = useState<Record<LogLevel, boolean>>({
     INFO: true, WARN: true, ERROR: true, DEBUG: true, FATAL: true, OTHER: true,
   })
@@ -141,6 +150,45 @@ export default function GameLogWindow({ instanceId }: { instanceId: string }) {
     setStopping(false)
   }
 
+  const flash = (text: string) => {
+    setFlashMsg(text)
+    if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current)
+    flashTimerRef.current = window.setTimeout(() => setFlashMsg(null), 3000)
+  }
+
+  /** 导出当前视图（搜索 + 等级筛选后的行），与界面显示逐行一致。 */
+  const onExport = async () => {
+    if (exporting || filtered.length === 0) return
+    const content = filtered.map(l => `[${l.timestamp}] ${l.level.padEnd(5)} ${l.text}`).join('\n') + '\n'
+    const name = `${instanceId}-${exportStamp()}.log`
+    setExporting(true)
+    try {
+      if (isTauri) {
+        const { save } = await import('@tauri-apps/plugin-dialog')
+        const dest = await save({ defaultPath: name, filters: [{ name: 'Log', extensions: ['log'] }] })
+        if (!dest) return
+        await exportGameLog(instanceId, dest, content)
+      } else {
+        // 纯浏览器没有保存对话框，只能下载到默认下载目录。
+        const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }))
+        const a = document.createElement('a')
+        a.href = url
+        a.download = name
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        // 立刻 revoke 会让浏览器来不及消费 Blob URL。
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+      }
+      flash(t('gameLog.exportDone'))
+    } catch {
+      // 写盘失败不再退回下载：目标路径可能已写入，再来一次会产生重复文件。
+      flash(t('gameLog.exportFailed'))
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const onClose = () => { win?.close() }
 
   return (
@@ -199,6 +247,10 @@ export default function GameLogWindow({ instanceId }: { instanceId: string }) {
             <span className={cn('h-1.5 w-1.5 rounded-full', connected ? 'bg-green-500' : 'bg-muted-foreground')} />
             {connected ? t('gameLog.connected') : t('gameLog.disconnected')}
           </span>
+          {flashMsg && <span role="status" aria-live="polite" className="text-xs text-muted-foreground">{flashMsg}</span>}
+          <Button size="sm" variant="outline" disabled={exporting || filtered.length === 0} onClick={onExport}>
+            {t('gameLog.exportLog')}
+          </Button>
           <Button size="sm" variant="destructive" disabled={stopping} onClick={onStop}>
             {t('gameLog.stopGame')}
           </Button>

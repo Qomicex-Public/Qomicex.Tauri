@@ -6,34 +6,43 @@
 //! - `GET /api/instance/{id}/logs`        — 返回该实例已缓冲的历史日志 `{ lines }`。
 //! - `GET /api/instance/{id}/logs/stream` — SSE 实时流：先发 `{type:"snapshot"}`（全量历史，
 //!   供重连去重），随后逐行发 `{type:"line"}`。
+//! - `POST /api/instance/{id}/logs/export` — 把日志窗口当前视图的正文写入用户选定路径。
 //! - `GET /logs-view/{id}`                — 后端托管的独立日志页（供前端 `window.open`
 //!   另开系统级浏览器窗口，直连后端 SSE，无需重载整个启动器 SPA）。
 
 use std::convert::Infallible;
+use std::path::Path;
 use std::time::Duration;
 
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{DefaultBodyLimit, Path as AxumPath, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::error::{ApiError, ApiResult};
 use crate::services::game_log::GameLogEntry;
 use crate::state::SharedState;
+use crate::util::origin::is_local_origin;
 
 /// SSE 心跳间隔（保持清爽，避免链路空闲被中间层掐断）。
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(15);
 /// 内部 mpsc 通道容量。
 const CHANNEL_CAP: usize = 64;
+/// 导出请求体上限：前端最多带 5000 行，长堆栈日志远超 axum 默认的 2 MiB。
+const EXPORT_BODY_LIMIT: usize = 16 * 1024 * 1024;
 
 /// /api 下的路由（合并进 `/api` nest）。
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/instance/{id}/logs", get(logs_history))
         .route("/instance/{id}/logs/stream", get(logs_stream))
+        .route(
+            "/instance/{id}/logs/export",
+            post(export_logs).layer(DefaultBodyLimit::max(EXPORT_BODY_LIMIT)),
+        )
 }
 
 /// 顶层路由（非 /api）：独立日志页。
@@ -57,6 +66,58 @@ async fn logs_history(
         running,
         lines,
     }))
+}
+
+/// POST /api/instance/{id}/logs/export — 把日志正文写入用户经保存对话框选定的路径。
+///
+/// 导出范围（搜索词 + 等级筛选）只存在于前端窗口状态，后端无法复刻，
+/// 故正文由前端拼好后传回，这里只负责落盘。
+async fn export_logs(
+    headers: axum::http::HeaderMap,
+    AxumPath(instance_id): AxumPath<String>,
+    Json(body): Json<ExportLogsRequest>,
+) -> ApiResult<Json<ExportLogsResponse>> {
+    if instance_id.trim().is_empty() {
+        return Err(ApiError::bad_request("BAD_REQUEST", "instance id required"));
+    }
+    // 该端点能写任意路径，必须挡掉外部网页的跨站请求（Tauri 内请求不带 Origin 或是本机来源）。
+    if let Some(origin) = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+    {
+        if !is_local_origin(origin) {
+            return Err(ApiError::forbidden(
+                "EXPORT_ORIGIN_REJECTED",
+                "该操作仅允许在启动器内调用",
+            ));
+        }
+    }
+    // 目标可能是慢盘/网络盘：同步 IO 放阻塞线程池，避免占住 Tokio worker。
+    let dest = body.dest.clone();
+    tokio::task::spawn_blocking(move || write_log_file(&dest, &body.content))
+        .await
+        .map_err(|e| ApiError::internal(format!("log export task failed: {e}")))??;
+    Ok(Json(ExportLogsResponse { path: body.dest }))
+}
+
+/// 写导出文件；保存对话框可能给出尚不存在的子目录，先建父目录。
+///
+/// 先写同目录临时文件再 rename：`File::create` 会先截断，写一半失败就毁掉
+/// 用户已有的同名文件。
+fn write_log_file(dest: &str, content: &str) -> std::io::Result<()> {
+    let dest_path = Path::new(dest);
+    if let Some(parent) = dest_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let tmp = dest_path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
+    std::fs::write(&tmp, content)?;
+    if let Err(e) = std::fs::rename(&tmp, dest_path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// GET /api/instance/{id}/logs/stream — SSE 实时日志。
@@ -139,6 +200,19 @@ struct LogsHistoryResponse {
     lines: Vec<GameLogEntry>,
 }
 
+#[derive(Deserialize)]
+struct ExportLogsRequest {
+    /// 用户经系统保存对话框选定的绝对路径。
+    dest: String,
+    /// 前端格式化好的日志正文（UTF-8 纯文本）。
+    content: String,
+}
+
+#[derive(Serialize)]
+struct ExportLogsResponse {
+    path: String,
+}
+
 /// 构建自包含的日志页 HTML。使用 `textContent` 渲染日志行以避免注入。
 fn log_page_html(instance_id: &str) -> String {
     format!(
@@ -209,4 +283,40 @@ fn log_page_html(instance_id: &str) -> String {
 </html>"#,
         id_json = serde_json::to_string(instance_id).unwrap_or_else(|_| "\"\"".to_string()),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_log_file_creates_parent_dirs_and_keeps_utf8() {
+        let dir = std::env::temp_dir().join(format!("qomicex-log-export-{}", uuid::Uuid::new_v4()));
+        let dest = dir.join("nested").join("game.log");
+        let content = "[12:00:00] INFO  中文日志\n";
+
+        write_log_file(&dest.to_string_lossy(), content).expect("写入成功");
+
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), content);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 覆盖已有文件不能留下半截内容或临时文件（先写临时文件再 rename）。
+    #[test]
+    fn write_log_file_replaces_existing_and_leaves_no_temp() {
+        let dir = std::env::temp_dir().join(format!("qomicex-log-export-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("game.log");
+        std::fs::write(&dest, "old").unwrap();
+
+        write_log_file(&dest.to_string_lossy(), "new").expect("覆盖成功");
+
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "new");
+        let names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["game.log".to_string()], "不应残留临时文件");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

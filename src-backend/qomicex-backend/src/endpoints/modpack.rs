@@ -60,6 +60,7 @@ use crate::services::instance_config;
 use crate::services::modpack_export::{list_export_tree, ExportFormat, ExportTreeNode};
 use crate::services::source_policy::SourcePlan;
 use crate::state::SharedState;
+use crate::util::origin::is_local_origin;
 
 /// Module-private aggregated state (assembled lazily, replacing DI injection).
 #[derive(Clone)]
@@ -163,20 +164,6 @@ pub struct DropStagingQuery {
     project_id: String,
     #[serde(default)]
     version_id: String,
-}
-
-/// 浏览器同源来源白名单。后端监听 `127.0.0.1` 且 CORS 放行任意来源，只靠这一点
-/// 挡不住任意网页发起的跨站请求；跨站请求必带 `Origin`，应用内请求只来自本机地址
-/// 与 Tauri 自定义协议。
-fn is_local_origin(origin: &str) -> bool {
-    let o = origin.trim().to_ascii_lowercase();
-    o == "http://localhost"
-        || o.starts_with("http://localhost:")
-        || o == "http://127.0.0.1"
-        || o.starts_with("http://127.0.0.1:")
-        || o.starts_with("tauri://")
-        || o.starts_with("http://tauri.localhost")
-        || o.starts_with("https://tauri.localhost")
 }
 
 /// 丢弃失败安装留下的暂存区（用户在下载中心移除任务时调用）。
