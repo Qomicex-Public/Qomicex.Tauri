@@ -25,6 +25,7 @@ use tokio::sync::{broadcast, mpsc};
 use crate::error::{ApiError, ApiResult};
 use crate::services::game_log::GameLogEntry;
 use crate::state::SharedState;
+use crate::util::origin::is_local_origin;
 
 /// SSE 心跳间隔（保持清爽，避免链路空闲被中间层掐断）。
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(15);
@@ -72,11 +73,24 @@ async fn logs_history(
 /// 导出范围（搜索词 + 等级筛选）只存在于前端窗口状态，后端无法复刻，
 /// 故正文由前端拼好后传回，这里只负责落盘。
 async fn export_logs(
+    headers: axum::http::HeaderMap,
     AxumPath(instance_id): AxumPath<String>,
     Json(body): Json<ExportLogsRequest>,
 ) -> ApiResult<Json<ExportLogsResponse>> {
     if instance_id.trim().is_empty() {
         return Err(ApiError::bad_request("BAD_REQUEST", "instance id required"));
+    }
+    // 该端点能写任意路径，必须挡掉外部网页的跨站请求（Tauri 内请求不带 Origin 或是本机来源）。
+    if let Some(origin) = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+    {
+        if !is_local_origin(origin) {
+            return Err(ApiError::forbidden(
+                "EXPORT_ORIGIN_REJECTED",
+                "该操作仅允许在启动器内调用",
+            ));
+        }
     }
     // 目标可能是慢盘/网络盘：同步 IO 放阻塞线程池，避免占住 Tokio worker。
     let dest = body.dest.clone();

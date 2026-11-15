@@ -247,7 +247,7 @@ export default function GameLogWindow({ instanceId }: { instanceId: string }) {
             <span className={cn('h-1.5 w-1.5 rounded-full', connected ? 'bg-green-500' : 'bg-muted-foreground')} />
             {connected ? t('gameLog.connected') : t('gameLog.disconnected')}
           </span>
-          {flashMsg && <span className="text-xs text-muted-foreground">{flashMsg}</span>}
+          {flashMsg && <span role="status" aria-live="polite" className="text-xs text-muted-foreground">{flashMsg}</span>}
           <Button size="sm" variant="outline" disabled={exporting || filtered.length === 0} onClick={onExport}>
             {t('gameLog.exportLog')}
           </Button>
