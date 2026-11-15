@@ -126,6 +126,7 @@ export interface TabItemNode {
   contentPage?: string
   effects?: EffectSpec[]
   animations?: AnimationSpec[]
+  actions?: NodeActionSpec[]
   children: WidgetNode[]
 }
 
@@ -143,6 +144,7 @@ export interface ListItemNode {
   contentPage?: string
   effects?: EffectSpec[]
   animations?: AnimationSpec[]
+  actions?: NodeActionSpec[]
   child?: WidgetNode
 }
 

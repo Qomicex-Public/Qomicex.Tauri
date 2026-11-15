@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { Fragment, useEffect, useState, type CSSProperties, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Button, Checkbox, Dialog, DialogBody, DialogHeader, DialogTitle, Select, SelectOption, Tabs, cn } from '../../../components/ui'
 import {
@@ -536,11 +536,15 @@ function NodeActionLayer({
   ctx: RenderContext
   children: ReactNode
 }) {
+  const loadedRef = useRef(false)
   useEffect(() => {
+    if (loadedRef.current) return
+    loadedRef.current = true
     runNodeActions(actions, 'Loaded', ctx)
-    // 只在节点挂载时执行一次 Loaded 动作
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+  const inside = (event: { currentTarget: EventTarget; relatedTarget: EventTarget | null }) =>
+    event.relatedTarget instanceof Node && event.currentTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)
   return (
     <div
       style={{ display: 'contents' }}
@@ -548,8 +552,12 @@ function NodeActionLayer({
       onDoubleClick={() => runNodeActions(actions, 'DoubleClick', ctx)}
       onMouseDown={() => runNodeActions(actions, 'MouseDown', ctx)}
       onMouseUp={() => runNodeActions(actions, 'MouseUp', ctx)}
-      onMouseOver={() => runNodeActions(actions, 'MouseOver', ctx)}
-      onMouseOut={() => runNodeActions(actions, 'MouseOut', ctx)}
+      onMouseOver={(event) => {
+        if (!inside(event)) runNodeActions(actions, 'MouseOver', ctx)
+      }}
+      onMouseOut={(event) => {
+        if (!inside(event)) runNodeActions(actions, 'MouseOut', ctx)
+      }}
       onContextMenu={(event) => {
         if (actions.some((action) => action.event === 'ContextMenu')) {
           event.preventDefault()
@@ -716,7 +724,11 @@ function TabsView({ node, ctx, root = false }: { node: TabsNode; ctx: RenderCont
         className={cn('min-w-0', animationClass(current?.animations), root && 'min-h-0 flex-1 overflow-auto')}
         style={{ ...effectStyle(current?.effects), ...animationStyle(current?.animations) }}
       >
-        {renderNodes(pageChildren(current?.contentPage, current?.children ?? [], ctx), ctx, `tab${index}-`)}
+        {current?.actions?.length ? (
+          <NodeActionLayer key={`tab-actions-${index}`} actions={current.actions} ctx={ctx}>
+            {renderNodes(pageChildren(current.contentPage, current.children ?? [], ctx), ctx, `tab${index}-`)}
+          </NodeActionLayer>
+        ) : renderNodes(pageChildren(current?.contentPage, current?.children ?? [], ctx), ctx, `tab${index}-`)}
       </div>
     </div>
   )
@@ -735,19 +747,24 @@ function ListView({ node, ctx, root = false }: { node: ListNode; ctx: RenderCont
   const itemNodes = pageChildren(sourceItem.contentPage, sourceItem.child ? [sourceItem.child] : [], ctx)
   return (
     <div style={nodeStyle(node)} className={cn('flex min-w-0 flex-col', animationClass(node.animations), GAP[node.gap ?? 0], root && 'min-h-0 flex-1 overflow-auto')}>
-      {items.map((item, index) => (
-        <Fragment key={index}>
-          <div
-            style={{ ...effectStyle(sourceItem.effects), ...animationStyle(sourceItem.animations) }}
-            className={cn('min-w-0', animationClass(sourceItem.animations))}
-          >
-            {renderNodes(itemNodes, {
-              ...ctx,
-              scope: { ...ctx.scope, [node.as]: item, Index: index },
-            })}
-          </div>
-        </Fragment>
-      ))}
+      {items.map((item, index) => {
+        const itemCtx = { ...ctx, scope: { ...ctx.scope, [node.as]: item, Index: index } }
+        const content = renderNodes(itemNodes, itemCtx)
+        return (
+          <Fragment key={index}>
+            <div
+              style={{ ...effectStyle(sourceItem.effects), ...animationStyle(sourceItem.animations) }}
+              className={cn('min-w-0', animationClass(sourceItem.animations))}
+            >
+              {sourceItem.actions?.length ? (
+                <NodeActionLayer key={`item-actions-${index}`} actions={sourceItem.actions} ctx={itemCtx}>
+                  {content}
+                </NodeActionLayer>
+              ) : content}
+            </div>
+          </Fragment>
+        )
+      })}
     </div>
   )
 }

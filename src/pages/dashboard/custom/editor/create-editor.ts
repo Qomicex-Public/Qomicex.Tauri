@@ -211,7 +211,6 @@ function normalizeTag(tag: string): string {
   return tag.startsWith('Widget.') ? tag.slice('Widget.'.length) : tag
 }
 
-/** 属性元素从同一份 ELEMENT_ATTRS 派生；这里只补充非属性型的容器元素。 */
 const PROPERTY_ELEMENT_EXTRAS: Record<string, readonly string[]> = {
   Widget: ['Inputs', 'Outputs', 'Converters'],
   Function: ['Interface', 'Input', 'Output', 'Script'],

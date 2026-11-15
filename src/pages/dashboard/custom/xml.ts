@@ -673,6 +673,7 @@ function parseUsing(el: Element, ctx: ParseCtx): UsingNode {
     refresh: attrs.has('Refresh') ? intAttr(attrs, 'Using', 'Refresh', 60, 86400) : undefined,
     argumentsJson,
     ...baseNode('Using', attrs),
+    actions: propertyElements.get('Actions') ? parseNodeActions(propertyElements.get('Actions')!) : undefined,
   }
 }
 
@@ -1031,6 +1032,7 @@ function parseTabItem(el: Element, ctx: ParseCtx, depth: number): TabItemNode {
     contentPage: meta.contentPage,
     effects: split.propertyElements.get('Effects') ? parseEffects(split.propertyElements.get('Effects')!) : undefined,
     animations: split.propertyElements.get('Animations') ? parseAnimations(split.propertyElements.get('Animations')!) : undefined,
+    actions: split.propertyElements.get('Actions') ? parseNodeActions(split.propertyElements.get('Actions')!) : undefined,
     children: meta.contentPage ? [] : parseChildren(el, ctx, depth + 1),
   }
 }
@@ -1053,6 +1055,7 @@ function parseListItem(el: Element, ctx: ParseCtx, depth: number): ListItemNode 
     contentPage: meta.contentPage,
     effects: split.propertyElements.get('Effects') ? parseEffects(split.propertyElements.get('Effects')!) : undefined,
     animations: split.propertyElements.get('Animations') ? parseAnimations(split.propertyElements.get('Animations')!) : undefined,
+    actions: split.propertyElements.get('Actions') ? parseNodeActions(split.propertyElements.get('Actions')!) : undefined,
     child: meta.contentPage ? undefined : parseNode(split.children[0], ctx, depth + 1),
   }
 }
