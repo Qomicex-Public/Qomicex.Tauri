@@ -19,6 +19,7 @@ import GlobalDropInstaller from './GlobalDropInstaller.tsx'
 import { useI18n } from '../i18n/index.tsx'
 import { setThemeBackground } from '../lib/themeColor.ts'
 import { applyScrollContainment } from '@qomicex/plugin-ui'
+import { useGlassRepaint } from '../hooks/useGlassRepaint.ts'
 
 /** 动图关闭时用 canvas 截取首帧静态渲染（GIF/APNG/WebP 无原生停帧能力）。
     跨源图片 drawImage 合法（仅读取像素受限），故无需 crossOrigin。 */
@@ -111,6 +112,8 @@ export default function Layout() {
   const location = useLocation()
   const mainRef = useRef<HTMLElement>(null)
   const prevPathRef = useRef(location.pathname)
+  // WebView2 的 backdrop-filter 首帧/动态插入不采样：统一在路由/背景/卡片变化后补重绘。
+  useGlassRepaint(location.pathname)
 
   async function resolveBg(s = getSettings()) {
     let filename = s.backgroundImage || randomBgRef.current || ''

@@ -489,6 +489,14 @@
     0 8px 22px -12px hsl(0 0% 0% / 0.42);
 }
 
+/* 玻璃材质下重新采样背景用：临时关闭 backdrop-filter 再恢复，
+   等价于 hover 触发的那次重绘（WebView2 首帧不采样的 workaround）。 */
+html.glass-repaint .glass-surface,
+html.glass-repaint [data-liquid-glass] {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
 /* 液态玻璃 Card（quidlass LiquidGlass 容器）统一底色。
    liquid 下 Card 不再叠加调用方 bg-card 类（Card.tsx 已 neutralize），
    由主题统一给半透明底色保证可读性，透明度与上方 .glass-surface 的 liquid 规则同源。 */
