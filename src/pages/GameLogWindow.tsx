@@ -40,7 +40,6 @@ const LEVEL_CLASS: Record<LogLevel, string> = {
 
 const MAX_LINES = 5000
 
-/** 导出文件默认名的时间戳部分：yyyyMMdd-HHmmss。 */
 function exportStamp(d = new Date()): string {
   const p = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
@@ -164,22 +163,27 @@ export default function GameLogWindow({ instanceId }: { instanceId: string }) {
     const name = `${instanceId}-${exportStamp()}.log`
     setExporting(true)
     try {
-      const { save } = await import('@tauri-apps/plugin-dialog')
-      const dest = await save({ defaultPath: name, filters: [{ name: 'Log', extensions: ['log'] }] })
-      if (!dest) return
-      await exportGameLog(instanceId, dest, content)
+      if (isTauri) {
+        const { save } = await import('@tauri-apps/plugin-dialog')
+        const dest = await save({ defaultPath: name, filters: [{ name: 'Log', extensions: ['log'] }] })
+        if (!dest) return
+        await exportGameLog(instanceId, dest, content)
+      } else {
+        // 纯浏览器没有保存对话框，只能下载到默认下载目录。
+        const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }))
+        const a = document.createElement('a')
+        a.href = url
+        a.download = name
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        // 立刻 revoke 会让浏览器来不及消费 Blob URL。
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+      }
       flash(t('gameLog.exportDone'))
     } catch {
-      // 非 Tauri（浏览器 dev）没有保存对话框；写盘失败也在此兜底，至少让文件落地。
-      const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }))
-      const a = document.createElement('a')
-      a.href = url
-      a.download = name
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-      flash(t('gameLog.exportDone'))
+      // 写盘失败不再退回下载：目标路径可能已写入，再来一次会产生重复文件。
+      flash(t('gameLog.exportFailed'))
     } finally {
       setExporting(false)
     }

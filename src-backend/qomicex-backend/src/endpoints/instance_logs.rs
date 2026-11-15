@@ -78,19 +78,32 @@ async fn export_logs(
     if instance_id.trim().is_empty() {
         return Err(ApiError::bad_request("BAD_REQUEST", "instance id required"));
     }
-    write_log_file(&body.dest, &body.content)
-        .map_err(|e| ApiError::bad_request("LOG_EXPORT_FAILED", e))?;
+    // 目标可能是慢盘/网络盘：同步 IO 放阻塞线程池，避免占住 Tokio worker。
+    let dest = body.dest.clone();
+    tokio::task::spawn_blocking(move || write_log_file(&dest, &body.content))
+        .await
+        .map_err(|e| ApiError::internal(format!("log export task failed: {e}")))??;
     Ok(Json(ExportLogsResponse { path: body.dest }))
 }
 
 /// 写导出文件；保存对话框可能给出尚不存在的子目录，先建父目录。
-fn write_log_file(dest: &str, content: &str) -> Result<(), String> {
-    if let Some(parent) = Path::new(dest).parent() {
+///
+/// 先写同目录临时文件再 rename：`File::create` 会先截断，写一半失败就毁掉
+/// 用户已有的同名文件。
+fn write_log_file(dest: &str, content: &str) -> std::io::Result<()> {
+    let dest_path = Path::new(dest);
+    if let Some(parent) = dest_path.parent() {
         if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(parent)?;
         }
     }
-    std::fs::write(dest, content).map_err(|e| e.to_string())
+    let tmp = dest_path.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
+    std::fs::write(&tmp, content)?;
+    if let Err(e) = std::fs::rename(&tmp, dest_path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// GET /api/instance/{id}/logs/stream — SSE 实时日志。
@@ -271,6 +284,25 @@ mod tests {
         write_log_file(&dest.to_string_lossy(), content).expect("写入成功");
 
         assert_eq!(std::fs::read_to_string(&dest).unwrap(), content);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 覆盖已有文件不能留下半截内容或临时文件（先写临时文件再 rename）。
+    #[test]
+    fn write_log_file_replaces_existing_and_leaves_no_temp() {
+        let dir = std::env::temp_dir().join(format!("qomicex-log-export-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("game.log");
+        std::fs::write(&dest, "old").unwrap();
+
+        write_log_file(&dest.to_string_lossy(), "new").expect("覆盖成功");
+
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "new");
+        let names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["game.log".to_string()], "不应残留临时文件");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
