@@ -19,6 +19,7 @@ import { Card, CardContent } from '../components/ui'
 import { Badge } from '../components/ui'
 import { Tooltip } from '../components/ui'
 import { useMessageBox } from '../components/ui'
+import { Skeleton } from '../components/ui'
 import { get, post, API_BASE, ApiError } from '../api/client.ts'
 import { getResourceDetail, getResourceVersionDownloads, getResourceVersions, getResourceDependencies, startCurseForgeVersionFetch, getCurseForgeVersionFetchProgress, getCurseForgeVersionFetchResult } from '../api/resource.ts'
 import { lookupChineseEntry } from '../api/mcmod.ts'
@@ -767,17 +768,17 @@ export default function ResourceDetailPage() {
             <CardContent className="p-0">
               <div className="grid gap-0 lg:grid-cols-[220px_minmax(0,1fr)]">
                 <div className="flex items-start justify-center bg-muted/30 p-6">
-                  <div className="h-36 w-36 animate-pulse rounded-2xl bg-muted" />
+                  <Skeleton className="h-36 w-36 rounded-2xl" />
                 </div>
                 <div className="space-y-5 p-6">
                   <div className="space-y-3">
-                    <div className="h-7 w-2/3 animate-pulse rounded bg-muted" />
-                    <div className="h-4 w-full animate-pulse rounded bg-muted" />
-                    <div className="h-4 w-5/6 animate-pulse rounded bg-muted" />
+                    <Skeleton className="h-7 w-2/3 rounded" />
+                    <Skeleton className="h-4 w-full rounded" />
+                    <Skeleton className="h-4 w-5/6 rounded" />
                   </div>
                   <div className="flex gap-2">
-                    <div className="h-8 w-24 animate-pulse rounded-lg bg-muted" />
-                    <div className="h-8 w-24 animate-pulse rounded-lg bg-muted" />
+                    <Skeleton className="h-8 w-24 rounded-lg" />
+                    <Skeleton className="h-8 w-24 rounded-lg" />
                   </div>
                 </div>
               </div>
@@ -787,20 +788,20 @@ export default function ResourceDetailPage() {
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
             <Card>
               <CardContent className="space-y-4 p-6">
-                <div className="h-6 w-28 animate-pulse rounded bg-muted" />
+                <Skeleton className="h-6 w-28 rounded" />
                 <div className="space-y-2">
-                  <div className="h-3 w-full animate-pulse rounded bg-muted" />
-                  <div className="h-3 w-5/6 animate-pulse rounded bg-muted" />
-                  <div className="h-3 w-2/3 animate-pulse rounded bg-muted" />
+                  <Skeleton className="h-3 w-full rounded" />
+                  <Skeleton className="h-3 w-5/6 rounded" />
+                  <Skeleton className="h-3 w-2/3 rounded" />
                 </div>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="space-y-4 p-6">
-                <div className="h-6 w-32 animate-pulse rounded bg-muted" />
+                <Skeleton className="h-6 w-32 rounded" />
                 <div className="space-y-2">
                   {Array.from({ length: 4 }).map((_, i) => (
-                    <div key={i} className="h-16 animate-pulse rounded-xl bg-muted" />
+                    <Skeleton key={i} className="h-16 rounded-xl" />
                   ))}
                 </div>
               </CardContent>
@@ -1066,7 +1067,7 @@ export default function ResourceDetailPage() {
                         </div>
                       )}
                       {Array.from({ length: 4 }).map((_, i) => (
-                        <div key={i} className="animate-pulse rounded-xl border border-border/60 bg-background p-3">
+                        <Skeleton key={i} className="rounded-xl border border-border/60 bg-background p-3">
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0 flex-1 space-y-2">
                               <div className="h-4 w-3/5 rounded bg-muted" />
@@ -1079,7 +1080,7 @@ export default function ResourceDetailPage() {
                             </div>
                             <div className="h-8 w-16 shrink-0 rounded-lg bg-muted" />
                           </div>
-                        </div>
+                        </Skeleton>
                       ))}
                     </div>
                   ) : versionsError ? (

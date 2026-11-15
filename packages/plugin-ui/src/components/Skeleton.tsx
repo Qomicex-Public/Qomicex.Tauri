@@ -1,20 +1,28 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import type { ReactNode } from 'react'
 import { cn } from '../lib/cn.js'
 
 interface SkeletonProps {
   className?: string
+  /** 手动拼的骨架块：子元素保持静态占位，由外层高光层扫过。 */
+  children?: ReactNode
 }
 
-function Skeleton({ className }: SkeletonProps) {
+/**
+ * 骨架占位：base 是灰块，高光层从左到右扫过（shimmer）。
+ * 需要整块骨架（卡片/列表行）时把容器本身当 Skeleton 用，子占位块不用再加动画。
+ */
+function Skeleton({ className, children }: SkeletonProps) {
   return (
-    <div
-      className={cn(
-        'animate-pulse rounded-xl bg-muted',
-        className
-      )}
-    />
+    <div className={cn('relative overflow-hidden rounded-xl bg-muted', className)}>
+      {children}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-foreground/10 to-transparent motion-reduce:animate-none"
+      />
+    </div>
   )
 }
 

@@ -25,6 +25,7 @@ import { cacheGet, cacheSet, cacheFresh, cacheInvalidate } from '../lib/simple-c
 import { updateModsViaDownloadCenter } from '../lib/updateMods.ts'
 import { computeMissingDependencies } from '../lib/modDependencies.ts'
 import { useMessageBox } from '../components/ui'
+import { Skeleton } from '../components/ui'
 import { getInstance, updateInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting, getInstanceGroups, getMemoryRecommendation } from '../api/instance.ts'
 import type { InstanceGroup } from '../api/instance.ts'
 import { openFolder, getSettings } from '../api/settings.ts'
@@ -434,13 +435,13 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
         {loading ? (
           <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
             {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="animate-pulse rounded-xl border bg-card overflow-hidden">
+              <Skeleton key={i} className="rounded-xl border bg-card overflow-hidden">
                 <div className="aspect-video bg-muted" />
                 <div className="p-3 space-y-2">
                   <div className="h-3 w-2/3 rounded bg-muted" />
                   <div className="h-2.5 w-1/3 rounded bg-muted" />
                 </div>
-              </div>
+              </Skeleton>
             ))}
           </div>
         ) : filtered.length === 0 ? (
@@ -1070,14 +1071,14 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
               <div className={cn('flex flex-col', modViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
                 {Array.from({ length: 4 }).map((_, i) => (
                   modViewMode === 'compact' ? (
-                    <div key={i} className="animate-pulse flex items-center gap-3 rounded-lg border px-3 py-2">
+                    <Skeleton key={i} className="flex items-center gap-3 rounded-lg border px-3 py-2">
                       <div className="h-4 w-4 shrink-0 rounded bg-muted" />
                       <div className="h-7 w-7 shrink-0 rounded-md bg-muted" />
                       <div className="h-3 flex-1 rounded bg-muted" />
                       <div className="h-5 w-9 shrink-0 rounded-full bg-muted" />
-                    </div>
+                    </Skeleton>
                   ) : (
-                    <div key={i} className="animate-pulse flex items-center gap-4 rounded-xl border p-4">
+                    <Skeleton key={i} className="flex items-center gap-4 rounded-xl border p-4">
                       <div className="h-4 w-4 shrink-0 rounded bg-muted" />
                       <div className="h-12 w-12 shrink-0 rounded-xl bg-muted" />
                       <div className="flex-1 space-y-2">
@@ -1085,7 +1086,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                         <div className="h-3 w-3/5 rounded bg-muted" />
                       </div>
                       <div className="h-5 w-9 shrink-0 rounded-full bg-muted" />
-                    </div>
+                    </Skeleton>
                   )
                 ))}
               </div>
@@ -1370,14 +1371,14 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
         {loading ? (
           <div className={cn('flex flex-col p-4', packViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
             {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className={cn('animate-pulse flex items-center border', packViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
+              <Skeleton key={i} className={cn('flex items-center border', packViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
                 <div className={cn('shrink-0 rounded bg-muted', packViewMode === 'compact' ? 'h-7 w-7 rounded-md' : 'h-12 w-12 rounded-xl')} />
                 <div className="flex-1 space-y-2">
                   <div className="h-3 w-1/3 rounded bg-muted" />
                   <div className="h-2.5 w-1/2 rounded bg-muted" />
                 </div>
                 <div className="h-6 w-7 rounded bg-muted" />
-              </div>
+              </Skeleton>
             ))}
           </div>
         ) : filtered.length === 0 ? (
@@ -1621,14 +1622,14 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
         {loading ? (
           <div className={cn('flex flex-col p-4', shaderViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
             {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className={cn('animate-pulse flex items-center border', shaderViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
+              <Skeleton key={i} className={cn('flex items-center border', shaderViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
                 <div className={cn('shrink-0 rounded bg-muted', shaderViewMode === 'compact' ? 'h-7 w-7 rounded-md' : 'h-12 w-12 rounded-xl')} />
                 <div className="flex-1 space-y-2">
                   <div className="h-3 w-1/3 rounded bg-muted" />
                   <div className="h-2.5 w-1/2 rounded bg-muted" />
                 </div>
                 <div className="h-6 w-7 rounded bg-muted" />
-              </div>
+              </Skeleton>
             ))}
           </div>
         ) : filtered.length === 0 ? (
@@ -1872,14 +1873,14 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
         {loading ? (
           <div className={cn('flex flex-col p-4', dataPackViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
             {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className={cn('animate-pulse flex items-center border', dataPackViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
+              <Skeleton key={i} className={cn('flex items-center border', dataPackViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
                 <div className={cn('shrink-0 rounded bg-muted', dataPackViewMode === 'compact' ? 'h-7 w-7 rounded-md' : 'h-12 w-12 rounded-xl')} />
                 <div className="flex-1 space-y-2">
                   <div className="h-3 w-1/3 rounded bg-muted" />
                   <div className="h-2.5 w-1/2 rounded bg-muted" />
                 </div>
                 <div className="h-6 w-7 rounded bg-muted" />
-              </div>
+              </Skeleton>
             ))}
           </div>
         ) : filtered.length === 0 ? (
@@ -2386,7 +2387,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
           {loading ? (
             <div className="flex flex-col gap-1 p-4">
               {Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="animate-pulse flex items-center gap-3 rounded-lg px-3 py-2.5">
+                <Skeleton key={i} className="flex items-center gap-3 rounded-lg px-3 py-2.5">
                   <div className="h-4 w-4 shrink-0 rounded bg-muted" />
                   <div className="flex-1 space-y-1.5">
                     <div className="h-3.5 w-1/3 rounded bg-muted" />
@@ -2397,7 +2398,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
                     <div className="h-7 w-7 rounded bg-muted" />
                     <div className="h-7 w-7 rounded bg-muted" />
                   </div>
-                </div>
+                </Skeleton>
               ))}
             </div>
           ) : filtered.length === 0 ? (
@@ -2836,13 +2837,13 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
         {loading ? (
           <div className="space-y-3 p-4">
             {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="animate-pulse flex items-center gap-3">
+              <Skeleton key={i} className="flex items-center gap-3">
                 <div className="flex-1 space-y-1.5">
                   <div className="h-4 w-1/4 rounded bg-muted" />
                   <div className="h-3 w-1/2 rounded bg-muted" />
                 </div>
                 <div className="h-8 w-32 rounded bg-muted" />
-              </div>
+              </Skeleton>
             ))}
           </div>
         ) : filtered.length === 0 ? (

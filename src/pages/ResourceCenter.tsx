@@ -30,6 +30,7 @@ import { Tabs } from '../components/ui'
 import { Popover } from '../components/ui'
 import { Tooltip } from '../components/ui'
 import { useMessageBox } from '../components/ui'
+import { Skeleton } from '../components/ui'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 import { useFavoritesStore, useFavoriteKeys, useFolderMap, favoriteKey } from '../stores/favoritesStore.ts'
 import FavoriteEditDialog from '../components/FavoriteEditDialog.tsx'
@@ -1905,7 +1906,7 @@ export default function ResourceCenter() {
       {(view === 'search' ? (initialLoading || isReplacing) : (favoritesLoading && !favoritesLoaded)) ? (
         <div className="flex flex-col gap-3">
           {Array.from({ length: 5 }).map((_, index) => (
-            <Card key={index} className="animate-pulse p-4">
+            <Skeleton key={index} className="p-4">
               <div className="flex gap-4">
                 <div className="h-16 w-16 rounded-2xl bg-muted" />
                 <div className="flex-1 space-y-3">
@@ -1914,7 +1915,7 @@ export default function ResourceCenter() {
                   <div className="h-4 w-1/4 rounded bg-muted" />
                 </div>
               </div>
-            </Card>
+            </Skeleton>
           ))}
         </div>
       ) : shownError ? (

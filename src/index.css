@@ -301,6 +301,11 @@
     animation: none !important;
   }
 
+  /* 骨架高光同样受「界面动画」开关与 reduced-motion 控制（motion-reduce 变体在组件侧）。 */
+  [data-anim-enabled="false"] .animate-shimmer {
+    animation: none !important;
+  }
+
   /* 显式过度（transition）同样要尊重「界面动画」开关与系统 reduced-motion 偏好：
      Tailwind 的 transition-* 不读 --anim-duration-multiplier，必须在这里兜住。
      需要被开关控制的过渡元素加 `anim-transition` 类即可。 */

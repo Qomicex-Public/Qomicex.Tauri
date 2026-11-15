@@ -48,6 +48,10 @@ export default {
         sm: "calc(var(--radius) - 4px)",
       },
       keyframes: {
+        shimmer: {
+          from: { transform: 'translateX(-100%)' },
+          to: { transform: 'translateX(100%)' },
+        },
         'sidebar-indicator': {
           '0%': { transform: 'scaleX(0)' },
           '100%': { transform: 'scaleX(1)' },
@@ -71,6 +75,7 @@ export default {
         },
       },
       animation: {
+        shimmer: 'shimmer calc(1600ms * var(--anim-duration-multiplier, 1)) linear infinite',
         'sidebar-indicator': 'sidebar-indicator 200ms cubic-bezier(0.16, 1, 0.3, 1)',
         'zoom-fade-in': 'zoom-fade-in calc(150ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.16, 1, 0.3, 1)',
         'slide-in-right': 'slide-in-right calc(200ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.16, 1, 0.3, 1)',

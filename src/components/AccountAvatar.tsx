@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react'
 import { tryGetCachedAvatar, fetchAndCacheAvatar } from '../api/skin.ts'
 import type { Account } from '../types/index.ts'
 import { cn } from '../lib/utils.ts'
+import { Skeleton } from './ui'
 
 export function AccountAvatar({ account, className }: {
   account: Pick<Account, 'name' | 'uuid' | 'loginMethod' | 'serverUrl'>
@@ -26,7 +27,7 @@ export function AccountAvatar({ account, className }: {
   if (loading) {
     return (
       <div className={cn('flex items-center justify-center rounded-full bg-muted', className)}>
-        <div className="h-1/2 w-1/2 animate-pulse rounded-full bg-muted-foreground/20" />
+        <Skeleton className="h-1/2 w-1/2 rounded-full bg-muted-foreground/20" />
       </div>
     )
   }
