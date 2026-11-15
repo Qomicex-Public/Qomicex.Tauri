@@ -37,10 +37,10 @@ jobs:
       - name: Self-check validator
         run: node scripts/test-pr-policy.mjs
       - name: Collect PR payload
-        id: payload
         uses: actions/github-script@v9
         with:
           script: |
+            const fs = require('node:fs')
             const commits = await github.paginate(github.rest.pulls.listCommits, {
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -48,12 +48,15 @@ jobs:
               per_page: 100
             });
             const pr = context.payload.pull_request;
-            core.setOutput('json', JSON.stringify({
-              title: pr.title,
-              body: pr.body,
-              commits: commits.map((commit) => commit.commit.message)
-            }));
+            // 写文件而不是 setOutput：step output 有 1MB 上限，长正文/多提交的 PR
+            // 会因截断误判；RUNNER_TEMP 无此限制。
+            fs.writeFileSync(
+              `${process.env.RUNNER_TEMP}/pr-payload.json`,
+              JSON.stringify({
+                title: pr.title,
+                body: pr.body,
+                commits: commits.map((commit) => commit.commit.message)
+              })
+            );
       - name: Validate title, body and commits
-        env:
-          PR_POLICY_INPUT: ${{ steps.payload.outputs.json }}
-        run: printf '%s' "$PR_POLICY_INPUT" | node scripts/pr-policy.mjs
+        run: node scripts/pr-policy.mjs < "$RUNNER_TEMP/pr-payload.json"
