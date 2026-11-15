@@ -153,6 +153,19 @@ test('子标题不会切断所属分节的内容', () => {
   assert.deepEqual(checkPr({ ...COMPLIANT, body }), [])
 })
 
+test('未闭合的 HTML 注释不影响分节判定', () => {
+  const body = `${TEMPLATE_BODY}\n<!-- 这条注释没有闭合`
+  assert.deepEqual(checkPr({ ...COMPLIANT, body }), [])
+})
+
+test('注释内嵌套的 <!-- 整体被丢弃', () => {
+  const body = TEMPLATE_BODY.replace(
+    '说明。',
+    '说明 <!-- 内层 <!-- 嵌套 --> 剩余文字',
+  )
+  assert.deepEqual(checkPr({ ...COMPLIANT, body }), [])
+})
+
 let failed = 0
 for (const [name, fn] of cases) {
   try {

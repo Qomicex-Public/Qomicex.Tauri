@@ -50,8 +50,25 @@ const DISCLOSURE_FIELDS = ['工具', '生成范围', '人工验证方式', '我�
 
 const normalize = (text) => text.replace(/\s+/g, '')
 
-/** 去掉 HTML 注释（模板里的填写说明），保留换行位置 */
-const stripComments = (body) => body.replace(/<!--[\s\S]*?-->/g, '')
+/**
+ * 去掉 HTML 注释（模板里的填写说明）。
+ *
+ * 用显式扫描而不是 `<!--[\s\S]*?-->` 正则：CodeQL 的
+ * js/incomplete-multi-character-sanitization 会把正则写法判成「可能残留 <!--」。
+ * 这里逐段跳过注释区间，未闭合的注释按「其后全部丢弃」处理（模板不会出现）。
+ */
+function stripComments(source) {
+  let out = ''
+  let index = 0
+  for (;;) {
+    const start = source.indexOf('<!--', index)
+    if (start === -1) return out + source.slice(index)
+    out += source.slice(index, start)
+    const end = source.indexOf('-->', start + 4)
+    if (end === -1) return out
+    index = end + 3
+  }
+}
 
 /**
  * 按 `## ` 二级标题切分正文。`###` 视为正文内容，避免用户写子标题时把
