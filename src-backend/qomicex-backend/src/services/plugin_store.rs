@@ -417,39 +417,134 @@ pub async fn install(
     client: &reqwest::Client,
     slug: &str,
     version: Option<&str>,
-) -> Result<crate::services::plugin::PluginInfo, ApiError> {
+) -> Result<InstallOutcome, ApiError> {
+    let mut visiting = std::collections::HashSet::new();
+    install_with_dependencies(client, slug, version, 0, &mut visiting).await
+}
+
+/// 单次安装结果：本体 + 本次连带安装的必装前置（按安装顺序，供前端展示）。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallOutcome {
+    pub plugin: crate::services::plugin::PluginInfo,
+    pub prerequisites: Vec<Prerequisite>,
+}
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Prerequisite {
+    pub id: String,
+    pub version: String,
+}
+
+/// 依赖递归深度上限：正常插件链 2~3 层，超过视为配置错误而非无限展开。
+const MAX_DEPENDENCY_DEPTH: usize = 5;
+
+async fn install_with_dependencies(
+    client: &reqwest::Client,
+    slug: &str,
+    version: Option<&str>,
+    depth: usize,
+    visiting: &mut std::collections::HashSet<String>,
+) -> Result<InstallOutcome, ApiError> {
+    if depth > MAX_DEPENDENCY_DEPTH {
+        return Err(ApiError::bad_request(
+            "STORE_DEPENDENCY_TOO_DEEP",
+            format!("前置依赖层级超过 {MAX_DEPENDENCY_DEPTH} 层: {slug}"),
+        ));
+    }
+    if !visiting.insert(slug.to_string()) {
+        return Err(ApiError::bad_request(
+            "STORE_DEPENDENCY_CYCLE",
+            format!("前置依赖出现循环引用: {slug}"),
+        ));
+    }
+
     let version = version.filter(|v| !v.trim().is_empty()).unwrap_or("latest");
     let info = download_info(client, slug, version).await?;
     let bytes = fetch_package(client, &info).await?;
     verify_package_matches_slug(&bytes, slug)?;
+
+    // 必装前置先从商店补齐：商店接口不返回 dependencies，只能读包内 manifest；
+    // 依赖 id 与商店 slug 同形（top.qomicex.xxx），直接按 id 取。
+    // optional 依赖是作者声明的可选扩展，故意不自动安装。
+    let mut prerequisites = Vec::new();
+    let manifest = read_package_manifest(&bytes)?;
+    for dep in required_missing_dependencies(
+        &manifest,
+        &crate::services::plugin::PluginStore::new().list_plugins(),
+    ) {
+        let installed = Box::pin(install_with_dependencies(
+            client,
+            &dep.id,
+            None,
+            depth + 1,
+            visiting,
+        ))
+        .await
+        .map_err(|e| {
+            ApiError::bad_request(
+                "STORE_DEPENDENCY_INSTALL_FAILED",
+                format!("前置插件 {} 安装失败: {}", dep.id, e.message),
+            )
+        })?;
+        prerequisites.push(Prerequisite {
+            id: installed.plugin.manifest.id.clone(),
+            version: installed.plugin.manifest.version.clone(),
+        });
+        prerequisites.extend(installed.prerequisites);
+    }
+
     // 商店路径：有签名则验、无签名放行（老版本不强制重签，ADR-050 降级策略）
-    crate::services::plugin::install_from_package(&bytes, false, false)?.ok_or_else(|| {
-        ApiError::bad_request("INVALID_PLUGIN_PACKAGE", "插件包无效（缺少 manifest.json）")
+    let plugin =
+        crate::services::plugin::install_from_package(&bytes, false, false)?.ok_or_else(|| {
+            ApiError::bad_request("INVALID_PLUGIN_PACKAGE", "插件包无效（缺少 manifest.json）")
+        })?;
+    visiting.remove(slug);
+    Ok(InstallOutcome {
+        plugin,
+        prerequisites,
     })
+}
+
+/// 需要先装的前置：跳过 `optional`（可选扩展），跳过已安装的（不做版本升降级，
+/// 已装但版本不满足的情况仍由 `install_from_package` 的预检拦住并报错）。
+fn required_missing_dependencies(
+    manifest: &crate::services::plugin::PluginManifest,
+    installed: &[crate::services::plugin::PluginInfo],
+) -> Vec<crate::services::plugin::PluginDependency> {
+    manifest
+        .dependencies
+        .iter()
+        .filter(|dep| !dep.optional)
+        .filter(|dep| !installed.iter().any(|p| p.manifest.id == dep.id))
+        .cloned()
+        .collect()
+}
+
+/// 读包内 manifest（只取 id/dependencies，用于依赖解析）。
+fn read_package_manifest(
+    package_bytes: &[u8],
+) -> Result<crate::services::plugin::PluginManifest, ApiError> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(package_bytes)).map_err(|e| {
+        ApiError::bad_request("INVALID_PLUGIN_PACKAGE", format!("插件包不是有效 zip: {e}"))
+    })?;
+    let mut reader = archive.by_name("manifest.json").map_err(|e| {
+        ApiError::bad_request(
+            "INVALID_PLUGIN_PACKAGE",
+            format!("插件包缺少 manifest.json: {e}"),
+        )
+    })?;
+    let mut json = String::new();
+    std::io::Read::read_to_string(&mut reader, &mut json)
+        .map_err(|e| ApiError::bad_request("INVALID_PLUGIN_PACKAGE", e.to_string()))?;
+    serde_json::from_str(&json)
+        .map_err(|e| ApiError::bad_request("INVALID_PLUGIN_PACKAGE", e.to_string()))
 }
 
 /// 校验包内 manifest.id 与请求的商店 slug 对应，防止串包安装。
 fn verify_package_matches_slug(package_bytes: &[u8], slug: &str) -> Result<(), ApiError> {
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(package_bytes)).map_err(|e| {
-        ApiError::bad_request("INVALID_PLUGIN_PACKAGE", format!("插件包不是有效 zip: {e}"))
-    })?;
-    let id: String = {
-        let mut reader = archive.by_name("manifest.json").map_err(|e| {
-            ApiError::bad_request(
-                "INVALID_PLUGIN_PACKAGE",
-                format!("插件包缺少 manifest.json: {e}"),
-            )
-        })?;
-        let mut json = String::new();
-        std::io::Read::read_to_string(&mut reader, &mut json)
-            .map_err(|e| ApiError::bad_request("INVALID_PLUGIN_PACKAGE", e.to_string()))?;
-        serde_json::from_str::<serde_json::Value>(&json)
-            .ok()
-            .and_then(|v| v.get("id").and_then(|i| i.as_str()).map(String::from))
-            .ok_or_else(|| {
-                ApiError::bad_request("INVALID_PLUGIN_PACKAGE", "manifest.json 缺少 id")
-            })?
-    };
+    let id = read_package_manifest(package_bytes)?.id;
     let slug_l = slug.to_lowercase();
     let matched = id == slug || id.to_lowercase().ends_with(&format!(".{slug_l}"));
     if !matched {
@@ -684,5 +779,67 @@ mod tests {
         let info = parse_download_info(&v).unwrap();
         assert_eq!(info.size, 123);
         assert!(info.mirror_url.is_none());
+    }
+
+    fn dep(id: &str, optional: bool) -> crate::services::plugin::PluginDependency {
+        crate::services::plugin::PluginDependency {
+            id: id.to_string(),
+            version: Some(">=1.0.0".to_string()),
+            optional,
+        }
+    }
+
+    fn installed(id: &str) -> crate::services::plugin::PluginInfo {
+        crate::services::plugin::PluginInfo {
+            manifest: crate::services::plugin::PluginManifest {
+                id: id.to_string(),
+                name: String::new(),
+                version: "1.2.0".to_string(),
+                min_launcher_version: String::new(),
+                layers: Vec::new(),
+                permissions: Vec::new(),
+                dependencies: Vec::new(),
+                entry: Default::default(),
+                contributes: None,
+                render: None,
+                icon: None,
+                l10n: None,
+            },
+            dir: String::new(),
+            state: "active".to_string(),
+            installed_at: String::new(),
+            has_rollback: false,
+        }
+    }
+
+    /// 必装缺失才装；optional 是作者声明的可选扩展，已装的也不重复装。
+    #[test]
+    fn required_missing_dependencies_skips_optional_and_installed() {
+        let manifest = crate::services::plugin::PluginManifest {
+            id: "top.qomicex.assistant".to_string(),
+            name: String::new(),
+            version: "1.0.0".to_string(),
+            min_launcher_version: String::new(),
+            layers: Vec::new(),
+            permissions: Vec::new(),
+            entry: Default::default(),
+            contributes: None,
+            render: None,
+            icon: None,
+            l10n: None,
+            dependencies: vec![
+                dep("top.qomicex.required-missing", false),
+                dep("top.qomicex.required-installed", false),
+                dep("top.qomicex.optional-missing", true),
+            ],
+        };
+        let installed_plugins = vec![installed("top.qomicex.required-installed")];
+
+        let need = required_missing_dependencies(&manifest, &installed_plugins);
+
+        assert_eq!(
+            need.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(),
+            vec!["top.qomicex.required-missing"]
+        );
     }
 }

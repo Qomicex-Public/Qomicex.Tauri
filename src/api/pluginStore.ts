@@ -146,8 +146,19 @@ export function fetchStoreDownloadInfo(
   )
 }
 
-/** 在线安装/更新（后端下载+SHA256 校验+依赖预检），返回与 /plugins 列表同构的 PluginInfo */
-export function installStorePlugin(slug: string, version?: string): Promise<unknown> {
+/** 单次商店安装连带装上的必装前置（id 即插件 manifest id，与商店 slug 同形）。 */
+export interface StorePrerequisite {
+  id: string
+  version: string
+}
+
+export interface StoreInstallResult {
+  plugin: unknown
+  prerequisites: StorePrerequisite[]
+}
+
+/** 在线安装/更新（后端下载+SHA256 校验+必装依赖补齐），返回本体与连带安装的前置 */
+export function installStorePlugin(slug: string, version?: string): Promise<StoreInstallResult> {
   return post(`${base}/install`, { slug, version })
 }
 
