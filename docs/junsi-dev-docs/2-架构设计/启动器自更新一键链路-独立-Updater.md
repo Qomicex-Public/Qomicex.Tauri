@@ -41,12 +41,12 @@ App.tsx (启动 5s 后台检查 / Settings 手动检查)
 | windows-x86_64 / windows-aarch64 | dir | NSIS /S /D= 安装后目录内容 | 解压覆盖安装根 | 无 |
 | linux-{arch}-appimage | appimage | AppImage 本体 | 整文件替换 + 0755 | 无 |
 | linux-{arch}-system | system | deb 层级（dpkg-deb -x） | 目标可写则本地覆盖 /，否则提权覆盖 | polkit 弹窗；无 agent 时回退免密 `sudo -n` |
-| darwin-x86_64 / darwin-aarch64 | app | .app 内部内容 | 可写则直写，否则提权覆盖 bundle | ⚠️ osascript 提权未实现 |
+| darwin-x86_64 / darwin-aarch64 | app | .app 内部内容 | 可写则直写，否则提权覆盖 bundle | osascript 授权弹窗；无法启动时回退免密 `sudo -n` |
 
 mode 检测：linux 且 $APPIMAGE 未设置 → system；其余平台 mode 忽略。
 
-已知缺口：darwin 行的提权分支在 updater 里只有 Linux 的 pkexec/sudo 实现，`.app` 不可写时
-macOS 更新会失败并落 `last-update-error.json`（ADR-067 修正记录已标注，未在本次修复范围）。
+darwin 的提权链路见「2026-11-16 更新（issue #204）」小节：`osascript`
+（管理员授权弹窗）优先，`sudo -n` 只在该程序无法启动时兜底；取消与执行失败都不再退让。
 
 ## Updater CLI 契约（Qomicex.Updater）
 
@@ -89,6 +89,10 @@ release job：update-package-fragment-*.json 合并 updates.json，与 zip/sig �
   不跨卷 rename（EXDEV），权限位显式带上（root 提权后属主为 root，不退化成用户可写）
 - 提权脚本逐条显式命令渲染，所有路径经 `sh_quote`（`'` → `'\''`）：包内文件名带引号
   也变不成 root 命令；脚本全文进日志（唯一现场证据），临时脚本用后即删
+- 提权脚本与 macOS staging 落在本次新建的 0700 私有目录里（`create_new`，撞名换名不复用）：
+  挡住的是**其它本地用户**预置同名文件/软链。**同一用户**的其它进程仍可在授权等待期间
+  改写这些内容——那需要 root 拥有的中转目录或特权 helper 才能关掉，见
+  「2026-11-16 更新（issue #204）」的评审意见处理②
 - `--launch`/dataDir 只经 semver 校验的版本号才进文件名（防路径穿越写签名）
 - 灰度门控在服务端（weight），客户端不参与决策
 - release 构建不认 `QOMICEX_UPDATER_PATH`：那条路径会被提权执行，等于任意代码以 root 跑
@@ -941,4 +945,117 @@ deb/rpm 安装（含报告者的 beta32）无法靠自更新跳出来，必须�
 **相邻缺口（另开 issue，未混入本修复）**：`release.yml` 只在 x86_64 job 生成
 `qomicex-update-linux-x86_64-{appimage,system}.zip`，**没有 linux-aarch64 / loong64 的自更新包**，
 arm64 deb/rpm 用户即使等待逻辑修好也拿不到包。
+
+### 2026-11-16 更新（issue #204：macOS .app 不可写时无法提权更新）
+
+**现象**：`.app` 对当前用户不可写时（`/Applications` 拖入、多账号机器上的标准用户、
+由他人部署的应用），点更新 → 下载完成 → 启动器退出 → 更新失败，落
+`last-update-error.json` 提示「更新未完成」。ADR-067 原文承诺的 `osascript` 提权从未实现，
+非 Linux 分支是显式失败桩；`#201` 那轮只把它换成了 `pkexec → sudo -n` 共用链，macOS 上
+`pkexec` 不存在、`sudo -n` 在图形会话里必然 `a password is required`，等于没有可用后端。
+
+用户通过 DMG 自行拖入且属主是自己的安装**不受影响**（走 `install_dir` 直写路径）。
+
+**修复（Qomicex.Updater）**：
+
+1. **后端按平台分派**（`backends_for(os)`）：macOS = `osascript` → `sudo -n`；
+   Linux / 其它 unix = `pkexec` → `sudo -n`（#201 的既有语义不动）。
+   `osascript` 只作为「程序无法启动」时的兜底——一旦它真的跑起来，`sudo -n` 不再介入。
+2. **授权用固定 AppleScript，路径走 argv**：`on run argv` + `quoted form of` 调 `/bin/sh <脚本>`，
+   脚本源码是常量。AppleScript 字符串转义与 shell 引用是两个独立边界，把路径拼进源码就要
+   同时转义两层，漏一层就是提权上下文里的命令注入。
+3. **取消靠机器标记，不靠退出码**：`do shell script` 抛出的 AppleScript 错误号就是 shell 的
+   退出码（TN2065），用户取消是 `-128`，两者混在同一数字空间。脚本把结果翻译成 stdout 上的
+   `QOMICEX_OK` / `QOMICEX_CANCELLED` / `QOMICEX_FAILED`，Rust 侧按**整份输出**比对——
+   任何多余内容都算失败，一个打印同名串的脚本伪造不了成功。`do shell script` 的返回值被赋给
+   局部变量丢弃，安装脚本的 stdout 不会混进标记。
+4. **完成判定只看标记**：osascript 的退出码成功失败都可能是 0。
+5. **结果三分类扩为四类**：新增 `PrivAttempt::ExecFailed`（提权已到手、脚本自己失败）。
+   `Cancelled` 与 `ExecFailed` 都立刻停止回退——前者是用户的选择，后者重放同一条计划必然
+   再失败，只会用 `sudo: a password is required` 盖掉真正的现场。映射到
+   `UPDATE_INSTALL_FAILED`（exit 4），`ELEVATION_DENIED`（exit 6）只留给已确认的取消。
+6. **取消语义不再在 `install_app` 里丢失**：`install_app` / `elevate_copy` 返回
+   `Result<(), InstallFailure>` 而不是 `String`——`denied` 一过手就没了，用户取消会被报成
+   「安装失败」。
+7. **临时资源私有化**：`app` 策略的 staging 与提权脚本都落在 `PrivateDir`——`temp_dir` 下
+   本次**新建**的目录（`create_dir` 撞名即换名，绝不复用；unix 0700；Drop 整棵删除，覆盖
+   解压失败 / 计划失败 / 取消 / 执行失败 / 成功五条路径）。脚本文件本身 `create_new` + 0700。
+   旧实现是 `qomicex-update-app-<pid>`、`qomicex-update-elevate-<pid>.sh` 这类可预测路径，
+   等于给本地其它用户一个预先放好同名文件/软链的机会。
+8. **提权脚本自身加固**：每条落位先 `rm -f -- <tmp>` 再 `cp`（只肯写自己新建的文件，
+   不跟随预置软链）；`mkdir -p --` 带 `--` 且目标目录已存在时是 no-op（`/Applications`
+   系系统预建，`set -e` 下 EEXIST 会让整条脚本死在第一条命令）；`trap ... EXIT INT TERM HUP`
+   只清理本次渲染出来的那些临时名，中途失败不留半截 `.tmp`。
+9. **文案按平台分派**（`manual_upgrade_hint`）：macOS 提示重新下载 DMG 拖入「应用程序」，
+   不再对 macOS 用户说 `sudo dpkg -i`。
+
+**界面文案**：`qomicex-tauri-i18n` 七种语言的 `dialogs.updateComplete.failed.elevationDenied`
+改为「管理员授权被取消或未获准」，并去掉「系统安装目录」限定——它现在同时覆盖 macOS 的
+`.app`，而 `ELEVATION_DENIED` 的语义收窄为「用户已确认取消」。
+
+**验证**：
+
+- `cargo test --manifest-path Qomicex.Updater/Cargo.toml`：10 + 1 例全绿（Windows 实跑）。
+  新增用例覆盖：标记 → 结论的四分支（含「已获授权但脚本失败」不许回退）、两平台后端顺序、
+  AppleScript 源码不变量（`on run argv` / `quoted form of` / `administrator privileges` /
+  `-128` / 结果丢弃 / 引号成对）、`elevate_copy` 与 `install_app` 的签名（编译期钉住 `denied`）、
+  `PrivateDir` 的唯一性/0700/Drop 自清、提权脚本的排他创建与软链不跟随、
+  渲染脚本对预置落位临时名 / 中途失败 trap / 已存在目标目录三条真实 `sh` 行为。
+- `cargo check --target x86_64-unknown-linux-gnu --all-targets`：通过（证明 unix 门控的
+  新增测试在 unix 上可编译）。
+- **未验证**：真实 macOS 授权弹窗的端到端验收（授权成功 / 用户取消 / 无残留 / 以原用户身份
+  重启）本仓库 CI 与本次开发环境都没有 mac 机器，需要在 macOS 上按下节步骤人工确认。
+  本节所有条目都只到「可编译 + 逻辑用例通过」为止，不声称真机可行。
+
+**macOS 验收步骤**（待执行）：
+
+1. 用隔离的测试 `.app`（不要用日常安装），`sudo chown -R root:wheel <Test>.app`，
+   确认启动用户确实不可写；从非 root 会话触发更新。
+2. 授权成功：出现标准管理员弹窗 → 版本前进 → 应用以**原用户**身份重启 →
+   staging、提权脚本、placement 临时文件（`.<name>.qomicex-update-tmp`）均无残留。
+3. 用户取消：不再尝试其它后端、目标文件未被修改、落 `ELEVATION_DENIED` 交接并尝试重启
+   原版本；取消提示优先于「更新完成」，失败记录只展示一次。
+4. 属主是自己的可写 `.app`：不弹授权窗，走 `install_dir` 直写。
+5. 路径含空格 / 单引号 / 双引号 / 反斜杠：完整链路可用（渲染脚本已用真实 `sh` 覆盖这类路径，
+   但 AppleScript `quoted form of` 那一层只能在 mac 上验）。
+6. 普通安装失败（如包内缺文件）：显示「安装失败」而不是「授权被取消」。
+
+**边界（不做，也别声称有）**：不做整包回滚；不发明确 SIGKILL / 断电 / 部分覆盖后的自动恢复
+保证（`trap` 只覆盖脚本自身的正常失败与常规信号）；不改归档格式、签名协议、自动安装重试策略；
+Linux 的临时目录与后端语义维持原样。
+
+**交付注意**：updater 经 `include_bytes!` 内嵌，旧版启动器仍用它自己带的那份旧 updater。
+已经处于「`.app` 不可写」状态的安装需要**先手动升级一次**（重新下载 DMG 覆盖安装），
+之后的自更新才会走新的授权链路。
+
+#### 评审意见处理（PR #353 review）
+
+**① 并发拉起多个 updater（采纳并修复）**：`installStaged` 原先没有进行中保护。Toast 的
+`onClick` 与 `onKeyDown`、以及设置页「立即更新」与 Toast 可能在同一帧里各触发一次，
+而 updater 是 detached 进程——两次调用会拉起两个进程同时往同一个 `.app` 写。各进程的
+私有 staging 目录串行化不了**目标**上的写入，结果是半更新状态或互相矛盾的结果。
+现按 `phase === 'installing'` 提前返回（`set` 是同步的，读到的一定是上一次调用的结果）。
+只加前端守卫、不引入锁文件：跨进程互斥仍需 shell 侧协调，而这条链路的既定形态就是
+「启动器退出后由 updater 独占目标」，重复拉起本身就应当被挡住而不是被排队。
+
+**② 提权前 staged 目录可被同用户改写（确认为既有边界，本次未关闭）**：
+`PrivateDir` 是 0700 且只有调用用户可写，所以**同一用户**的其它进程仍能在授权弹窗
+等待期间替换 staging 内容或提权脚本。评审建议「把已验证的载荷移到非特权所有者无法
+修改的位置，并在应用前再验一次」——这条在只有非特权权限的 updater 里做不到：
+目标位置要么仍需提权才能写（等于没解决），要么就得引入一个 root 常驻组件（改变
+架构，不在本 issue 范围）。
+
+实际情况是：这不是 #204 引入的窗口，而是「以本地用户身份解压后再提权落位」这一
+既有形态的固有属性；本次改动把它**收窄**了——原先是 `temp_dir` 下可预测的
+`qomicex-update-app-<pid>` / `qomicex-update-elevate-<pid>.sh`（任意本地用户都能预置），
+现在是 0700 私有目录 + `create_new`，攻击面从「任意本地用户」缩小到「当前用户自己的
+其它进程」。后者要防的是「用户自己攻击自己」，通常不计入威胁模型。
+
+真正能关掉它的方向（另开 issue，需要架构决策）：把提权脚本与被覆盖内容收进一个
+root 拥有、调用者只读的目录，并在提权上下文里重验签名；或让 updater 整体以
+特权 helper 形式运行。两条都超出「修 macOS 提权缺失」的范围，这里明确不声称已解决。
+
+**③ 一条与本 PR 无关的处置**：本次改动不触碰归档格式、签名协议与自动安装重试策略，
+评审若涉及这些方面的建议不在本 PR 处理。
+
 

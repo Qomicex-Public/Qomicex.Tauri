@@ -229,6 +229,10 @@ fn release_claim(updates_dir: &Path, claim_name: &str) {
 pub(crate) struct UpdateError {
     /// 机器可读码：ELEVATION_DENIED | UPDATE_INSTALL_FAILED | UPDATE_WAIT_TIMEOUT。
     /// 前端按它取多语言文案；`message` 只当技术细节展示，不进翻译。
+    ///
+    /// ELEVATION_DENIED 只由「已确认用户取消授权」产生（macOS 授权弹窗的
+    /// AppleScript -128、pkexec 的 127 且 polkit 未失效）。提权后端不可用、授权
+    /// 通过但覆盖脚本失败，都落 UPDATE_INSTALL_FAILED。
     pub(crate) code: String,
     /// 技术细节（OS 报错原文，可能含路径与引号）
     pub(crate) message: String,
