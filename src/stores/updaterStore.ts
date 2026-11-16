@@ -297,6 +297,12 @@ export const useUpdaterStore = create<UpdaterState>((set, getState) => ({
   async installStaged() {
     const { staged } = getState()
     if (!staged) return
+    // 进行中保护（issue #204 评审）：Toast 的 onClick 与 onKeyDown、以及设置页
+    // 「立即更新」与 Toast 可能在同一帧里各触发一次。updater 是 detached 进程，
+    // 两次调用会拉起两个进程同时往同一个 .app 里写——各自的私有 staging 目录
+    // 串行化不了目标上的写入，结果是半更新状态或互相矛盾的结果。
+    // set 是同步的，所以这里读到的 phase 已经反映了前一次调用。
+    if (getState().phase === 'installing') return
     set({ phase: 'installing', progress: 100 })
     try {
       await runUpdater(staged.packagePath, staged.signature, staged.version, staged.changelog)
