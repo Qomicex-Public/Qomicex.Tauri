@@ -93,8 +93,13 @@ export async function takeUpdateNotice(dataDir: string): Promise<UpdateNotice | 
 export interface UpdateError {
   /**
    * 机器可读码，UI 按它取多语言文案：
-   * `ELEVATION_DENIED`（授权被取消/不可用）| `UPDATE_INSTALL_FAILED`（覆盖失败）|
-   * `UPDATE_WAIT_TIMEOUT`（旧进程没退出）。
+   * `ELEVATION_DENIED`（**已确认**用户取消授权）| `UPDATE_INSTALL_FAILED`
+   * （覆盖失败）| `UPDATE_WAIT_TIMEOUT`（旧进程没退出）。
+   *
+   * `ELEVATION_DENIED` 只表示「用户自己选择了不授权」——提权后端不可用
+   * （没装 pkexec / 无 polkit agent / 非交互 sudo 要密码）以及「已授权但脚本
+   * 失败」都算 `UPDATE_INSTALL_FAILED`。两者别混：前者要给「你可以再点一次并
+   * 允许授权」的出路，后者给的是真正的安装现场。
    */
   code: string
   /** 技术细节（OS 报错原文，可能含路径与引号），只做次要展示 */

@@ -17,6 +17,11 @@ import type { UpdateError, UpdateNotice } from '../api/update.ts'
  * 码由 Qomicex.Updater 决定（`ELEVATION_DENIED` / `UPDATE_INSTALL_FAILED` /
  * `UPDATE_WAIT_TIMEOUT`），这里只做映射——未知码走 `failed.unknown`，
  * 上游新增码时最多少一句定制文案，不会渲染成空白。
+ *
+ * `ELEVATION_DENIED` 是「用户取消了授权」这一种情况（macOS 授权弹窗取消 /
+ * polkit 弹窗取消）。提权后端不可用、已授权但覆盖脚本失败都属于
+ * `UPDATE_INSTALL_FAILED`——所以这里的文案说的是「授权被取消或未获准」，
+ * 而不是「改系统目录需要管理员权限」。
  */
 const FAILURE_REASON_KEYS: Record<string, string> = {
   ELEVATION_DENIED: 'dialogs.updateComplete.failed.elevationDenied',
