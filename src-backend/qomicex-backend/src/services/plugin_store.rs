@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
 use crate::error::ApiError;
+use crate::services::plugin_compat::{self, PluginSystemRequirements};
 use crate::settings;
 use crate::state::APP_VERSION;
 
@@ -196,7 +197,14 @@ pub async fn list_plugins(
             urlencoding::encode(v.trim())
         ));
     }
-    store_send(store_get(client, &path)).await
+    let mut body = store_send(store_get(client, &path)).await?;
+    if let Some(items) = body.get_mut("items").and_then(|v| v.as_array_mut()) {
+        for item in items {
+            let requirements = parse_requirements(item);
+            mark_supported(item, requirements.as_ref());
+        }
+    }
+    Ok(body)
 }
 
 /// GET /plugins/:slug 详情（含已发布 versions[]）。
@@ -204,11 +212,55 @@ pub async fn plugin_detail(
     client: &reqwest::Client,
     slug: &str,
 ) -> Result<serde_json::Value, ApiError> {
-    store_send(store_get(
+    let mut body = store_send(store_get(
         client,
         &format!("/plugins/{}", urlencoding::encode(slug)),
     ))
-    .await
+    .await?;
+
+    let latest_requirements =
+        body.get("latestVersion")
+            .and_then(|v| v.as_str())
+            .and_then(|latest| {
+                body.get("versions")
+                    .and_then(|v| v.as_array())
+                    .and_then(|versions| {
+                        versions
+                            .iter()
+                            .find(|v| v.get("version").and_then(|v| v.as_str()) == Some(latest))
+                    })
+                    .and_then(parse_requirements)
+            });
+    mark_supported(&mut body, latest_requirements.as_ref());
+
+    if let Some(versions) = body.get_mut("versions").and_then(|v| v.as_array_mut()) {
+        for version in versions {
+            let requirements = parse_requirements(version);
+            mark_supported(version, requirements.as_ref());
+        }
+    }
+    Ok(body)
+}
+
+/// 商店的 `systemRequirements` 只做透传解析；结构非法时按未声明处理。
+fn parse_requirements(value: &serde_json::Value) -> Option<PluginSystemRequirements> {
+    value
+        .get("systemRequirements")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+}
+
+/// 给商店返回对象补当前系统的兼容结果，前端只消费布尔值。
+fn mark_supported(item: &mut serde_json::Value, requirements: Option<&PluginSystemRequirements>) {
+    if let Some(obj) = item.as_object_mut() {
+        obj.insert(
+            "systemSupported".to_string(),
+            serde_json::Value::Bool(plugin_compat::is_supported(
+                requirements,
+                plugin_compat::current(),
+            )),
+        );
+    }
 }
 
 /// GET /plugins/:slug/reviews 评价列表（只读）。
@@ -871,11 +923,13 @@ mod tests {
                 render: None,
                 icon: None,
                 l10n: None,
+                system_requirements: None,
             },
             dir: String::new(),
             state: "active".to_string(),
             installed_at: String::new(),
             has_rollback: false,
+            system_supported: true,
         }
     }
 
@@ -894,6 +948,7 @@ mod tests {
             render: None,
             icon: None,
             l10n: None,
+            system_requirements: None,
             dependencies: vec![
                 dep("top.qomicex.required-missing", false),
                 dep("top.qomicex.required-installed", false),

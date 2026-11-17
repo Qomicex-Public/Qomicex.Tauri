@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { get, post } from './client.ts'
+import type { PluginSystemRequirements } from '../plugins/types.ts'
 
 const base = '/store'
 
@@ -30,6 +31,10 @@ export interface StorePlugin {
   developerName?: string
   developerLevel?: string
   publishedAt?: string
+  /** 最新版本的 manifest.systemRequirements（商店透传）。 */
+  systemRequirements?: PluginSystemRequirements
+  /** 启动器后端按当前系统判定的结果；缺省按支持处理。 */
+  systemSupported?: boolean
 }
 
 export interface StorePluginVersion {
@@ -43,6 +48,10 @@ export interface StorePluginVersion {
   sizeBytes: number
   downloadCount: number
   createdAt: string
+  /** 该版本的 manifest.systemRequirements（商店透传）。 */
+  systemRequirements?: PluginSystemRequirements
+  /** 启动器后端按当前系统判定的结果；缺省按支持处理。 */
+  systemSupported?: boolean
 }
 
 export interface StorePluginDetail extends StorePlugin {

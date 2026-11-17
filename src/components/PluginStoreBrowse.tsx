@@ -122,6 +122,7 @@ export default function PluginStoreBrowse() {
   }
 
   async function openInstallConfirm(item: StorePlugin, isUpdate: boolean) {
+    if (item.systemSupported === false) return
     try {
       const d = await fetchStorePlugin(item.slug)
       const version = isUpdate ? d.latestVersion ?? item.latestVersion ?? '' : d.latestVersion ?? ''
@@ -252,6 +253,7 @@ export default function PluginStoreBrowse() {
                 {items.map((item) => {
                   const updatable = updatableTo(item)
                   const installed = !!installedVersionOf(item)
+                  const unsupported = item.systemSupported === false
                   return (
                     <div
                       key={item.slug}
@@ -298,9 +300,15 @@ export default function PluginStoreBrowse() {
                           <span>{t('settings.plugins.store.downloadsCount', { count: item.downloadsCount ?? 0 })}</span>
                         </span>
                       </div>
+                      {unsupported && (
+                        <p className="text-[11px] text-destructive">
+                          {t('settings.plugins.store.unsupportedSystem')}
+                        </p>
+                      )}
                       <Button
                         size="sm"
                         variant={updatable ? 'default' : 'outline'}
+                        disabled={unsupported}
                         onClick={(e) => {
                           e.stopPropagation()
                           void openInstallConfirm(item, !!updatable)

@@ -49,6 +49,9 @@ pub struct PluginManifest {
     /// 插件自持 i18n 目录（包内相对路径）。后端只透传给前端解析 %key%。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub l10n: Option<String>,
+    /// 支持的 OS/版本/架构声明；缺省表示全部支持。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_requirements: Option<crate::services::plugin_compat::PluginSystemRequirements>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,6 +158,8 @@ pub struct PluginInfo {
     pub installed_at: String,
     /// 是否存在可回滚的 `.bak-*` 升级快照（前端据此显示「回滚」入口）
     pub has_rollback: bool,
+    /// 当前系统是否满足 manifest.systemRequirements（缺省声明时为 true）。
+    pub system_supported: bool,
 }
 
 // =====================================================================
@@ -337,6 +342,7 @@ impl PluginStore {
         // 与 install_from_package 同一套 id 校验：本入口的入参是任意本地目录，
         // 漏校验时 `plugins_dir.join(&manifest.id)` 可把内容写到 plugins/ 之外。
         validate_plugin_id(&manifest.id)?;
+        crate::services::plugin_compat::ensure_supported(manifest.system_requirements.as_ref())?;
 
         let missing = self.resolve_missing_dependencies(&manifest);
         if !missing.is_empty() {
@@ -362,6 +368,9 @@ impl PluginStore {
         copy_dir_recursive(source_dir, &target)?;
 
         let has_rollback = find_latest_snapshot(&self.plugins_dir, &manifest.id).is_some();
+        let system_supported = crate::services::plugin_compat::manifest_supported(
+            manifest.system_requirements.as_ref(),
+        );
         self.invalidate_cache();
         Ok(Some(PluginInfo {
             manifest,
@@ -369,6 +378,7 @@ impl PluginStore {
             state: "installed".to_string(),
             installed_at: now_o(),
             has_rollback,
+            system_supported,
         }))
     }
 
@@ -504,12 +514,16 @@ impl PluginStore {
                 .map(created_time_o)
                 .unwrap_or_else(now_o);
             let has_rollback = find_latest_snapshot(&self.plugins_dir, &manifest.id).is_some();
+            let system_supported = crate::services::plugin_compat::manifest_supported(
+                manifest.system_requirements.as_ref(),
+            );
             result.push(PluginInfo {
                 manifest,
                 dir: dir.to_string_lossy().into_owned(),
                 state,
                 installed_at,
                 has_rollback,
+                system_supported,
             });
         }
         let mut g = match self.states_cache.lock() {
@@ -564,6 +578,7 @@ pub fn install_from_package(
     // manifest.id 会被用作文件系统路径（安装目录名），必须先做格式校验，
     // 拒绝路径穿越（../、绝对路径、盘符、隐藏分隔）等恶意 ID。
     validate_plugin_id(&manifest.id)?;
+    crate::services::plugin_compat::ensure_supported(manifest.system_requirements.as_ref())?;
 
     // 依赖预检：与 install_from_dir 相同的必装前置检查（缺依赖拒装），
     // 在替换目标目录之前执行，避免半安装状态。
@@ -653,12 +668,15 @@ pub fn install_from_package(
     result?;
 
     let has_rollback = find_latest_snapshot(&plugins_dir, &manifest.id).is_some();
+    let system_supported =
+        crate::services::plugin_compat::manifest_supported(manifest.system_requirements.as_ref());
     Ok(Some(PluginInfo {
         manifest,
         dir: target_dir.to_string_lossy().into_owned(),
         state: "installed".to_string(),
         installed_at: now_o(),
         has_rollback,
+        system_supported,
     }))
 }
 
@@ -1096,6 +1114,20 @@ mod tests {
             let err = install_from_package(&pkg, false, false).unwrap_err();
             assert_eq!(err.code, "INVALID_PLUGIN_PACKAGE", "id={id}");
         }
+    }
+
+    #[test]
+    fn install_rejects_unsupported_system() {
+        let pkg = minimal_package(
+            r#"{"id":"com.example.wrong-os","name":"x","version":"1.0.0",
+                "systemRequirements":{"os":[
+                    {"name":"windows","allow":false},
+                    {"name":"macos","allow":false},
+                    {"name":"linux","allow":false}
+                ]}}"#,
+        );
+        let err = install_from_package(&pkg, false, false).unwrap_err();
+        assert_eq!(err.code, "PLUGIN_UNSUPPORTED_SYSTEM");
     }
 
     /// 回归（#225）：`install_from_dir` 过去只做 `plugins_dir.join(&manifest.id)`，

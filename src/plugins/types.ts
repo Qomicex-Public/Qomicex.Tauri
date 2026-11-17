@@ -17,6 +17,24 @@ export interface PluginManifest {
    * 语言）+ bundle.<locale>.json；manifest 显示字符串用 `%key%` 引用词条，
    * 宿主按启动器 locale 解析；运行时经 `call('getPluginStrings')` 取包。 */
   l10n?: string
+  /** 支持的 OS/版本/架构声明；缺省 = 全部支持。 */
+  systemRequirements?: PluginSystemRequirements
+}
+
+/** 插件系统要求：`os` 为空或缺省时全部支持。 */
+export interface PluginSystemRequirements {
+  os?: PluginOsRequirement[]
+}
+
+export interface PluginOsRequirement {
+  /** windows / macos / linux（接受 osx、win32 等别名） */
+  name: string
+  /** 版本约束，如 `">=10"`、`"*"`；缺省视为 `*` */
+  version?: string
+  /** x64 / arm64 / x86；缺省视为 `*` */
+  arch?: string
+  /** 缺省按允许处理；显式 false 表示该系统不受支持 */
+  allow?: boolean
 }
 
 export interface PluginDependency {
@@ -103,6 +121,8 @@ export interface PluginInfo {
   state: PluginState
   installedAt: string
   hasRollback?: boolean
+  /** 后端按 manifest.systemRequirements 判定的当前系统兼容性（缺省声明为 true）。 */
+  systemSupported?: boolean
 }
 
 export type PluginState = 'installed' | 'active' | 'disabled'

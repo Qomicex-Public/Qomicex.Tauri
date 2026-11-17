@@ -47,6 +47,11 @@ export function PluginCard({ plugin, onToggle, onUninstall, onClick, onOpenPermi
         <div className="font-medium text-sm truncate">{manifest.name}</div>
         <div className="text-xs text-muted-foreground truncate">{manifest.id}@{manifest.version}</div>
       </div>
+      {plugin.systemSupported === false && (
+        <span className="shrink-0 rounded border border-destructive/30 px-1.5 py-0.5 text-[10px] text-destructive">
+          {t('settings.plugins.store.unsupportedSystem')}
+        </span>
+      )}
       {plugin.hasRollback && onRollback && (
         <button
           type="button"
