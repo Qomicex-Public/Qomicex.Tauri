@@ -133,6 +133,7 @@
 - [ADR-129：主页自定义 XML 组件（QWidget）与在线数据/更新](1-决策记录/ADR-129-主页自定义-XML-组件-QWidget-与在线数据-更新.md)
 - [ADR-130：QWidget v2：类 XAML 属性系统、资源/触发器、TS 脚本与嵌套组件](1-决策记录/ADR-130-QWidget-v2-类-XAML-属性系统-资源-触发器-TS-脚本与嵌套组件.md)
 - [ADR-131：插件系统要求声明与兼容性判定](1-决策记录/ADR-131-插件系统要求声明与兼容性判定.md)
+- [ADR-132：更新弹窗展示跨版本更新内容（issue #357）](1-决策记录/ADR-132-更新弹窗展示跨版本更新内容-issue-357.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 
