@@ -4,11 +4,13 @@
 import Markdown from 'react-markdown'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Button } from './ui'
-import { ArrowRight, CheckCircle2, CircleAlert, ExternalLink } from 'lucide-react'
+import { ArrowRight, CheckCircle2, CircleAlert, ExternalLink, Sparkles } from 'lucide-react'
 import { useI18n } from '../i18n/index.tsx'
 import { REPOSITORY_URL } from '../constants/credits.ts'
 import { trainLabelKey, trainOf } from '../lib/updateChannel.ts'
 import type { UpdateError, UpdateNotice } from '../api/update.ts'
+import UpdateChangelog from './UpdateChangelog.tsx'
+import { useUpdateChangelog } from '../hooks/useUpdateChangelog.ts'
 
 
 /**
@@ -51,6 +53,16 @@ interface Props {
  */
 export default function UpdateCompleteDialog({ open, notice, error, onClose }: Props) {
   const { t } = useI18n()
+
+  // 跨版本更新内容（issue #357）：这次实际跨过了哪些版本。用 notice 里的
+  // previousVersion → version 作为区间，而不是当前进程版本——更新完成后
+  // 两者相等，区间会退化成空。
+  const history = useUpdateChangelog({
+    enabled: open && !!notice,
+    current: notice?.previousVersion ?? '',
+    target: notice?.version,
+    channel: notice ? trainOf(notice.version) : undefined,
+  })
 
   if (!notice && error) {
     const failedVersion = (error.version || '').replace(/^v+/, '')
@@ -142,11 +154,37 @@ export default function UpdateCompleteDialog({ open, notice, error, onClose }: P
           </button>
         </div>
 
-        <div className="max-h-56 overflow-y-auto [scrollbar-gutter:stable] break-words rounded-lg bg-background p-3 text-sm leading-relaxed text-muted-foreground prose prose-sm dark:prose-invert max-w-none">
-          <Markdown>{notice.changelog || t('dialogs.update.noNotes')}</Markdown>
-        </div>
+        {history.entries.length > 0 ? (
+          <div className="space-y-1">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <Sparkles className="h-3 w-3" />
+              {t('dialogs.update.historyTitle')}
+            </div>
+            <UpdateChangelog
+              entries={history.entries}
+              latestVersion={version}
+              hasOlderVersions={history.truncated}
+            />
+          </div>
+        ) : (
+          <div className="max-h-56 overflow-y-auto [scrollbar-gutter:stable] break-words rounded-lg bg-background p-3 text-sm leading-relaxed text-muted-foreground prose prose-sm dark:prose-invert max-w-none">
+            <Markdown>{notice.changelog || t('dialogs.update.noNotes')}</Markdown>
+          </div>
+        )}
       </DialogBody>
       <DialogFooter className="min-h-[4.0625rem] flex-wrap gap-2">
+        {/* 「查看完整更新内容」放在 footer（按参考设计）：与「知道了」并列，
+            不打断上方滚动区。UpdateDialog 不放这个按钮——它要留给
+            「下次再说 / 立即更新」，且上方已有「查看发布页」。 */}
+        {history.entries.length > 0 && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => openUrl(releaseUrl).catch(() => window.open(releaseUrl, '_blank'))}
+          >
+            {t('dialogs.update.viewFullNotes')}
+          </Button>
+        )}
         <Button size="sm" onClick={onClose}>
           {t('dialogs.updateComplete.dismiss')}
         </Button>
