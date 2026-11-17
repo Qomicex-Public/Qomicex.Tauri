@@ -11,6 +11,7 @@ import { trainLabelKey, trainOf } from '../lib/updateChannel.ts'
 import type { UpdateError, UpdateNotice } from '../api/update.ts'
 import UpdateChangelog from './UpdateChangelog.tsx'
 import { useUpdateChangelog } from '../hooks/useUpdateChangelog.ts'
+import { pickSpanningEntries } from '../lib/updateHistory.ts'
 
 
 /**
@@ -63,6 +64,7 @@ export default function UpdateCompleteDialog({ open, notice, error, onClose }: P
     target: notice?.version,
     channel: notice ? trainOf(notice.version) : undefined,
   })
+  const spanningEntries = pickSpanningEntries(history, notice?.version)
 
   if (!notice && error) {
     const failedVersion = (error.version || '').replace(/^v+/, '')
@@ -154,14 +156,14 @@ export default function UpdateCompleteDialog({ open, notice, error, onClose }: P
           </button>
         </div>
 
-        {history.entries.length > 0 ? (
+        {spanningEntries ? (
           <div className="space-y-1">
             <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
               <Sparkles className="h-3 w-3" />
               {t('dialogs.update.historyTitle')}
             </div>
             <UpdateChangelog
-              entries={history.entries}
+              entries={spanningEntries}
               latestVersion={version}
               hasOlderVersions={history.truncated}
             />
@@ -176,7 +178,7 @@ export default function UpdateCompleteDialog({ open, notice, error, onClose }: P
         {/* 「查看完整更新内容」放在 footer（按参考设计）：与「知道了」并列，
             不打断上方滚动区。UpdateDialog 不放这个按钮——它要留给
             「下次再说 / 立即更新」，且上方已有「查看发布页」。 */}
-        {history.entries.length > 0 && (
+        {spanningEntries && (
           <Button
             size="sm"
             variant="outline"

@@ -32,8 +32,11 @@ export function useUpdateChangelog(params: {
       setState(EMPTY)
       return
     }
-    // 组件可能在请求飞行中卸载/改参数：用 flag 丢弃过期结果，避免把旧
-    // current/target 的响应写进新一次的状态。
+    // 参数一变就先清空：否则新旧请求之间会有一段「用旧版本的条目渲染新目标」
+    // 的窗口，用户看到的版本号与内容对不上。`stale` 只拦住写入时机，拦不住
+    // 这段已渲染的陈旧内容。
+    setState(EMPTY)
+
     let stale = false
     void (async () => {
       try {

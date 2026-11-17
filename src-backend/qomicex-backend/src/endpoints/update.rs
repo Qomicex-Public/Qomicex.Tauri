@@ -401,12 +401,16 @@ fn manifest_channel(headers: &HeaderMap) -> &str {
 ///
 /// 只声明用得上的字段：上游还给了 `type` / `title`，但跨版本展示只需要版本号、
 /// 正文与时间；多余字段会让 `dead_code` 告警挂在 CI 上。
+///
+/// `notes` 必须是 `Option<String>`：`release_history.notes` 是可空列，SQL NULL
+/// 在上游 JSON 里是 `null`，而 `#[serde(default)]` 只兜「字段缺失」不兜 `null`
+/// —— 一个 null 就会让整个响应反序列化失败，全部历史被静默降级成空。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpstreamReleaseNote {
     version: String,
     #[serde(default)]
-    notes: String,
+    notes: Option<String>,
     #[serde(default)]
     published_at: Option<String>,
 }
@@ -575,17 +579,29 @@ async fn changelog(
 
     let (entries, truncated) = match cached {
         Some(c) => (c.entries, c.truncated),
-        None => match fetch_release_notes(&state.http_client, &channel).await {
+        None => match fetch_release_notes(&channel).await {
             Ok(entries) => {
-                let truncated = entries.len() >= CHANGELOG_UPSTREAM_LIMIT;
+                // 拉满上游窗口 ≠ 一定还有更早的：恰好 50 条时上游没有更多了。
+                // 用 `>=` 只是保守近似，真正的「有没有第 51 条」上游不告诉我们，
+                // 所以这里按 `<` 判定，宁可少数一次提示也不误导用户去翻发布页。
+                let truncated = entries.len() > CHANGELOG_UPSTREAM_LIMIT;
                 {
                     let mut guard = changelog_cache().lock().unwrap_or_else(|p| p.into_inner());
-                    *guard = Some(ChangelogCache {
-                        channel: channel.clone(),
-                        entries: entries.clone(),
-                        truncated,
-                        cached_at: Instant::now(),
-                    });
+                    // 不让「空结果」覆盖已有缓存：上游 5xx/表未建时返回空，
+                    // 若此时把缓存清成空，30 分钟内所有人都看不到历史，
+                    // 而真正的原因（上游临时故障）已经恢复。保留旧缓存更接近事实。
+                    let keep_old = entries.is_empty()
+                        && guard
+                            .as_ref()
+                            .is_some_and(|c| c.channel == channel && !c.entries.is_empty());
+                    if !keep_old {
+                        *guard = Some(ChangelogCache {
+                            channel: channel.clone(),
+                            entries: entries.clone(),
+                            truncated,
+                            cached_at: Instant::now(),
+                        });
+                    }
                 }
                 (entries, truncated)
             }
@@ -622,7 +638,12 @@ fn apply_span_filter(
         .take(CHANGELOG_MAX_ENTRIES)
         .map(|e| ChangelogEntry {
             version: e.version,
-            notes: e.notes,
+            // 上游对超 8KB 的 notes 做过截断并带 per-entry `truncated`。这里**有意
+            // 不转发**该标记：单条 notes 被截断只影响那一版的正文完整性，而
+            // 前端无论如何都只渲染文本，多一个「本条不完整」角标对用户没有可用
+            // 操作（完整内容只能去发布页看，段头的「详情」链接已经提供了出口）。
+            // 转发它反而要求前端为每段多一条分支，收益低于复杂度。
+            notes: e.notes.unwrap_or_default(),
             published_at: e.published_at,
         })
         .collect();
@@ -649,13 +670,25 @@ fn apply_span_filter(
 ///
 /// 返回 `String` 而不是 `ApiError`：失败一律被调用方降级为空列表，不向上传播，
 /// 这里只需要可读的失败原因用于日志。
-async fn fetch_release_notes(
-    client: &reqwest::Client,
-    channel: &str,
-) -> Result<Vec<UpstreamReleaseNote>, String> {
+///
+/// **不复用 `state.http_client`**：那个客户端在用户开启「忽略 SSL 证书」时会带
+/// `danger_accept_invalid_certs(true)`（见 `state.rs` 的构建逻辑），而本请求会把
+/// `license_machine_code()` 作为 Bearer 凭据发给固定上游域名。TLS 校验失效时，
+/// 中间人可截获该凭据并冒充本机向 `api.qomicex.top` 发请求（许可证通道钉住与
+/// 灰度门控都按 machineCode 裁决）。
+///
+/// 官方上游用有效证书，正常路径不受影响；与 `plugin_download_client` 的处理
+/// 口径一致（同样不继承 `ignore_ssl`，理由见 `state.rs` 的字段注释）。
+/// 代理设置也不继承：这条链路直连固定域名，走用户代理无收益且会扩大暴露面。
+async fn fetch_release_notes(channel: &str) -> Result<Vec<UpstreamReleaseNote>, String> {
     // limit 必须先绑成 String：数组字面量里 `(&str, &str)` 与 `(&str, &String)`
     // 不会自动做 deref 归一，直接内联 `&N.to_string()` 会编译不过。
     let limit = CHANGELOG_UPSTREAM_LIMIT.to_string();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .user_agent(crate::state::USER_AGENT)
+        .build()
+        .map_err(|e| format!("build client failed: {e}"))?;
     let response = client
         .get(format!("{UPSTREAM_BASE}{RELEASE_NOTES_PATH}"))
         .query(&[("channel", channel), ("limit", limit.as_str())])
@@ -1156,7 +1189,7 @@ mod tests {
     fn note(version: &str) -> UpstreamReleaseNote {
         UpstreamReleaseNote {
             version: version.to_string(),
-            notes: format!("## {version}"),
+            notes: Some(format!("## {version}")),
             published_at: None,
         }
     }
@@ -1221,11 +1254,33 @@ mod tests {
         );
     }
 
-    /// 跨列车且目标带 `v` 前缀时仍要命中（上游 tag 可能带前缀）。
+    /// 跨列车且 target 带 `v` 前缀时必须命中——这正是 `trim_start_matches('v')`
+    /// 归一化的意义。断言里刻意让 target **带前缀**，否则归一化坏掉也能通过测试
+    /// （回归防护：只测「条目带前缀」测不出 target 侧的归一化缺失）。
     #[test]
-    fn span_across_trains_matches_ignoring_v_prefix() {
+    fn span_across_trains_matches_prefixed_target() {
+        let entries = vec![note("0.1.0-beta31.0"), note("0.1.0-beta30.0")];
+        let out = filter_changelog_span(entries, "0.1.0-release1.0", Some("v0.1.0-beta31.0"));
+        assert_eq!(
+            versions_of(&out),
+            vec!["0.1.0-beta31.0"],
+            "target 的 v 前缀必须被归一化掉"
+        );
+    }
+
+    /// 条目带 `v` 前缀、target 不带：两侧都要正确归一。
+    #[test]
+    fn span_across_trains_matches_prefixed_entries() {
         let entries = vec![note("v0.1.0-beta31.0"), note("v0.1.0-beta30.0")];
         let out = filter_changelog_span(entries, "0.1.0-release1.0", Some("0.1.0-beta31.0"));
+        assert_eq!(versions_of(&out), vec!["v0.1.0-beta31.0"]);
+    }
+
+    /// 两侧都带 `v` 前缀。
+    #[test]
+    fn span_across_trains_matches_both_prefixed() {
+        let entries = vec![note("v0.1.0-beta31.0")];
+        let out = filter_changelog_span(entries, "0.1.0-release1.0", Some("v0.1.0-beta31.0"));
         assert_eq!(versions_of(&out), vec!["v0.1.0-beta31.0"]);
     }
 
@@ -1324,8 +1379,22 @@ mod tests {
         // 缺字段容错：notes/publishedAt 缺失时用默认值，不整体失败。
         let sparse: UpstreamReleaseNotesResponse =
             serde_json::from_str(r#"{"entries":[{"version":"1.0.0-beta1.0"}]}"#).unwrap();
-        assert_eq!(sparse.entries[0].notes, "");
+        assert_eq!(sparse.entries[0].notes, None);
         assert!(sparse.entries[0].published_at.is_none());
+
+        // `release_history.notes` 是可空列，SQL NULL 在上游 JSON 里是 `null`。
+        // 这里必须能吃下：一个 null 不能把整个响应打回空列表（回归防护）。
+        let with_null: UpstreamReleaseNotesResponse = serde_json::from_str(&concat!(
+            "{\"entries\":[",
+            "{\"version\":\"1.2.0-beta2.0\",\"notes\":null,\"publishedAt\":null},",
+            "{\"version\":\"1.2.0-beta1.0\",\"notes\":\"ok\",\"publishedAt\":\"2026-11-17T08:42:17Z\"}",
+            "]}"
+        ))
+        .expect("notes 为 null 时必须仍能整体解析");
+        assert_eq!(with_null.entries.len(), 2, "null 不得导致整批丢失");
+        assert_eq!(with_null.entries[0].notes, None);
+        assert_eq!(with_null.entries[1].notes.as_deref(), Some("ok"));
+
         // 空 entries 也要能解析（上游历史表为空时）。
         let empty: UpstreamReleaseNotesResponse =
             serde_json::from_str(r#"{"entries":[]}"#).unwrap();

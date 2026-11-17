@@ -1,4 +1,4 @@
-# ADR-131：更新弹窗展示跨版本更新内容（issue #357）
+# ADR-132：更新弹窗展示跨版本更新内容（issue #357）
 
 | 属性 | 内容 |
 |---|---|
@@ -49,7 +49,7 @@ CREATE TABLE release_history (
 
 ### 4. 启动器新增 `GET /api/update/changelog?current=&target=&channel=`
 
-转发上游后做区间过滤：同列车内保留 `current < v <= target`（复用 `update_channel::is_train_upgrade`）。跨列车（用户切通道）时序数不可比，不做收敛，回上游原始顺序并由 `spanning` 说明这不是普通升级。展示上限 10 条，30 分钟进程内缓存（缓存**上游原始列表**而非过滤结果——区间随请求变化，缓存结果会让不同跨度的用户互相污染）。
+转发上游后做区间过滤：同列车内保留 `current < v <= target`（复用 `update_channel::is_train_upgrade`）。跨列车（用户切通道）时序数不可比，**只保留目标版本自身**（去 `v` 前缀精确比对）——用户关心的是「我要装的那版改了什么」，而不是目标列车的整段历史（那样会列出 beta30/beta29 之类的噪音）。`target` 缺省时剥掉不比 `current` 新的条目；dev/unknown 构建没有可比序数，保留上游原序避免整段清空。跨列车时 `spanning` 恒为 false，前端退回单块 changelog 渲染。展示上限 10 条，30 分钟进程内缓存（缓存**上游原始列表**而非过滤结果——区间随请求变化，缓存结果会让不同跨度的用户互相污染）。
 
 ### 5. 前端按参考设计渲染
 

@@ -158,3 +158,36 @@ export function displayVersion(version: string): string {
   const clean = (version || '').trim().replace(/^v+/, '')
   return clean ? `v${clean}` : ''
 }
+
+/** 判定「该不该走跨版本视图」所需的最小数据结构（避免依赖 api 层的完整类型）。 */
+export interface SpanningInput {
+  spanning: boolean
+  entries: Array<{ version: string }>
+}
+
+/**
+ * 本次该用「跨版本视图」还是退回单块 changelog。
+ *
+ * 判据不是「有没有 entries」，而是两条都必须成立：
+ *
+ * 1. `spanning` —— 真的跨了多个版本。上游只命中一条时（单次小版本升级），
+ *    该走原来的单块渲染：跨版本视图为一条内容套版本段头与折叠入口是噪音，
+ *    而且它会用上游的 notes 取代 `plan.changelog`，两者内容可能不同源。
+ * 2. **目标版本在列表里** —— 上游历史可能滞后（新版本刚发布还没 sync 到，
+ *    或 `per_page=50` 窗口已滑过目标版本）。此时若照旧切到跨版本视图，用户
+ *    看不到「他要装的那一版改了什么」——而这正是弹窗的核心信息。
+ *
+ * 返回 `null` 表示该退回单块 changelog 渲染。
+ */
+export function pickSpanningEntries<T extends { version: string }>(
+  history: SpanningInput & { entries: T[] },
+  targetVersion: string | undefined,
+): T[] | null {
+  if (!history.spanning || history.entries.length === 0) return null
+  if (!targetVersion) return history.entries
+  const wanted = targetVersion.trim().replace(/^v+/, '')
+  const hasTarget = history.entries.some(
+    (e) => e.version.trim().replace(/^v+/, '') === wanted,
+  )
+  return hasTarget ? history.entries : null
+}

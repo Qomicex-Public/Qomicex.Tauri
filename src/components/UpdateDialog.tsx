@@ -15,6 +15,7 @@ import { APP_INFO } from '../constants/credits.ts'
 import { channelLabelKey } from '../lib/updateChannel.ts'
 import UpdateChangelog from './UpdateChangelog.tsx'
 import { useUpdateChangelog } from '../hooks/useUpdateChangelog.ts'
+import { pickSpanningEntries } from '../lib/updateHistory.ts'
 
 interface Props {
   open: boolean
@@ -37,6 +38,7 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
     target: plan?.version,
     channel: plan?.channel,
   })
+  const spanningEntries = pickSpanningEntries(history, plan?.version)
 
   const handleUpdate = useCallback(() => {
     if (!plan) return
@@ -113,24 +115,25 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
           </div>
         )}
 
-        {/* 跨版本更新内容（issue #357）。history.entries 为空时（上游端点未部署 /
-            本次只跨一个版本）自动退回下面的单块 changelog 渲染，因此这里不需要
-            额外的 loading 态——打开弹窗的瞬间看到的就是接入前的界面。 */}
-        {history.entries.length > 0 && (
+        {/* 跨版本更新内容（issue #357）。spanningEntries 为 null 时（上游端点未部署 /
+            本次只跨一个版本 / 目标版本不在历史里）自动退回下面的单块 changelog
+            渲染，因此这里不需要额外的 loading 态——打开弹窗的瞬间看到的就是
+            接入前的界面。判据见 hooks/useUpdateChangelog 的 pickSpanningEntries。 */}
+        {spanningEntries && (
           <div className="space-y-1">
             <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
               <Sparkles className="h-3 w-3" />
               {t('dialogs.update.historyTitle')}
             </div>
             <UpdateChangelog
-              entries={history.entries}
+              entries={spanningEntries}
               latestVersion={plan.version}
               hasOlderVersions={history.truncated}
             />
           </div>
         )}
 
-        {history.entries.length === 0 && (
+        {!spanningEntries && (
           <div className="max-h-56 overflow-y-auto [scrollbar-gutter:stable] break-words rounded-lg bg-background p-3 text-sm leading-relaxed text-muted-foreground prose prose-sm dark:prose-invert max-w-none">
             <Markdown>{plan.changelog || t('dialogs.update.noNotes')}</Markdown>
           </div>

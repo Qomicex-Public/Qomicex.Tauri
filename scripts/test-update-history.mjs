@@ -54,6 +54,7 @@ try {
     splitVisibleVersions,
     displayVersion,
     categoryLabelKey,
+    pickSpanningEntries,
     DEFAULT_VISIBLE_VERSIONS,
   } = require(join(outDir, 'updateHistory.js'))
 
@@ -179,6 +180,47 @@ try {
     assert.equal(categoryLabelKey('refactor'), 'dialogs.update.category.refactor')
     assert.equal(categoryLabelKey('perf'), 'dialogs.update.category.perf')
     assert.equal(categoryLabelKey('other'), 'dialogs.update.category.other')
+    checks++
+  }
+
+  // ---- pickSpanningEntries：该不该走跨版本视图 ----
+  {
+    const entries = [{ version: '1.2.0-beta2.0' }, { version: '1.2.0-beta1.0' }]
+
+    // spanning=false（只命中一条）→ 退回单块渲染，即使有 entries
+    assert.equal(
+      pickSpanningEntries({ spanning: false, entries }, '1.2.0-beta2.0'),
+      null,
+      '只跨一个版本时不该用跨版本视图',
+    )
+    // 空 entries → 退回
+    assert.equal(pickSpanningEntries({ spanning: true, entries: [] }, '1.2.0-beta2.0'), null)
+    // spanning=true 且目标在列表里 → 使用
+    assert.equal(
+      pickSpanningEntries({ spanning: true, entries }, '1.2.0-beta2.0')?.length,
+      2,
+    )
+    // 目标不在列表里 → 退回单块，否则用户看不到自己要装的那版
+    assert.equal(
+      pickSpanningEntries({ spanning: true, entries }, '1.2.0-beta9.0'),
+      null,
+      '目标版本不在历史里时必须退回单块 changelog',
+    )
+    // target 缺失 → 不做该检查，直接用
+    assert.equal(pickSpanningEntries({ spanning: true, entries }, undefined)?.length, 2)
+    assert.equal(pickSpanningEntries({ spanning: true, entries }, '')?.length, 2)
+    // v 前缀两侧都要归一
+    assert.equal(
+      pickSpanningEntries({ spanning: true, entries }, 'v1.2.0-beta2.0')?.length,
+      2,
+    )
+    assert.equal(
+      pickSpanningEntries(
+        { spanning: true, entries: [{ version: 'v1.2.0-beta2.0' }] },
+        '1.2.0-beta2.0',
+      )?.length,
+      1,
+    )
     checks++
   }
 
