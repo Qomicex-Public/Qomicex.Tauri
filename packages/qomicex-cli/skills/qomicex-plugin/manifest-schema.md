@@ -53,6 +53,30 @@
 | `contributes` | object | 可选 | 扩展点 |
 | `icon` | string | 可选 | 顶层图标（插件管理/列表显示；库插件建议用顶层 icon 而非 menuItems） |
 | `l10n` | string | 可选 | 插件自持 i18n 目录（包内相对路径，如 `"l10n"`）。目录内存 `bundle.json`（默认语言）+ `bundle.<locale>.json`（如 `bundle.zh-CN.json`），值为扁平 `key → string`。manifest 显示字符串用 `%key%` 引用词条，宿主加载时按启动器 locale 解析（回退默认包→原文）；运行时经 `call('getPluginStrings')` 取合并包、`call('getLocale')` 取当前 locale（均免权限）。插件文案**不要**依赖启动器 i18n |
+| `systemRequirements` | object | 可选 | 系统要求声明，见下；缺省表示全部系统支持 |
+
+## systemRequirements 对象
+
+```json
+{
+  "systemRequirements": {
+    "os": [
+      { "name": "windows", "version": ">=10", "arch": "x64", "allow": true },
+      { "name": "macos", "version": ">=12", "arch": "arm64", "allow": true },
+      { "name": "linux", "version": "*", "arch": "*", "allow": true }
+    ]
+  }
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `os[].name` | string | `windows` / `macos` / `linux`（接受 `osx`、`win32` 别名） |
+| `os[].version` | string? | 版本约束：`>=` `>` `<=` `<` `=`，空格表示 AND，`*` 或缺省表示任意版本。Windows 取系统版本（如 `10 (19045)`，即 10/11） |
+| `os[].arch` | string? | `x64` / `arm64` / `x86`（接受 `x86_64`、`aarch64`、`ia32` 别名），`*` 或缺省表示任意架构 |
+| `os[].allow` | boolean? | `true` 支持、`false` 不支持；缺省按 `true` |
+
+判定规则：多条目 OR；只有 `allow:true` 条目时按白名单（未声明的系统不支持）；只有 `allow:false` 条目时按黑名单；两者都有时按声明，命中的 `false` 优先否决，其余未命中按支持。不满足时启动器拒绝安装，商店「安装」按钮禁用。
 
 ## entry 对象
 

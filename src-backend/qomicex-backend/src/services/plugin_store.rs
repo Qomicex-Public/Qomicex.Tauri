@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
 use crate::error::ApiError;
+use crate::services::plugin_compat::{self, PluginSystemRequirements};
 use crate::settings;
 use crate::state::APP_VERSION;
 
@@ -196,7 +197,14 @@ pub async fn list_plugins(
             urlencoding::encode(v.trim())
         ));
     }
-    store_send(store_get(client, &path)).await
+    let mut body = store_send(store_get(client, &path)).await?;
+    if let Some(items) = body.get_mut("items").and_then(|v| v.as_array_mut()) {
+        for item in items {
+            let requirements = parse_requirements(item);
+            mark_supported(item, &requirements);
+        }
+    }
+    Ok(body)
 }
 
 /// GET /plugins/:slug 详情（含已发布 versions[]）。
@@ -204,11 +212,69 @@ pub async fn plugin_detail(
     client: &reqwest::Client,
     slug: &str,
 ) -> Result<serde_json::Value, ApiError> {
-    store_send(store_get(
+    let mut body = store_send(store_get(
         client,
         &format!("/plugins/{}", urlencoding::encode(slug)),
     ))
-    .await
+    .await?;
+
+    let latest_requirements = body
+        .get("latestVersion")
+        .and_then(|v| v.as_str())
+        .and_then(|latest| {
+            body.get("versions")
+                .and_then(|v| v.as_array())
+                .and_then(|versions| {
+                    versions
+                        .iter()
+                        .find(|v| v.get("version").and_then(|v| v.as_str()) == Some(latest))
+                })
+        })
+        .map(parse_requirements)
+        .unwrap_or(RequirementsState::Absent);
+    mark_supported(&mut body, &latest_requirements);
+
+    if let Some(versions) = body.get_mut("versions").and_then(|v| v.as_array_mut()) {
+        for version in versions {
+            let requirements = parse_requirements(version);
+            mark_supported(version, &requirements);
+        }
+    }
+    Ok(body)
+}
+
+/// 商店字段必须区分「未声明」与「声明了但解析失败」：
+/// 前者沿用默认支持，后者在安装入口同样会被拒绝，不能显示成可安装。
+enum RequirementsState {
+    Absent,
+    Invalid,
+    Valid(PluginSystemRequirements),
+}
+
+fn parse_requirements(value: &serde_json::Value) -> RequirementsState {
+    match value.get("systemRequirements") {
+        None | Some(serde_json::Value::Null) => RequirementsState::Absent,
+        Some(raw) => serde_json::from_value(raw.clone())
+            .map(RequirementsState::Valid)
+            .unwrap_or(RequirementsState::Invalid),
+    }
+}
+
+/// 给商店返回对象补当前系统的兼容结果，前端只消费布尔值。
+fn mark_supported(item: &mut serde_json::Value, state: &RequirementsState) {
+    let supported = match state {
+        RequirementsState::Absent => true,
+        RequirementsState::Invalid => false,
+        RequirementsState::Valid(requirements) => {
+            plugin_compat::is_supported(Some(requirements), plugin_compat::current())
+        }
+    };
+    if let Some(obj) = item.as_object_mut() {
+        obj.insert(
+            "systemSupported".to_string(),
+            serde_json::Value::Bool(supported),
+        );
+    }
 }
 
 /// GET /plugins/:slug/reviews 评价列表（只读）。
@@ -484,6 +550,9 @@ async fn install_with_dependencies(
     // 依赖 id 与商店 slug 同形（top.qomicex.xxx），直接按 id 取。
     // optional 依赖是作者声明的可选扩展，故意不自动安装。
     let manifest = read_package_manifest(&bytes)?;
+    // 先拒绝不兼容的父插件，避免递归装完依赖后才在 install_from_package 失败，
+    // 留下「前置已落盘、本体没装」的半安装状态。
+    crate::services::plugin_compat::ensure_supported(manifest.system_requirements.as_ref())?;
     for dep in required_missing_dependencies(
         &manifest,
         &crate::services::plugin::PluginStore::new().list_plugins(),
@@ -848,6 +917,19 @@ mod tests {
         assert!(info.mirror_url.is_none());
     }
 
+    #[test]
+    fn malformed_requirements_are_not_reported_supported() {
+        let mut item = serde_json::json!({"systemRequirements": {"os": "windows"}});
+        let state = parse_requirements(&item);
+        mark_supported(&mut item, &state);
+        assert_eq!(item["systemSupported"], serde_json::Value::Bool(false));
+
+        let mut absent = serde_json::json!({});
+        let state = parse_requirements(&absent);
+        mark_supported(&mut absent, &state);
+        assert_eq!(absent["systemSupported"], serde_json::Value::Bool(true));
+    }
+
     fn dep(id: &str, optional: bool) -> crate::services::plugin::PluginDependency {
         crate::services::plugin::PluginDependency {
             id: id.to_string(),
@@ -871,11 +953,13 @@ mod tests {
                 render: None,
                 icon: None,
                 l10n: None,
+                system_requirements: None,
             },
             dir: String::new(),
             state: "active".to_string(),
             installed_at: String::new(),
             has_rollback: false,
+            system_supported: true,
         }
     }
 
@@ -894,6 +978,7 @@ mod tests {
             render: None,
             icon: None,
             l10n: None,
+            system_requirements: None,
             dependencies: vec![
                 dep("top.qomicex.required-missing", false),
                 dep("top.qomicex.required-installed", false),

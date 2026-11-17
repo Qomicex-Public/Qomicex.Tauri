@@ -9,6 +9,16 @@ export const ID_RE = /^(?!.*\.\.)[a-z0-9]+([.-][a-z0-9]+)*$/
 export const SEMVER_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/
 export const LAYERS = ['l0', 'l1', 'l2', 'l3', 'l4']
 
+/** 启动器实际识别的 OS/架构（含别名）；其余名称会给出 warning。 */
+const SYSTEM_OS_NAMES = new Set(['windows', 'win', 'win32', 'macos', 'osx', 'darwin', 'mac', 'linux'])
+const SYSTEM_ARCH_NAMES = new Set([
+  'x64', 'x86_64', 'amd64',
+  'arm64', 'aarch64',
+  'x86', 'i386', 'i686', 'ia32',
+  'arm', 'armv7',
+  '*',
+])
+
 export interface ManifestIssue {
   severity: 'error' | 'warning'
   path: string
@@ -51,6 +61,51 @@ export function checkId(id: unknown): string[] {
   if (!ID_RE.test(id)) errs.push('id 必须是反向域名格式（小写字母/数字/点/连字符，禁止连续双点，如 com.example.demo）')
   if (!id.includes('.')) errs.push('id 建议使用反向域名格式（含至少一个点），当前形如 hello-plugin')
   return errs
+}
+
+function validateSystemRequirements(
+  value: unknown,
+  add: (severity: 'error' | 'warning', path: string, message: string) => void
+): void {
+  // shortcut: 只校验结构与枚举，不解析版本约束语法；运行时语义由启动器判定。
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    add('error', 'systemRequirements', 'systemRequirements 必须是对象')
+    return
+  }
+  const os = (value as Record<string, unknown>).os
+  if (os === undefined) return
+  if (!Array.isArray(os)) {
+    add('error', 'systemRequirements.os', 'systemRequirements.os 必须是数组')
+    return
+  }
+  os.forEach((raw, index) => {
+    const path = `systemRequirements.os[${index}]`
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      add('error', path, '条目必须是对象')
+      return
+    }
+    const entry = raw as Record<string, unknown>
+    if (typeof entry.name !== 'string' || !entry.name.trim()) {
+      add('error', `${path}.name`, '缺少必填字段 name')
+    } else if (!SYSTEM_OS_NAMES.has(entry.name.trim().toLowerCase())) {
+      add('warning', `${path}.name`, `未知系统: ${entry.name}（可用 windows/macos/linux）`)
+    }
+    if (entry.version !== undefined && typeof entry.version !== 'string') {
+      add('error', `${path}.version`, 'version 必须是字符串（如 ">=10" 或 "*"）')
+    }
+    if (entry.arch !== undefined && typeof entry.arch !== 'string') {
+      add('error', `${path}.arch`, 'arch 必须是字符串（如 "x64" 或 "*"）')
+    } else if (
+      typeof entry.arch === 'string' &&
+      entry.arch.trim() &&
+      !SYSTEM_ARCH_NAMES.has(entry.arch.trim().toLowerCase())
+    ) {
+      add('warning', `${path}.arch`, `未知架构: ${entry.arch}（可用 x64/arm64/x86/*）`)
+    }
+    if (entry.allow !== undefined && typeof entry.allow !== 'boolean') {
+      add('error', `${path}.allow`, 'allow 必须是布尔值')
+    }
+  })
 }
 
 export function validateManifest(raw: unknown): ManifestCheck {
@@ -122,6 +177,8 @@ export function validateManifest(raw: unknown): ManifestCheck {
   if (m.render !== undefined && m.render !== 'inline' && m.render !== 'iframe' && m.render !== 'webview') {
     add('warning', 'render', "render 仅支持 'inline' / 'iframe' / 'webview'")
   }
+
+  if (m.systemRequirements !== undefined) validateSystemRequirements(m.systemRequirements, add)
 
   if (m.contributes !== undefined) {
     const c = m.contributes as Record<string, unknown>
