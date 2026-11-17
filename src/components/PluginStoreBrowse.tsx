@@ -125,6 +125,11 @@ export default function PluginStoreBrowse() {
     if (item.systemSupported === false) return
     try {
       const d = await fetchStorePlugin(item.slug)
+      // 列表可能早于新版本发布；详情判定不兼容时不再打开确认框。
+      if (d.systemSupported === false) {
+        notify(t('settings.plugins.store.unsupportedSystem'), 'error')
+        return
+      }
       const version = isUpdate ? d.latestVersion ?? item.latestVersion ?? '' : d.latestVersion ?? ''
       const vEntry = d.versions?.find((v) => v.version === version)
       const local = findLocal(item.slug)
