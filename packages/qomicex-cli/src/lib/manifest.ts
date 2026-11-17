@@ -67,6 +67,7 @@ function validateSystemRequirements(
   value: unknown,
   add: (severity: 'error' | 'warning', path: string, message: string) => void
 ): void {
+  // shortcut: 只校验结构与枚举，不解析版本约束语法；运行时语义由启动器判定。
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     add('error', 'systemRequirements', 'systemRequirements 必须是对象')
     return
