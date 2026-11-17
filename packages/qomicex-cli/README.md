@@ -55,7 +55,7 @@ qomicex pack --skip-build             # 跳过构建（复用现有 dist）
 qomicex verify                        # 目录模式：manifest + 权限 + 长循环
 qomicex verify --package ./release/x.qplugin   # 包模式：manifest + 签名验签
 ```
-- **manifest 合法性**：id（反向域名/安全字符）、name、version(semver)、minLauncherVersion、layers、permissions、entry、contributes。
+- **manifest 合法性**：id（反向域名/安全字符）、name、version(semver)、minLauncherVersion、layers、permissions、entry、contributes、systemRequirements（OS/版本/架构声明，缺省 = 全部支持）。
 - **权限最小化**：对比 `manifest.permissions` 与源码实际调用的桥方法（`METHOD_PERMISSIONS` 表）。声明未用 / 用了未声明都会报错。源码扫描：有 `src/` 时扫 `src/`（`dist/` 视为产物跳过）；无 `src/` 的纯静态/纯 html 插件也扫 `dist/` 与根目录 html，支持 `__PLUGIN_API__?.` 可选链写法。**L3 纯 wasm 插件**（layers 含 l3、无前端 entry、无 JS 源码）跳过 JS 权限扫描（`wasm:execute` 由网关消费）。
 - **长循环告警**：`while(true)`、`for(;;)`、`setInterval` 无界轮询（提示放 Worker/WASM/后端）。
 - **签名检查**：包模式用内置商店根公钥验签（ADR-050）；无签名提示"未签名"不拒绝。

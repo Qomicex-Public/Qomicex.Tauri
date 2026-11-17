@@ -11,6 +11,7 @@ AI agent 生成/修改插件时必须逐条遵守。违反任何一条都可能�
 5. **permissions**：值是权限目录 id。未知权限 → warning。
 6. **entry**：`frontend`/`backend`/`theme` 至少一个。`frontend` 应指向 `.html`（如 `dist/index.html`）。
 7. **render**：默认 `iframe`（沙箱），仅显式 `"inline"` 走内联渲染。对 UI 插件建议不做修改，保持 iframe 默认。
+7a. **systemRequirements**（可选）：`{ os: [{ name, version, arch, allow }] }`。`name` 为 `windows`/`macos`/`linux`；`version` 支持 `>= > <= < =`、空格 AND、`*`；`arch` 为 `x64`/`arm64`/`x86`/`*`；`allow` 缺省 `true`。缺省声明 = 全部支持；只有 `true` 条目 = 白名单；只有 `false` 条目 = 黑名单；混合时命中 `false` 优先、其余未命中按支持。不满足时商店禁用安装、本地导入被拒绝。
 
 ## 权限
 

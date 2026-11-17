@@ -580,3 +580,33 @@ __PLUGIN_API__.registerHook('scanVersions', async (ctx, next) => {
 - 权限：`hook:register`（**danger**）
 - 插件 hook 函数在插件 iframe 中执行，经两阶段桥与主窗口默认实现交互
 - 停用时自动注销该插件全部 hooks
+
+
+### 2026-11-17 更新
+## manifest 系统要求（systemRequirements）
+
+插件可在 `manifest.json` 声明支持的系统，缺省表示全部支持。启动器、商店与 CLI 使用同一份语义。
+
+```json
+{
+  "systemRequirements": {
+    "os": [
+      { "name": "windows", "version": ">=10", "arch": "x64", "allow": true },
+      { "name": "macos", "version": ">=12", "arch": "arm64", "allow": true },
+      { "name": "linux", "version": "*", "arch": "*", "allow": true }
+    ]
+  }
+}
+```
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `os` | array? | 缺省或空数组 = 全部系统支持 |
+| `os[].name` | string | `windows` / `macos` / `linux`（接受 `osx`、`win32` 等别名） |
+| `os[].version` | string? | `>=` `>` `<=` `<` `=`，空格表示 AND，`*` 或缺省表示任意版本 |
+| `os[].arch` | string? | `x64` / `arm64` / `x86`（接受 `x86_64`、`aarch64`、`ia32` 别名），`*` 或缺省表示任意架构 |
+| `os[].allow` | boolean? | `true` 支持、`false` 不支持；缺省按 `true` |
+
+判定：多条目 OR；只有 `allow:true` 条目时按白名单（未声明系统不支持）；只有 `allow:false` 条目时按黑名单；两者都有时按声明，命中的 `false` 优先否决，其余未命中按支持。
+
+生效点：商店列表/详情返回 `systemRequirements` 与启动器判定的 `systemSupported`，不兼容时安装按钮禁用；本地导入与商店安装在安装管线返回 `PLUGIN_UNSUPPORTED_SYSTEM`；已装插件列表以 `systemSupported` 标注。
