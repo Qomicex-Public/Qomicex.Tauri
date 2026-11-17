@@ -4,6 +4,7 @@
 import { useEffect, useLayoutEffect, useRef, RefObject } from 'react'
 import gsap from 'gsap'
 import { getSettings } from '../api/settings.ts'
+import { selectEnterItems } from './listEnterSelection.ts'
 
 /**
  * 页面入场动画 Hook
@@ -253,9 +254,12 @@ export function useAnimatedList<T extends HTMLElement>(
     const allChildren = Array.from(el.children) as HTMLElement[]
     if (allChildren.length === 0) return
 
+    // 保存上一批 children 用于 diff（下方基线块会覆盖 ref，必须先取快照）。
+    const prevChildren = prevChildrenRef.current
+
     // 基线兜底：首次渲染（或上一次渲染容器未就绪导致 prev 为空）时，
     // 先记录当前 children 作为 diff 基线，不触发退出动画。
-    if (prevChildrenRef.current.length === 0) {
+    if (prevChildren.length === 0) {
       prevChildrenRef.current = allChildren
       const rects = new Map<string, { left: number; top: number; width: number; height: number }>()
       allChildren.forEach((c) => {
@@ -272,7 +276,7 @@ export function useAnimatedList<T extends HTMLElement>(
     // 因此挂到 body 层用 fixed 定位（视口坐标），播完再移除。
     // 只给前 MAX_ANIMATE_ITEMS 个被移除项做退出动画（避免大量 blur 卡片同时进 tween）。
     const newKeys = new Set(allChildren.map((c) => c.dataset.key))
-    const removed = prevChildrenRef.current.filter(
+    const removed = prevChildren.filter(
       (n): n is HTMLElement & { dataset: { key: string } } =>
         !!n.dataset.key && !newKeys.has(n.dataset.key)
     )
@@ -306,8 +310,9 @@ export function useAnimatedList<T extends HTMLElement>(
         })
       })
 
-    // 进入动画：只动画前 MAX_ANIMATE_ITEMS 个，其余保持最终态
-    const children = allChildren.slice(0, MAX_ANIMATE_ITEMS)
+    // 进入动画：只动画本次新增项（按 data-key diff）；首屏/整页替换退化为前 35 个。
+    // 详见 selectEnterItems 注释（issue #355）。
+    const children = selectEnterItems(allChildren, prevChildren, MAX_ANIMATE_ITEMS)
 
     const from: gsap.TweenVars = { opacity: 0 }
     const to: gsap.TweenVars = {
@@ -339,21 +344,23 @@ export function useAnimatedList<T extends HTMLElement>(
     }
     originalsRef.current = originals
 
-    const timeline = gsap.timeline()
-    tlRef.current = timeline
-    timeline.fromTo(children, from, to)
-    // 入场 tween 结束后把内联 transform 还原（force3D 会留下
-    // translate3d(0,0,0)）。这些残留会把卡片固定在独立合成层里，WebView2 下
-    // `.glass-surface` 的 backdrop-filter 首帧不重绘：列表项看不到毛玻璃，
-    // 鼠标移入触发别的重绘后才恢复（issue #327）。
-    // 列表更新会重建 timeline：旧回调不得还原成上一轮的残留值。
-    timeline.eventCallback('onComplete', () => {
-      if (tlRef.current !== timeline) return
-      for (const [node, original] of originals) {
-        node.style.transform = original.transform
-        node.style.opacity = original.opacity
-      }
-    })
+    if (children.length > 0) {
+      const timeline = gsap.timeline()
+      tlRef.current = timeline
+      timeline.fromTo(children, from, to)
+      // 入场 tween 结束后把内联 transform 还原（force3D 会留下
+      // translate3d(0,0,0)）。这些残留会把卡片固定在独立合成层里，WebView2 下
+      // `.glass-surface` 的 backdrop-filter 首帧不重绘：列表项看不到毛玻璃，
+      // 鼠标移入触发别的重绘后才恢复（issue #327）。
+      // 列表更新会重建 timeline：旧回调不得还原成上一轮的残留值。
+      timeline.eventCallback('onComplete', () => {
+        if (tlRef.current !== timeline) return
+        for (const [node, original] of originals) {
+          node.style.transform = original.transform
+          node.style.opacity = original.opacity
+        }
+      })
+    }
 
     // 记录本批 children 及其视口坐标（在挂载期间记录，供下次退出克隆定位）
     prevChildrenRef.current = allChildren
