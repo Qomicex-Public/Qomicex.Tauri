@@ -17,7 +17,7 @@
 
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -56,9 +56,9 @@ function mod(fileName, modId, dependencies = [], providesIds = [], active = true
 const dep = (modId) => ({ modId })
 
 /** Map<fileName, ModDependency[]> → { fileName: modId[] }，便于断言。 */
-function missingOf(mods) {
+function missingOf(mods, loader = 'forge') {
   const out = {}
-  for (const [file, deps] of computeMissingDependencies(mods)) {
+  for (const [file, deps] of computeMissingDependencies(mods, loader)) {
     out[file] = deps.map((d) => d.modId)
   }
   return out
@@ -72,6 +72,7 @@ try {
     [tsc, source, '--outDir', outDir, '--module', 'commonjs', '--target', 'es2020', '--skipLibCheck'],
     { stdio: 'inherit' },
   )
+  writeFileSync(join(outDir, 'package.json'), '{"type":"commonjs"}')
   ;({ computeMissingDependencies } = createRequire(import.meta.url)(
     // 带 `import type ../types` 时 tsc 的公共根变成 src，产物会落在 lib/ 下。
     existsSync(join(outDir, 'modDependencies.js'))
@@ -97,6 +98,10 @@ try {
   })
 
   check('禁用 Connector 不放行', missingOf([mod('connector.jar', 'connector', [], [], false), ffapi, fabricMod]), {
+    'coolmod.jar': ['fabric-api', 'fabric', 'fabric-lifecycle-events-v1'],
+  })
+
+  check('Fabric 加载器不启用 Connector 归一', missingOf([connector, ffapi, fabricMod], 'fabric'), {
     'coolmod.jar': ['fabric-api', 'fabric', 'fabric-lifecycle-events-v1'],
   })
 

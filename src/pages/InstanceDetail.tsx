@@ -514,8 +514,9 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
    * 缺失强制依赖（issue #165）：key = fileName。
    * 判定需要全列表视角（依赖是否被别的 mod 提供），故在父级统一计算后下传卡片。
    * 严格口径：只有启用中的 mod 才算「已提供」——见 lib/modDependencies.ts。
+   * 传入实例加载器：Connector 的 Fabric 别名只在 Forge/NeoForge 实例生效。
    */
-  const missingDepsMap = useMemo(() => computeMissingDependencies(mods), [mods])
+  const missingDepsMap = useMemo(() => computeMissingDependencies(mods, loader), [mods, loader])
 
   const [filterType, setFilterType] = useState('all')
   const [sortBy, setSortBy] = useState('name-asc')

@@ -33,9 +33,9 @@ import type { ModDependency, ModMetadata } from '../types/index.ts'
  *   `fabric_api`，所有子模块把上游 id 的 `-` 换成 `_`
  *   （`fabric-transfer-api-v1` → `fabric_transfer_api_v1`），官方文档：
  *   https://github.com/Sinytra/Connector/blob/9287e9f/docs/developers.mdx
- * - 因此**仅在实例里存在启用中的 Connector 时**，把 `fabric` / `fabric-*` 依赖按
- *   FFAPI 的命名归一后再匹配，并且只接受 FFAPI 自己提供的 id（嵌套子模块）；
- *   普通 Fabric 实例不受影响，避免掩盖真实缺失。
+ * - 因此**仅在实例里存在启用中的 Connector、且加载器为 Forge/NeoForge 时**，把
+ *   `fabric` / `fabric-*` 依赖按 FFAPI 的命名归一后再匹配，并且只接受 FFAPI 自己
+ *   提供的 id（嵌套子模块）；普通 Fabric 实例不受影响，避免掩盖真实缺失。
  */
 
 /**
@@ -142,8 +142,12 @@ export interface ModDependencyStatus {
  * @returns key = `mod.fileName`，value = 该模组的缺失项；**没有任何缺失的模组不会出现在返回的 Map 里**。
  */
 export function computeMissingDependencies(
-  mods: ModMetadata[]
+  mods: ModMetadata[],
+  loader?: string
 ): Map<string, ModDependency[]> {
+  // Connector 只在 Forge/NeoForge 实例里运行；Fabric 等其他加载器维持原判定。
+  const loaderKey = loader?.trim().toLowerCase() ?? ''
+  const connectorLoader = loaderKey === 'forge' || loaderKey === 'neoforge'
   // ① 启用中的模组才有资格「提供」依赖（严格口径）
   const enabled = mods.filter((m) => m.active)
 
@@ -168,8 +172,10 @@ export function computeMissingDependencies(
     .filter((m) => !m.modId?.trim())
     .map((m) => fileStemLower(m.fileName))
 
-  // Connector 只有在启用时才提供 FFAPI 侧的 Fabric 环境（禁用 = 不会加载）。
-  const connectorPresent = [...CONNECTOR_MOD_IDS].some((id) => providedIds.has(id))
+  // Connector 只有在启用时才提供 FFAPI 侧的 Fabric 环境（禁用 = 不会加载）；
+  // 且只有 Forge/NeoForge 实例会跑 Connector。
+  const connectorPresent =
+    connectorLoader && [...CONNECTOR_MOD_IDS].some((id) => providedIds.has(id))
 
   /**
    * FFAPI 实际提供的 id：只认 Connector 侧的 Fabric API 实现（主 id `fabric_api`，
