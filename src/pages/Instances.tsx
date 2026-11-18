@@ -34,6 +34,7 @@ import { Tabs } from '../components/ui'
 import { Skeleton } from '../components/ui'
 import type { ScannedVersion, RemoteVersionInfo, CreateInstanceRequest, LoaderVersionInfo, LoaderAddonInfo, DownloadTask, GameInstance } from '../types/index.ts'
 import { getSettings, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, onSettingsChange, openFolder } from '../api/settings.ts'
+import { getSystemInfo } from '../api/system.ts'
 import { InstanceIcon } from '../components/InstanceIcon.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
 import { ApiError } from '../api/client.ts'
@@ -53,6 +54,53 @@ import { useRunning } from '../contexts/RunningContext.tsx'
 interface ManagedDir {
   path: string
   name: string
+  /** 不可删除的固定目录；路径跟随系统解析，名称取 i18n。 */
+  fixed?: 'official'
+}
+
+/** 路径比较键：统一分隔符、去尾斜杠；Windows 盘符路径不区分大小写。 */
+function pathKey(path: string): string {
+  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '')
+  return /^[a-zA-Z]:/.test(normalized) ? normalized.toLowerCase() : normalized
+}
+
+/** 列表键：固定项按角色区分，避免两个固定角色恰好指向同一路径时 key 重复。 */
+function dirKey(d: ManagedDir): string {
+  return d.fixed ? `fixed:${d.fixed}` : d.path
+}
+
+/**
+ * 把固定的官方启动器目录并入已保存列表：路径跟随系统更新、与普通目录去重、
+ * 缺失时插到最前面。旧版本留下的 `fixed: 'launcher'` 条目一并清掉。
+ */
+function mergeFixedDirs(dirs: ManagedDir[], officialPath: string): ManagedDir[] {
+  let changed = false
+  let next = dirs.filter((d) => {
+    if ((d.fixed as string | undefined) === 'launcher') {
+      changed = true
+      return false
+    }
+    return true
+  })
+  if (officialPath) {
+    const officialKey = pathKey(officialPath)
+    next = next.filter((d) => {
+      if (d.fixed || pathKey(d.path) !== officialKey) return true
+      changed = true
+      return false
+    })
+    const idx = next.findIndex((d) => d.fixed === 'official')
+    if (idx >= 0) {
+      if (next[idx].path !== officialPath) {
+        next[idx] = { ...next[idx], path: officialPath }
+        changed = true
+      }
+    } else {
+      next.unshift({ path: officialPath, name: '', fixed: 'official' })
+      changed = true
+    }
+  }
+  return changed ? next : dirs
 }
 
 const LOADER_COLORS: Record<string, string> = {
@@ -139,7 +187,9 @@ function saveViewMode(key: string, mode: 'grid' | 'list') {
 function loadDirs(): ManagedDir[] {
   try { return JSON.parse(localStorage.getItem('qomicex-directories') || '[]') } catch { return [] }
 }
-function saveDirs(dirs: ManagedDir[]) { localStorage.setItem('qomicex-directories', JSON.stringify(dirs)) }
+function saveDirs(dirs: ManagedDir[]) {
+  try { localStorage.setItem('qomicex-directories', JSON.stringify(dirs)) } catch { /* 配额满时保留内存状态 */ }
+}
 
 function loadSettings() {
   return getSettings()
@@ -202,6 +252,33 @@ export default function Instances() {
   const [removingDir, setRemovingDir] = useState<string | null>(null)
   const [currentDir, setCurrentDir] = useState(() => loadSettings().gameDir || '')
   const [dirPopover, setDirPopover] = useState(false)
+
+  // 固定目录：官方启动器目录（后端按平台解析）。挂载与页内刷新时重新拉取；
+  // 失败保留现有列表，下次刷新再试。
+  const managedDirsRef = useRef(managedDirs)
+  managedDirsRef.current = managedDirs
+  useEffect(() => {
+    let cancelled = false
+    getSystemInfo()
+      .then((info) => {
+        if (cancelled) return
+        const official = (info.officialGameDir || '').replace(/[\\/]+$/, '')
+        const prev = managedDirsRef.current
+        const next = mergeFixedDirs(prev, official)
+        if (next !== prev) {
+          setManagedDirs(next)
+          saveDirs(next)
+        }
+      })
+      .catch(() => { /* 保留现有列表 */ })
+    return () => { cancelled = true }
+  }, [instanceRefreshKey])
+
+  /** 固定目录的名称取 i18n，普通目录用保存的名称。 */
+  const dirLabel = useCallback((d: ManagedDir) => {
+    if (d.fixed === 'official') return t('instances.officialDir')
+    return d.name || dirName(d.path)
+  }, [t])
 
   useEffect(() => {
     return onSettingsChange((s) => {
@@ -437,9 +514,16 @@ export default function Instances() {
   }
 
   function removeDir(path: string) {
+    if (managedDirs.some((d) => d.fixed && d.path === path)) return
     setRemovingDir(path)
     setTimeout(() => {
-      setManagedDirs((prev) => { const next = prev.filter((d) => d.path !== path); saveDirs(next); return next })
+      setManagedDirs((prev) => {
+        // 延时期间该路径可能已被固定项接管：保留它。
+        if (prev.some((d) => d.fixed && d.path === path)) return prev
+        const next = prev.filter((d) => d.path !== path)
+        saveDirs(next)
+        return next
+      })
       setRemovingDir(null)
     }, 400)
   }
@@ -456,6 +540,7 @@ export default function Instances() {
   }
 
   function startEdit(d: ManagedDir) {
+    if (d.fixed) return
     setEditingPath(d.path)
     setEditName(d.name)
   }
@@ -463,7 +548,14 @@ export default function Instances() {
   function commitEdit() {
     const name = editName.trim()
     if (editingPath && name) {
-      setManagedDirs((prev) => { const next = prev.map((dd) => dd.path === editingPath ? { ...dd, name } : dd); saveDirs(next); return next })
+      setManagedDirs((prev) => {
+        // 异步合并可能已把该条目换成固定项：此时不允许写 name。
+        const target = prev.find((dd) => dd.path === editingPath)
+        if (!target || target.fixed) return prev
+        const next = prev.map((dd) => (dd.path === editingPath ? { ...dd, name } : dd))
+        saveDirs(next)
+        return next
+      })
     }
     setEditingPath(null)
   }
@@ -1291,18 +1383,18 @@ export default function Instances() {
               <p className="px-1 text-xs text-muted-foreground">{t('instances.dirCount', { count: managedDirs.length })}</p>
               {managedDirs.map((d, i) => {
                 const active = currentDir === d.path
-                const editing = editingPath === d.path
+                const editing = !d.fixed && editingPath === d.path
                 const contextItems: ContextMenuItem[] = [
                   { label: t('instances.setCurrent'), onClick: () => switchDir(d.path), disabled: active },
-                  { label: t('instances.rename'), onClick: () => startEdit(d) },
+                  ...(d.fixed ? [] : [{ label: t('instances.rename'), onClick: () => startEdit(d) }]),
                   { label: t('instances.moveUp'), onClick: () => moveDir(i, i - 1), disabled: i === 0 },
                   { label: t('instances.moveDown'), onClick: () => moveDir(i, i + 1), disabled: i === managedDirs.length - 1 },
                   { label: t('instances.openDir'), onClick: () => { openFolder(d.path).catch(() => {}) } },
-                  { label: t('instances.remove'), onClick: () => removeDir(d.path), danger: true },
+                  ...(d.fixed ? [] : [{ label: t('instances.remove'), onClick: () => removeDir(d.path), danger: true }]),
                 ]
                 return (
                   <div
-                    key={d.path}
+                    key={dirKey(d)}
                     className={cn(
                       'rounded-lg border transition-colors',
                       active ? 'border-primary/40 bg-primary/5' : 'border-border bg-muted/20 hover:bg-muted/40'
@@ -1314,50 +1406,57 @@ export default function Instances() {
                         tabIndex={0}
                         onClick={() => switchDir(d.path)}
                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchDir(d.path) } }}
-                        className="cursor-pointer space-y-1 p-3"
+                        className="cursor-pointer p-3"
                       >
                         <div className="flex items-center gap-2">
                           <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          {editing ? (
-                            <Input
-                              autoFocus
-                              value={editName}
-                              onChange={(e) => setEditName(e.target.value)}
-                              onBlur={commitEdit}
-                              onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditingPath(null) }}
-                              onClick={(e) => e.stopPropagation()}
-                              className="h-7 text-sm font-medium"
-                            />
-                          ) : (
-                            <>
-                              <span className="min-w-0 flex-1 truncate text-sm font-medium">{d.name || dirName(d.path)}</span>
-                              <Tooltip content={t('instances.rename')}>
-                                <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={(e) => { e.stopPropagation(); startEdit(d) }}>
-                                  <Pencil className="h-3 w-3" />
-                                </Button>
-                              </Tooltip>
-                            </>
-                          )}
-                          {active && (
-                            <span className="inline-flex items-center gap-1 shrink-0 rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
-                              <Check className="h-3 w-3" />
-                              {t('instances.inUse')}
-                            </span>
-                          )}
+                          {/* 图标与整块（名称 + 路径）垂直居中，路径与名称同列。 */}
+                          <div className="min-w-0 flex-1 space-y-0.5">
+                            {editing ? (
+                              <Input
+                                autoFocus
+                                value={editName}
+                                onChange={(e) => setEditName(e.target.value)}
+                                onBlur={commitEdit}
+                                onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditingPath(null) }}
+                                onClick={(e) => e.stopPropagation()}
+                                className="h-7 text-sm font-medium"
+                              />
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <span className="min-w-0 flex-1 truncate text-sm font-medium">{dirLabel(d)}</span>
+                                {!d.fixed && (
+                                  <Tooltip content={t('instances.rename')}>
+                                    <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={(e) => { e.stopPropagation(); startEdit(d) }}>
+                                      <Pencil className="h-3 w-3" />
+                                    </Button>
+                                  </Tooltip>
+                                )}
+                                {active && (
+                                  <span className="inline-flex items-center gap-1 shrink-0 rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
+                                    <Check className="h-3 w-3" />
+                                    {t('instances.inUse')}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            <Tooltip content={d.path}>
+                              <p className="truncate text-xs text-muted-foreground">{truncateMiddle(d.path, 48)}</p>
+                            </Tooltip>
+                          </div>
                           <Tooltip content={t('instances.openDir')}>
                             <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={(e) => { e.stopPropagation(); openFolder(d.path).catch(() => {}) }}>
                               <FolderOpen className="h-3.5 w-3.5" />
                             </Button>
                           </Tooltip>
-                          <Tooltip content={t('instances.remove')}>
-                            <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={(e) => { e.stopPropagation(); removeDir(d.path) }}>
-                              <MorphActionIcon active={removingDir === d.path} busy={RotateCwData} rest={Trash2Data} className="h-3.5 w-3.5" />
-                            </Button>
-                          </Tooltip>
+                          {!d.fixed && (
+                            <Tooltip content={t('instances.remove')}>
+                              <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={(e) => { e.stopPropagation(); removeDir(d.path) }}>
+                                <MorphActionIcon active={removingDir === d.path} busy={RotateCwData} rest={Trash2Data} className="h-3.5 w-3.5" />
+                              </Button>
+                            </Tooltip>
+                          )}
                         </div>
-                        <Tooltip content={d.path}>
-                          <p className="truncate pl-6 text-xs text-muted-foreground">{truncateMiddle(d.path, 48)}</p>
-                        </Tooltip>
                       </div>
                     </ContextMenu>
                   </div>
@@ -1475,12 +1574,12 @@ export default function Instances() {
                 ) : (
                   <div className="max-h-56 space-y-0.5 overflow-y-auto">
                     {managedDirs.map((d) => (
-                      <button key={d.path} onClick={() => switchDir(d.path)} className={cn('flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-accent', currentDir === d.path && 'bg-accent/80')}>
+                      <button key={dirKey(d)} onClick={() => switchDir(d.path)} className={cn('flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-accent', currentDir === d.path && 'bg-accent/80')}>
                         <div className={cn('flex h-8 w-8 items-center justify-center rounded-lg', currentDir === d.path ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground')}>
                           <Folder className="h-4 w-4" />
                         </div>
                         <div className="flex-1 truncate">
-                          <div className="text-sm font-medium">{d.name}</div>
+                          <div className="text-sm font-medium">{dirLabel(d)}</div>
                           <div className="truncate text-xs text-muted-foreground">{d.path}</div>
                         </div>
                         {currentDir === d.path && <Check className="h-3 w-3 text-primary" />}

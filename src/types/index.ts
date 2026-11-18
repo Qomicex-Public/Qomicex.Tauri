@@ -14,6 +14,8 @@ export interface SystemInfo {
   /** 启动器版本（CARGO_PKG_VERSION） */
   appVersion?: string
   dataDir?: string
+  /** 官方启动器（Mojang）的默认游戏目录（跨平台解析）。 */
+  officialGameDir?: string
 }
 
 export interface JavaRuntime {
