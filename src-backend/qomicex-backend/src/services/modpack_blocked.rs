@@ -665,14 +665,8 @@ pub fn scan_candidates(
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        if let Some(idx) = pending.iter().position(|e| {
-            e.sha1.as_deref().filter(|s| !s.is_empty()).is_none()
-                && !e.file_name.trim().is_empty()
-                && e.file_name.eq_ignore_ascii_case(&name)
-        }) {
-            out.push((path, pending.remove(idx)));
-            continue;
-        }
+        // 先算哈希再匹配：清单里可能同时有「有哈希」和「无哈希」的条目，按文件名
+        // 先匹配会把一个本可被哈希验证的文件交给无哈希条目，留下可验证的那条没补。
         let Ok(sha1) = crate::services::modpack_export::sha1_file_hex(&path) else {
             continue;
         };

@@ -68,6 +68,8 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
   const [scanning, setScanning] = useState(false)
   /** 启动器正在下载的条目 → 百分比（total 未知时为 null）；可多个并发。 */
   const [fetching, setFetching] = useState<Record<number, number | null>>({})
+  /** 每个文件的下载尝试序号：旧尝试的 finally 不能清掉新尝试的进度。 */
+  const fetchAttempts = useRef<Record<number, number>>({})
   const [hover, setHover] = useState(false)
   const [error, setError] = useState('')
   // 关闭/切换实例后，仍在飞的请求不能回写状态（否则会把旧实例的清单灌进新实例）。
@@ -228,6 +230,13 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
     return () => {
       cancelled = true
       unlisteners.forEach(fn => fn())
+      // 窗口与对话框共享生命周期：对话框关闭后没人接收下载事件，留着队列只会
+      // 丢事件（原生端仍会取消下载并消耗标签）。关闭即放弃这一批。
+      if (isTauri()) {
+        void import('@tauri-apps/api/core')
+          .then(({ invoke }) => invoke('close_blocked_download_window'))
+          .catch(() => {})
+      }
     }
   }, [open])
 
@@ -361,6 +370,8 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
     async (req: DownloadRequested) => {
       if (req.instanceId !== instanceIdRef.current) return
       const fileId = req.fileId
+      const attempt = (fetchAttempts.current[fileId] ?? 0) + 1
+      fetchAttempts.current[fileId] = attempt
       setFetching(prev => ({ ...prev, [fileId]: null }))
       setError('')
       let timer: ReturnType<typeof setInterval> | null = null
@@ -369,6 +380,7 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
           void getBlockedFetchProgress(instanceId, fileId)
             .then(p => {
               if (instanceIdRef.current !== instanceId) return
+              if (fetchAttempts.current[fileId] !== attempt) return
               const percent =
                 p.total && p.total > 0
                   ? Math.min(100, Math.floor((p.downloaded / p.total) * 100))
@@ -379,7 +391,14 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
         }, 400)
         const res = await fetchBlockedMod(instanceId, fileId, req.url)
         if (instanceIdRef.current !== instanceId) return
-        applyRemaining(res.items ?? [])
+        if (fetchAttempts.current[fileId] !== attempt) return
+        const remaining = res.items ?? []
+        // 并发下载时响应可能乱序到达：列表只会变短，变长的响应是过期快照。
+        if (remaining.length <= itemsRef.current.length) {
+          applyRemaining(remaining)
+        } else {
+          void refresh()
+        }
       } catch (e: unknown) {
         if (instanceIdRef.current !== instanceId) return
         // 失败也回查一次：可能后端已落盘但响应丢失。
@@ -387,12 +406,15 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
         setError(describeError(e, t('dialogs.blockedMods.submitFailed')))
       } finally {
         if (timer) clearInterval(timer)
-        setFetching(prev => {
-          if (!(fileId in prev)) return prev
-          const next = { ...prev }
-          delete next[fileId]
-          return next
-        })
+        if (fetchAttempts.current[fileId] === attempt) {
+          delete fetchAttempts.current[fileId]
+          setFetching(prev => {
+            if (!(fileId in prev)) return prev
+            const next = { ...prev }
+            delete next[fileId]
+            return next
+          })
+        }
       }
     },
     [applyRemaining, describeError, instanceId, refresh, t],
@@ -420,12 +442,14 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
       }
     } catch (e: unknown) {
       if (instanceIdRef.current !== instanceId) return
+      // 扫描可能已完成一部分（后端逐个导入后失败）：先回查清单再报错。
+      void refresh()
       setError(describeError(e, t('dialogs.blockedMods.loadFailed')))
     } finally {
       busyRef.current = false
       setScanning(false)
     }
-  }, [applyRemaining, describeError, instanceId, t])
+  }, [applyRemaining, describeError, instanceId, refresh, t])
 
   /** 重扫清单：用户可能已经把文件放进 mods 目录，后端会核对后剔除。 */
   const rescan = useCallback(async () => {
@@ -569,6 +593,7 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
             className="h-7 gap-1 px-1.5"
             disabled={busy || items.length === 0}
             onClick={() => void openAllPages()}
+            hidden={!isTauri()}
           >
             <Layers className="h-3 w-3" />
             {t('dialogs.blockedMods.openAllPages')}

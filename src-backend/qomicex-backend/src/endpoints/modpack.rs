@@ -2939,9 +2939,21 @@ async fn submit_blocked_mod_by_path(
 /// 在 `lock_blocked_write` 之外扫描：哈希与复制是同步阻塞 I/O，放到
 /// `spawn_blocking` 里跑，不占 tokio 工作线程。
 async fn scan_blocked_downloads(
+    headers: axum::http::HeaderMap,
     State(s): State<SharedState>,
     AxumPath(instance_id): AxumPath<String>,
 ) -> ApiResult<Json<crate::services::modpack_blocked::BlockedModList>> {
+    if let Some(origin) = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+    {
+        if !is_local_origin(origin) {
+            return Err(ApiError::forbidden(
+                "BLOCKED_SCAN_ORIGIN_REJECTED",
+                "该操作仅允许在启动器内调用",
+            ));
+        }
+    }
     let inst = s
         .instance
         .get_by_id(&instance_id)
@@ -2966,7 +2978,15 @@ async fn scan_blocked_downloads(
     .map_err(|e| ApiError::internal(format!("扫描下载目录任务异常: {e}")))?;
 
     for (src, entry) in scanned {
-        accept_blocked_file(&s, &inst, &src, &entry).await?;
+        // 单个候选失效（扫描后被移动/删除）不应中断整批：其余文件照常导入，
+        // 失败的条目留在清单里等下次重试。
+        if let Err(e) = accept_blocked_file(&s, &inst, &src, &entry).await {
+            tracing::warn!(
+                file_id = entry.file_id,
+                error = %e.message,
+                "下载目录补全失败，跳过该文件"
+            );
+        }
     }
 
     let mut remaining = blocked_remaining(&s, &inst);
@@ -3059,10 +3079,22 @@ async fn download_cdn_file(
 /// 只走到 Requested 就没了结果（下载不落盘也不报错），改由后端下载既能看到
 /// 进度，也能沿用同一套 SHA-1 校验与落盘逻辑。
 async fn fetch_blocked_mod(
+    headers: axum::http::HeaderMap,
     State(s): State<SharedState>,
     AxumPath(instance_id): AxumPath<String>,
     Json(req): Json<BlockedFetchRequest>,
 ) -> ApiResult<Json<crate::services::modpack_blocked::BlockedModList>> {
+    if let Some(origin) = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+    {
+        if !is_local_origin(origin) {
+            return Err(ApiError::forbidden(
+                "BLOCKED_FETCH_ORIGIN_REJECTED",
+                "该操作仅允许在启动器内调用",
+            ));
+        }
+    }
     let inst = s
         .instance
         .get_by_id(&instance_id)
@@ -3076,6 +3108,14 @@ async fn fetch_blocked_mod(
                 "该文件不在待补全清单中（可能已补全或实例已更新）",
             )
         })?;
+    // 自动下载必须能校验：缺 SHA-1 时中转文件名与清单文件名不同，落盘仍会被拒绝，
+    // 不如直接给出可操作的提示。
+    if entry.sha1.as_deref().filter(|s| !s.is_empty()).is_none() {
+        return Err(ApiError::bad_request(
+            "BLOCKED_FETCH_NO_SHA1",
+            "该条目缺少校验值，无法自动校验，请用「选择文件」手动补全",
+        ));
+    }
     let url = reqwest::Url::parse(req.url.trim()).map_err(|e| {
         ApiError::bad_request("BLOCKED_FETCH_URL_INVALID", format!("下载地址无效: {e}"))
     })?;
@@ -3087,7 +3127,19 @@ async fn fetch_blocked_mod(
     }
 
     let key = format!("{instance_id}:{}", req.file_id);
-    if let Ok(mut map) = blocked_fetch_states().lock() {
+    {
+        let mut map = blocked_fetch_states()
+            .lock()
+            .map_err(|_| ApiError::internal("下载进度表不可用"))?;
+        // 同一文件的重叠请求会共用同一份进度快照：直接拒绝，让前端沿用进行中的那次。
+        if let Some(state) = map.get(&key) {
+            if !state.done && state.error.is_none() {
+                return Err(ApiError::conflict(
+                    "BLOCKED_FETCH_BUSY",
+                    "该文件正在下载中，请稍候",
+                ));
+            }
+        }
         map.insert(
             key.clone(),
             BlockedFetchProgress {
@@ -3668,6 +3720,8 @@ impl ModpackServiceData {
         let existing = self
             .instance
             .find_by_name(&req.name, &resolved_game_dir)
+            // find_by_name 返回内存快照；先按独立配置重载，身份字段才是最新值。
+            .and_then(|cur| self.instance.get_by_id(&cur.id))
             .filter(|cur| same_modpack_target(cur, &instance, &src_norm, &req));
         let created = match existing {
             Some(cur) => {

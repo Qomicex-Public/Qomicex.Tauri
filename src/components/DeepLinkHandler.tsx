@@ -260,42 +260,51 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
             if (!ok) return cancel()
           }
           try {
+            // 请求用的 gameDir/隔离设置先固定下来：重试描述符必须能重放这次请求，
+            // 不能等响应回来再读设置（期间用户可能改过）。
+            const settings = getSettings()
+            const gameDir = settings.gameDir
+            const versionIsolation = settings.versionIsolation !== false
             const { instanceId } = await installModpackDirect({
               id: finalName,
               type: action.source,
               projectId: action.projectId,
               // Technic 无 fileId：不传（后端 technic 分支只认 projectId）。
               fileId: sourceNeedsFileId(action.source) ? action.fileId : undefined,
-              gameDir: getSettings().gameDir,
+              gameDir,
             })
             // SSE 自动补的卡片没有重试描述符（它不知道来源坐标），安装失败后只能删掉。
             // 这里按本次请求的坐标先建卡，SSE 到达时按 instanceId 更新同一张卡；
             // 卡片持久化在 localStorage，重启后重试按钮仍在。
             const retryable = !sourceNeedsFileId(action.source) || !!action.fileId
             if (retryable && action.source !== 'technic') {
-              const settings = getSettings()
-              const task = {
+              const retry = {
+                kind: 'modpack' as const,
                 name: finalName,
-                type: 'modpack' as const,
                 gameVersion: '',
-                instanceId,
-                status: 'queued' as const,
-                progress: 0,
-                createdAt: new Date().toISOString(),
-                retry: {
-                  kind: 'modpack' as const,
-                  name: finalName,
-                  gameVersion: '',
-                  source: action.source,
-                  projectId: action.projectId,
-                  versionId: action.fileId,
-                  gameDir: settings.gameDir,
-                  versionIsolation: settings.versionIsolation !== false,
-                },
+                source: action.source,
+                projectId: action.projectId,
+                versionId: action.fileId,
+                gameDir,
+                versionIsolation,
               }
               const existing = getTasks().find(t => t.id === instanceId || t.instanceId === instanceId)
-              if (existing) updateTask(existing.id, task)
-              else addTask({ id: instanceId, ...task })
+              if (existing) {
+                // 只补 retry：SSE 可能已把卡片推进到 awaiting-files，不能被重置成排队态。
+                updateTask(existing.id, { retry })
+              } else {
+                addTask({
+                  id: instanceId,
+                  name: finalName,
+                  type: 'modpack',
+                  gameVersion: '',
+                  instanceId,
+                  status: 'queued',
+                  progress: 0,
+                  createdAt: new Date().toISOString(),
+                  retry,
+                })
+              }
             }
             navigate('/instances')
             notify(t('deepLink.installStarted'), 'success')

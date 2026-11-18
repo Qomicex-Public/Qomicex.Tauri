@@ -53,10 +53,14 @@ export async function skipBlockedMods(instanceId: string): Promise<BlockedModLis
 /** 应用内下载进度快照（后端按 instanceId+fileId 记录）。 */
 export interface BlockedFetchProgress {
   downloaded: number
-  total?: number
+  /** 未知总量时后端返回 null（不是缺省字段）。 */
+  total: number | null
   done: boolean
-  error?: string
+  error: string | null
 }
+
+/** 单个受限文件的下载 + SHA-1 校验预算：大文件慢网可能远超全局 15s 默认值。 */
+const BLOCKED_FETCH_TIMEOUT_MS = 10 * 60 * 1000
 
 /**
  * 由启动器下载受限文件。
@@ -70,10 +74,11 @@ export async function fetchBlockedMod(
   fileId: number,
   url: string,
 ): Promise<BlockedModList> {
-  return post<BlockedModList>(`/modpack/blocked/${encodeURIComponent(instanceId)}/fetch`, {
-    fileId,
-    url,
-  })
+  return post<BlockedModList>(
+    `/modpack/blocked/${encodeURIComponent(instanceId)}/fetch`,
+    { fileId, url },
+    { timeoutMs: BLOCKED_FETCH_TIMEOUT_MS },
+  )
 }
 
 /** 轮询应用内下载进度；下载结束后仍保留最后一份快照。 */

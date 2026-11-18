@@ -54,8 +54,10 @@ export function updateTask(id: string, updates: Partial<DownloadTask>) {
   tasks = tasks.map((t) => (t.id === id ? { ...t, ...updates } : t))
   // Debounce persistence: progress updates are high-frequency (~3/s from SSE),
   // but structural mutations (add/remove/clear) should persist immediately.
+  // `retry` 决定重启后能否重试，必须立即落盘；进度更新仍走防抖。
   if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = setTimeout(saveTasks, SAVE_DEBOUNCE_MS)
+  if ('retry' in updates) saveTasks()
+  else saveTimer = setTimeout(saveTasks, SAVE_DEBOUNCE_MS)
   emitChange()
 }
 

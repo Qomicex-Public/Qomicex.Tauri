@@ -3064,7 +3064,7 @@ CurseForge 的作者可以关闭 Project Distribution Toggle。开关关闭后�
 
 - 候选上限 200 个文件、单个不超过 512 MiB，按修改时间倒序优先算新下载的文件；超出上限只是少扫，不报错。
 - 源文件**不删除、不移动**，与手动补全一致。
-- 没有命中时返回原清单，调用方据「长度未变化」提示用户。
+- 没有命中时返回的是**复查 `mods/` 之后**的剩余清单（用户已直接放入目录的文件同样会被剔除）；调用方不应以「请求前后长度是否变化」判断下载目录是否命中。
 
 **响应：** `BlockedModList`（补全后的剩余清单）
 
@@ -3088,7 +3088,7 @@ CurseForge 的作者可以关闭 Project Distribution Toggle。开关关闭后�
 
 **响应：** `BlockedModList`（补全后的剩余清单）
 
-**错误码：** `INSTANCE_NOT_FOUND`(404)、`BLOCKED_ENTRY_NOT_FOUND`(404)、`BLOCKED_FETCH_URL_INVALID`(400)、`BLOCKED_FETCH_URL_REJECTED`(400)、`BLOCKED_UPLOAD_REJECTED`(400 校验失败)、`INTERNAL_ERROR`(500 临时文件/网络失败)
+**错误码：** `INSTANCE_NOT_FOUND`(404)、`BLOCKED_ENTRY_NOT_FOUND`(404)、`BLOCKED_FETCH_URL_INVALID`(400 地址无法解析)、`BLOCKED_FETCH_URL_REJECTED`(400 非 `*.forgecdn.net`)、`BLOCKED_FETCH_NO_SHA1`(400 条目缺校验值，需手动导入)、`BLOCKED_FETCH_BUSY`(409 该文件已在下载中)、`BLOCKED_FETCH_ORIGIN_REJECTED`(403 非本机来源)、`BLOCKED_UPLOAD_REJECTED`(400 落盘校验失败)、`UPSTREAM_ERROR`(502 CDN 非成功状态或下载流读取失败)、`INTERNAL_ERROR`(500 本地临时目录创建失败)
 
 #### GET `/api/modpack/blocked/{instanceId}/fetch/{fileId}/progress`
 

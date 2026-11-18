@@ -49,11 +49,26 @@ struct Session {
     tabs: Vec<Tab>,
     active: usize,
     total: usize,
+    /// 会话代次：异步任务（导航/关窗）执行前核对，避免上一批的收尾动作作用到新窗口。
+    generation: u64,
 }
 
 fn session() -> &'static Mutex<Option<Session>> {
     static SESSION: OnceLock<Mutex<Option<Session>>> = OnceLock::new();
     SESSION.get_or_init(|| Mutex::new(None))
+}
+
+fn generation_counter() -> &'static std::sync::atomic::AtomicU64 {
+    static GENERATION: OnceLock<std::sync::atomic::AtomicU64> = OnceLock::new();
+    GENERATION.get_or_init(|| std::sync::atomic::AtomicU64::new(0))
+}
+
+fn next_generation() -> u64 {
+    generation_counter().fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+}
+
+fn current_generation() -> u64 {
+    generation_counter().load(std::sync::atomic::Ordering::SeqCst)
 }
 
 /// 一键下载开关：用户点工具栏按钮后才自动点文件页的 Download。
@@ -293,28 +308,34 @@ fn window_title() -> String {
 
 /// 同一个文件地址在短时间内可能被页面重复请求（CF 的 307 链路/重试）：
 /// 重复事件只取消下载，不再弹标签，否则会误伤队列里的下一条。
+///
+/// 去重只在一批（会话代次）内有效：上一批的记录不能挡住新一批对同一 URL 的请求。
 fn is_duplicate_capture(url: &str) -> bool {
-    static LAST: OnceLock<Mutex<Option<(String, std::time::Instant)>>> = OnceLock::new();
+    static LAST: OnceLock<Mutex<Option<(u64, String, std::time::Instant)>>> = OnceLock::new();
     let mut guard = match LAST.get_or_init(|| Mutex::new(None)).lock() {
         Ok(g) => g,
         Err(_) => return false,
     };
+    let generation = current_generation();
     let now = std::time::Instant::now();
-    if let Some((last, at)) = guard.as_ref() {
-        if last == url && now.duration_since(*at) < std::time::Duration::from_secs(3) {
+    if let Some((last_gen, last, at)) = guard.as_ref() {
+        if *last_gen == generation
+            && last == url
+            && now.duration_since(*at) < std::time::Duration::from_secs(3)
+        {
             return true;
         }
     }
-    *guard = Some((url.to_string(), now));
+    *guard = Some((generation, url.to_string(), now));
     false
 }
 
-/// 取出当前标签并切到下一个；返回 (instanceId, fileId, 下一个地址)。
+/// 取出当前标签并切到下一个；返回 (instanceId, fileId, 下一个地址, 会话代次)。
 ///
 /// 没有剩余标签时清空会话并返回 `None` 的下一个地址（调用方关窗）。
-fn pop_active_tab() -> Option<(String, i64, Option<String>)> {
+fn pop_active_tab() -> Option<(String, i64, Option<String>, u64)> {
     let mut guard = session().lock().ok()?;
-    let (instance_id, file_id, next) = {
+    let (instance_id, file_id, next, generation) = {
         let s = guard.as_mut()?;
         if s.tabs.is_empty() {
             return None;
@@ -326,12 +347,13 @@ fn pop_active_tab() -> Option<(String, i64, Option<String>)> {
             s.active = s.tabs.len().saturating_sub(1);
         }
         let next = s.tabs.get(s.active).map(|t| t.url.clone());
-        (instance_id, tab.file_id, next)
+        let generation = s.generation;
+        (instance_id, tab.file_id, next, generation)
     };
     if next.is_none() {
         *guard = None;
     }
-    Some((instance_id, file_id, next))
+    Some((instance_id, file_id, next, generation))
 }
 
 fn active_url() -> Option<String> {
@@ -346,14 +368,16 @@ const AUTO_CLICK_SCRIPT: &str = r#"
 (function () {
   var HOST = '__QM_HOST__';
   var ID = '__QM_FILE__';
+  function matchDownload(href) {
+    // 完整路径段比较：/download/42 不能命中 ID=420 的链接。
+    var m = /\/download\/(\d+)(?:[\/?#]|$)/.exec(href || '');
+    return !!m && m[1] === ID;
+  }
   try {
-    var el = document.querySelector('a[href*="/download/' + ID + '"]');
-    if (!el) {
-      var nodes = document.querySelectorAll('a[href]');
-      for (var i = 0; i < nodes.length; i++) {
-        var href = nodes[i].getAttribute('href') || '';
-        if (href.indexOf('/download/' + ID) !== -1) { el = nodes[i]; break; }
-      }
+    var el = null;
+    var nodes = document.querySelectorAll('a[href]');
+    for (var i = 0; i < nodes.length; i++) {
+      if (matchDownload(nodes[i].getAttribute('href'))) { el = nodes[i]; break; }
     }
     if (el) {
       el.click();
@@ -393,13 +417,19 @@ fn schedule_auto_click(app: AppHandle, delay_ms: u64) {
         if !is_file_page(&url) {
             return;
         }
-        // 优先用队列里的 fileId；会话已空时退回 URL 最后一段（/files/{id}）。
-        let file_id = with_session(|s| s.tabs.get(s.active).map(|t| t.file_id))
-            .flatten()
-            .or_else(|| url.path().rsplit('/').next()?.parse::<i64>().ok());
-        let Some(file_id) = file_id else {
+        // 只点队列里当前标签对应的页面：页面被手动导航到别的文件时不自动点。
+        let Some(file_id) = with_session(|s| s.tabs.get(s.active).map(|t| t.file_id)).flatten()
+        else {
             return;
         };
+        let url_file_id = url
+            .path()
+            .rsplit('/')
+            .next()
+            .and_then(|s| s.parse::<i64>().ok());
+        if url_file_id != Some(file_id) {
+            return;
+        }
         let script = AUTO_CLICK_SCRIPT
             .replace("__QM_HOST__", ACTION_HOST)
             .replace("__QM_FILE__", &file_id.to_string());
@@ -423,7 +453,7 @@ fn schedule_toolbar(app: AppHandle) {
     });
 }
 
-/// 工具栏动作。由 `on_navigation` 拦截伪地址后调用。
+/// 工具栏动作。由 `on_new_window` 拦截伪地址（window.open）后调用。
 fn handle_action(app: &AppHandle, url: &Url) {
     if url.host_str() != Some(ACTION_HOST) {
         return;
@@ -518,6 +548,7 @@ pub async fn open_blocked_download_window(
 
     let first = tabs[0].url.clone();
     let total = tabs.len();
+    let generation = next_generation();
     {
         let mut guard = session().lock().map_err(|_| "下载会话不可用")?;
         *guard = Some(Session {
@@ -525,6 +556,7 @@ pub async fn open_blocked_download_window(
             tabs,
             active: 0,
             total,
+            generation,
         });
     }
 
@@ -617,7 +649,7 @@ pub async fn open_blocked_download_window(
                     tauri_log!("cf-download", "duplicate capture ignored: {url}");
                     return false;
                 }
-                let Some((instance_id, file_id, next)) = pop_active_tab() else {
+                let Some((instance_id, file_id, next, generation)) = pop_active_tab() else {
                     return false;
                 };
                 let _ = done_app.emit_to(
@@ -629,9 +661,13 @@ pub async fn open_blocked_download_window(
                         url: url.to_string(),
                     },
                 );
-                // 地址已交给后端；切到下一个标签，没有剩余标签时关窗。
+                // 地址已交给后端；切到下一个标签，没有剩余标签时关窗。异步任务开跑前
+                // 核对会话代次：这一批已经被新一批替换时不再动窗口。
                 let app = done_app.clone();
                 tauri::async_runtime::spawn(async move {
+                    if current_generation() != generation {
+                        return;
+                    }
                     let Some(win) = app.get_webview_window(WINDOW_LABEL) else {
                         return;
                     };
@@ -664,6 +700,22 @@ pub async fn open_blocked_download_window(
 
     let _ = win.set_title(&window_title());
     schedule_toolbar(app.clone());
+    Ok(())
+}
+
+/// 关闭应用内下载窗口并作废当前队列（补全对话框关闭时调用）。
+///
+/// 窗口与对话框共享生命周期：对话框关掉后没人接收 `blocked-download-requested`，
+/// 继续下载只会丢事件。关闭对话框即放弃这一批标签，下次重新「全部打开」。
+#[tauri::command]
+pub async fn close_blocked_download_window(app: AppHandle) -> Result<(), String> {
+    *session().lock().map_err(|_| "下载会话不可用")? = None;
+    set_auto(false);
+    // 作废在飞的收尾任务（导航/关窗），避免它们作用到下一批。
+    next_generation();
+    if let Some(win) = app.get_webview_window(WINDOW_LABEL) {
+        let _ = win.close();
+    }
     Ok(())
 }
 

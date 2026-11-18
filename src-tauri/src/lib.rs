@@ -355,6 +355,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             curseforge_dl::open_blocked_download_window,
+            curseforge_dl::close_blocked_download_window,
             dialog_cmd::pick_dialog,
             dialog_cmd::read_widget_file,
             dialog_cmd::write_widget_file,

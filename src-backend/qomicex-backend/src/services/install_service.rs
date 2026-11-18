@@ -1896,7 +1896,9 @@ fn staged_file_matches_target(path: &std::path::Path, target: &DownloadTarget) -
 /// 再整批重下几百个模组没有意义。校验口径与暂存区恢复完全一致——宁可不跳过，
 /// 也不把同尺寸的坏文件当成完成。
 pub(crate) fn target_file_complete(target: &DownloadTarget) -> bool {
-    staged_file_matches_target(&target.dest, target)
+    // 缺 SHA-1 时只比大小会把同尺寸的坏文件当成完成，必须重下。
+    target.sha1.as_deref().is_some_and(|s| !s.is_empty())
+        && staged_file_matches_target(&target.dest, target)
 }
 
 pub(crate) async fn download_batch(
