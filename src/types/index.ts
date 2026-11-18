@@ -16,8 +16,6 @@ export interface SystemInfo {
   dataDir?: string
   /** 官方启动器（Mojang）的默认游戏目录（跨平台解析）。 */
   officialGameDir?: string
-  /** 启动器自己的默认游戏目录（数据目录下 .minecraft）。 */
-  launcherGameDir?: string
 }
 
 export interface JavaRuntime {

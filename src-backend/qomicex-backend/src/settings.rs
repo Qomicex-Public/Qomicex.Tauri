@@ -68,15 +68,43 @@ pub fn resolve_base_dir() -> PathBuf {
     default_dir()
 }
 
-/// 新装/重置时的默认游戏目录：放在启动器数据目录下（`{BaseDir}/.minecraft`）。
+/// 官方启动器（Mojang）的默认游戏目录。
 ///
-/// 不放在用户主目录：默认值会在目录管理里作为固定项展示，数据目录旁边更容易
-/// 找到；已有用户保存过 `gameDir`，不受这次默认值变更影响。
+/// Windows `%APPDATA%\.minecraft`、macOS `~/Library/Application Support/minecraft`、
+/// Linux `~/.minecraft`。启动器的默认 `gameDir` 直接用这个目录：与官方启动器共用
+/// 一份游戏文件，也避免在 macOS 上另造一套路径规则。
+pub(crate) fn official_game_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        dirs::data_dir()
+            .map(|d| d.join(".minecraft"))
+            .or_else(|| dirs::home_dir().map(|h| h.join(".minecraft")))
+            .unwrap_or_else(|| PathBuf::from(".minecraft"))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        dirs::data_dir()
+            .map(|d| d.join("minecraft"))
+            .or_else(|| {
+                dirs::home_dir().map(|h| {
+                    h.join("Library")
+                        .join("Application Support")
+                        .join("minecraft")
+                })
+            })
+            .unwrap_or_else(|| PathBuf::from("minecraft"))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        dirs::home_dir()
+            .map(|h| h.join(".minecraft"))
+            .unwrap_or_else(|| PathBuf::from(".minecraft"))
+    }
+}
+
+/// 新装/重置时的默认游戏目录：官方启动器目录。
 pub(crate) fn default_game_dir() -> String {
-    resolve_base_dir()
-        .join(".minecraft")
-        .to_string_lossy()
-        .into_owned()
+    official_game_dir().to_string_lossy().into_owned()
 }
 
 #[cfg(test)]
@@ -84,10 +112,10 @@ mod default_dir_tests {
     use super::*;
 
     #[test]
-    fn default_game_dir_is_under_base_dir() {
+    fn default_game_dir_is_official() {
         assert_eq!(
             std::path::PathBuf::from(default_game_dir()),
-            resolve_base_dir().join(".minecraft")
+            official_game_dir()
         );
     }
 }

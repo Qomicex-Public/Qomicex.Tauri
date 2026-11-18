@@ -224,42 +224,10 @@ async fn sysinfo(State(state): State<SharedState>) -> ApiResult<Json<SystemInfoR
         available_memory: avail as i64,
         app_version: state.app_version.clone(),
         data_dir: state.data_dir.to_string_lossy().into_owned(),
-        official_game_dir: official_game_dir().to_string_lossy().into_owned(),
-        launcher_game_dir: crate::settings::default_game_dir(),
+        official_game_dir: crate::settings::official_game_dir()
+            .to_string_lossy()
+            .into_owned(),
     }))
-}
-
-/// 官方启动器（Mojang）的默认游戏目录。
-///
-/// 与启动器自己的默认目录（`{BaseDir}/.minecraft`）不是同一个位置：官方启动器
-/// Windows 用 Roaming、macOS 用 `minecraft`（无点）、Linux 仍是 `~/.minecraft`。
-fn official_game_dir() -> std::path::PathBuf {
-    #[cfg(windows)]
-    {
-        dirs::data_dir()
-            .map(|d| d.join(".minecraft"))
-            .or_else(|| dirs::home_dir().map(|h| h.join(".minecraft")))
-            .unwrap_or_else(|| std::path::PathBuf::from(".minecraft"))
-    }
-    #[cfg(target_os = "macos")]
-    {
-        dirs::data_dir()
-            .map(|d| d.join("minecraft"))
-            .or_else(|| {
-                dirs::home_dir().map(|h| {
-                    h.join("Library")
-                        .join("Application Support")
-                        .join("minecraft")
-                })
-            })
-            .unwrap_or_else(|| std::path::PathBuf::from("minecraft"))
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        dirs::home_dir()
-            .map(|h| h.join(".minecraft"))
-            .unwrap_or_else(|| std::path::PathBuf::from(".minecraft"))
-    }
 }
 
 async fn region() -> ApiResult<Json<RegionResponse>> {

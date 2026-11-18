@@ -54,8 +54,8 @@ import { useRunning } from '../contexts/RunningContext.tsx'
 interface ManagedDir {
   path: string
   name: string
-  /** 不可删除的固定目录；路径跟随设置解析，名称取 i18n。 */
-  fixed?: 'official' | 'launcher'
+  /** 不可删除的固定目录；路径跟随系统解析，名称取 i18n。 */
+  fixed?: 'official'
 }
 
 /** 路径比较键：统一分隔符、去尾斜杠；Windows 盘符路径不区分大小写。 */
@@ -70,35 +70,35 @@ function dirKey(d: ManagedDir): string {
 }
 
 /**
- * 把两个固定目录并入已保存列表：路径跟随设置更新、与普通目录去重、
- * 首次出现在最前面（官方在前，启动器默认第二）。
+ * 把固定的官方启动器目录并入已保存列表：路径跟随系统更新、与普通目录去重、
+ * 缺失时插到最前面。旧版本留下的 `fixed: 'launcher'` 条目一并清掉。
  */
-function mergeFixedDirs(dirs: ManagedDir[], officialPath: string, launcherPath: string): ManagedDir[] {
-  const specs: Array<{ kind: NonNullable<ManagedDir['fixed']>; path: string }> = []
-  if (officialPath) specs.push({ kind: 'official', path: officialPath })
-  if (launcherPath) specs.push({ kind: 'launcher', path: launcherPath })
-  if (specs.length === 0) return dirs
-
-  const fixedKeys = new Set(specs.map((s) => pathKey(s.path)))
+function mergeFixedDirs(dirs: ManagedDir[], officialPath: string): ManagedDir[] {
   let changed = false
-  const next = dirs.filter((d) => {
-    if (d.fixed || !fixedKeys.has(pathKey(d.path))) return true
-    changed = true
-    return false
+  let next = dirs.filter((d) => {
+    if ((d.fixed as string | undefined) === 'launcher') {
+      changed = true
+      return false
+    }
+    return true
   })
-  for (const spec of specs) {
-    const idx = next.findIndex((d) => d.fixed === spec.kind)
+  if (officialPath) {
+    const officialKey = pathKey(officialPath)
+    next = next.filter((d) => {
+      if (d.fixed || pathKey(d.path) !== officialKey) return true
+      changed = true
+      return false
+    })
+    const idx = next.findIndex((d) => d.fixed === 'official')
     if (idx >= 0) {
-      if (next[idx].path !== spec.path) {
-        next[idx] = { ...next[idx], path: spec.path }
+      if (next[idx].path !== officialPath) {
+        next[idx] = { ...next[idx], path: officialPath }
         changed = true
       }
-      continue
+    } else {
+      next.unshift({ path: officialPath, name: '', fixed: 'official' })
+      changed = true
     }
-    const officialIdx = next.findIndex((d) => d.fixed === 'official')
-    const insertAt = spec.kind === 'official' ? 0 : officialIdx >= 0 ? officialIdx + 1 : 0
-    next.splice(insertAt, 0, { path: spec.path, name: '', fixed: spec.kind })
-    changed = true
   }
   return changed ? next : dirs
 }
@@ -253,8 +253,8 @@ export default function Instances() {
   const [currentDir, setCurrentDir] = useState(() => loadSettings().gameDir || '')
   const [dirPopover, setDirPopover] = useState(false)
 
-  // 固定目录：官方启动器目录 + 启动器默认目录，路径都由后端按平台解析。
-  // 挂载与页内刷新时重新拉取；失败保留现有列表，下次刷新再试。
+  // 固定目录：官方启动器目录（后端按平台解析）。挂载与页内刷新时重新拉取；
+  // 失败保留现有列表，下次刷新再试。
   const managedDirsRef = useRef(managedDirs)
   managedDirsRef.current = managedDirs
   useEffect(() => {
@@ -263,9 +263,8 @@ export default function Instances() {
       .then((info) => {
         if (cancelled) return
         const official = (info.officialGameDir || '').replace(/[\\/]+$/, '')
-        const launcher = (info.launcherGameDir || '').replace(/[\\/]+$/, '')
         const prev = managedDirsRef.current
-        const next = mergeFixedDirs(prev, official, launcher)
+        const next = mergeFixedDirs(prev, official)
         if (next !== prev) {
           setManagedDirs(next)
           saveDirs(next)
@@ -278,7 +277,6 @@ export default function Instances() {
   /** 固定目录的名称取 i18n，普通目录用保存的名称。 */
   const dirLabel = useCallback((d: ManagedDir) => {
     if (d.fixed === 'official') return t('instances.officialDir')
-    if (d.fixed === 'launcher') return t('instances.launcherDefaultDir')
     return d.name || dirName(d.path)
   }, [t])
 
