@@ -89,35 +89,36 @@ try {
   const ffapi = mod('fabric-api.jar', 'fabric_api', [], ['fabric_lifecycle_events_v1'])
   const connector = mod('connector.jar', 'connector')
 
-  // ① Connector + FFAPI：三种 Fabric 侧写法都应视为已满足。
   check('Connector + FFAPI 不误报', missingOf([connector, ffapi, fabricMod]), {})
-
-  // ② 旧版 Connector（1.20.x）mod id 是 connectormod。
   check('connectormod 同样生效', missingOf([mod('connector.jar', 'connectormod'), ffapi, fabricMod]), {})
 
-  // ③ 没有 Connector：维持原判定，Fabric API 相关依赖仍报缺失（不能回归成静默放行）。
   check('无 Connector 仍报缺失', missingOf([ffapi, fabricMod]), {
     'coolmod.jar': ['fabric-api', 'fabric', 'fabric-lifecycle-events-v1'],
   })
 
-  // ④ Connector 被禁用 = 不会加载，不能借此放行。
   check('禁用 Connector 不放行', missingOf([mod('connector.jar', 'connector', [], [], false), ffapi, fabricMod]), {
     'coolmod.jar': ['fabric-api', 'fabric', 'fabric-lifecycle-events-v1'],
   })
 
-  // ⑤ 真实缺失的第三方前置仍要报。
   const needsCreate = mod('addon.jar', 'addon', [dep('fabric-api'), dep('create')])
   check('真实缺失仍报', missingOf([connector, ffapi, needsCreate]), {
     'addon.jar': ['create'],
   })
 
-  // ⑥ FFAPI 没提供的 Fabric 子模块仍要报。
   const needsUnknownModule = mod('unknown.jar', 'unknown', [dep('fabric-unknown-api-v9')])
   check('未提供的子模块仍报', missingOf([connector, ffapi, needsUnknownModule]), {
     'unknown.jar': ['fabric-unknown-api-v9'],
   })
 
-  // ⑦ 非 fabric 前缀的连字符 id 不做归一（避免把别的模组当成已提供）。
+  // 归一后的 id 必须由 FFAPI 自己提供；别的模组恰好声明了同名下划线 id 不能算。
+  const unrelatedProvider = mod('unrelated.jar', 'unrelated_mod', [], ['fabric_other_api_v1'])
+  const needsOtherFabric = mod('needs-other.jar', 'needs_other', [dep('fabric-other-api-v1')])
+  check(
+    '非 FFAPI 提供的下划线 id 不放行',
+    missingOf([connector, ffapi, unrelatedProvider, needsOtherFabric]),
+    { 'needs-other.jar': ['fabric-other-api-v1'] },
+  )
+
   const needsOther = mod('other.jar', 'other', [dep('my-mod')])
   check('非 fabric 前缀不归一', missingOf([connector, mod('mymod.jar', 'my_mod'), needsOther]), {
     'other.jar': ['my-mod'],

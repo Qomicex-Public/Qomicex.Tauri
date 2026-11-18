@@ -34,7 +34,8 @@ import type { ModDependency, ModMetadata } from '../types/index.ts'
  *   （`fabric-transfer-api-v1` → `fabric_transfer_api_v1`），官方文档：
  *   https://github.com/Sinytra/Connector/blob/9287e9f/docs/developers.mdx
  * - 因此**仅在实例里存在启用中的 Connector 时**，把 `fabric` / `fabric-*` 依赖按
- *   FFAPI 的命名归一后再匹配；普通 Fabric 实例不受影响，避免掩盖真实缺失。
+ *   FFAPI 的命名归一后再匹配，并且只接受 FFAPI 自己提供的 id（嵌套子模块）；
+ *   普通 Fabric 实例不受影响，避免掩盖真实缺失。
  */
 
 /**
@@ -87,7 +88,7 @@ const CONNECTOR_MOD_IDS: ReadonlySet<string> = new Set(['connector', 'connectorm
  * FFAPI 主 id 是 `fabric_api`（下划线），子模块把上游 id 的 `-` 换成 `_`
  * （`fabric-transfer-api-v1` → `fabric_transfer_api_v1`）；旧模组还可能依赖
  * `fabric`（1.19.2 之前的 Fabric API id）。只映射 `fabric` / `fabric-` 前缀，
- * 其他模组的连字符 id 不经手，避免把真实缺失误判成「已提供」。
+ * 且调用方只与 **FFAPI 自己提供的 id** 比较，避免把别的模组当成已提供。
  */
 function connectorAliases(depId: string): string[] {
   if (depId === 'fabric') return ['fabric_api', 'fabric-api']
@@ -95,7 +96,8 @@ function connectorAliases(depId: string): string[] {
   return []
 }
 
-/** 去掉 `.jar` / `.jar.disabled` / `.disabled` 后的文件名主干，转小写。 */function fileStemLower(fileName: string): string {
+/** 去掉 `.jar` / `.jar.disabled` / `.disabled` 后的文件名主干，转小写。 */
+function fileStemLower(fileName: string): string {
   return fileName
     .replace(/\.disabled$/i, '')
     .replace(/\.jar$/i, '')
@@ -169,13 +171,33 @@ export function computeMissingDependencies(
   // Connector 只有在启用时才提供 FFAPI 侧的 Fabric 环境（禁用 = 不会加载）。
   const connectorPresent = [...CONNECTOR_MOD_IDS].some((id) => providedIds.has(id))
 
+  /**
+   * FFAPI 实际提供的 id：只认 Connector 侧的 Fabric API 实现（主 id `fabric_api`，
+   * 兼容旧写法 `fabric-api`）及其嵌套子模块。归一后的别名必须落在这一集合里，
+   * 不能拿「任意模组提供的下划线 id」当已满足——否则一个无关的 `fabric-xxx`
+   * 依赖会被别的模组的 `fabric_xxx` 掩盖。
+   */
+  const ffapiIds = new Set<string>()
+  if (connectorPresent) {
+    for (const m of enabled) {
+      const id = m.modId?.trim().toLowerCase()
+      if (id !== 'fabric_api' && id !== 'fabric-api') continue
+      ffapiIds.add('fabric_api')
+      ffapiIds.add('fabric-api')
+      for (const p of m.providesIds ?? []) {
+        const pid = p?.trim().toLowerCase()
+        if (pid) ffapiIds.add(pid)
+      }
+    }
+  }
+
   const isSatisfied = (depId: string): boolean => {
     const id = depId.trim().toLowerCase()
     if (!id) return true // 空 id 视为无效声明，不报（后端已过滤，防御性保留）
     if (PLATFORM_PROVIDED_IDS.has(id)) return true
     if (providedIds.has(id)) return true
-    // Connector 实例：Fabric API 依赖按 FFAPI 的 `_` 命名再匹配一次。
-    if (connectorPresent && connectorAliases(id).some((alias) => providedIds.has(alias))) return true
+    // Connector 实例：Fabric API 依赖按 FFAPI 的 `_` 命名再匹配一次，且只认 FFAPI 自己提供的 id。
+    if (connectorPresent && connectorAliases(id).some((alias) => ffapiIds.has(alias))) return true
     return anonymousStems.some((stem) => fileNameMayProvide(stem, id))
   }
 

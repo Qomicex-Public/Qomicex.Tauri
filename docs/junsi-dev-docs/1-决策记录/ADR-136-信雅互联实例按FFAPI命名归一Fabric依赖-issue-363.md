@@ -24,7 +24,7 @@ issue #363：Forge/NeoForge 整合包用信雅互联（Sinytra Connector）加�
 ## 决策
 
 1. 在 `computeMissingDependencies` 里识别**启用中的** Connector（`connector` 或 `connectormod`）。禁用的 Connector 不参与加载，不能借此放行。
-2. 仅当 Connector 存在时，对 `fabric` / `fabric-` 前缀的依赖做一次 FFAPI 归一后再匹配：
+2. 仅当 Connector 存在时，对 `fabric` / `fabric-` 前缀的依赖做一次 FFAPI 归一后再匹配，且**只与 FFAPI 自己提供的 id 集合比较**（主 id `fabric_api`/`fabric-api` 及其嵌套子模块）：
    - `fabric`（1.19.2 之前的 Fabric API id）→ `fabric_api` / `fabric-api`；
    - `fabric-*` → 连字符换下划线（`fabric_lifecycle_events_v1` 等）。
 3. 归一范围刻意收窄到 `fabric` / `fabric-` 前缀：其他模组的连字符 id 不经手，避免把真实缺失误判成「已提供」。
