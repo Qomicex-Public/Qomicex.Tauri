@@ -4722,7 +4722,7 @@ pub(crate) async fn run_modpack_pipeline(
                         p.files.len()
                     );
                 }
-                // 复用既有实例重装/重试：已完整落盘的模组不必重下（ADR-133）。
+                // 复用既有实例重装/重试：已完整落盘的模组不必重下（ADR-134）。
                 files.retain(|t| !crate::services::install_service::target_file_complete(t));
                 if !files.is_empty() {
                     download_batch(&h_g, &mgr_g, files, Some("download-files")).await?;
@@ -4875,7 +4875,7 @@ pub(crate) async fn run_modpack_pipeline(
                         blocked.len()
                     );
                 }
-                // 复用既有实例重装/重试：已完整落盘的文件不必重下（ADR-133）。
+                // 复用既有实例重装/重试：已完整落盘的文件不必重下（ADR-134）。
                 files.retain(|t| !crate::services::install_service::target_file_complete(t));
                 if !files.is_empty() {
                     download_batch(&h_g, &mgr_g, files, Some("download-files")).await?;

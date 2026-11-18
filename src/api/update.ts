@@ -53,6 +53,52 @@ export async function fetchUpdatePlan(channel?: string): Promise<UpdatePlan> {
   return res ?? { hasUpdate: false }
 }
 
+// ---------------------------------------------------------------------------
+// 跨版本更新内容（issue #357）
+// ---------------------------------------------------------------------------
+
+/** 一条版本记录（后端 /api/update/changelog 的 entries 元素）。 */
+export interface ChangelogEntry {
+  /** 无 v 前缀的版本号 */
+  version: string
+  /** 该版本的更新日志（markdown 原文） */
+  notes: string
+  /** 发布时间（ISO8601，上游缺省时省略） */
+  publishedAt?: string
+}
+
+/** 后端 /api/update/changelog 响应 */
+export interface UpdateChangelog {
+  /** true = entries 真的跨了多个版本；false = 单条或空（调用方走单块渲染） */
+  spanning: boolean
+  entries: ChangelogEntry[]
+  /** 该通道历史总条数（诊断用） */
+  total: number
+  /** true = 还有更早的版本没取到（渲染「还有 N 个更早的版本」入口） */
+  truncated: boolean
+}
+
+/**
+ * 拉取跨版本更新内容。
+ *
+ * 后端在任何失败下都返回 `spanning=false` + 空 entries（不抛错），所以这里
+ * 不需要额外的错误兜底；调用方看到 `entries.length === 0` 就退回
+ * `plan.changelog` 的单块渲染。
+ *
+ * `target` 是本次要更新到的版本；后端用它裁掉「比目标还新」的版本。
+ */
+export async function fetchUpdateChangelog(params: {
+  current: string
+  target?: string
+  channel?: string
+}): Promise<UpdateChangelog> {
+  const search = new URLSearchParams({ current: params.current })
+  if (params.target) search.set('target', params.target)
+  if (params.channel) search.set('channel', params.channel)
+  const res = await get<UpdateChangelog | undefined>(`/update/changelog?${search.toString()}`)
+  return res ?? { spanning: false, entries: [], total: 0, truncated: false }
+}
+
 /** Tauri 壳 `run_updater` 写下的「更新完成交接文件」内容（读后即删）。 */
 export interface UpdateNotice {
   /** 更新目标版本（与当前运行版本一致才应展示，见 App.tsx 版本守卫） */

@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! 分发受限模组的应用内下载窗口（ADR-132）。
+//! 分发受限模组的应用内下载窗口（ADR-133）。
 //!
 //! 作者关闭第三方分发后没有可用的 API 下载地址，只能在 CurseForge 文件页上
 //! 由用户自己点 Download。这个窗口把多张文件页做成标签队列：一次打开全部待补

@@ -257,7 +257,7 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
    * 项目页只到「项目」粒度，用户得自己在 Files 里翻版本，这正是 issue #301
    * 里下错版本的来源；精确文件页由后端拼好，缺失说明上游解析失败。
    *
-   * 精确文件页在 Tauri 里改用应用内小窗（ADR-132）：用户在页面上点 Download，
+   * 精确文件页在 Tauri 里改用应用内小窗（ADR-133）：用户在页面上点 Download，
    * 启动器接管下载并自动校验补全；命令不可用时退回系统浏览器，手动流程不变。
    */
   const openItemPage = useCallback(

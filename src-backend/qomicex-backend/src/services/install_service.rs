@@ -1892,7 +1892,7 @@ fn staged_file_matches_target(path: &std::path::Path, target: &DownloadTarget) -
 
 /// 目标文件已落盘且与清单的 size/sha1 一致，可跳过重复下载。
 ///
-/// 用于同包重装/重试复用既有实例（ADR-133）：待补全安装的产物已在目标目录里，
+/// 用于同包重装/重试复用既有实例（ADR-134）：待补全安装的产物已在目标目录里，
 /// 再整批重下几百个模组没有意义。校验口径与暂存区恢复完全一致——宁可不跳过，
 /// 也不把同尺寸的坏文件当成完成。
 pub(crate) fn target_file_complete(target: &DownloadTarget) -> bool {

@@ -169,6 +169,8 @@ jobs:
       # updateChannel 的回归（版本前缀大小写须与后端 strip_v 一致，见 ADR-085 v1.2）。
       # 零依赖脚本：用仓库自带 tsc 编译真实源码后断言，不是测试框架。
       - run: pnpm run test:update-channel
+      # 跨版本更新内容（issue #357）的 notes 解析与折叠切分回归。
+      - run: pnpm run test:update-history
       # 深链解析的安全边界回归（路径穿越绕白名单 / 非法编码抛错 / 同名实例被静默乱挑）。
       # 同样是用仓库自带 tsc 编译真实源码后断言，不依赖 Node 的类型剥离。
       - run: pnpm run test:deep-link

@@ -1089,7 +1089,7 @@ Yggdrasil.MinecraftToken.Create Yggdrasil.Server.Join`。
 
 **响应：** `{ "message": "安装已启动", "versionId": "..." }`
 
-**同包重装/重试（ADR-133）：** 建实例前按「同 `name` + 同 `gameDir`」查找现有记录；来源与项目/版本一致，或记录无来源字段但 `modpackName` 一致时**复用**该记录并在原目录继续安装（失败安装保留的半装文件由暂存与校验跳过），不再返回 `实例目录已被占用`。目标仍有进行中任务时直接返回现有 instanceId，不重复起管线。用户自建的同名实例（无 `modpackName`）仍按占用报错。
+**同包重装/重试（ADR-134）：** 建实例前按「同 `name` + 同 `gameDir`」查找现有记录；来源与项目/版本一致，或记录无来源字段但 `modpackName` 一致时**复用**该记录并在原目录继续安装（失败安装保留的半装文件由暂存与校验跳过），不再返回 `实例目录已被占用`。目标仍有进行中任务时直接返回现有 instanceId，不重复起管线。用户自建的同名实例（无 `modpackName`）仍按占用报错。
 
 ### POST `/api/modpack/install-direct`
 
@@ -3056,7 +3056,7 @@ CurseForge 的作者可以关闭 Project Distribution Toggle。开关关闭后�
 
 #### POST `/api/modpack/blocked/{instanceId}/scan-downloads`
 
-从系统下载文件夹补全（ADR-132）。用户更习惯在浏览器里直接下载，回来后还要自己找文件、逐条选择；本端点扫描 `dirs::download_dir()` 下的 `.jar` / `.litemod`，按 `sha1` 匹配清单条目，仅对无哈希的旧条目退回文件名匹配，命中的复制进 `mods/` 并从清单移除。
+从系统下载文件夹补全（ADR-133）。用户更习惯在浏览器里直接下载，回来后还要自己找文件、逐条选择；本端点扫描 `dirs::download_dir()` 下的 `.jar` / `.litemod`，按 `sha1` 匹配清单条目，仅对无哈希的旧条目退回文件名匹配，命中的复制进 `mods/` 并从清单移除。
 
 **请求体：** 无。
 
@@ -3074,7 +3074,7 @@ CurseForge 的作者可以关闭 Project Distribution Toggle。开关关闭后�
 
 #### POST `/api/modpack/blocked/{instanceId}/fetch`
 
-由启动器下载受限文件（ADR-132）。CF 的下载确认页倒计时结束后用 `mode:"cors", credentials:"omit"` 的 fetch 取 CDN 文件；在 WebView2 里这条链路只触发 `on_download` 的 `Requested`，既不落盘也不回调完成。小窗捕获到地址后取消浏览器下载并调用本端点。
+由启动器下载受限文件（ADR-133）。CF 的下载确认页倒计时结束后用 `mode:"cors", credentials:"omit"` 的 fetch 取 CDN 文件；在 WebView2 里这条链路只触发 `on_download` 的 `Requested`，既不落盘也不回调完成。小窗捕获到地址后取消浏览器下载并调用本端点。
 
 **请求体：**
 

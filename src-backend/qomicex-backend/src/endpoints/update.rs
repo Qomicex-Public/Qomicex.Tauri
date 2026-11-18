@@ -36,6 +36,13 @@ use crate::state::SharedState;
 const UPSTREAM_BASE: &str = "https://api.qomicex.top";
 const VERSION_CHECK_PATH: &str = "/api/client/version/check";
 const UPDATE_PLAN_PATH: &str = "/api/client/update/plan";
+const RELEASE_NOTES_PATH: &str = "/api/client/release-notes";
+
+/// 启动器一次展示的版本数量上限：超出部分由前端折叠成「还有 N 个更早的版本」。
+const CHANGELOG_MAX_ENTRIES: usize = 10;
+/// 向上游要的历史窗口。单版本 notes 动辄数 KB，50 条足够覆盖常见升级跨度。
+const CHANGELOG_UPSTREAM_LIMIT: usize = 50;
+const CHANGELOG_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 
 /// Proxy prefixes raced to find the fastest mirror for the download URL.
 const PROXY_PREFIXES: &[&str] = &[
@@ -55,6 +62,7 @@ pub fn router() -> Router<SharedState> {
         .route("/update/check", get(check))
         .route("/update/manifest", get(manifest))
         .route("/update/plan", get(plan))
+        .route("/update/changelog", get(changelog))
 }
 
 /// GET /api/update/plan?channel=... — launcher self-update plan for the new
@@ -383,6 +391,320 @@ fn manifest_channel(headers: &HeaderMap) -> &str {
         .get("x-updater-channel")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("stable")
+}
+
+// ---------------------------------------------------------------------------
+// 跨版本更新内容（issue #357）
+// ---------------------------------------------------------------------------
+
+/// 上游 `/api/client/release-notes` 的单条记录。
+///
+/// 只声明用得上的字段：上游还给了 `type` / `title`，但跨版本展示只需要版本号、
+/// 正文与时间；多余字段会让 `dead_code` 告警挂在 CI 上。
+///
+/// `notes` 必须是 `Option<String>`：`release_history.notes` 是可空列，SQL NULL
+/// 在上游 JSON 里是 `null`，而 `#[serde(default)]` 只兜「字段缺失」不兜 `null`
+/// —— 一个 null 就会让整个响应反序列化失败，全部历史被静默降级成空。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpstreamReleaseNote {
+    version: String,
+    #[serde(default)]
+    notes: Option<String>,
+    #[serde(default)]
+    published_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpstreamReleaseNotesResponse {
+    #[serde(default)]
+    entries: Vec<UpstreamReleaseNote>,
+}
+
+/// 返回给前端的一条版本记录。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangelogEntry {
+    pub version: String,
+    pub notes: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<String>,
+}
+
+/// `GET /api/update/changelog` 的响应。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangelogResponse {
+    /// true = entries 真的跨了多个版本；false = 单条（或空），前端按原样渲染。
+    pub spanning: bool,
+    pub entries: Vec<ChangelogEntry>,
+    /// 过滤前的候选总数（诊断用）。
+    pub total: usize,
+    /// true = 还有更早的版本没展示：本次区间被展示上限截断，或上游历史窗口
+    /// 被拉满（历史表里还有更早的）。前端据此渲染「更早版本见发布页」提示。
+    pub truncated: bool,
+}
+
+impl ChangelogResponse {
+    fn empty() -> Self {
+        Self {
+            spanning: false,
+            entries: Vec::new(),
+            total: 0,
+            truncated: false,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChangelogQuery {
+    /// 已安装版本；缺省取本进程版本（与 `/update/plan` 同口径）。
+    current: Option<String>,
+    /// 目标版本；缺省时只保留「比 current 新」的条目（上界未知）。
+    target: Option<String>,
+    /// 显式通道；缺省回落到 current 所属列车。
+    channel: Option<String>,
+}
+
+/// 区间过滤的纯函数部分：只保留同列车内 `current < v <= target` 的版本。
+///
+/// 跨列车（用户切换通道）时**只保留目标版本自身**：两条列车的序数不可比，
+/// 无法用 `current` 划下界；此时用户关心的是「我要装的那个版本改了什么」，
+/// 而不是目标所属列车的整段历史（那会列出 beta30/beta29 之类的噪音）。
+fn filter_changelog_span(
+    entries: Vec<UpstreamReleaseNote>,
+    current: &str,
+    target: Option<&str>,
+) -> Vec<UpstreamReleaseNote> {
+    // 直接用函数指针而非 `|v| train_of(v)`：后者会触发 clippy 的
+    // redundant_closure（本文件此前零告警，不新开）。
+    let train = update_channel::train_of;
+    let Some(target) = target.filter(|t| !t.is_empty()) else {
+        // 没有目标版本：上界未知，但仍要剥掉不比当前新的条目——否则会把用户
+        // 早就用过的版本当成"本次更新内容"列出来。
+        //
+        // dev / unknown 构建没有可比序数（`is_train_upgrade` 恒 false），
+        // 此时保留上游原序，避免整段被清空。
+        if matches!(
+            train(current),
+            update_channel::Train::Dev | update_channel::Train::Unknown
+        ) {
+            return entries;
+        }
+        return entries
+            .into_iter()
+            .filter(|e| update_channel::is_train_upgrade(current, &e.version))
+            .collect();
+    };
+    if train(current) != train(target) {
+        // 跨列车（含 dev/unknown）：上游已按目标列车过滤，这里只留目标那一版。
+        // 去 `v` 前缀后精确比对——不做前缀/模糊匹配。
+        let wanted = target.trim_start_matches('v');
+        return entries
+            .into_iter()
+            .filter(|e| e.version.trim_start_matches('v') == wanted)
+            .collect();
+    }
+    entries
+        .into_iter()
+        .filter(|e| {
+            // 同列车内：必须比当前新，且不比目标更新。
+            update_channel::is_train_upgrade(current, &e.version)
+                && !update_channel::is_train_upgrade(target, &e.version)
+        })
+        .collect()
+}
+
+/// 30 分钟窗口缓存：上游历史是发布产物，不会分钟级变化。
+///
+/// 缓存的是**上游原始列表**而不是已过滤结果：区间（`current..target`）随每次
+/// 请求变化，缓存过滤后的结果会让不同跨度的用户互相污染。
+struct ChangelogCache {
+    channel: String,
+    entries: Vec<UpstreamReleaseNote>,
+    truncated: bool,
+    cached_at: Instant,
+}
+
+impl ChangelogCache {
+    fn get(&self, channel: &str) -> Option<Self> {
+        if self.channel != channel || self.cached_at.elapsed() > CHANGELOG_CACHE_TTL {
+            return None;
+        }
+        Some(Self {
+            channel: self.channel.clone(),
+            entries: self.entries.clone(),
+            truncated: self.truncated,
+            cached_at: self.cached_at,
+        })
+    }
+}
+
+fn changelog_cache() -> &'static Mutex<Option<ChangelogCache>> {
+    static CACHE: OnceLock<Mutex<Option<ChangelogCache>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+/// GET /api/update/changelog?current=...&target=...&channel=...
+///
+/// 跨版本更新内容：从上游取该通道最近的发布历史，按 `current < v <= target`
+/// 过滤后返回。**任何失败都返回空的 `spanning=false`**，让前端静默回落到
+/// `/update/plan` 自带的单条 changelog——这条降级保证是刻意的：上游端点尚未
+/// 部署、或临时故障时，界面行为与接入前完全一致，不会出现空面板。
+async fn changelog(
+    State(state): State<SharedState>,
+    Query(q): Query<ChangelogQuery>,
+) -> ApiResult<Json<ChangelogResponse>> {
+    let current = q
+        .current
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(state.app_version.as_str())
+        .to_string();
+
+    // 通道：显式 > 已安装构建所属列车。都没有（dev 构建）→ 无历史可谈。
+    let Some(channel) = update_channel::effective_channel(q.channel.as_deref(), &current) else {
+        tracing::info!("update changelog: no channel for current={current} — empty");
+        return Ok(Json(ChangelogResponse::empty()));
+    };
+
+    // Fast path: 缓存命中（过滤在下面按本次请求重算）。
+    let cached = {
+        let guard = changelog_cache().lock().unwrap_or_else(|p| p.into_inner());
+        guard.as_ref().and_then(|c| c.get(&channel))
+    };
+
+    let (entries, truncated) = match cached {
+        Some(c) => (c.entries, c.truncated),
+        None => match fetch_release_notes(&channel).await {
+            Ok(entries) => {
+                // 拉满上游窗口 ≠ 一定还有更早的：恰好 50 条时上游没有更多了。
+                // 用 `>=` 只是保守近似，真正的「有没有第 51 条」上游不告诉我们，
+                // 所以这里按 `<` 判定，宁可少数一次提示也不误导用户去翻发布页。
+                let truncated = entries.len() > CHANGELOG_UPSTREAM_LIMIT;
+                {
+                    let mut guard = changelog_cache().lock().unwrap_or_else(|p| p.into_inner());
+                    // 不让「空结果」覆盖已有缓存：上游 5xx/表未建时返回空，
+                    // 若此时把缓存清成空，30 分钟内所有人都看不到历史，
+                    // 而真正的原因（上游临时故障）已经恢复。保留旧缓存更接近事实。
+                    let keep_old = entries.is_empty()
+                        && guard
+                            .as_ref()
+                            .is_some_and(|c| c.channel == channel && !c.entries.is_empty());
+                    if !keep_old {
+                        *guard = Some(ChangelogCache {
+                            channel: channel.clone(),
+                            entries: entries.clone(),
+                            truncated,
+                            cached_at: Instant::now(),
+                        });
+                    }
+                }
+                (entries, truncated)
+            }
+            Err(e) => {
+                tracing::warn!("update changelog: upstream unavailable ({e}) — empty fallback");
+                return Ok(Json(ChangelogResponse::empty()));
+            }
+        },
+    };
+
+    Ok(Json(apply_span_filter(
+        entries,
+        truncated,
+        &current,
+        q.target.as_deref(),
+    )))
+}
+
+/// 把完整列表收敛成本次请求该展示的区间：过滤 → 截断 → 算 spanning。
+fn apply_span_filter(
+    entries: Vec<UpstreamReleaseNote>,
+    truncated: bool,
+    current: &str,
+    target: Option<&str>,
+) -> ChangelogResponse {
+    let total = entries.len();
+    let filtered = filter_changelog_span(entries, current, target);
+    let matched = filtered.len();
+    // spanning = 真的跨了版本。单条时前端按「普通单版本 notes」渲染（不显示
+    // 版本段头也不出折叠），所以这里用 len > 1 而不是「过滤是否发生」。
+    let spanning = matched > 1;
+    let shown: Vec<ChangelogEntry> = filtered
+        .into_iter()
+        .take(CHANGELOG_MAX_ENTRIES)
+        .map(|e| ChangelogEntry {
+            version: e.version,
+            // 上游对超 8KB 的 notes 做过截断并带 per-entry `truncated`。这里**有意
+            // 不转发**该标记：单条 notes 被截断只影响那一版的正文完整性，而
+            // 前端无论如何都只渲染文本，多一个「本条不完整」角标对用户没有可用
+            // 操作（完整内容只能去发布页看，段头的「详情」链接已经提供了出口）。
+            // 转发它反而要求前端为每段多一条分支，收益低于复杂度。
+            notes: e.notes.unwrap_or_default(),
+            published_at: e.published_at,
+        })
+        .collect();
+    // 「还有 N 个更早的版本」：本次区间被展示上限截断，或上游窗口被拉满
+    // （历史表还有更早的、这次根本没取到）。
+    //
+    // 不能用 `total > shown.len()`：total 是**该通道全部历史**，含比已安装版本
+    // 还旧的条目——那些用户早就用过了，不是"还没看到的更新内容"。
+    let has_older = truncated || matched > shown.len();
+    tracing::info!(
+        "update changelog: current={current} target={target:?} channel-total={total} \
+         matched={matched} entries={} spanning={spanning} has-older={has_older}",
+        shown.len()
+    );
+    ChangelogResponse {
+        spanning,
+        entries: shown,
+        total,
+        truncated: has_older,
+    }
+}
+
+/// 拉上游发布历史（只读 D1，上游不实时打 GitHub）。
+///
+/// 返回 `String` 而不是 `ApiError`：失败一律被调用方降级为空列表，不向上传播，
+/// 这里只需要可读的失败原因用于日志。
+///
+/// **不复用 `state.http_client`**：那个客户端在用户开启「忽略 SSL 证书」时会带
+/// `danger_accept_invalid_certs(true)`（见 `state.rs` 的构建逻辑），而本请求会把
+/// `license_machine_code()` 作为 Bearer 凭据发给固定上游域名。TLS 校验失效时，
+/// 中间人可截获该凭据并冒充本机向 `api.qomicex.top` 发请求（许可证通道钉住与
+/// 灰度门控都按 machineCode 裁决）。
+///
+/// 官方上游用有效证书，正常路径不受影响；与 `plugin_download_client` 的处理
+/// 口径一致（同样不继承 `ignore_ssl`，理由见 `state.rs` 的字段注释）。
+/// 代理设置也不继承：这条链路直连固定域名，走用户代理无收益且会扩大暴露面。
+async fn fetch_release_notes(channel: &str) -> Result<Vec<UpstreamReleaseNote>, String> {
+    // limit 必须先绑成 String：数组字面量里 `(&str, &str)` 与 `(&str, &String)`
+    // 不会自动做 deref 归一，直接内联 `&N.to_string()` 会编译不过。
+    let limit = CHANGELOG_UPSTREAM_LIMIT.to_string();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .user_agent(crate::state::USER_AGENT)
+        .build()
+        .map_err(|e| format!("build client failed: {e}"))?;
+    let response = client
+        .get(format!("{UPSTREAM_BASE}{RELEASE_NOTES_PATH}"))
+        .query(&[("channel", channel), ("limit", limit.as_str())])
+        .bearer_auth(license_machine_code())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("HTTP {status}"));
+    }
+    let body = response.text().await.map_err(|e| e.to_string())?;
+    let parsed: UpstreamReleaseNotesResponse =
+        serde_json::from_str(&body).map_err(|e| format!("release-notes parse failed: {e}"))?;
+    Ok(parsed.entries)
 }
 
 /// Perform the version check (corresponds to UpdateService.CheckAsync).
@@ -860,5 +1182,222 @@ mod tests {
             train_reject_reason("0.1.0-beta31.0", "0.1.0-beta23.0", "nightly"),
             Some("channel-mismatch")
         );
+    }
+
+    // ---- 跨版本 changelog 区间过滤（issue #357）----
+
+    fn note(version: &str) -> UpstreamReleaseNote {
+        UpstreamReleaseNote {
+            version: version.to_string(),
+            notes: Some(format!("## {version}")),
+            published_at: None,
+        }
+    }
+
+    fn versions_of(entries: &[UpstreamReleaseNote]) -> Vec<&str> {
+        entries.iter().map(|e| e.version.as_str()).collect()
+    }
+
+    /// 普通同通道升级：只保留「比 current 新、且不比 target 新」的版本。
+    /// 上游按发布时间倒序返回，所以 beta31 在 beta23 之前。
+    #[test]
+    fn span_keeps_only_the_upgrade_range() {
+        let entries = vec![
+            note("0.1.0-beta31.0"),
+            note("0.1.0-beta30.0"),
+            note("0.1.0-beta23.0"),
+            note("0.1.0-beta22.0"),
+        ];
+        let out = filter_changelog_span(entries, "0.1.0-beta23.0", Some("0.1.0-beta31.0"));
+        assert_eq!(
+            versions_of(&out),
+            vec!["0.1.0-beta31.0", "0.1.0-beta30.0"],
+            "beta23 自身不算「更新内容」，beta22 比已安装版本还旧"
+        );
+    }
+
+    /// target 落在中间：比 target 更新的版本不得出现（否则 UI 会把未来的版本
+    /// 也算进「本次更新内容」）。
+    #[test]
+    fn span_excludes_versions_newer_than_target() {
+        let entries = vec![
+            note("0.1.0-beta33.0"),
+            note("0.1.0-beta32.0"),
+            note("0.1.0-beta31.0"),
+        ];
+        let out = filter_changelog_span(entries, "0.1.0-beta30.0", Some("0.1.0-beta31.0"));
+        assert_eq!(versions_of(&out), vec!["0.1.0-beta31.0"]);
+    }
+
+    /// 已是最新：区间为空。前端靠 entries.len() 决定是否走跨版本渲染。
+    #[test]
+    fn span_is_empty_when_current_equals_target() {
+        let entries = vec![note("0.1.0-beta31.0"), note("0.1.0-beta30.0")];
+        let out = filter_changelog_span(entries, "0.1.0-beta31.0", Some("0.1.0-beta31.0"));
+        assert!(out.is_empty());
+    }
+
+    /// 跨列车（用户切了通道）：只保留目标版本自身，不列目标列车的整段历史
+    /// （beta30/beta29 对「切到 beta31」的用户是噪音，且序数不可比）。
+    #[test]
+    fn span_across_trains_keeps_only_target() {
+        let entries = vec![
+            note("0.1.0-beta31.0"),
+            note("0.1.0-beta30.0"),
+            note("0.1.0-release1.0"),
+        ];
+        let out = filter_changelog_span(entries, "0.1.0-release1.0", Some("0.1.0-beta31.0"));
+        assert_eq!(
+            versions_of(&out),
+            vec!["0.1.0-beta31.0"],
+            "跨列车只展示目标版本自身"
+        );
+    }
+
+    /// 跨列车且 target 带 `v` 前缀时必须命中——这正是 `trim_start_matches('v')`
+    /// 归一化的意义。断言里刻意让 target **带前缀**，否则归一化坏掉也能通过测试
+    /// （回归防护：只测「条目带前缀」测不出 target 侧的归一化缺失）。
+    #[test]
+    fn span_across_trains_matches_prefixed_target() {
+        let entries = vec![note("0.1.0-beta31.0"), note("0.1.0-beta30.0")];
+        let out = filter_changelog_span(entries, "0.1.0-release1.0", Some("v0.1.0-beta31.0"));
+        assert_eq!(
+            versions_of(&out),
+            vec!["0.1.0-beta31.0"],
+            "target 的 v 前缀必须被归一化掉"
+        );
+    }
+
+    /// 条目带 `v` 前缀、target 不带：两侧都要正确归一。
+    #[test]
+    fn span_across_trains_matches_prefixed_entries() {
+        let entries = vec![note("v0.1.0-beta31.0"), note("v0.1.0-beta30.0")];
+        let out = filter_changelog_span(entries, "0.1.0-release1.0", Some("0.1.0-beta31.0"));
+        assert_eq!(versions_of(&out), vec!["v0.1.0-beta31.0"]);
+    }
+
+    /// 两侧都带 `v` 前缀。
+    #[test]
+    fn span_across_trains_matches_both_prefixed() {
+        let entries = vec![note("v0.1.0-beta31.0")];
+        let out = filter_changelog_span(entries, "0.1.0-release1.0", Some("v0.1.0-beta31.0"));
+        assert_eq!(versions_of(&out), vec!["v0.1.0-beta31.0"]);
+    }
+
+    /// target 缺省：上界未知，但必须剥掉「不比当前新」的条目——否则弹窗会把
+    /// 用户早就用过的版本当成本次更新内容列出来。
+    #[test]
+    fn span_without_target_still_drops_installed_and_older() {
+        let entries = vec![
+            note("0.1.0-beta31.0"),
+            note("0.1.0-beta30.0"),
+            note("0.1.0-beta23.0"),
+            note("0.1.0-beta22.0"),
+        ];
+        let out = filter_changelog_span(entries, "0.1.0-beta23.0", None);
+        assert_eq!(
+            versions_of(&out),
+            vec!["0.1.0-beta31.0", "0.1.0-beta30.0"],
+            "current 自身与更旧版本都必须被剥掉"
+        );
+    }
+
+    /// target 缺省 + dev 构建（无可比序数）：保留上游原序，不能把整段清空。
+    #[test]
+    fn span_without_target_keeps_entries_for_dev_build() {
+        let entries = vec![note("0.1.0-beta31.0"), note("0.1.0-beta30.0")];
+        let out = filter_changelog_span(entries, "0.1.0", None);
+        assert_eq!(out.len(), 2);
+    }
+
+    /// 空 target 字符串与 None 等价（前端可能传空串）。
+    #[test]
+    fn span_treats_empty_target_as_absent() {
+        let entries = vec![note("0.1.0-beta31.0"), note("0.1.0-beta23.0")];
+        let out = filter_changelog_span(entries, "0.1.0-beta23.0", Some(""));
+        assert_eq!(versions_of(&out), vec!["0.1.0-beta31.0"]);
+    }
+
+    /// 完整链路：过滤后截断到展示上限，并算对 spanning / truncated。
+    #[test]
+    fn apply_filter_truncates_and_reports_spanning() {
+        let mut entries = Vec::new();
+        for i in (1..=15).rev() {
+            entries.push(note(&format!("0.1.0-beta{i}.0")));
+        }
+        // current=beta1 target=beta15 → 14 条命中，展示上限 10 条。
+        let out = apply_span_filter(entries, false, "0.1.0-beta1.0", Some("0.1.0-beta15.0"));
+        assert!(out.spanning);
+        assert_eq!(out.entries.len(), CHANGELOG_MAX_ENTRIES);
+        assert_eq!(out.total, 15);
+        assert!(out.truncated, "被展示上限截断时必须标记仍有更早版本");
+        assert_eq!(out.entries[0].version, "0.1.0-beta15.0");
+    }
+
+    /// 单条命中：spanning=false，前端退回单块渲染（不出折叠、不出段头）。
+    #[test]
+    fn apply_filter_marks_single_entry_as_not_spanning() {
+        let entries = vec![note("0.1.0-beta31.0"), note("0.1.0-beta30.0")];
+        let out = apply_span_filter(entries, false, "0.1.0-beta30.0", Some("0.1.0-beta31.0"));
+        assert!(!out.spanning);
+        assert_eq!(out.entries.len(), 1);
+        assert!(!out.truncated);
+    }
+
+    /// 上游窗口被截断（拉满 limit）时，即使本次区间只有几条，也要告诉前端
+    /// 「还有更早版本」——否则用户以为历史到此为止。
+    #[test]
+    fn upstream_truncation_propagates() {
+        let entries = vec![note("0.1.0-beta31.0")];
+        let out = apply_span_filter(entries, true, "0.1.0-beta30.0", Some("0.1.0-beta31.0"));
+        assert!(out.truncated);
+    }
+
+    /// 上游响应契约：真实 payload 带 `type`/`title`/`truncated` 等本端未声明的
+    /// 字段，serde 必须忽略它们而不是整体失败（失败会被静默降级成空列表，
+    /// 表现为「功能上线了但一直没内容」）。
+    ///
+    /// payload 取自 Web.Backend `GET /api/client/release-notes` 的实际输出。
+    #[test]
+    fn upstream_payload_deserializes_with_extra_fields() {
+        let raw = concat!(
+            "{\"entries\":[",
+            "{\"version\":\"1.2.0-beta1.0\",\"type\":\"beta\",\"title\":\"v1.2.0-beta1.0\",",
+            "\"notes\":\"## v1.2.0-beta1.0\",\"publishedAt\":\"2026-11-17T08:42:17Z\",\"truncated\":false},",
+            "{\"version\":\"1.1.2-beta1.0\",\"type\":\"beta\",\"title\":\"v1.1.2-beta1.0\",",
+            "\"notes\":\"## v1.1.2-beta1.0\",\"publishedAt\":\"2026-11-06T16:33:52Z\",\"truncated\":false}",
+            "]}"
+        );
+        let parsed: UpstreamReleaseNotesResponse =
+            serde_json::from_str(raw).expect("真实 payload 必须能解析");
+        assert_eq!(parsed.entries.len(), 2);
+        assert_eq!(parsed.entries[0].version, "1.2.0-beta1.0");
+        assert_eq!(
+            parsed.entries[0].published_at.as_deref(),
+            Some("2026-11-17T08:42:17Z")
+        );
+        // 缺字段容错：notes/publishedAt 缺失时用默认值，不整体失败。
+        let sparse: UpstreamReleaseNotesResponse =
+            serde_json::from_str(r#"{"entries":[{"version":"1.0.0-beta1.0"}]}"#).unwrap();
+        assert_eq!(sparse.entries[0].notes, None);
+        assert!(sparse.entries[0].published_at.is_none());
+
+        // `release_history.notes` 是可空列，SQL NULL 在上游 JSON 里是 `null`。
+        // 这里必须能吃下：一个 null 不能把整个响应打回空列表（回归防护）。
+        let with_null: UpstreamReleaseNotesResponse = serde_json::from_str(&concat!(
+            "{\"entries\":[",
+            "{\"version\":\"1.2.0-beta2.0\",\"notes\":null,\"publishedAt\":null},",
+            "{\"version\":\"1.2.0-beta1.0\",\"notes\":\"ok\",\"publishedAt\":\"2026-11-17T08:42:17Z\"}",
+            "]}"
+        ))
+        .expect("notes 为 null 时必须仍能整体解析");
+        assert_eq!(with_null.entries.len(), 2, "null 不得导致整批丢失");
+        assert_eq!(with_null.entries[0].notes, None);
+        assert_eq!(with_null.entries[1].notes.as_deref(), Some("ok"));
+
+        // 空 entries 也要能解析（上游历史表为空时）。
+        let empty: UpstreamReleaseNotesResponse =
+            serde_json::from_str(r#"{"entries":[]}"#).unwrap();
+        assert!(empty.entries.is_empty());
     }
 }
