@@ -137,6 +137,7 @@
 - [ADR-133：受限模组补全改应用内下载窗口与下载目录扫描，不自动点击](1-决策记录/ADR-133-受限模组补全改应用内下载窗口与下载目录扫描-不自动点击.md)
 - [ADR-134：同包重装复用既有实例，重启后待补全不降级失败](1-决策记录/ADR-134-同包重装复用既有实例-重启后待补全不降级失败.md)
 - [ADR-135：目录管理增加官方启动器默认目录，固定项不可删除](1-决策记录/ADR-135-目录管理增加官方启动器默认目录-固定项不可删除.md)
+- [ADR-136：信雅互联实例按 FFAPI 命名归一 Fabric 依赖（issue #363）](1-决策记录/ADR-136-信雅互联实例按FFAPI命名归一Fabric依赖-issue-363.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 

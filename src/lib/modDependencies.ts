@@ -25,6 +25,17 @@ import type { ModDependency, ModMetadata } from '../types/index.ts'
  * - **不校验版本约束**。`versionRange` 是 Maven/自定义谓词（如 `[1.20.1,1.21)`），
  *   前端没有可靠语义去判定本地版本是否落入区间；强行判断会产生误报。
  *   本函数只回答「这个 mod id 在不在」，版本区间仅作为提示文本展示给用户。
+ *
+ * 信雅互联（Sinytra Connector，issue #363）：
+ * - Connector 让 Forge/NeoForge 实例能加载 Fabric jar，这类 jar 的依赖是 Fabric 侧
+ *   的 `fabric` / `fabric-api` / `fabric-*-v1`；
+ * - Forgified Fabric API（FFAPI）是 Connector 侧的 Fabric API 实现，主 id 为
+ *   `fabric_api`，所有子模块把上游 id 的 `-` 换成 `_`
+ *   （`fabric-transfer-api-v1` → `fabric_transfer_api_v1`），官方文档：
+ *   https://github.com/Sinytra/Connector/blob/9287e9f/docs/developers.mdx
+ * - 因此**仅在实例里存在启用中的 Connector、且加载器为 Forge/NeoForge 时**，把
+ *   `fabric` / `fabric-*` 依赖按 FFAPI 的命名归一后再匹配，并且只接受 FFAPI 自己
+ *   提供的 id（嵌套子模块）；普通 Fabric 实例不受影响，避免掩盖真实缺失。
  */
 
 /**
@@ -64,6 +75,26 @@ const PLATFORM_PROVIDED_IDS: ReadonlySet<string> = new Set([
   'lowcodefml',
   'modlauncher',
 ])
+
+/**
+ * 信雅互联（Sinytra Connector）的 FML mod id：新版用 `connector`，Forge 1.20.x 的
+ * 1.x 版本用 `connectormod`（ConnectorUtil.CONNECTOR_MODID）。
+ */
+const CONNECTOR_MOD_IDS: ReadonlySet<string> = new Set(['connector', 'connectormod'])
+
+/**
+ * Connector 实例里 Fabric API 依赖在 FFAPI 侧的实际 id。
+ *
+ * FFAPI 主 id 是 `fabric_api`（下划线），子模块把上游 id 的 `-` 换成 `_`
+ * （`fabric-transfer-api-v1` → `fabric_transfer_api_v1`）；旧模组还可能依赖
+ * `fabric`（1.19.2 之前的 Fabric API id）。只映射 `fabric` / `fabric-` 前缀，
+ * 且调用方只与 **FFAPI 自己提供的 id** 比较，避免把别的模组当成已提供。
+ */
+function connectorAliases(depId: string): string[] {
+  if (depId === 'fabric') return ['fabric_api', 'fabric-api']
+  if (depId.startsWith('fabric-')) return [depId.replace(/-/g, '_')]
+  return []
+}
 
 /** 去掉 `.jar` / `.jar.disabled` / `.disabled` 后的文件名主干，转小写。 */
 function fileStemLower(fileName: string): string {
@@ -111,8 +142,12 @@ export interface ModDependencyStatus {
  * @returns key = `mod.fileName`，value = 该模组的缺失项；**没有任何缺失的模组不会出现在返回的 Map 里**。
  */
 export function computeMissingDependencies(
-  mods: ModMetadata[]
+  mods: ModMetadata[],
+  loader?: string
 ): Map<string, ModDependency[]> {
+  // Connector 只在 Forge/NeoForge 实例里运行；Fabric 等其他加载器维持原判定。
+  const loaderKey = loader?.trim().toLowerCase() ?? ''
+  const connectorLoader = loaderKey === 'forge' || loaderKey === 'neoforge'
   // ① 启用中的模组才有资格「提供」依赖（严格口径）
   const enabled = mods.filter((m) => m.active)
 
@@ -137,11 +172,38 @@ export function computeMissingDependencies(
     .filter((m) => !m.modId?.trim())
     .map((m) => fileStemLower(m.fileName))
 
+  // Connector 只有在启用时才提供 FFAPI 侧的 Fabric 环境（禁用 = 不会加载）；
+  // 且只有 Forge/NeoForge 实例会跑 Connector。
+  const connectorPresent =
+    connectorLoader && [...CONNECTOR_MOD_IDS].some((id) => providedIds.has(id))
+
+  /**
+   * FFAPI 实际提供的 id：只认 Connector 侧的 Fabric API 实现（主 id `fabric_api`，
+   * 兼容旧写法 `fabric-api`）及其嵌套子模块。归一后的别名必须落在这一集合里，
+   * 不能拿「任意模组提供的下划线 id」当已满足——否则一个无关的 `fabric-xxx`
+   * 依赖会被别的模组的 `fabric_xxx` 掩盖。
+   */
+  const ffapiIds = new Set<string>()
+  if (connectorPresent) {
+    for (const m of enabled) {
+      const id = m.modId?.trim().toLowerCase()
+      if (id !== 'fabric_api' && id !== 'fabric-api') continue
+      ffapiIds.add('fabric_api')
+      ffapiIds.add('fabric-api')
+      for (const p of m.providesIds ?? []) {
+        const pid = p?.trim().toLowerCase()
+        if (pid) ffapiIds.add(pid)
+      }
+    }
+  }
+
   const isSatisfied = (depId: string): boolean => {
     const id = depId.trim().toLowerCase()
     if (!id) return true // 空 id 视为无效声明，不报（后端已过滤，防御性保留）
     if (PLATFORM_PROVIDED_IDS.has(id)) return true
     if (providedIds.has(id)) return true
+    // Connector 实例：Fabric API 依赖按 FFAPI 的 `_` 命名再匹配一次，且只认 FFAPI 自己提供的 id。
+    if (connectorPresent && connectorAliases(id).some((alias) => ffapiIds.has(alias))) return true
     return anonymousStems.some((stem) => fileNameMayProvide(stem, id))
   }
 
