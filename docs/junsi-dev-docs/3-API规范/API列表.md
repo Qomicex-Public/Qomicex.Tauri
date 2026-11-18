@@ -1765,9 +1765,14 @@ technic **纳入聚合源**（`source=all` + `category=modpack`）：接受其�
   "osDisplayName": "Windows 11 Pro",
   "gitCommit": "abc123",
   "memory": 17179869184,
-  "availableMemory": 8589934592
+  "availableMemory": 8589934592,
+  "appVersion": "1.2.0",
+  "dataDir": "C:/Users/me/AppData/Local/qomicex-launcher",
+  "officialGameDir": "C:/Users/me/AppData/Roaming/.minecraft"
 }
 ```
+
+> `officialGameDir`：官方启动器（Mojang）的默认游戏目录——Windows `%APPDATA%\.minecraft`、macOS `~/Library/Application Support/minecraft`、Linux `~/.minecraft`。目录管理用它生成不可删除的固定项。
 
 ### GET `/api/systeminfo`
 
@@ -2386,9 +2391,14 @@ full 请求）。作用范围仅限本端点，不影响启动/安装/整合包/
   "osDisplayName": "Windows 11 Pro",
   "gitCommit": "abc123",
   "memory": 17179869184,
-  "availableMemory": 8589934592
+  "availableMemory": 8589934592,
+  "appVersion": "1.2.0",
+  "dataDir": "C:/Users/me/AppData/Local/qomicex-launcher",
+  "officialGameDir": "C:/Users/me/AppData/Roaming/.minecraft"
 }
 ```
+
+> `officialGameDir`：官方启动器（Mojang）的默认游戏目录——Windows `%APPDATA%\.minecraft`、macOS `~/Library/Application Support/minecraft`、Linux `~/.minecraft`。目录管理用它生成不可删除的固定项。
 
 
 ### 2026-08-15 更新
@@ -2410,9 +2420,14 @@ full 请求）。作用范围仅限本端点，不影响启动/安装/整合包/
   "osDisplayName": "Windows 11 Pro",
   "gitCommit": "abc123",
   "memory": 17179869184,
-  "availableMemory": 8589934592
+  "availableMemory": 8589934592,
+  "appVersion": "1.2.0",
+  "dataDir": "C:/Users/me/AppData/Local/qomicex-launcher",
+  "officialGameDir": "C:/Users/me/AppData/Roaming/.minecraft"
 }
 ```
+
+> `officialGameDir`：官方启动器（Mojang）的默认游戏目录——Windows `%APPDATA%\.minecraft`、macOS `~/Library/Application Support/minecraft`、Linux `~/.minecraft`。目录管理用它生成不可删除的固定项。
 
 ### 2026-08-16 更新：Yggdrasil ALI 地址解析端点
 

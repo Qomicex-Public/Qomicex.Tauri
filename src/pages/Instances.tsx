@@ -34,6 +34,7 @@ import { Tabs } from '../components/ui'
 import { Skeleton } from '../components/ui'
 import type { ScannedVersion, RemoteVersionInfo, CreateInstanceRequest, LoaderVersionInfo, LoaderAddonInfo, DownloadTask, GameInstance } from '../types/index.ts'
 import { getSettings, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, onSettingsChange, openFolder } from '../api/settings.ts'
+import { getSystemInfo } from '../api/system.ts'
 import { InstanceIcon } from '../components/InstanceIcon.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
 import { ApiError } from '../api/client.ts'
@@ -53,6 +54,48 @@ import { useRunning } from '../contexts/RunningContext.tsx'
 interface ManagedDir {
   path: string
   name: string
+  /** 不可删除的固定目录；路径跟随设置解析，名称取 i18n。 */
+  fixed?: 'official' | 'launcher'
+}
+
+/** 启动器默认游戏目录：数据目录下的 .minecraft（数据目录未知时返回空串）。 */
+function launcherDefaultPath(dataDir: string | undefined): string {
+  const base = (dataDir || '').replace(/[\\/]+$/, '')
+  return base ? `${base}/.minecraft` : ''
+}
+
+/**
+ * 把两个固定目录并入已保存列表：路径跟随设置更新、与普通目录去重、
+ * 首次出现在最前面（官方在前，启动器默认第二）。
+ */
+function mergeFixedDirs(dirs: ManagedDir[], officialPath: string, launcherPath: string): ManagedDir[] {
+  const specs: Array<{ kind: NonNullable<ManagedDir['fixed']>; path: string }> = []
+  if (officialPath) specs.push({ kind: 'official', path: officialPath })
+  if (launcherPath) specs.push({ kind: 'launcher', path: launcherPath })
+  if (specs.length === 0) return dirs
+
+  const fixedPaths = new Set(specs.map((s) => s.path))
+  let changed = false
+  const next = dirs.filter((d) => {
+    if (d.fixed || !fixedPaths.has(d.path)) return true
+    changed = true
+    return false
+  })
+  for (const spec of specs) {
+    const idx = next.findIndex((d) => d.fixed === spec.kind)
+    if (idx >= 0) {
+      if (next[idx].path !== spec.path) {
+        next[idx] = { ...next[idx], path: spec.path }
+        changed = true
+      }
+      continue
+    }
+    const officialIdx = next.findIndex((d) => d.fixed === 'official')
+    const insertAt = spec.kind === 'official' ? 0 : officialIdx >= 0 ? officialIdx + 1 : 0
+    next.splice(insertAt, 0, { path: spec.path, name: '', fixed: spec.kind })
+    changed = true
+  }
+  return changed ? next : dirs
 }
 
 const LOADER_COLORS: Record<string, string> = {
@@ -202,6 +245,32 @@ export default function Instances() {
   const [removingDir, setRemovingDir] = useState<string | null>(null)
   const [currentDir, setCurrentDir] = useState(() => loadSettings().gameDir || '')
   const [dirPopover, setDirPopover] = useState(false)
+
+  // 固定目录：官方启动器目录（系统解析）+ 启动器默认目录（数据目录下 .minecraft）。
+  // 路径每次挂载都按当前设置校正；拿不到系统信息时至少保留启动器默认目录。
+  useEffect(() => {
+    const launcherPath = launcherDefaultPath(loadSettings().dataDir)
+    let cancelled = false
+    const apply = (officialPath: string) => {
+      if (cancelled) return
+      setManagedDirs((prev) => {
+        const next = mergeFixedDirs(prev, officialPath, launcherPath)
+        if (next !== prev) saveDirs(next)
+        return next
+      })
+    }
+    getSystemInfo()
+      .then((info) => apply((info.officialGameDir || '').replace(/[\\/]+$/, '')))
+      .catch(() => apply(''))
+    return () => { cancelled = true }
+  }, [])
+
+  /** 固定目录的名称取 i18n，普通目录用保存的名称。 */
+  const dirLabel = useCallback((d: ManagedDir) => {
+    if (d.fixed === 'official') return t('instances.officialDir')
+    if (d.fixed === 'launcher') return t('instances.launcherDefaultDir')
+    return d.name || dirName(d.path)
+  }, [t])
 
   useEffect(() => {
     return onSettingsChange((s) => {
@@ -437,6 +506,7 @@ export default function Instances() {
   }
 
   function removeDir(path: string) {
+    if (managedDirs.some((d) => d.fixed && d.path === path)) return
     setRemovingDir(path)
     setTimeout(() => {
       setManagedDirs((prev) => { const next = prev.filter((d) => d.path !== path); saveDirs(next); return next })
@@ -456,6 +526,7 @@ export default function Instances() {
   }
 
   function startEdit(d: ManagedDir) {
+    if (d.fixed) return
     setEditingPath(d.path)
     setEditName(d.name)
   }
@@ -1294,11 +1365,11 @@ export default function Instances() {
                 const editing = editingPath === d.path
                 const contextItems: ContextMenuItem[] = [
                   { label: t('instances.setCurrent'), onClick: () => switchDir(d.path), disabled: active },
-                  { label: t('instances.rename'), onClick: () => startEdit(d) },
+                  ...(d.fixed ? [] : [{ label: t('instances.rename'), onClick: () => startEdit(d) }]),
                   { label: t('instances.moveUp'), onClick: () => moveDir(i, i - 1), disabled: i === 0 },
                   { label: t('instances.moveDown'), onClick: () => moveDir(i, i + 1), disabled: i === managedDirs.length - 1 },
                   { label: t('instances.openDir'), onClick: () => { openFolder(d.path).catch(() => {}) } },
-                  { label: t('instances.remove'), onClick: () => removeDir(d.path), danger: true },
+                  ...(d.fixed ? [] : [{ label: t('instances.remove'), onClick: () => removeDir(d.path), danger: true }]),
                 ]
                 return (
                   <div
@@ -1330,12 +1401,14 @@ export default function Instances() {
                             />
                           ) : (
                             <>
-                              <span className="min-w-0 flex-1 truncate text-sm font-medium">{d.name || dirName(d.path)}</span>
-                              <Tooltip content={t('instances.rename')}>
-                                <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={(e) => { e.stopPropagation(); startEdit(d) }}>
-                                  <Pencil className="h-3 w-3" />
-                                </Button>
-                              </Tooltip>
+                              <span className="min-w-0 flex-1 truncate text-sm font-medium">{dirLabel(d)}</span>
+                              {!d.fixed && (
+                                <Tooltip content={t('instances.rename')}>
+                                  <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={(e) => { e.stopPropagation(); startEdit(d) }}>
+                                    <Pencil className="h-3 w-3" />
+                                  </Button>
+                                </Tooltip>
+                              )}
                             </>
                           )}
                           {active && (
@@ -1349,11 +1422,13 @@ export default function Instances() {
                               <FolderOpen className="h-3.5 w-3.5" />
                             </Button>
                           </Tooltip>
-                          <Tooltip content={t('instances.remove')}>
-                            <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={(e) => { e.stopPropagation(); removeDir(d.path) }}>
-                              <MorphActionIcon active={removingDir === d.path} busy={RotateCwData} rest={Trash2Data} className="h-3.5 w-3.5" />
-                            </Button>
-                          </Tooltip>
+                          {!d.fixed && (
+                            <Tooltip content={t('instances.remove')}>
+                              <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={(e) => { e.stopPropagation(); removeDir(d.path) }}>
+                                <MorphActionIcon active={removingDir === d.path} busy={RotateCwData} rest={Trash2Data} className="h-3.5 w-3.5" />
+                              </Button>
+                            </Tooltip>
+                          )}
                         </div>
                         <Tooltip content={d.path}>
                           <p className="truncate pl-6 text-xs text-muted-foreground">{truncateMiddle(d.path, 48)}</p>
@@ -1480,7 +1555,7 @@ export default function Instances() {
                           <Folder className="h-4 w-4" />
                         </div>
                         <div className="flex-1 truncate">
-                          <div className="text-sm font-medium">{d.name}</div>
+                          <div className="text-sm font-medium">{dirLabel(d)}</div>
                           <div className="truncate text-xs text-muted-foreground">{d.path}</div>
                         </div>
                         {currentDir === d.path && <Check className="h-3 w-3 text-primary" />}

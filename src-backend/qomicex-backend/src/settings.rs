@@ -68,6 +68,30 @@ pub fn resolve_base_dir() -> PathBuf {
     default_dir()
 }
 
+/// 新装/重置时的默认游戏目录：放在启动器数据目录下（`{BaseDir}/.minecraft`）。
+///
+/// 不放在用户主目录：默认值会在目录管理里作为固定项展示，数据目录旁边更容易
+/// 找到；已有用户保存过 `gameDir`，不受这次默认值变更影响。
+pub(crate) fn default_game_dir() -> String {
+    resolve_base_dir()
+        .join(".minecraft")
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[cfg(test)]
+mod default_dir_tests {
+    use super::*;
+
+    #[test]
+    fn default_game_dir_is_under_base_dir() {
+        assert_eq!(
+            std::path::PathBuf::from(default_game_dir()),
+            resolve_base_dir().join(".minecraft")
+        );
+    }
+}
+
 /// 通过写引导文件修改数据目录（对应 SetBaseDir）。
 pub fn set_base_dir(path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
     let bootstrap = bootstrap_file();
@@ -270,11 +294,8 @@ pub struct CustomJavaEntryDto {
 
 impl Default for SettingsResponse {
     fn default() -> Self {
-        let default_dir = dirs::home_dir()
-            .map(|h| h.join(".minecraft").to_string_lossy().into_owned())
-            .unwrap_or_else(|| ".minecraft".to_string());
         Self {
-            game_dir: default_dir,
+            game_dir: default_game_dir(),
             download_threads: 64,
             file_chunk_threads: None,
             version_isolation: true,
