@@ -61,7 +61,10 @@ interface ManagedDir {
 /** 启动器默认游戏目录：数据目录下的 .minecraft（数据目录未知时返回空串）。 */
 function launcherDefaultPath(dataDir: string | undefined): string {
   const base = (dataDir || '').replace(/[\\/]+$/, '')
-  return base ? `${base}/.minecraft` : ''
+  if (!base) return ''
+  // 跟随数据目录的分隔符，避免展示成 C:\qomicex-launcher/.minecraft。
+  const sep = base.includes('\\') ? '\\' : '/'
+  return `${base}${sep}.minecraft`
 }
 
 /**
@@ -1385,38 +1388,44 @@ export default function Instances() {
                         tabIndex={0}
                         onClick={() => switchDir(d.path)}
                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchDir(d.path) } }}
-                        className="cursor-pointer space-y-1 p-3"
+                        className="cursor-pointer p-3"
                       >
                         <div className="flex items-center gap-2">
                           <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          {editing ? (
-                            <Input
-                              autoFocus
-                              value={editName}
-                              onChange={(e) => setEditName(e.target.value)}
-                              onBlur={commitEdit}
-                              onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditingPath(null) }}
-                              onClick={(e) => e.stopPropagation()}
-                              className="h-7 text-sm font-medium"
-                            />
-                          ) : (
-                            <>
-                              <span className="min-w-0 flex-1 truncate text-sm font-medium">{dirLabel(d)}</span>
-                              {!d.fixed && (
-                                <Tooltip content={t('instances.rename')}>
-                                  <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={(e) => { e.stopPropagation(); startEdit(d) }}>
-                                    <Pencil className="h-3 w-3" />
-                                  </Button>
-                                </Tooltip>
-                              )}
-                            </>
-                          )}
-                          {active && (
-                            <span className="inline-flex items-center gap-1 shrink-0 rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
-                              <Check className="h-3 w-3" />
-                              {t('instances.inUse')}
-                            </span>
-                          )}
+                          {/* 图标与整块（名称 + 路径）垂直居中，路径与名称同列。 */}
+                          <div className="min-w-0 flex-1 space-y-0.5">
+                            {editing ? (
+                              <Input
+                                autoFocus
+                                value={editName}
+                                onChange={(e) => setEditName(e.target.value)}
+                                onBlur={commitEdit}
+                                onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditingPath(null) }}
+                                onClick={(e) => e.stopPropagation()}
+                                className="h-7 text-sm font-medium"
+                              />
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <span className="min-w-0 flex-1 truncate text-sm font-medium">{dirLabel(d)}</span>
+                                {!d.fixed && (
+                                  <Tooltip content={t('instances.rename')}>
+                                    <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={(e) => { e.stopPropagation(); startEdit(d) }}>
+                                      <Pencil className="h-3 w-3" />
+                                    </Button>
+                                  </Tooltip>
+                                )}
+                                {active && (
+                                  <span className="inline-flex items-center gap-1 shrink-0 rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
+                                    <Check className="h-3 w-3" />
+                                    {t('instances.inUse')}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            <Tooltip content={d.path}>
+                              <p className="truncate text-xs text-muted-foreground">{truncateMiddle(d.path, 48)}</p>
+                            </Tooltip>
+                          </div>
                           <Tooltip content={t('instances.openDir')}>
                             <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={(e) => { e.stopPropagation(); openFolder(d.path).catch(() => {}) }}>
                               <FolderOpen className="h-3.5 w-3.5" />
@@ -1430,9 +1439,6 @@ export default function Instances() {
                             </Tooltip>
                           )}
                         </div>
-                        <Tooltip content={d.path}>
-                          <p className="truncate pl-6 text-xs text-muted-foreground">{truncateMiddle(d.path, 48)}</p>
-                        </Tooltip>
                       </div>
                     </ContextMenu>
                   </div>
