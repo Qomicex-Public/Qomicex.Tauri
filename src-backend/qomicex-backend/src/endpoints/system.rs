@@ -225,6 +225,7 @@ async fn sysinfo(State(state): State<SharedState>) -> ApiResult<Json<SystemInfoR
         app_version: state.app_version.clone(),
         data_dir: state.data_dir.to_string_lossy().into_owned(),
         official_game_dir: official_game_dir().to_string_lossy().into_owned(),
+        launcher_game_dir: crate::settings::default_game_dir(),
     }))
 }
 

@@ -58,13 +58,15 @@ interface ManagedDir {
   fixed?: 'official' | 'launcher'
 }
 
-/** 启动器默认游戏目录：数据目录下的 .minecraft（数据目录未知时返回空串）。 */
-function launcherDefaultPath(dataDir: string | undefined): string {
-  const base = (dataDir || '').replace(/[\\/]+$/, '')
-  if (!base) return ''
-  // 跟随数据目录的分隔符，避免展示成 C:\qomicex-launcher/.minecraft。
-  const sep = base.includes('\\') ? '\\' : '/'
-  return `${base}${sep}.minecraft`
+/** 路径比较键：统一分隔符、去尾斜杠；Windows 盘符路径不区分大小写。 */
+function pathKey(path: string): string {
+  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '')
+  return /^[a-zA-Z]:/.test(normalized) ? normalized.toLowerCase() : normalized
+}
+
+/** 列表键：固定项按角色区分，避免两个固定角色恰好指向同一路径时 key 重复。 */
+function dirKey(d: ManagedDir): string {
+  return d.fixed ? `fixed:${d.fixed}` : d.path
 }
 
 /**
@@ -77,10 +79,10 @@ function mergeFixedDirs(dirs: ManagedDir[], officialPath: string, launcherPath: 
   if (launcherPath) specs.push({ kind: 'launcher', path: launcherPath })
   if (specs.length === 0) return dirs
 
-  const fixedPaths = new Set(specs.map((s) => s.path))
+  const fixedKeys = new Set(specs.map((s) => pathKey(s.path)))
   let changed = false
   const next = dirs.filter((d) => {
-    if (d.fixed || !fixedPaths.has(d.path)) return true
+    if (d.fixed || !fixedKeys.has(pathKey(d.path))) return true
     changed = true
     return false
   })
@@ -185,7 +187,9 @@ function saveViewMode(key: string, mode: 'grid' | 'list') {
 function loadDirs(): ManagedDir[] {
   try { return JSON.parse(localStorage.getItem('qomicex-directories') || '[]') } catch { return [] }
 }
-function saveDirs(dirs: ManagedDir[]) { localStorage.setItem('qomicex-directories', JSON.stringify(dirs)) }
+function saveDirs(dirs: ManagedDir[]) {
+  try { localStorage.setItem('qomicex-directories', JSON.stringify(dirs)) } catch { /* 配额满时保留内存状态 */ }
+}
 
 function loadSettings() {
   return getSettings()
@@ -249,24 +253,27 @@ export default function Instances() {
   const [currentDir, setCurrentDir] = useState(() => loadSettings().gameDir || '')
   const [dirPopover, setDirPopover] = useState(false)
 
-  // 固定目录：官方启动器目录（系统解析）+ 启动器默认目录（数据目录下 .minecraft）。
-  // 路径每次挂载都按当前设置校正；拿不到系统信息时至少保留启动器默认目录。
+  // 固定目录：官方启动器目录 + 启动器默认目录，路径都由后端按平台解析。
+  // 挂载与页内刷新时重新拉取；失败保留现有列表，下次刷新再试。
+  const managedDirsRef = useRef(managedDirs)
+  managedDirsRef.current = managedDirs
   useEffect(() => {
-    const launcherPath = launcherDefaultPath(loadSettings().dataDir)
     let cancelled = false
-    const apply = (officialPath: string) => {
-      if (cancelled) return
-      setManagedDirs((prev) => {
-        const next = mergeFixedDirs(prev, officialPath, launcherPath)
-        if (next !== prev) saveDirs(next)
-        return next
-      })
-    }
     getSystemInfo()
-      .then((info) => apply((info.officialGameDir || '').replace(/[\\/]+$/, '')))
-      .catch(() => apply(''))
+      .then((info) => {
+        if (cancelled) return
+        const official = (info.officialGameDir || '').replace(/[\\/]+$/, '')
+        const launcher = (info.launcherGameDir || '').replace(/[\\/]+$/, '')
+        const prev = managedDirsRef.current
+        const next = mergeFixedDirs(prev, official, launcher)
+        if (next !== prev) {
+          setManagedDirs(next)
+          saveDirs(next)
+        }
+      })
+      .catch(() => { /* 保留现有列表 */ })
     return () => { cancelled = true }
-  }, [])
+  }, [instanceRefreshKey])
 
   /** 固定目录的名称取 i18n，普通目录用保存的名称。 */
   const dirLabel = useCallback((d: ManagedDir) => {
@@ -512,7 +519,13 @@ export default function Instances() {
     if (managedDirs.some((d) => d.fixed && d.path === path)) return
     setRemovingDir(path)
     setTimeout(() => {
-      setManagedDirs((prev) => { const next = prev.filter((d) => d.path !== path); saveDirs(next); return next })
+      setManagedDirs((prev) => {
+        // 延时期间该路径可能已被固定项接管：保留它。
+        if (prev.some((d) => d.fixed && d.path === path)) return prev
+        const next = prev.filter((d) => d.path !== path)
+        saveDirs(next)
+        return next
+      })
       setRemovingDir(null)
     }, 400)
   }
@@ -537,7 +550,14 @@ export default function Instances() {
   function commitEdit() {
     const name = editName.trim()
     if (editingPath && name) {
-      setManagedDirs((prev) => { const next = prev.map((dd) => dd.path === editingPath ? { ...dd, name } : dd); saveDirs(next); return next })
+      setManagedDirs((prev) => {
+        // 异步合并可能已把该条目换成固定项：此时不允许写 name。
+        const target = prev.find((dd) => dd.path === editingPath)
+        if (!target || target.fixed) return prev
+        const next = prev.map((dd) => (dd.path === editingPath ? { ...dd, name } : dd))
+        saveDirs(next)
+        return next
+      })
     }
     setEditingPath(null)
   }
@@ -1365,7 +1385,7 @@ export default function Instances() {
               <p className="px-1 text-xs text-muted-foreground">{t('instances.dirCount', { count: managedDirs.length })}</p>
               {managedDirs.map((d, i) => {
                 const active = currentDir === d.path
-                const editing = editingPath === d.path
+                const editing = !d.fixed && editingPath === d.path
                 const contextItems: ContextMenuItem[] = [
                   { label: t('instances.setCurrent'), onClick: () => switchDir(d.path), disabled: active },
                   ...(d.fixed ? [] : [{ label: t('instances.rename'), onClick: () => startEdit(d) }]),
@@ -1376,7 +1396,7 @@ export default function Instances() {
                 ]
                 return (
                   <div
-                    key={d.path}
+                    key={dirKey(d)}
                     className={cn(
                       'rounded-lg border transition-colors',
                       active ? 'border-primary/40 bg-primary/5' : 'border-border bg-muted/20 hover:bg-muted/40'
@@ -1556,7 +1576,7 @@ export default function Instances() {
                 ) : (
                   <div className="max-h-56 space-y-0.5 overflow-y-auto">
                     {managedDirs.map((d) => (
-                      <button key={d.path} onClick={() => switchDir(d.path)} className={cn('flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-accent', currentDir === d.path && 'bg-accent/80')}>
+                      <button key={dirKey(d)} onClick={() => switchDir(d.path)} className={cn('flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-accent', currentDir === d.path && 'bg-accent/80')}>
                         <div className={cn('flex h-8 w-8 items-center justify-center rounded-lg', currentDir === d.path ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground')}>
                           <Folder className="h-4 w-4" />
                         </div>
