@@ -3,11 +3,24 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
-import { AlertTriangle, ExternalLink, FileUp, Loader2, RefreshCw, Upload } from 'lucide-react'
+import {
+  AlertTriangle,
+  ExternalLink,
+  FileUp,
+  FolderDown,
+  Layers,
+  Loader2,
+  RefreshCw,
+  SkipForward,
+  Upload,
+} from 'lucide-react'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Button, useMessageBox, cn } from './ui'
 import {
   blockedModLabel,
+  fetchBlockedMod,
+  getBlockedFetchProgress,
   getBlockedMods,
+  scanBlockedDownloads,
   skipBlockedMods,
   submitBlockedMod,
 } from '../api/modpack-blocked.ts'
@@ -26,6 +39,17 @@ interface Props {
   onSkipped?: () => void
 }
 
+/** 应用内下载窗口在页面触发下载时回传的文件地址（见 src-tauri/src/curseforge_dl.rs）。 */
+interface DownloadRequested {
+  instanceId: string
+  fileId: number
+  url: string
+}
+
+function isTauri(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+}
+
 /**
  * CurseForge 分发受限文件的补全对话框（issue #291）。
  *
@@ -41,6 +65,9 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
   const [loading, setLoading] = useState(false)
   const [busyFileId, setBusyFileId] = useState<number | null>(null)
   const [importing, setImporting] = useState(false)
+  const [scanning, setScanning] = useState(false)
+  /** 启动器正在下载的条目 → 百分比（total 未知时为 null）；可多个并发。 */
+  const [fetching, setFetching] = useState<Record<number, number | null>>({})
   const [hover, setHover] = useState(false)
   const [error, setError] = useState('')
   // 关闭/切换实例后，仍在飞的请求不能回写状态（否则会把旧实例的清单灌进新实例）。
@@ -50,11 +77,16 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
   const instanceIdRef = useRef(instanceId)
   instanceIdRef.current = instanceId
   const busyRef = useRef(false)
+  // 扫描下载目录要判断「有没有补上」，用 ref 取调用时刻的清单长度。
+  const itemsRef = useRef<BlockedModFile[]>([])
+  itemsRef.current = items
   // 回调经 ref 取最新值：调用方通常传内联箭头函数，直接进依赖会让加载 effect 每帧重跑。
   const onResolvedRef = useRef(onResolved)
   onResolvedRef.current = onResolved
   // 拖放监听只注册一次，处理函数经 ref 取最新值，避免每次渲染重订阅。
   const dropHandlerRef = useRef<(paths: string[]) => void>(() => {})
+  // 应用内下载窗口的事件同样只订阅一次。
+  const downloadRequestedRef = useRef<(req: DownloadRequested) => void>(() => {})
 
   const describeError = useCallback(
     (e: unknown, fallback: string) => {
@@ -177,6 +209,28 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
     }
   }, [open])
 
+  // 应用内下载窗口把 CDN 地址交过来：由启动器下载（有进度）。
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    const unlisteners: Array<() => void> = []
+    const track = (p: Promise<() => void>) => {
+      p.then(fn => {
+        if (cancelled) fn()
+        else unlisteners.push(fn)
+      }).catch(() => {})
+    }
+    track(
+      listen<DownloadRequested>('blocked-download-requested', e => {
+        downloadRequestedRef.current(e.payload)
+      }),
+    )
+    return () => {
+      cancelled = true
+      unlisteners.forEach(fn => fn())
+    }
+  }, [open])
+
   const openProjectPage = useCallback(async (url: string) => {
     try {
       const { openUrl } = await import('@tauri-apps/plugin-opener')
@@ -193,11 +247,64 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
    *
    * 项目页只到「项目」粒度，用户得自己在 Files 里翻版本，这正是 issue #301
    * 里下错版本的来源；精确文件页由后端拼好，缺失说明上游解析失败。
+   *
+   * 精确文件页在 Tauri 里改用应用内小窗（ADR-132）：用户在页面上点 Download，
+   * 启动器接管下载并自动校验补全；命令不可用时退回系统浏览器，手动流程不变。
    */
   const openItemPage = useCallback(
-    (item: BlockedModFile) => openProjectPage(item.filePageUrl || item.pageUrl),
-    [openProjectPage],
+    async (item: BlockedModFile) => {
+      if (item.filePageUrl && isTauri()) {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core')
+          await invoke('open_blocked_download_window', {
+            instanceId,
+            files: [
+              {
+                fileId: item.fileId,
+                fileName: blockedModLabel(item),
+                url: item.filePageUrl,
+              },
+            ],
+            title: blockedModLabel(item),
+          })
+          return
+        } catch {
+          // 落到系统浏览器：手动补全仍然可用。
+        }
+      }
+      await openProjectPage(item.filePageUrl || item.pageUrl)
+    },
+    [instanceId, openProjectPage],
   )
+
+  /** 一键把全部待补文件开成标签队列：逐个点 Download，标签自动关闭。 */
+  const openAllPages = useCallback(async () => {
+    const files = itemsRef.current
+      .filter(item => !!item.filePageUrl)
+      .map(item => ({
+        fileId: item.fileId,
+        fileName: blockedModLabel(item),
+        url: item.filePageUrl!,
+      }))
+    if (files.length === 0) {
+      setError(t('dialogs.blockedMods.openAllEmpty'))
+      return
+    }
+    if (!isTauri()) {
+      await openProjectPage(files[0].url)
+      return
+    }
+    try {
+      const { invoke } = await import('@tauri-apps/api/core')
+      await invoke('open_blocked_download_window', {
+        instanceId,
+        files,
+        title: `${files.length} 个待补文件`,
+      })
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : t('dialogs.blockedMods.downloadFailed'))
+    }
+  }, [instanceId, openProjectPage, t])
 
   /** 逐条指定文件：用于文件名缺失、或拖入后匹配不到条目的情况。 */
   const pickFile = useCallback(
@@ -246,6 +353,80 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
     [applyRemaining, describeError, instanceId, refresh, t],
   )
 
+  /**
+   * 窗口把 CDN 地址交过来后由启动器下载：轮询进度显示在对应行，完成后
+   * 后端已经做完 SHA-1 校验并落盘，这里只刷新剩余清单。
+   */
+  const startFetch = useCallback(
+    async (req: DownloadRequested) => {
+      if (req.instanceId !== instanceIdRef.current) return
+      const fileId = req.fileId
+      setFetching(prev => ({ ...prev, [fileId]: null }))
+      setError('')
+      let timer: ReturnType<typeof setInterval> | null = null
+      try {
+        timer = setInterval(() => {
+          void getBlockedFetchProgress(instanceId, fileId)
+            .then(p => {
+              if (instanceIdRef.current !== instanceId) return
+              const percent =
+                p.total && p.total > 0
+                  ? Math.min(100, Math.floor((p.downloaded / p.total) * 100))
+                  : null
+              setFetching(prev => (fileId in prev ? { ...prev, [fileId]: percent } : prev))
+            })
+            .catch(() => {})
+        }, 400)
+        const res = await fetchBlockedMod(instanceId, fileId, req.url)
+        if (instanceIdRef.current !== instanceId) return
+        applyRemaining(res.items ?? [])
+      } catch (e: unknown) {
+        if (instanceIdRef.current !== instanceId) return
+        // 失败也回查一次：可能后端已落盘但响应丢失。
+        void refresh()
+        setError(describeError(e, t('dialogs.blockedMods.submitFailed')))
+      } finally {
+        if (timer) clearInterval(timer)
+        setFetching(prev => {
+          if (!(fileId in prev)) return prev
+          const next = { ...prev }
+          delete next[fileId]
+          return next
+        })
+      }
+    },
+    [applyRemaining, describeError, instanceId, refresh, t],
+  )
+
+  downloadRequestedRef.current = req => {
+    void startFetch(req)
+  }
+
+  /** 从系统下载文件夹补全：后端按哈希匹配，源文件保留。 */
+  const scanDownloads = useCallback(async () => {
+    if (busyRef.current) return
+    busyRef.current = true
+    setScanning(true)
+    setError('')
+    try {
+      const before = itemsRef.current.length
+      const res = await scanBlockedDownloads(instanceId)
+      if (instanceIdRef.current !== instanceId) return
+      const remaining = res.items ?? []
+      applyRemaining(remaining)
+      // 没补上任何一条时明确说出来，否则用户只看到按钮转了一圈。
+      if (before > 0 && remaining.length === before) {
+        setError(t('dialogs.blockedMods.scanDownloadsEmpty'))
+      }
+    } catch (e: unknown) {
+      if (instanceIdRef.current !== instanceId) return
+      setError(describeError(e, t('dialogs.blockedMods.loadFailed')))
+    } finally {
+      busyRef.current = false
+      setScanning(false)
+    }
+  }, [applyRemaining, describeError, instanceId, t])
+
   /** 重扫清单：用户可能已经把文件放进 mods 目录，后端会核对后剔除。 */
   const rescan = useCallback(async () => {
     if (busyRef.current) return
@@ -284,7 +465,7 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
     onClose()
   }, [describeError, instanceId, onClose, onSkipped, t])
 
-  const busy = importing || loading || busyFileId !== null
+  const busy = importing || scanning || loading || busyFileId !== null
 
   return (
     <Dialog open={open} onClose={onClose} className="max-w-lg">
@@ -341,15 +522,22 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
                       {item.fileLength ? ` · ${formatSize(item.fileLength)}` : ''}
                     </div>
                   </div>
+                  {fetching[item.fileId] !== undefined && (
+                    <span className="shrink-0 text-[11px] tabular-nums text-primary">
+                      {fetching[item.fileId] === null ? '…' : `${fetching[item.fileId]}%`}
+                    </span>
+                  )}
                   <Button
                     variant="ghost"
                     size="sm"
                     className="shrink-0 gap-1"
-                    onClick={() => openItemPage(item)}
+                    onClick={() => void openItemPage(item)}
                   >
                     <ExternalLink className="h-3 w-3" />
                     {item.filePageUrl
-                      ? t('dialogs.blockedMods.openFilePage')
+                      ? isTauri()
+                        ? t('dialogs.blockedMods.downloadInApp')
+                        : t('dialogs.blockedMods.openFilePage')
                       : t('dialogs.blockedMods.openPage')}
                   </Button>
                   <Button
@@ -373,24 +561,50 @@ export function BlockedModsDialog({ open, instanceId, onClose, onResolved, onSki
         )}
       </DialogBody>
       <DialogFooter className="justify-between">
-        <div className="flex items-center gap-1.5">
+        {/* 紧凑样式确保 4 个动作在 max-w-lg 下排成一行；窗口被压到极窄时才换行。 */}
+        <div className="flex flex-wrap items-center gap-1">
           <Button
             variant="ghost"
             size="sm"
-            className="gap-1.5"
+            className="h-7 gap-1 px-1.5"
+            disabled={busy || items.length === 0}
+            onClick={() => void openAllPages()}
+          >
+            <Layers className="h-3 w-3" />
+            {t('dialogs.blockedMods.openAllPages')}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 px-1.5"
+            disabled={busy}
+            onClick={() => void scanDownloads()}
+          >
+            {scanning ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <FolderDown className="h-3 w-3" />
+            )}
+            {t('dialogs.blockedMods.scanDownloads')}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 px-1.5"
             disabled={busy}
             onClick={() => void rescan()}
           >
-            <RefreshCw className="h-3.5 w-3.5" />
+            <RefreshCw className="h-3 w-3" />
             {t('dialogs.blockedMods.rescan')}
           </Button>
           <Button
             variant="ghost"
             size="sm"
-            className="text-muted-foreground"
+            className="h-7 gap-1 px-1.5 text-muted-foreground"
             disabled={busy}
             onClick={() => void skip()}
           >
+            <SkipForward className="h-3 w-3" />
             {t('dialogs.blockedMods.skip')}
           </Button>
         </div>

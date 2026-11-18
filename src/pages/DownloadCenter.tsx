@@ -882,20 +882,38 @@ if (task.instanceId && task.type !== 'batch') {
           }
           getInstallProgress(task.instanceId).then(p => {
             if (!p || p.status === 'not-started') {
-              if (task.status === 'queued') {
-                // Not-started may be a race with SSE push — wait 5s then re-check before removal
-                const taskId = task.id
-                const instId = task.instanceId!
-                setTimeout(() => {
-                  const t = getTasks().find(t => t.id === taskId)
-                  if (!t || t.status !== 'queued') return
-                  getInstallProgress(instId).then(p2 => {
-                    if (!p2 || p2.status === 'not-started') removeTask(taskId)
-                  }).catch(() => {})
-                }, 5000)
-              } else {
-                updateTask(task.id, { status: 'failed', error: t('downloads.errors.taskExpired') })
+              const taskId = task.id
+              const instId = task.instanceId!
+              const expired = () => {
+                if (task.status === 'queued') {
+                  // Not-started may be a race with SSE push — wait 5s then re-check before removal
+                  setTimeout(() => {
+                    const cur = getTasks().find(t => t.id === taskId)
+                    if (!cur || cur.status !== 'queued') return
+                    getInstallProgress(instId).then(p2 => {
+                      if (!p2 || p2.status === 'not-started') removeTask(taskId)
+                    }).catch(() => {})
+                  }, 5000)
+                } else {
+                  updateTask(taskId, { status: 'failed', error: t('downloads.errors.taskExpired') })
+                }
               }
+              // 重启后 tracker 是空的，但待补全清单还在磁盘上：那是「等用户补文件」，
+              // 不是过期。先查清单再决定，否则一重启就再也回不到补全入口。
+              if (task.kind === 'server' || task.kind === 'plugin') {
+                expired()
+                return
+              }
+              getBlockedMods(instId)
+                .then(res => {
+                  const count = (res.items ?? []).length
+                  if (count > 0) {
+                    updateTask(taskId, { status: 'awaiting-files', blockedFiles: count })
+                  } else {
+                    expired()
+                  }
+                })
+                .catch(expired)
             } else if (p.status === 'completed') {
               // 任务已完成后才被 SSE 剔除（get_all_active 不含 completed），
               // 此处补正终态，否则任务会永远卡在"连接中/下载中"

@@ -403,6 +403,18 @@ impl InstanceService {
             .collect()
     }
 
+    /// 按名称 + 游戏根目录查找实例（同名不同目录是合法记录，不能只比名称）。
+    ///
+    /// 用于同包重装/重试：失败安装会保留实例记录与半装产物，再走 `create`
+    /// 只会撞「实例目录已被占用」，永远无法恢复。
+    pub fn find_by_name(&self, name: &str, game_dir: &str) -> Option<GameInstance> {
+        let guard = self.instances.lock().unwrap_or_else(|p| p.into_inner());
+        guard
+            .iter()
+            .find(|i| i.name == name && same_game_root(&i.game_dir, game_dir))
+            .cloned()
+    }
+
     pub fn get_by_id(&self, id: &str) -> Option<GameInstance> {
         let (found, changed) = {
             let mut guard = self.instances.lock().unwrap_or_else(|p| p.into_inner());

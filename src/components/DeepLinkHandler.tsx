@@ -13,6 +13,7 @@ import { usePluginStore } from '../stores/pluginStore.ts'
 import { logError } from '../lib/frontendLog.ts'
 import { getSettings } from '../api/settings.ts'
 import { getInstances, installModpackDirect, resolveModpack } from '../api/instance.ts'
+import { addTask, getTasks, updateTask } from '../stores/downloadStore.ts'
 import { joinRoom } from '../api/connector.ts'
 import { installStorePlugin } from '../api/pluginStore.ts'
 import { installPluginFromUrl } from '../api/plugins.ts'
@@ -259,7 +260,7 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
             if (!ok) return cancel()
           }
           try {
-            await installModpackDirect({
+            const { instanceId } = await installModpackDirect({
               id: finalName,
               type: action.source,
               projectId: action.projectId,
@@ -267,6 +268,35 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
               fileId: sourceNeedsFileId(action.source) ? action.fileId : undefined,
               gameDir: getSettings().gameDir,
             })
+            // SSE 自动补的卡片没有重试描述符（它不知道来源坐标），安装失败后只能删掉。
+            // 这里按本次请求的坐标先建卡，SSE 到达时按 instanceId 更新同一张卡；
+            // 卡片持久化在 localStorage，重启后重试按钮仍在。
+            const retryable = !sourceNeedsFileId(action.source) || !!action.fileId
+            if (retryable && action.source !== 'technic') {
+              const settings = getSettings()
+              const task = {
+                name: finalName,
+                type: 'modpack' as const,
+                gameVersion: '',
+                instanceId,
+                status: 'queued' as const,
+                progress: 0,
+                createdAt: new Date().toISOString(),
+                retry: {
+                  kind: 'modpack' as const,
+                  name: finalName,
+                  gameVersion: '',
+                  source: action.source,
+                  projectId: action.projectId,
+                  versionId: action.fileId,
+                  gameDir: settings.gameDir,
+                  versionIsolation: settings.versionIsolation !== false,
+                },
+              }
+              const existing = getTasks().find(t => t.id === instanceId || t.instanceId === instanceId)
+              if (existing) updateTask(existing.id, task)
+              else addTask({ id: instanceId, ...task })
+            }
             navigate('/instances')
             notify(t('deepLink.installStarted'), 'success')
           } catch (e) {

@@ -609,6 +609,82 @@ pub fn match_source<'a>(
         })
 }
 
+/// 单次扫描的候选文件上限：下载目录堆了几百个 jar 时逐个算哈希会把用户卡在
+/// 按钮上，取最新的一批已覆盖「刚下载完就回来点补全」的实际场景。
+pub const SCAN_MAX_FILES: usize = 200;
+
+/// 超过补全上限的文件即使命中也会在落盘阶段被拒绝，先算哈希纯属浪费。
+const SCAN_MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
+
+/// 在候选目录（系统下载文件夹）里找出能补上清单的文件。
+///
+/// 有 SHA-1 的条目只认哈希：同名不同版本只差哈希，按名字收下会把错版本放进
+/// `mods/`。无哈希的旧条目才退回文件名匹配，省掉一次完整读取。返回
+/// `(源文件, 清单条目)`，源文件不移动、不删除。
+pub fn scan_candidates(
+    dir: &Path,
+    items: &[BlockedModFile],
+    max_files: usize,
+) -> Vec<(PathBuf, BlockedModFile)> {
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    let mut files: Vec<(PathBuf, std::time::SystemTime)> = rd
+        .flatten()
+        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .filter(|e| {
+            e.path()
+                .extension()
+                .and_then(|x| x.to_str())
+                .is_some_and(|x| x.eq_ignore_ascii_case("jar") || x.eq_ignore_ascii_case("litemod"))
+        })
+        .filter(|e| {
+            e.metadata()
+                .map(|m| m.len() <= SCAN_MAX_FILE_BYTES)
+                .unwrap_or(false)
+        })
+        .map(|e| {
+            let mtime = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            (e.path(), mtime)
+        })
+        .collect();
+    // 刚下载的文件最可能对应刚点的链接，先算它们。
+    files.sort_by_key(|(_, t)| std::cmp::Reverse(*t));
+    files.truncate(max_files);
+
+    let mut pending: Vec<BlockedModFile> = items.to_vec();
+    for (path, _) in files {
+        if pending.is_empty() {
+            break;
+        }
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if let Some(idx) = pending.iter().position(|e| {
+            e.sha1.as_deref().filter(|s| !s.is_empty()).is_none()
+                && !e.file_name.trim().is_empty()
+                && e.file_name.eq_ignore_ascii_case(&name)
+        }) {
+            out.push((path, pending.remove(idx)));
+            continue;
+        }
+        let Ok(sha1) = crate::services::modpack_export::sha1_file_hex(&path) else {
+            continue;
+        };
+        let Some(entry) = match_source(&pending, &sha1, &name).cloned() else {
+            continue;
+        };
+        pending.retain(|e| e.file_id != entry.file_id);
+        out.push((path, entry));
+    }
+    out
+}
+
 /// 串行化清单的「读-改-写」：并发补全不同条目、或补全与重扫同时进行时，
 /// 后写者会拿着旧副本覆盖先完成的结果（lost update）。
 static BLOCKED_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -1114,6 +1190,63 @@ mod tests {
             !drop_present_in_mods(&gd, "Nast", true, &mut items),
             "没有变化时不应触发重复落盘"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 下载目录扫描：有哈希的条目只认哈希，同名的错版本必须不匹配。
+    #[test]
+    fn scan_candidates_matches_by_sha1_not_name() {
+        let root = temp_root("scan-dl");
+        let right = root.join("whatever-name.jar");
+        let wrong = root.join("mmcr.jar");
+        std::fs::write(&right, b"right").unwrap();
+        std::fs::write(&wrong, b"wrong").unwrap();
+        let sha1 = sha1_file_hex(&right).unwrap();
+        // 只读文件也要算，文本文件不影响扫描上限判断。
+        std::fs::write(root.join("notes.txt"), b"x").unwrap();
+
+        let items = vec![entry(1, "mmcr.jar", Some(&sha1))];
+        let hit = scan_candidates(&root, &items, SCAN_MAX_FILES);
+        assert_eq!(hit.len(), 1, "只能命中哈希一致的那份");
+        assert_eq!(hit[0].0, right, "按哈希匹配，不看文件名");
+        assert_eq!(hit[0].1.file_id, 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 无哈希的旧条目按文件名兜底，名字不符不能收下。
+    #[test]
+    fn scan_candidates_falls_back_to_name_only_without_sha1() {
+        let root = temp_root("scan-name");
+        std::fs::write(root.join("legacy.jar"), b"legacy").unwrap();
+        std::fs::write(root.join("other.jar"), b"other").unwrap();
+
+        let items = vec![entry(3, "legacy.jar", None)];
+        let hit = scan_candidates(&root, &items, SCAN_MAX_FILES);
+        assert_eq!(hit.len(), 1);
+        assert_eq!(hit[0].1.file_id, 3);
+        assert!(
+            scan_candidates(&root, &[entry(4, "missing.jar", None)], SCAN_MAX_FILES).is_empty(),
+            "文件名不匹配不能算补全"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 目录不存在或候选超过上限时只返回已找到的部分，不能报错阻断补全。
+    #[test]
+    fn scan_candidates_tolerates_missing_dir_and_caps_files() {
+        let root = temp_root("scan-cap");
+        assert!(scan_candidates(
+            &root.join("no-such-dir"),
+            &[entry(1, "a.jar", None)],
+            SCAN_MAX_FILES
+        )
+        .is_empty());
+
+        std::fs::write(root.join("a.jar"), b"a").unwrap();
+        std::fs::write(root.join("b.jar"), b"b").unwrap();
+        let items = vec![entry(1, "a.jar", None), entry(2, "b.jar", None)];
+        assert_eq!(scan_candidates(&root, &items, 1).len(), 1, "上限必须生效");
+        assert_eq!(scan_candidates(&root, &items, SCAN_MAX_FILES).len(), 2);
         let _ = std::fs::remove_dir_all(&root);
     }
 
