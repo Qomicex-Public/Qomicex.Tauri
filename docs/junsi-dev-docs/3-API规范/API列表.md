@@ -1089,6 +1089,8 @@ Yggdrasil.MinecraftToken.Create Yggdrasil.Server.Join`。
 
 **响应：** `{ "message": "安装已启动", "versionId": "..." }`
 
+**同包重装/重试（ADR-134）：** 建实例前按「同 `name` + 同 `gameDir`」查找现有记录；来源与项目/版本一致，或记录无来源字段但 `modpackName` 一致时**复用**该记录并在原目录继续安装（失败安装保留的半装文件由暂存与校验跳过），不再返回 `实例目录已被占用`。目标仍有进行中任务时直接返回现有 instanceId，不重复起管线。用户自建的同名实例（无 `modpackName`）仍按占用报错。
+
 ### POST `/api/modpack/install-direct`
 
 一键安装整合包（插件/内部调用用）。与 `/install` 共享完整安装管线：后端自行解析来源并组装安装请求，调用方只需传定位信息。
@@ -3019,7 +3021,7 @@ CurseForge 的作者可以关闭 Project Distribution Toggle。开关关闭后�
 
 > `pageUrl` 用 `https://www.curseforge.com/projects/{projectId}`：实测该形式 302 到 slug 页（HTTP 200），而 `projects/{id}/files/{fileId}` 是 404。
 
-> `filePageUrl`（issue #301，可选）：精确到该文件版本的下载页，由项目的 `links.websiteUrl` 拼 `/files/{fileId}` 得到，形如 `https://www.curseforge.com/minecraft/mc-mods/{slug}/files/{fileId}`（实测 HTTP 200 且落到对应 File ID）。它是**尽力而为**的展示字段：需要调用 `POST /v1/mods` 解析项目网站地址（100 条一批、单次超时 10 s、结果进程内缓存），解析失败或未配置 CurseForge API Key 时**整个字段缺失**，前端退回 `pageUrl`。该字段不写回 `.qomicex/blocked-mods.json`，`schemaVersion` 不变，旧 sidecar 照常读取。三个返回 `BlockedModList` 的端点（GET 与两个 submit）都会带上它，`DELETE` 返回空清单。
+> `filePageUrl`（issue #301，可选）：精确到该文件版本的下载页，由项目的 `links.websiteUrl` 拼 `/files/{fileId}` 得到，形如 `https://www.curseforge.com/minecraft/mc-mods/{slug}/files/{fileId}`（实测 HTTP 200 且落到对应 File ID）。它是**尽力而为**的展示字段：需要调用 `POST /v1/mods` 解析项目网站地址（100 条一批、单次超时 10 s、结果进程内缓存），解析失败或未配置 CurseForge API Key 时**整个字段缺失**，前端退回 `pageUrl`。该字段不写回 `.qomicex/blocked-mods.json`，`schemaVersion` 不变，旧 sidecar 照常读取。三个返回 `BlockedModList` 的端点（GET 与两个 submit）都会带上它，`DELETE` 返回空清单。`scan-downloads` 同样带上它。
 
 #### POST `/api/modpack/blocked/{instanceId}/submit`
 
@@ -3051,6 +3053,52 @@ CurseForge 的作者可以关闭 Project Distribution Toggle。开关关闭后�
 **响应：** `BlockedModList`（补全后的剩余清单，前端直接用它刷新）
 
 **错误码：** `INSTANCE_NOT_FOUND`(404)、`BLOCKED_UPLOAD_FILE_NOT_FOUND`(400 路径不存在)、`BLOCKED_UPLOAD_TOO_LARGE`(400 超 512 MiB)、`BLOCKED_ENTRY_NOT_FOUND`(404 条目已被补全或实例已更新)、`BLOCKED_UPLOAD_REJECTED`(400 校验失败或文件名非法)
+
+#### POST `/api/modpack/blocked/{instanceId}/scan-downloads`
+
+从系统下载文件夹补全（ADR-133）。用户更习惯在浏览器里直接下载，回来后还要自己找文件、逐条选择；本端点扫描 `dirs::download_dir()` 下的 `.jar` / `.litemod`，按 `sha1` 匹配清单条目，仅对无哈希的旧条目退回文件名匹配，命中的复制进 `mods/` 并从清单移除。
+
+**请求体：** 无。
+
+**行为：**
+
+- 候选上限 200 个文件、单个不超过 512 MiB，按修改时间倒序优先算新下载的文件；超出上限只是少扫，不报错。
+- 源文件**不删除、不移动**，与手动补全一致。
+- 没有命中时返回的是**复查 `mods/` 之后**的剩余清单（用户已直接放入目录的文件同样会被剔除）；调用方不应以「请求前后长度是否变化」判断下载目录是否命中。
+
+**响应：** `BlockedModList`（补全后的剩余清单）
+
+**错误码：** `INSTANCE_NOT_FOUND`(404)、`DOWNLOAD_DIR_NOT_FOUND`(400 系统下载目录无法解析)、`BLOCKED_UPLOAD_REJECTED`(400 命中文件校验失败)
+
+> 前端「应用内下载」不经过本端点：独立 webview 窗口打开精确文件页，用户在页面点 Download 后由 Tauri 的 `on_download` 捕获 CDN 地址并回传，再走下面的 `/fetch`。
+
+#### POST `/api/modpack/blocked/{instanceId}/fetch`
+
+由启动器下载受限文件（ADR-133）。CF 的下载确认页倒计时结束后用 `mode:"cors", credentials:"omit"` 的 fetch 取 CDN 文件；在 WebView2 里这条链路只触发 `on_download` 的 `Requested`，既不落盘也不回调完成。小窗捕获到地址后取消浏览器下载并调用本端点。
+
+**请求体：**
+
+```json
+{ "fileId": 7107048, "url": "https://mediafilez.forgecdn.net/files/7107/48/xxx.jar" }
+```
+
+- `url` 只允许 `https://*.forgecdn.net`（地址来自页面，不校验等于开放任意 URL 下载面），否则 `BLOCKED_FETCH_URL_REJECTED`(400)。
+- 流式下载到 `{gameDir}/temp`，复用 `accept_blocked_file` 做 SHA-1 校验与落盘，临时文件随后删除。
+- 下载期间进度写入进程内快照，供下面的 `progress` 端点轮询。
+
+**响应：** `BlockedModList`（补全后的剩余清单）
+
+**错误码：** `INSTANCE_NOT_FOUND`(404)、`BLOCKED_ENTRY_NOT_FOUND`(404)、`BLOCKED_FETCH_URL_INVALID`(400 地址无法解析)、`BLOCKED_FETCH_URL_REJECTED`(400 非 `*.forgecdn.net`)、`BLOCKED_FETCH_NO_SHA1`(400 条目缺校验值，需手动导入)、`BLOCKED_FETCH_BUSY`(409 该文件已在下载中)、`BLOCKED_FETCH_ORIGIN_REJECTED`(403 非本机来源)、`BLOCKED_UPLOAD_REJECTED`(400 落盘校验失败)、`UPSTREAM_ERROR`(502 CDN 非成功状态或下载流读取失败)、`INTERNAL_ERROR`(500 本地临时目录创建失败)
+
+#### GET `/api/modpack/blocked/{instanceId}/fetch/{fileId}/progress`
+
+应用内下载进度（前端每 400ms 轮询）。下载结束后保留最后一份快照。
+
+```json
+{ "downloaded": 1048576, "total": 5102525, "done": false, "error": null }
+```
+
+`total` 未知时缺省；`done=true` 表示已落盘；`error` 非空表示失败原因。
 
 #### DELETE `/api/modpack/blocked/{instanceId}`
 

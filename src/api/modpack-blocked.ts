@@ -50,6 +50,59 @@ export async function skipBlockedMods(instanceId: string): Promise<BlockedModLis
   return del<BlockedModList>(`/modpack/blocked/${encodeURIComponent(instanceId)}`)
 }
 
+/** 应用内下载进度快照（后端按 instanceId+fileId 记录）。 */
+export interface BlockedFetchProgress {
+  downloaded: number
+  /** 未知总量时后端返回 null（不是缺省字段）。 */
+  total: number | null
+  done: boolean
+  error: string | null
+}
+
+/** 单个受限文件的下载 + SHA-1 校验预算：大文件慢网可能远超全局 15s 默认值。 */
+const BLOCKED_FETCH_TIMEOUT_MS = 10 * 60 * 1000
+
+/**
+ * 由启动器下载受限文件。
+ *
+ * `url` 是页面倒计时结束后请求的 CDN 地址（仅允许 `*.forgecdn.net`）；后端流式
+ * 下载、按清单 SHA-1 校验后放进 `mods/`。与 WebView2 自带下载栈无关，因此能
+ * 提供进度并在完成后回填清单。
+ */
+export async function fetchBlockedMod(
+  instanceId: string,
+  fileId: number,
+  url: string,
+): Promise<BlockedModList> {
+  return post<BlockedModList>(
+    `/modpack/blocked/${encodeURIComponent(instanceId)}/fetch`,
+    { fileId, url },
+    { timeoutMs: BLOCKED_FETCH_TIMEOUT_MS },
+  )
+}
+
+/** 轮询应用内下载进度；下载结束后仍保留最后一份快照。 */
+export async function getBlockedFetchProgress(
+  instanceId: string,
+  fileId: number,
+): Promise<BlockedFetchProgress> {
+  return get<BlockedFetchProgress>(
+    `/modpack/blocked/${encodeURIComponent(instanceId)}/fetch/${fileId}/progress`,
+  )
+}
+
+/**
+ * 从系统下载文件夹补全：后端按 SHA-1（无哈希条目按文件名）匹配清单，
+ * 命中的文件复制进 `mods/` 并从清单移除，源文件保留。
+ *
+ * 返回补全后的剩余清单；没有命中时清单原样返回，调用方据此提示。
+ */
+export async function scanBlockedDownloads(instanceId: string): Promise<BlockedModList> {
+  return post<BlockedModList>(
+    `/modpack/blocked/${encodeURIComponent(instanceId)}/scan-downloads`,
+  )
+}
+
 /** 清单条目里可直接展示的名称：CF 给了 fileName 就用，否则退回 id。 */
 export function blockedModLabel(item: BlockedModFile): string {
   const name = item.fileName.trim()

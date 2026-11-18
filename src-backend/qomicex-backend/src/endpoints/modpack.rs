@@ -28,10 +28,10 @@
 //!   runs the same background pipeline.
 //! - Temp uploads are removed after the install task settles.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use arc_swap::ArcSwap;
 use axum::body::Body;
@@ -40,6 +40,7 @@ use axum::http::{header, StatusCode};
 use axum::response::Response;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
@@ -147,6 +148,18 @@ pub fn router() -> Router<SharedState> {
         .route(
             "/modpack/blocked/{instanceId}/submit/{fileId}",
             post(submit_blocked_mod),
+        )
+        .route(
+            "/modpack/blocked/{instanceId}/scan-downloads",
+            post(scan_blocked_downloads),
+        )
+        .route(
+            "/modpack/blocked/{instanceId}/fetch",
+            post(fetch_blocked_mod),
+        )
+        .route(
+            "/modpack/blocked/{instanceId}/fetch/{fileId}/progress",
+            get(blocked_fetch_progress),
         )
         // 移除失败任务时丢弃暂存区：用户不再重试，下次安装从头下载。
         .route("/modpack/staging", delete(drop_staging))
@@ -2917,6 +2930,275 @@ async fn submit_blocked_mod_by_path(
     )))
 }
 
+/// POST /modpack/blocked/{instanceId}/scan-downloads -- 从系统下载文件夹补全。
+///
+/// 用户更习惯在浏览器里直接下载，回来后还要自己找文件、逐条选择。这里直接把
+/// 下载目录里的 jar 按 SHA-1（无哈希条目按文件名）匹配清单，命中的就登记，
+/// 源文件不移动、不删除。候选数量与单文件大小都有上限，避免把按钮卡住。
+///
+/// 在 `lock_blocked_write` 之外扫描：哈希与复制是同步阻塞 I/O，放到
+/// `spawn_blocking` 里跑，不占 tokio 工作线程。
+async fn scan_blocked_downloads(
+    headers: axum::http::HeaderMap,
+    State(s): State<SharedState>,
+    AxumPath(instance_id): AxumPath<String>,
+) -> ApiResult<Json<crate::services::modpack_blocked::BlockedModList>> {
+    if let Some(origin) = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+    {
+        if !is_local_origin(origin) {
+            return Err(ApiError::forbidden(
+                "BLOCKED_SCAN_ORIGIN_REJECTED",
+                "该操作仅允许在启动器内调用",
+            ));
+        }
+    }
+    let inst = s
+        .instance
+        .get_by_id(&instance_id)
+        .ok_or_else(|| ApiError::not_found("INSTANCE_NOT_FOUND", "Instance not found"))?;
+    let dir = dirs::download_dir()
+        .ok_or_else(|| ApiError::bad_request("DOWNLOAD_DIR_NOT_FOUND", "找不到系统下载文件夹"))?;
+
+    let pending = blocked_remaining(&s, &inst);
+    if pending.is_empty() {
+        return Ok(Json(crate::services::modpack_blocked::BlockedModList::new(
+            Vec::new(),
+        )));
+    }
+    let scanned = tokio::task::spawn_blocking(move || {
+        crate::services::modpack_blocked::scan_candidates(
+            &dir,
+            &pending,
+            crate::services::modpack_blocked::SCAN_MAX_FILES,
+        )
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("扫描下载目录任务异常: {e}")))?;
+
+    for (src, entry) in scanned {
+        // 单个候选失效（扫描后被移动/删除）不应中断整批：其余文件照常导入，
+        // 失败的条目留在清单里等下次重试。
+        if let Err(e) = accept_blocked_file(&s, &inst, &src, &entry).await {
+            tracing::warn!(
+                file_id = entry.file_id,
+                error = %e.message,
+                "下载目录补全失败，跳过该文件"
+            );
+        }
+    }
+
+    let mut remaining = blocked_remaining(&s, &inst);
+    fill_file_page_urls(&s, &mut remaining).await;
+    Ok(Json(crate::services::modpack_blocked::BlockedModList::new(
+        remaining,
+    )))
+}
+
+/// 应用内下载的进度快照（前端轮询）。
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BlockedFetchProgress {
+    downloaded: u64,
+    total: Option<u64>,
+    done: bool,
+    error: Option<String>,
+}
+
+fn blocked_fetch_states() -> &'static Mutex<HashMap<String, BlockedFetchProgress>> {
+    static STATES: OnceLock<Mutex<HashMap<String, BlockedFetchProgress>>> = OnceLock::new();
+    STATES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn update_fetch_state(key: &str, f: impl FnOnce(&mut BlockedFetchProgress)) {
+    if let Ok(mut map) = blocked_fetch_states().lock() {
+        if let Some(state) = map.get_mut(key) {
+            f(state);
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BlockedFetchRequest {
+    file_id: i64,
+    /// 页面倒计时结束后请求的文件地址。
+    url: String,
+}
+
+/// 这个地址来自页面，不校验等于给前端开了一个任意 URL 的下载面。
+fn is_curseforge_cdn(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        && url
+            .host_str()
+            .is_some_and(|h| h == "forgecdn.net" || h.ends_with(".forgecdn.net"))
+}
+
+/// 把 CDN 文件流式写入临时文件，顺便更新轮询进度。
+async fn download_cdn_file(
+    client: &reqwest::Client,
+    url: reqwest::Url,
+    dest: &Path,
+    key: &str,
+) -> Result<(), String> {
+    let resp = client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, crate::state::USER_AGENT)
+        .send()
+        .await
+        .map_err(|e| format!("请求下载地址失败: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("下载地址返回 HTTP {}", resp.status()));
+    }
+    let total = resp.content_length();
+    update_fetch_state(key, |s| s.total = s.total.or(total));
+
+    let mut file = tokio::fs::File::create(dest)
+        .await
+        .map_err(|e| format!("创建临时文件失败: {e}"))?;
+    let mut stream = resp.bytes_stream();
+    let mut written = 0u64;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("读取下载流失败: {e}"))?;
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| format!("写入临时文件失败: {e}"))?;
+        written += chunk.len() as u64;
+        update_fetch_state(key, |s| s.downloaded = written);
+    }
+    file.flush()
+        .await
+        .map_err(|e| format!("刷新临时文件失败: {e}"))?;
+    Ok(())
+}
+
+/// POST /modpack/blocked/{instanceId}/fetch -- 由启动器下载受限文件。
+///
+/// 页面倒计时结束后由 webview 把文件地址交过来：WebView2 自己的下载栈在这里
+/// 只走到 Requested 就没了结果（下载不落盘也不报错），改由后端下载既能看到
+/// 进度，也能沿用同一套 SHA-1 校验与落盘逻辑。
+async fn fetch_blocked_mod(
+    headers: axum::http::HeaderMap,
+    State(s): State<SharedState>,
+    AxumPath(instance_id): AxumPath<String>,
+    Json(req): Json<BlockedFetchRequest>,
+) -> ApiResult<Json<crate::services::modpack_blocked::BlockedModList>> {
+    if let Some(origin) = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+    {
+        if !is_local_origin(origin) {
+            return Err(ApiError::forbidden(
+                "BLOCKED_FETCH_ORIGIN_REJECTED",
+                "该操作仅允许在启动器内调用",
+            ));
+        }
+    }
+    let inst = s
+        .instance
+        .get_by_id(&instance_id)
+        .ok_or_else(|| ApiError::not_found("INSTANCE_NOT_FOUND", "Instance not found"))?;
+    let entry = crate::services::modpack_blocked::load_blocked(&inst.game_dir, &inst.name)
+        .into_iter()
+        .find(|it| it.file_id == req.file_id)
+        .ok_or_else(|| {
+            ApiError::not_found(
+                "BLOCKED_ENTRY_NOT_FOUND",
+                "该文件不在待补全清单中（可能已补全或实例已更新）",
+            )
+        })?;
+    // 自动下载必须能校验：缺 SHA-1 时中转文件名与清单文件名不同，落盘仍会被拒绝，
+    // 不如直接给出可操作的提示。
+    if entry.sha1.as_deref().filter(|s| !s.is_empty()).is_none() {
+        return Err(ApiError::bad_request(
+            "BLOCKED_FETCH_NO_SHA1",
+            "该条目缺少校验值，无法自动校验，请用「选择文件」手动补全",
+        ));
+    }
+    let url = reqwest::Url::parse(req.url.trim()).map_err(|e| {
+        ApiError::bad_request("BLOCKED_FETCH_URL_INVALID", format!("下载地址无效: {e}"))
+    })?;
+    if !is_curseforge_cdn(&url) {
+        return Err(ApiError::bad_request(
+            "BLOCKED_FETCH_URL_REJECTED",
+            "只允许下载 CurseForge CDN 上的文件",
+        ));
+    }
+
+    let key = format!("{instance_id}:{}", req.file_id);
+    {
+        let mut map = blocked_fetch_states()
+            .lock()
+            .map_err(|_| ApiError::internal("下载进度表不可用"))?;
+        // 同一文件的重叠请求会共用同一份进度快照：直接拒绝，让前端沿用进行中的那次。
+        if let Some(state) = map.get(&key) {
+            if !state.done && state.error.is_none() {
+                return Err(ApiError::conflict(
+                    "BLOCKED_FETCH_BUSY",
+                    "该文件正在下载中，请稍候",
+                ));
+            }
+        }
+        map.insert(
+            key.clone(),
+            BlockedFetchProgress {
+                total: entry.file_length.map(|v| v.max(0) as u64),
+                ..Default::default()
+            },
+        );
+    }
+
+    let temp_dir = Path::new(&inst.game_dir).join("temp");
+    std::fs::create_dir_all(&temp_dir).map_err(|e| {
+        update_fetch_state(&key, |s| s.error = Some(format!("创建临时目录失败: {e}")));
+        ApiError::internal(format!("创建临时目录失败: {e}"))
+    })?;
+    let tmp = temp_dir.join(format!(
+        "blocked-{}-{}.part",
+        req.file_id,
+        uuid::Uuid::new_v4()
+    ));
+
+    if let Err(e) = download_cdn_file(&s.http_client, url, &tmp, &key).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        update_fetch_state(&key, |s| s.error = Some(e.clone()));
+        return Err(ApiError::upstream(e));
+    }
+
+    let result = accept_blocked_file(&s, &inst, &tmp, &entry).await;
+    // 临时文件只是下载中转，落盘后立即清理（源文件本来就是我们自己下的）。
+    let _ = tokio::fs::remove_file(&tmp).await;
+    let mut remaining = match result {
+        Ok(items) => items,
+        Err(e) => {
+            update_fetch_state(&key, |s| s.error = Some(e.message.clone()));
+            return Err(e);
+        }
+    };
+    update_fetch_state(&key, |s| {
+        s.done = true;
+        s.total = Some(s.downloaded);
+    });
+    fill_file_page_urls(&s, &mut remaining).await;
+    Ok(Json(crate::services::modpack_blocked::BlockedModList::new(
+        remaining,
+    )))
+}
+
+/// GET /modpack/blocked/{instanceId}/fetch/{fileId}/progress -- 应用内下载进度。
+async fn blocked_fetch_progress(
+    AxumPath((instance_id, file_id)): AxumPath<(String, i64)>,
+) -> Json<BlockedFetchProgress> {
+    let key = format!("{instance_id}:{file_id}");
+    let snapshot = blocked_fetch_states()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(&key).cloned())
+        .unwrap_or_default();
+    Json(snapshot)
+}
+
 /// DELETE /modpack/blocked/{instanceId} -- 放弃补全：清空清单并结束等待态。
 ///
 /// 实例保留（缺文件仍能启动，只是依赖它们的模组会在游戏内报错）。
@@ -2947,6 +3229,30 @@ async fn skip_blocked_mods(
 ///
 /// 刻意不用「有 id 就写」：宁可少判可更新，也不要为一个来源不明的实例提供
 /// 原地更新 —— 那会覆盖用户手工搭建的内容。
+/// 现有实例记录是否就是本次要装的同一个整合包（同来源、同项目、同版本）。
+///
+/// 资源中心安装会写 `modpack_source/project_id/version_id`；`install-direct`
+/// （拖入 / 一键装 / 分享深链）按 issue #118 刻意不写来源字段，只能比包名。
+/// 只有「同目录 + 同名 + 同包」才复用，用户自建的同名实例不会被接管。
+fn same_modpack_target(
+    cur: &crate::services::instance::GameInstance,
+    next: &crate::services::instance::GameInstance,
+    src: &str,
+    req: &ModpackInstallRequest,
+) -> bool {
+    match (
+        cur.modpack_source.as_deref(),
+        cur.modpack_project_id.as_deref(),
+    ) {
+        (Some(cur_src), Some(cur_pid)) => {
+            cur_src == src
+                && Some(cur_pid) == req.project_id.as_deref()
+                && cur.modpack_version_id.as_deref() == req.version_id.as_deref()
+        }
+        _ => cur.modpack_name.is_some() && cur.modpack_name == next.modpack_name,
+    }
+}
+
 fn is_updatable_origin(req: &ModpackInstallRequest) -> bool {
     let origin_marked = req
         .origin
@@ -3408,7 +3714,25 @@ impl ModpackServiceData {
             .icon_data
             .as_deref()
             .map(crate::util::pcl_icon::normalize_icon_data_uri);
-        let created = self.instance.create(instance).map_err(ApiError::internal)?;
+        // 同包重装/重试/深链重放：失败安装会保留实例记录与半装产物（待补全清单、
+        // 暂存文件），再走 create 只会得到「实例目录已被占用」。身份一致时复用
+        // 现有记录，管线在原有目录上继续，已完整的文件会被跳过。
+        let existing = self
+            .instance
+            .find_by_name(&req.name, &resolved_game_dir)
+            // find_by_name 返回内存快照；先按独立配置重载，身份字段才是最新值。
+            .and_then(|cur| self.instance.get_by_id(&cur.id))
+            .filter(|cur| same_modpack_target(cur, &instance, &src_norm, &req));
+        let created = match existing {
+            Some(cur) => {
+                // 同一目标仍在安装中：不重复起管线，把现有任务交还调用方。
+                if self.tracker.active_kind(&cur.id).is_some() {
+                    return Ok(cur.id);
+                }
+                cur
+            }
+            None => self.instance.create(instance).map_err(ApiError::internal)?,
+        };
         let instance_id = created.id.clone();
         let version_dir_name = created.name.clone();
 
@@ -4302,7 +4626,8 @@ pub(crate) async fn run_modpack_pipeline(
                     })
                     .collect();
                 let rels: Vec<String> = planned.iter().map(|(_, r)| r.clone()).collect();
-                let files: Vec<_> = planned.into_iter().map(|(t, _)| t).collect();
+                let mut files: Vec<_> = planned.into_iter().map(|(t, _)| t).collect();
+                files.retain(|t| !crate::services::install_service::target_file_complete(t));
                 if !files.is_empty() {
                     download_batch(&h_g, &mgr_g, files, Some("download-files")).await?;
                 }
@@ -4397,6 +4722,8 @@ pub(crate) async fn run_modpack_pipeline(
                         p.files.len()
                     );
                 }
+                // 复用既有实例重装/重试：已完整落盘的模组不必重下（ADR-134）。
+                files.retain(|t| !crate::services::install_service::target_file_complete(t));
                 if !files.is_empty() {
                     download_batch(&h_g, &mgr_g, files, Some("download-files")).await?;
                 }
@@ -4422,6 +4749,7 @@ pub(crate) async fn run_modpack_pipeline(
                         .with_headers(headers)
                         .with_sha1(&l.sha1)
                     })
+                    .filter(|t| !crate::services::install_service::target_file_complete(t))
                     .collect();
                 // FTB 的 lib 路径是绝对路径，清单需要相对实例目录的形式：
                 // 相对 version 目录（隔离）/ 相对 game_dir（非隔离）都是相对实例根的。
@@ -4547,6 +4875,8 @@ pub(crate) async fn run_modpack_pipeline(
                         blocked.len()
                     );
                 }
+                // 复用既有实例重装/重试：已完整落盘的文件不必重下（ADR-134）。
+                files.retain(|t| !crate::services::install_service::target_file_complete(t));
                 if !files.is_empty() {
                     download_batch(&h_g, &mgr_g, files, Some("download-files")).await?;
                 }
@@ -5644,6 +5974,99 @@ mod tests {
         release_qml_overrides, resolve_effective_game_version, ModpackInstallRequest,
         ModpackOptionalFile, ParsedModpack,
     };
+
+    /// issue #301 复盘回归：失败安装留下的实例记录必须能被同包重装/重试复用，
+    /// 否则只会撞「实例目录已被占用」，用户永远恢复不了。
+    #[test]
+    fn same_modpack_target_matches_identity_or_pack_name() {
+        use crate::services::instance::GameInstance;
+
+        let req = ModpackInstallRequest {
+            name: "BMC4".into(),
+            game_version: "1.20.1".into(),
+            loader: None,
+            loader_version: None,
+            max_memory: None,
+            game_dir: "E:/.minecraft".into(),
+            version_isolation: true,
+            modpack_files: None,
+            overrides_zip: None,
+            optional_file_ids: None,
+            icon_data: None,
+            modpack_name: Some("Better MC".into()),
+            modpack_version: None,
+            modpack_author: None,
+            modpack_summary: None,
+            source: Some("curseforge".into()),
+            project_id: Some("876781".into()),
+            version_id: Some("9554990".into()),
+            optifine_version: None,
+            file_id: None,
+            local_path: None,
+            origin: None,
+            version_published_at: None,
+        };
+        let next = GameInstance {
+            name: "BMC4".into(),
+            modpack_name: Some("Better MC".into()),
+            ..Default::default()
+        };
+        let with_identity = GameInstance {
+            modpack_source: Some("curseforge".into()),
+            modpack_project_id: Some("876781".into()),
+            modpack_version_id: Some("9554990".into()),
+            ..next.clone()
+        };
+        assert!(super::same_modpack_target(
+            &with_identity,
+            &next,
+            "curseforge",
+            &req
+        ));
+
+        // 同项目不同版本：不是同一次安装，不能复用。
+        let other_version = GameInstance {
+            modpack_version_id: Some("1".into()),
+            ..with_identity.clone()
+        };
+        assert!(!super::same_modpack_target(
+            &other_version,
+            &next,
+            "curseforge",
+            &req
+        ));
+
+        // install-direct 不写来源字段：同包名也算同一个包（深链重放/重试）。
+        assert!(super::same_modpack_target(&next, &next, "curseforge", &req));
+
+        // 用户自建同名实例（无 modpackName）：不能被接管。
+        let manual = GameInstance {
+            name: "BMC4".into(),
+            ..Default::default()
+        };
+        assert!(!super::same_modpack_target(
+            &manual,
+            &next,
+            "curseforge",
+            &req
+        ));
+    }
+
+    /// 应用内下载只接受 CDN 域：地址来自页面，放开等于开放任意 URL 下载面。
+    #[test]
+    fn blocked_fetch_only_accepts_forge_cdn() {
+        let parse = |s: &str| reqwest::Url::parse(s).unwrap();
+        assert!(super::is_curseforge_cdn(&parse(
+            "https://mediafilez.forgecdn.net/files/1/2/a.jar"
+        )));
+        assert!(super::is_curseforge_cdn(&parse(
+            "https://edge.forgecdn.net/files/1/2/a.jar?api-key=x"
+        )));
+        assert!(!super::is_curseforge_cdn(&parse("https://evil.com/a.jar")));
+        assert!(!super::is_curseforge_cdn(&parse(
+            "http://edge.forgecdn.net/a.jar"
+        )));
+    }
 
     /// issue #176 复盘回归：gameVersion 决策必须 manifest 优先。
     ///

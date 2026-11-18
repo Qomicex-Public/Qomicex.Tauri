@@ -846,6 +846,8 @@ export default function DownloadCenter() {
 if (task.instanceId && task.type !== 'batch') {
         const match = sseData.installs.find((i) => i.instanceId === task.instanceId)
         if (match) {
+          // 卡片重新出现在 SSE 里：允许它下一次消失时再做一次过期检查。
+          checkedStaleInstallIds.current.delete(task.instanceId)
           let newStatus: DownloadTask['status'] = 'downloading'
           if (match.status === 'completed') newStatus = 'completed'
           else if (match.status === 'cancelled') newStatus = 'cancelled'
@@ -882,20 +884,52 @@ if (task.instanceId && task.type !== 'batch') {
           }
           getInstallProgress(task.instanceId).then(p => {
             if (!p || p.status === 'not-started') {
-              if (task.status === 'queued') {
-                // Not-started may be a race with SSE push — wait 5s then re-check before removal
-                const taskId = task.id
-                const instId = task.instanceId!
-                setTimeout(() => {
-                  const t = getTasks().find(t => t.id === taskId)
-                  if (!t || t.status !== 'queued') return
-                  getInstallProgress(instId).then(p2 => {
-                    if (!p2 || p2.status === 'not-started') removeTask(taskId)
-                  }).catch(() => {})
-                }, 5000)
-              } else {
-                updateTask(task.id, { status: 'failed', error: t('downloads.errors.taskExpired') })
+              const taskId = task.id
+              const instId = task.instanceId!
+              // 异步回包前卡片可能已被 SSE 推进到终态：按 id+instanceId 确认还是同一张卡。
+              const stillSameTask = () => {
+                const cur = getTasks().find((t) => t.id === taskId)
+                return !!cur && cur.instanceId === instId
               }
+              const expired = () => {
+                if (!stillSameTask()) return
+                if (task.status === 'queued') {
+                  // Not-started may be a race with SSE push — wait 5s then re-check before removal
+                  setTimeout(() => {
+                    const cur = getTasks().find(t => t.id === taskId)
+                    if (!cur || cur.status !== 'queued') return
+                    getInstallProgress(instId).then(p2 => {
+                      if (!p2 || p2.status === 'not-started') removeTask(taskId)
+                      else if (p2.status === 'completed') {
+                        updateTask(taskId, {
+                          status: 'completed',
+                          progress: 100,
+                          completedAt: new Date().toISOString(),
+                        })
+                      }
+                    }).catch(() => {})
+                  }, 5000)
+                } else {
+                  updateTask(taskId, { status: 'failed', error: t('downloads.errors.taskExpired') })
+                }
+              }
+              // 重启后 tracker 是空的，但待补全清单还在磁盘上：那是「等用户补文件」，
+              // 不是过期。先查清单再决定，否则一重启就再也回不到补全入口。
+              if (task.kind === 'server' || task.kind === 'plugin') {
+                expired()
+                return
+              }
+              getBlockedMods(instId)
+                .then(res => {
+                  if (!stillSameTask()) return
+                  const count = (res.items ?? []).length
+                  if (count > 0) {
+                    updateTask(taskId, { status: 'awaiting-files', blockedFiles: count })
+                  } else {
+                    expired()
+                  }
+                })
+                .catch(expired)
             } else if (p.status === 'completed') {
               // 任务已完成后才被 SSE 剔除（get_all_active 不含 completed），
               // 此处补正终态，否则任务会永远卡在"连接中/下载中"
@@ -924,7 +958,8 @@ if (task.instanceId && task.type !== 'batch') {
         if (lost) {
           getInstallProgress(prevId).then(p => {
             if (p.status === 'completed') updateTask(lost.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
-            else if (p.status === 'failed' || p.status === 'cancelled' || p.status === 'not-started') updateTask(lost.id, { status: p.status === 'not-started' ? 'cancelled' : p.status })
+            // not-started 交给磁盘恢复路径处理：这里判成 cancelled 会把待补全卡片直接关掉。
+            else if (p.status === 'failed' || p.status === 'cancelled') updateTask(lost.id, { status: p.status })
           }).catch(() => {})
         }
       }

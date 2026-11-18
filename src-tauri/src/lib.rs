@@ -9,6 +9,7 @@ use tauri::{Emitter, Manager};
 
 #[macro_use]
 mod logger;
+mod curseforge_dl;
 mod deep_link;
 mod dialog_cmd;
 #[cfg(target_os = "windows")]
@@ -353,6 +354,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            curseforge_dl::open_blocked_download_window,
+            curseforge_dl::close_blocked_download_window,
             dialog_cmd::pick_dialog,
             dialog_cmd::read_widget_file,
             dialog_cmd::write_widget_file,
