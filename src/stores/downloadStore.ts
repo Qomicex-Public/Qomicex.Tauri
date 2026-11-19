@@ -44,13 +44,55 @@ export function getTasks(): DownloadTask[] {
   return tasks
 }
 
+/** 自动补卡的显示名回退（后端没给 title 时就是 instanceId），合并时不能盖掉用户起的名字。 */
+function isFallbackName(task: DownloadTask): boolean {
+  return !!task.instanceId && task.name === task.instanceId
+}
+
+/** 安装管线卡片（SSE 自动补卡一律记为 'modpack'，本地游戏安装卡是 'game'）。 */
+function isInstallCard(task: DownloadTask): boolean {
+  return task.type === 'game' || task.type === 'modpack' || task.type === 'modpack-update'
+}
+
+/**
+ * 同一实例只允许一张卡片（issue #366）。
+ *
+ * 两条建卡路径会撞上：SSE 对「本地没有卡片的后端任务」自动补卡，而发起安装的
+ * 对话框/重试流程也会建卡。旧实现无条件前插，于是同一 instanceId 出现多张
+ * 不同名、同进度的卡片；自动补的那张没有 retry 描述符，失败后没有重试按钮。
+ * 这里按 id / instanceId 合并，并保住重试描述符与用户命名的卡片名。
+ */
 export function addTask(task: DownloadTask) {
-  tasks = [task, ...tasks]
+  const index = tasks.findIndex(
+    (t) =>
+      t.id === task.id ||
+      (!!task.instanceId && t.instanceId === task.instanceId && isInstallCard(t) && isInstallCard(task)),
+  )
+  if (index < 0) {
+    tasks = [task, ...tasks]
+  } else {
+    const prev = tasks[index]
+    const merged: DownloadTask = { ...prev, ...task }
+    merged.retry = task.retry ?? prev.retry
+    if (isFallbackName(task) && prev.name && !isFallbackName(prev)) {
+      // SSE 自动补卡：名字回退为 instanceId、类型一律记 'modpack'。这两项都只是
+      // 渲染兜底，不能覆盖本地卡片（游戏安装是 'game'，名字由用户起）。
+      merged.name = prev.name
+      merged.type = prev.type
+    }
+    tasks = tasks.map((t, i) => (i === index ? merged : t))
+  }
   saveTasks()
   emitChange()
 }
 
 export function updateTask(id: string, updates: Partial<DownloadTask>) {
+  // 重试会把卡片挂到新建的实例上：若 SSE 已给那个实例自动补过卡，这里必须收编，
+  // 否则同一实例两张卡（自动卡没有 retry，表现为「重试过一次就没有重试按钮」）。
+  if (updates.instanceId) {
+    const instanceId = updates.instanceId
+    tasks = tasks.filter((t) => t.id === id || t.instanceId !== instanceId)
+  }
   tasks = tasks.map((t) => (t.id === id ? { ...t, ...updates } : t))
   // Debounce persistence: progress updates are high-frequency (~3/s from SSE),
   // but structural mutations (add/remove/clear) should persist immediately.

@@ -376,6 +376,8 @@ fn new_download_manager(settings: &SettingsResponse) -> Arc<DownloadManager> {
         // 下载传输按来源自动路由：`http1_parallel` 为「强制 H1」开关（默认关，不强制）；
         // `h1_parallel_hosts` 恒含「按连接限速」CDN（Modrinth），其余源（Mojang/BMCLAPI/
         // CurseForge 等）保持 HTTP/2。实测 Modrinth CDN 上 H1 并行比 H2 多路复用快 3.7 倍。
+        // （issue #366 曾测过把 CurseForge 也改走 H1：三轮结果 H1 快 1.5 倍/慢 2 倍不等，
+        // 差异被 CDN 限速抖动淹没，不构成改路由的依据。）
         http1_parallel: settings.http1_parallel,
         h1_parallel_hosts: H1_PARALLEL_HOSTS.iter().map(|s| s.to_string()).collect(),
         ..Default::default()
