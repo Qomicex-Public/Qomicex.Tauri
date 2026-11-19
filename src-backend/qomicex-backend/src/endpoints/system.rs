@@ -224,6 +224,9 @@ async fn sysinfo(State(state): State<SharedState>) -> ApiResult<Json<SystemInfoR
         available_memory: avail as i64,
         app_version: state.app_version.clone(),
         data_dir: state.data_dir.to_string_lossy().into_owned(),
+        official_game_dir: crate::settings::official_game_dir()
+            .to_string_lossy()
+            .into_owned(),
     }))
 }
 
@@ -277,6 +280,11 @@ async fn put_settings(
     // 热替换下载管理器（旧管理器进行中的任务被取消），使新值立即生效。
     let rebuild_download_manager = {
         let old = state.settings.read().await;
+        // 开关从开切到关：立即还原已写入的系统状态（独显偏好 / 游戏模式）。
+        if old.launch_hardware_boost.unwrap_or(true) && !body.launch_hardware_boost.unwrap_or(true)
+        {
+            crate::services::hardware::disable_boost();
+        }
         old.enable_http3.unwrap_or(false) != body.enable_http3.unwrap_or(false)
             || old.download_threads != body.download_threads
             || old.file_chunk_threads != body.file_chunk_threads

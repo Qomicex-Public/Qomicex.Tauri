@@ -976,6 +976,8 @@ async fn host_instance(
                         source: None,
                     })
                 } else {
+                    // 独显偏好/游戏模式必须在进程创建前就位（与普通启动路径同一口径）。
+                    crate::services::hardware::prepare_launch(&java_path);
                     let launch_options = {
                         // core.launch 细分阶段回调（与普通启动路径口径一致）
                         let cb_tracker = tracker.clone();
@@ -1034,6 +1036,7 @@ async fn host_instance(
                     return;
                 }
                 tracker.track(&starting_id, pid);
+                crate::services::hardware::apply_priority(pid);
                 tracker.set_progress(
                     &starting_id,
                     LaunchProgress {
@@ -1058,6 +1061,7 @@ async fn host_instance(
             }
             Err(err) => {
                 let mut chain = err.to_string();
+                crate::services::hardware::abort_launch();
                 let mut cur = std::error::Error::source(&err);
                 while let Some(c) = cur {
                     chain.push_str(" | cause: ");

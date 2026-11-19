@@ -275,6 +275,8 @@ impl AppState {
         GameLogService::spawn(&game_log);
         // 崩溃监控：订阅游戏进程退出事件，收集诊断并写 LaunchTracker 终态
         crate::services::crash_watcher::CrashWatcher::spawn(&launch_tracker, &instance, &game_log);
+        // 上次进程被强杀时可能残留全局游戏模式/未还原的独显偏好，启动即自愈
+        crate::services::hardware::recover_stale_state();
         let export_tasks = Arc::new(ExportTaskManager::new());
 
         let plugin_store = Arc::new(PluginStore::new());

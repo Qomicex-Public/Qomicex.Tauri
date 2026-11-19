@@ -68,6 +68,58 @@ pub fn resolve_base_dir() -> PathBuf {
     default_dir()
 }
 
+/// 官方启动器（Mojang）的默认游戏目录。
+///
+/// Windows `%APPDATA%\.minecraft`、macOS `~/Library/Application Support/minecraft`、
+/// Linux `~/.minecraft`。启动器的默认 `gameDir` 直接用这个目录：与官方启动器共用
+/// 一份游戏文件，也避免在 macOS 上另造一套路径规则。
+pub(crate) fn official_game_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        dirs::data_dir()
+            .map(|d| d.join(".minecraft"))
+            .or_else(|| dirs::home_dir().map(|h| h.join(".minecraft")))
+            .unwrap_or_else(|| PathBuf::from(".minecraft"))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        dirs::data_dir()
+            .map(|d| d.join("minecraft"))
+            .or_else(|| {
+                dirs::home_dir().map(|h| {
+                    h.join("Library")
+                        .join("Application Support")
+                        .join("minecraft")
+                })
+            })
+            .unwrap_or_else(|| PathBuf::from("minecraft"))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        dirs::home_dir()
+            .map(|h| h.join(".minecraft"))
+            .unwrap_or_else(|| PathBuf::from(".minecraft"))
+    }
+}
+
+/// 新装/重置时的默认游戏目录：官方启动器目录。
+pub(crate) fn default_game_dir() -> String {
+    official_game_dir().to_string_lossy().into_owned()
+}
+
+#[cfg(test)]
+mod default_dir_tests {
+    use super::*;
+
+    #[test]
+    fn default_game_dir_is_official() {
+        assert_eq!(
+            std::path::PathBuf::from(default_game_dir()),
+            official_game_dir()
+        );
+    }
+}
+
 /// 通过写引导文件修改数据目录（对应 SetBaseDir）。
 pub fn set_base_dir(path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
     let bootstrap = bootstrap_file();
@@ -253,6 +305,21 @@ pub struct SettingsResponse {
     /// `channelSwitch`（跨通道切换，需用户明确知晓）一律仍走对话框。
     #[serde(default)]
     pub update_auto_install: Option<bool>,
+    /// 启动游戏时请求硬件加速。
+    ///
+    /// Windows：把本次启动用的 `java.exe` 在 `HKCU\Software\Microsoft\DirectX\UserGpuPreferences`
+    /// 里设为独占性能显卡（`GpuPreference=2;`，保留该值里其它 token），关闭开关时还原原值。
+    /// macOS：启动前调用 Xcode 的 `gamepolicyctl game-mode set on`，游戏退出/关开关时
+    /// `set auto`（工具缺失则静默跳过）。
+    ///
+    /// `None`/`Some(true)` = 开启（默认开）；`Some(false)` = 关闭。
+    #[serde(default)]
+    pub launch_hardware_boost: Option<bool>,
+    /// 游戏进程优先级：`"below_normal"` / `"normal"` / `"above_normal"` / `"high"`。
+    /// `None` 视为 `"normal"`（不改动）。非 Windows 上提升档位需要 root，
+    /// 应用时降级为 normal（见 [`crate::services::hardware`]）。
+    #[serde(default)]
+    pub process_priority: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -270,11 +337,8 @@ pub struct CustomJavaEntryDto {
 
 impl Default for SettingsResponse {
     fn default() -> Self {
-        let default_dir = dirs::home_dir()
-            .map(|h| h.join(".minecraft").to_string_lossy().into_owned())
-            .unwrap_or_else(|| ".minecraft".to_string());
         Self {
-            game_dir: default_dir,
+            game_dir: default_game_dir(),
             download_threads: 64,
             file_chunk_threads: None,
             version_isolation: true,
@@ -334,6 +398,8 @@ impl Default for SettingsResponse {
             scan_skip_jar_probe: None,
             // 默认开启自动下载并安装更新（None 亦视为开启，见字段注释）。
             update_auto_install: Some(true),
+            launch_hardware_boost: Some(true),
+            process_priority: Some("normal".to_string()),
         }
     }
 }
@@ -390,6 +456,12 @@ impl SettingsResponse {
 fn normalize_loaded_settings(s: &mut SettingsResponse) {
     if s.auto_select_source.is_none() {
         s.auto_select_source = Some(true);
+    }
+    // 手改 settings.json / 旧版本写入未知档位时收敛到 normal，避免每次启动都走降级分支。
+    if !crate::services::hardware::is_known_priority(
+        s.process_priority.as_deref().unwrap_or("normal"),
+    ) {
+        s.process_priority = Some("normal".to_string());
     }
 }
 

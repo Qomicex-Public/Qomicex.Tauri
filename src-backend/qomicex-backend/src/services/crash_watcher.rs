@@ -103,6 +103,8 @@ async fn handle_exit(
     code: i32,
 ) {
     tracing::info!(pid, code, "crash-watcher: game process exited");
+    // 系统级副作用（macOS 游戏模式）必须在这里复位：stop/kill 路径在下面会提前 return。
+    crate::services::hardware::on_game_exit(pid);
 
     // stop/kill 场景 states 已清空，find_by_pid 为 None → 忽略（不算崩溃）。
     // 例外：事件可能先于 launch 流程的 track() 到达（进程秒退），短暂重试一次。

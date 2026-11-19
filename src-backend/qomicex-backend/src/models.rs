@@ -43,6 +43,10 @@ pub struct SystemInfoResponse {
     pub app_version: String,
     /// 启动器数据目录（插件默认工作区定位用；等价 GET /settings/data-dir）。
     pub data_dir: String,
+    /// 官方启动器（Mojang）的默认游戏目录：Windows `%APPDATA%\.minecraft`、
+    /// macOS `~/Library/Application Support/minecraft`、Linux `~/.minecraft`。
+    /// 也是启动器的默认 `gameDir`。
+    pub official_game_dir: String,
 }
 
 #[derive(Serialize)]
