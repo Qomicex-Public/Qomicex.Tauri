@@ -342,7 +342,7 @@ impl JavaRuntimeStore {
         let mut results = Vec::new();
         let mut seen: Vec<String> = Vec::new();
         let mut found = Vec::new();
-        collect_files_recursive(&dir, &mut found);
+        collect_files_recursive(&dir, 0, &mut found);
         for file in found {
             let is_java_exe = file
                 .file_name()
@@ -1328,7 +1328,7 @@ fn resolve_java_executable(p: &str) -> Option<String> {
     }
     let java_name: &str = if cfg!(windows) { "java.exe" } else { "java" };
     let mut found = Vec::new();
-    collect_files_recursive(path, &mut found);
+    collect_files_recursive(path, 0, &mut found);
     found
         .into_iter()
         .find(|f| {
@@ -1346,14 +1346,23 @@ fn resolve_java_executable(p: &str) -> Option<String> {
         .map(|f| f.to_string_lossy().into_owned())
 }
 
-fn collect_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) {
+/// 目录遍历深度上限。Windows 上指向自身或祖先的兼容联接（如
+/// `C:\ProgramData\Application Data`）会让无界递归一直往下走，在 1MiB 主线程栈上
+/// 直接爆栈并 abort（0xC0000409）。Java 家目录布局最多
+/// `<root>/<vendor>/<version>/bin/java.exe`，8 层足够。
+const MAX_SCAN_DEPTH: usize = 8;
+
+fn collect_files_recursive(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
+    if depth >= MAX_SCAN_DEPTH {
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_files_recursive(&path, out);
+            collect_files_recursive(&path, depth + 1, out);
         } else {
             out.push(path);
         }
@@ -1397,7 +1406,7 @@ fn extract_archive(archive_path: &Path, target_dir: &Path, file_name: &str) -> R
 fn set_executable_permissions(root: &Path) {
     use std::os::unix::fs::PermissionsExt;
     let mut found = Vec::new();
-    collect_files_recursive(root, &mut found);
+    collect_files_recursive(root, 0, &mut found);
     for f in found {
         let in_bin = f
             .parent()
@@ -1417,7 +1426,7 @@ fn set_executable_permissions(_root: &Path) {}
 fn find_java_executable(root: &Path) -> Option<String> {
     let java_name: &str = if cfg!(windows) { "java.exe" } else { "java" };
     let mut found = Vec::new();
-    collect_files_recursive(root, &mut found);
+    collect_files_recursive(root, 0, &mut found);
     found
         .into_iter()
         .find(|p| {
@@ -1621,6 +1630,35 @@ mod tests {
         let dto = JavaRuntimeDto::from(r.clone());
         let back = dto_to_result(dto).unwrap();
         assert_eq!(back, r);
+    }
+
+    #[test]
+    fn collect_files_recursive_stops_at_depth_cap() {
+        // 无界递归会在 Windows 1MiB 主线程栈上爆栈 abort（0xC0000409），
+        // 这里用一个 20 层目录确认超过上限的层不再被遍历。
+        let root =
+            std::env::temp_dir().join(format!("qomicex-java-depth-{}", uuid::Uuid::new_v4()));
+        let mut dir = root.clone();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("shallow.txt"), b"").unwrap();
+        for i in 0..20 {
+            dir = dir.join(format!("d{i}"));
+            std::fs::create_dir_all(&dir).unwrap();
+        }
+        std::fs::write(dir.join("deep.txt"), b"").unwrap();
+
+        let mut found = Vec::new();
+        collect_files_recursive(&root, 0, &mut found);
+        let names: Vec<String> = found
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(names.iter().any(|n| n == "shallow.txt"), "{names:?}");
+        assert!(
+            !names.iter().any(|n| n == "deep.txt"),
+            "深度超限的目录仍被遍历: {names:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
