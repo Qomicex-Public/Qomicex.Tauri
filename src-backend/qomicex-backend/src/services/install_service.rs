@@ -2095,6 +2095,9 @@ pub(crate) async fn download_batch_with_mirrors(
 
     // 已存在的文件计入分母与已完成数：重试时进度从上次的位置继续，而不是从 0 重数。
     let total = ids.len() as u64 + pre_done;
+    // 文件数按批次累计（issue #366）：同一管线的多个批次共用 ProgressField，
+    // 直接覆写会让 UI 在 23/199 与 0/1 之间回跳。
+    let batch_slot = handle.begin_file_batch(total as i32);
     tracing::info!(
         tasks = ids.len(),
         pre_done,
@@ -2108,8 +2111,7 @@ pub(crate) async fn download_batch_with_mirrors(
             handle.set_step_percent(sid, 100.0);
         }
         handle.update(|f| {
-            f.total_files = total as i32;
-            f.completed_files = total as i32;
+            f.set_file_batch_done(batch_slot, total as i32);
         });
         return Ok(());
     }
@@ -2120,6 +2122,8 @@ pub(crate) async fn download_batch_with_mirrors(
     // 同 dest 的并发任务在 DownloadManager 层会短暂互斥；失败详情是「正在被另一个
     // 下载任务写入」时不是真失败，等对方完成后重试，避免跨批次安装直接失败。
     let mut dest_retries: HashMap<u64, u32> = HashMap::new();
+    // 瞬态失败的批次内自动重试计数（issue #366），与 dest 占用重试分开计。
+    let mut auto_retries: HashMap<u64, u32> = HashMap::new();
     let mut prog: HashMap<u64, (u64, u64)> = HashMap::new();
     // 每任务**最近一次原始上报**的 downloaded（不做只增钳位）。仅用于 stall 看门狗的
     // 活跃判定：下载器重试会把计数打回 0，展示值因高水位不变，若用它判活会漏掉
@@ -2265,20 +2269,27 @@ pub(crate) async fn download_batch_with_mirrors(
                         started = true;
                         let mut retried = false;
                         if state == TaskState::Failed {
-                            if let Some(reason) = detail.as_deref() {
-                                if is_dest_contention(reason) {
-                                    let attempt = dest_retries.entry(id).or_insert(0);
-                                    *attempt += 1;
-                                    if *attempt <= 5 {
-                                        tracing::warn!(
-                                            id,
-                                            attempt = *attempt,
-                                            "目标文件被并发任务占用，稍后重试"
-                                        );
-                                        let _ = mgr.retry(id).await;
-                                        retried = true;
-                                    }
+                            // 广播事件可能落后于轮询：该任务已被 poll_task_states
+                            // 重新入队时，这条 Failed 是**过期事件**，按它记失败会把
+                            // 正在重试的批次误判为失败。以 manager 的实时状态为准。
+                            match mgr.state(id).await {
+                                Ok(TaskState::Failed) => {
+                                    retried = auto_retry_failed(
+                                        mgr,
+                                        id,
+                                        detail.as_deref(),
+                                        &mut dest_retries,
+                                        &mut auto_retries,
+                                        &mut task_speed,
+                                    )
+                                    .await;
                                 }
+                                Ok(_) => {
+                                    last_event = Instant::now();
+                                    continue;
+                                }
+                                // 任务已被移除：没有可对账的对象，按事件记录。
+                                Err(_) => {}
                             }
                         }
                         if !retried {
@@ -2329,6 +2340,7 @@ pub(crate) async fn download_batch_with_mirrors(
                 &file_name,
                 &file_url,
                 &mut dest_retries,
+                &mut auto_retries,
             )
             .await
             {
@@ -2361,8 +2373,7 @@ pub(crate) async fn download_batch_with_mirrors(
         let current_speed = task_speed.values().max().copied().unwrap_or(0) as f64;
 
         handle.update(|f| {
-            f.total_files = total as i32;
-            f.completed_files = done as i32;
+            f.set_file_batch_done(batch_slot, done as i32);
             f.current_file = current_file;
             // 当前批次（文件）的真实下载进度 0-100；批次结束清 0（阶段即将切换）
             f.current_file_progress = if done >= total { 0.0 } else { pct_in * 100.0 };
@@ -2469,6 +2480,69 @@ fn is_dest_contention(reason: &str) -> bool {
     reason.contains("目标文件正在被另一个下载任务写入")
 }
 
+/// 批次内单文件瞬态失败的自动重试上限。
+///
+/// 2 次的依据：下载器内部已含分段/流式重试与镜像轮换，批次层只是给「整个文件
+/// 被判失败」再补一次机会；再多只会让确定性故障的整批失败时间成倍拉长。
+const FILE_AUTO_RETRY_LIMIT: u32 = 2;
+
+/// 确定性失败（4xx，除 408/429）：重试同一个 URL 只会再拿到同一个响应。
+fn is_permanent_failure(reason: &str) -> bool {
+    // 下载器错误文本里的状态码形如 "HTTP 404 Not Found (url)"（engine.rs）。
+    let Some(pos) = reason.find("HTTP ") else {
+        return false;
+    };
+    let code: String = reason[pos + 5..].chars().take(3).collect();
+    let Ok(code) = code.parse::<u16>() else {
+        return false;
+    };
+    (400..500).contains(&code) && code != 408 && code != 429
+}
+
+/// 失败任务的批次内自动重试。返回 true 表示已重新入队，调用方不得再记终态。
+async fn auto_retry_failed(
+    mgr: &DownloadManager,
+    id: u64,
+    reason: Option<&str>,
+    dest_retries: &mut HashMap<u64, u32>,
+    auto_retries: &mut HashMap<u64, u32>,
+    task_speed: &mut HashMap<u64, u64>,
+) -> bool {
+    let Some(reason) = reason else {
+        return false;
+    };
+    // 失败详情可能带签名 URL / 查询令牌：入 trace 前统一脱敏。
+    let reason = crate::util::url::redact_urls_in_text(reason);
+    let reason = reason.as_str();
+    if is_dest_contention(reason) {
+        let attempt = dest_retries.entry(id).or_insert(0);
+        *attempt += 1;
+        if *attempt <= 5 {
+            tracing::warn!(id, attempt = *attempt, "目标文件被并发任务占用，稍后重试");
+            task_speed.remove(&id);
+            return mgr.retry(id).await.is_ok();
+        }
+        return false;
+    }
+    if is_permanent_failure(reason) {
+        return false;
+    }
+    let attempt = auto_retries.entry(id).or_insert(0);
+    *attempt += 1;
+    if *attempt > FILE_AUTO_RETRY_LIMIT {
+        return false;
+    }
+    tracing::warn!(
+        id,
+        attempt = *attempt,
+        reason,
+        "文件下载失败，批次内自动重试"
+    );
+    // 重试期间没有新的速度样本：清掉上一次尝试的速度，UI 不展示过期值。
+    task_speed.remove(&id);
+    mgr.retry(id).await.is_ok()
+}
+
 /// Apply a terminal-state event to the batch tracking maps. Extracted so the
 /// polling fallback can reuse the exact same logic without duplicating state
 /// machines.
@@ -2548,6 +2622,7 @@ async fn poll_task_states(
     file_name: &HashMap<u64, String>,
     file_url: &HashMap<u64, String>,
     dest_retries: &mut HashMap<u64, u32>,
+    auto_retries: &mut HashMap<u64, u32>,
 ) -> bool {
     let mut active = false;
     for &id in id_set {
@@ -2577,16 +2652,18 @@ async fn poll_task_states(
             ) {
                 let detail = mgr.last_error(id).await;
                 if state == TaskState::Failed {
-                    if let Some(reason) = detail.as_deref() {
-                        if is_dest_contention(reason) {
-                            let attempt = dest_retries.entry(id).or_insert(0);
-                            *attempt += 1;
-                            if *attempt <= 5 {
-                                let _ = mgr.retry(id).await;
-                                active = true;
-                                continue;
-                            }
-                        }
+                    if auto_retry_failed(
+                        mgr,
+                        id,
+                        detail.as_deref(),
+                        dest_retries,
+                        auto_retries,
+                        task_speed,
+                    )
+                    .await
+                    {
+                        active = true;
+                        continue;
                     }
                 }
                 apply_terminal_state(
@@ -3279,6 +3356,22 @@ mod tests {
     }
 
     /// 已完成的任务不得重复计入在途完成度（409/493 显示 99% 的成因之一）。
+    #[test]
+    fn permanent_failure_only_covers_deterministic_http_status() {
+        assert!(is_permanent_failure("HTTP 404 Not Found (https://x/y)"));
+        assert!(is_permanent_failure("HTTP 403 Forbidden"));
+        // 408/429 是瞬态：限流与请求超时都值得再试。
+        assert!(!is_permanent_failure("HTTP 429 Too Many Requests"));
+        assert!(!is_permanent_failure("HTTP 408 Request Timeout"));
+        assert!(!is_permanent_failure("HTTP 500 Internal Server Error"));
+        assert!(!is_permanent_failure(
+            "看门狗: 流式下载无数据超过 60s（url=https://x/y）"
+        ));
+        assert!(!is_permanent_failure(
+            "目标文件正在被另一个下载任务写入: /tmp/a"
+        ));
+    }
+
     #[test]
     fn inflight_credit_skips_completed_tasks() {
         let mut prog: HashMap<u64, (u64, u64)> = HashMap::new();

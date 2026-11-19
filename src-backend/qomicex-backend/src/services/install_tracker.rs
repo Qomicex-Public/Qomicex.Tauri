@@ -21,7 +21,7 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -292,8 +292,14 @@ impl InstallHandle {
         self.update(|f| f.current_file = file.to_string());
     }
 
-    /// 记录「分发受限、待手动补全」的文件数（issue #291）。
-    ///
+    /// 登记一个下载批次，返回计数槽 id（issue #366：文件数跨批次累计，不再互相覆写）。
+    pub fn begin_file_batch(&self, planned: i32) -> u64 {
+        let id = self.0.next_batch_id.fetch_add(1, Ordering::SeqCst);
+        self.update(|f| f.begin_file_batch(id, planned));
+        id
+    }
+
+    /// 记录「分发受限、待手动补全」的文件数（issue #291）。    ///
     /// 与失败计数分开维护：这些文件不是下载出错，而是作者明确拒绝第三方分发，
     /// 属于已知且可操作的阻塞，安装仍可完成。
     pub fn set_blocked_files(&self, count: i32) {
@@ -388,6 +394,20 @@ pub struct ProgressField {
     /// 进入终态（completed/failed/cancelled）的时刻，用于 SSE 时效过滤。
     /// 非终态为 `None`；状态被重置回非终态时清空。
     pub terminal_at: Option<std::time::Instant>,
+    /// 各下载批次的文件计数（issue #366）。
+    ///
+    /// 一条安装管线会串行/并行跑多个 `download_batch`（game-files、loader-libs、
+    /// modpack-files、overrides…），它们共用同一个 `ProgressField`。旧实现每批次
+    /// 直接覆写 `total_files/completed_files`，UI 上表现为 23/199 → 0/1 来回跳。
+    /// 改为按批次登记、汇总展示：分母只增，已完成数只增。
+    file_batches: std::collections::HashMap<u64, FileBatchCount>,
+}
+
+/// 单个下载批次的文件计数（计划数 / 已完成数）。
+#[derive(Clone, Copy, Default)]
+struct FileBatchCount {
+    planned: i32,
+    done: i32,
 }
 
 /// 终态任务在进度 SSE 中的保留时长。
@@ -438,6 +458,26 @@ impl ProgressField {
             self.terminal_at = None;
         }
         self.status = status.as_str().to_string();
+    }
+
+    /// 登记一个下载批次并返回其计数槽 id（issue #366：文件数跨批次累计）。
+    pub fn begin_file_batch(&mut self, id: u64, planned: i32) {
+        self.file_batches
+            .insert(id, FileBatchCount { planned, done: 0 });
+        self.refresh_file_counts();
+    }
+
+    /// 更新某批次已完成文件数（只增；终态由调用方传 planned 收尾）。
+    pub fn set_file_batch_done(&mut self, id: u64, done: i32) {
+        if let Some(slot) = self.file_batches.get_mut(&id) {
+            slot.done = slot.done.max(done).min(slot.planned);
+        }
+        self.refresh_file_counts();
+    }
+
+    fn refresh_file_counts(&mut self) {
+        self.total_files = self.file_batches.values().map(|b| b.planned).sum();
+        self.completed_files = self.file_batches.values().map(|b| b.done).sum();
     }
 
     /// 显式设置某步骤状态（done 时 percent=100），不影响其他步骤。
@@ -512,6 +552,8 @@ struct InstallState {
     resume_existing: AtomicBool,
     /// 暂存区记录的可复用文件（绝对路径 → 期望大小）。缺失的路径一律重下。
     resume_sizes: Mutex<Option<std::collections::HashMap<std::path::PathBuf, u64>>>,
+    /// 下载批次计数槽的自增 id（issue #366）。
+    next_batch_id: AtomicU64,
     tx: broadcast::Sender<InstallProgress>,
 }
 
@@ -541,11 +583,13 @@ impl InstallState {
                 steps: Vec::new(),
                 title: None,
                 terminal_at: None,
+                file_batches: std::collections::HashMap::new(),
             }),
             cancelled: AtomicBool::new(false),
             paused: AtomicBool::new(false),
             resume_existing: AtomicBool::new(false),
             resume_sizes: Mutex::new(None),
+            next_batch_id: AtomicU64::new(1),
             tx,
         }
     }
@@ -1041,6 +1085,7 @@ mod tests {
             steps: Vec::new(),
             title: None,
             terminal_at: None,
+            file_batches: std::collections::HashMap::new(),
         }
     }
 
@@ -1170,6 +1215,31 @@ mod tests {
         assert_eq!(InstallStatus::from_str("awaiting-files"), status);
         assert!(!status.is_terminal());
         assert!(InstallStatus::Completed.is_terminal());
+    }
+
+    #[test]
+    fn file_counts_accumulate_across_batches() {
+        let mut f = field();
+        // 串行批次：第二个批次不得把第一个批次的计数清零（issue #366）。
+        f.begin_file_batch(1, 199);
+        f.set_file_batch_done(1, 23);
+        assert_eq!((f.completed_files, f.total_files), (23, 199));
+        f.set_file_batch_done(1, 199);
+        f.begin_file_batch(2, 1);
+        assert_eq!((f.completed_files, f.total_files), (199, 200));
+        f.set_file_batch_done(2, 1);
+        assert_eq!((f.completed_files, f.total_files), (200, 200));
+        // 并行批次：各自推进，不回退、不重复计数。
+        f.begin_file_batch(3, 10);
+        f.begin_file_batch(4, 20);
+        f.set_file_batch_done(3, 4);
+        f.set_file_batch_done(4, 6);
+        assert_eq!((f.completed_files, f.total_files), (210, 230));
+        // 已完成数单调：重复上报较小值被忽略，且不超过本批次计划数。
+        f.set_file_batch_done(3, 1);
+        assert_eq!((f.completed_files, f.total_files), (210, 230));
+        f.set_file_batch_done(3, 99);
+        assert_eq!(f.completed_files, 216);
     }
 
     #[test]

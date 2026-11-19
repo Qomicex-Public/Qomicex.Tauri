@@ -139,6 +139,7 @@
 - [ADR-135：目录管理增加官方启动器默认目录，固定项不可删除](1-决策记录/ADR-135-目录管理增加官方启动器默认目录-固定项不可删除.md)
 - [ADR-136：信雅互联实例按 FFAPI 命名归一 Fabric 依赖（issue #363）](1-决策记录/ADR-136-信雅互联实例按FFAPI命名归一Fabric依赖-issue-363.md)
 - [ADR-137：启动期硬件策略：Windows 独显偏好、macOS 游戏模式与进程优先级](1-决策记录/ADR-137-启动期硬件策略-Windows-独显偏好-macOS-游戏模式与进程优先级.md)
+- [ADR-138：下载镜像轮换限界、批次自动重试及任务卡去重（issue #366）](1-决策记录/ADR-138-下载镜像轮换限界与批次自动重试及任务卡去重-issue-366.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 
