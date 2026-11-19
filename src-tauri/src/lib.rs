@@ -81,6 +81,7 @@ pub(crate) fn user_temp_dir() -> std::path::PathBuf {
 fn extract_backend() -> Option<std::path::PathBuf> {
     let base = user_temp_dir();
     let _ = std::fs::create_dir_all(&base);
+    sweep_pid_copies(&base);
     let primary = base.join(BACKEND_EXE);
 
     match std::fs::write(&primary, BACKEND) {
@@ -101,6 +102,27 @@ fn extract_backend() -> Option<std::path::PathBuf> {
         Err(e) => {
             tauri_log!("backend", "write to {} failed: {e}", unique.display());
             None
+        }
+    }
+}
+
+/// 清理历史遗留的 `{pid}-{BACKEND_EXE}` 副本（每个约 38 MB）。主路径被仍在运行的
+/// 旧后端占用时，每次启动都会写一个新副本且从不删除；正被占用的副本删除会失败，
+/// 忽略即可（下次启动再清）。只匹配「纯数字 PID + 连字符 + 本名」，不碰主副本。
+fn sweep_pid_copies(base: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(stem) = name.strip_suffix(BACKEND_EXE) else {
+            continue;
+        };
+        let Some(pid) = stem.strip_suffix('-') else {
+            continue;
+        };
+        if !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()) {
+            let _ = std::fs::remove_file(entry.path());
         }
     }
 }
@@ -212,6 +234,30 @@ fn spawn_backend(app: &tauri::App, pipe_name: &Option<String>) {
     }
     let state = app.state::<BackendChild>();
     *state.0.lock().unwrap() = Some(child);
+
+    // 后端崩溃（panic abort / 爆栈 / 被第三方结束）不会留下任何提示：前端只会一直
+    // 等 /api/health。这里轮询退出码并落日志，用户报告时至少能看到 0xC0000409 之类。
+    {
+        let handle = app.handle().clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let state = handle.state::<BackendChild>();
+            let mut guard = state.0.lock().unwrap();
+            let Some(child) = guard.as_mut() else { return };
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let code = status.code().unwrap_or(-1) as u32;
+                    tauri_log!("backend", "exited: code={code} (0x{code:08X}) {status:?}");
+                    return;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tauri_log!("backend", "try_wait failed: {e}");
+                    return;
+                }
+            }
+        });
+    }
     tauri_log!(
         "backend",
         "spawned: {} ({} bytes)",
@@ -393,4 +439,35 @@ pub fn run() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sweep_pid_copies_removes_only_pid_variants() {
+        let base = std::env::temp_dir().join(format!("qomicex-sweep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        for name in [
+            "11492-qomicex-backend.exe",
+            "qomicex-backend.exe",
+            "Packet.dll",
+        ] {
+            std::fs::write(base.join(name), b"x").unwrap();
+        }
+
+        sweep_pid_copies(&base);
+
+        let left: Vec<String> = std::fs::read_dir(&base)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(!left.iter().any(|n| n.starts_with("11492-")), "{left:?}");
+        assert!(left.iter().any(|n| n == "qomicex-backend.exe"), "{left:?}");
+        assert!(left.iter().any(|n| n == "Packet.dll"), "{left:?}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
