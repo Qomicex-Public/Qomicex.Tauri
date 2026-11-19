@@ -18,6 +18,17 @@ let listeners: Listener[] = []
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 const SAVE_DEBOUNCE_MS = 500
 
+/** 安装管线卡片（SSE 自动补卡一律记为 'modpack'，本地游戏安装卡是 'game'）。 */
+function isInstallCard(task: DownloadTask): boolean {
+  return task.type === 'game' || task.type === 'modpack' || task.type === 'modpack-update'
+}
+
+/** 同一张卡片的判据：id 相同，或安装类卡片落在同一实例上。 */
+function isSameCard(a: DownloadTask, b: DownloadTask): boolean {
+  if (a.id === b.id) return true
+  return !!a.instanceId && a.instanceId === b.instanceId && isInstallCard(a) && isInstallCard(b)
+}
+
 function loadTasks(): DownloadTask[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -26,7 +37,16 @@ function loadTasks(): DownloadTask[] {
     if (!Array.isArray(parsed)) return []
     // retryPending 是「本次进程内的重试进行中」标记：启动时一律清掉。
     // 否则上次退出时正在重建的卡片会永久跳过 SSE 对账、停在排队态。
-    return (parsed as DownloadTask[]).map((t) => ({ ...t, retryPending: false }))
+    const restored = (parsed as DownloadTask[]).map((t) => ({ ...t, retryPending: false }))
+    // 旧版本可能已持久化了同一实例的多张卡片：加载时去重，保留信息最全的一张
+    // （有 retry 描述符的优先），否则重复卡片会在整个会话里一直显示。
+    const deduped: DownloadTask[] = []
+    for (const t of restored) {
+      const i = deduped.findIndex((o) => isSameCard(o, t))
+      if (i < 0) deduped.push(t)
+      else if (t.retry && !deduped[i].retry) deduped[i] = t
+    }
+    return deduped
   } catch {
     return []
   }
@@ -49,11 +69,6 @@ function isFallbackName(task: DownloadTask): boolean {
   return !!task.instanceId && task.name === task.instanceId
 }
 
-/** 安装管线卡片（SSE 自动补卡一律记为 'modpack'，本地游戏安装卡是 'game'）。 */
-function isInstallCard(task: DownloadTask): boolean {
-  return task.type === 'game' || task.type === 'modpack' || task.type === 'modpack-update'
-}
-
 /**
  * 同一实例只允许一张卡片（issue #366）。
  *
@@ -73,7 +88,9 @@ export function addTask(task: DownloadTask) {
   } else {
     const prev = tasks[index]
     const merged: DownloadTask = { ...prev, ...task }
-    merged.retry = task.retry ?? prev.retry
+    // retry 描述符按卡片语义取：整合包**更新**没有描述符，必须清掉安装卡的旧
+    // 描述符，否则更新失败后点重试会按旧描述符重新安装旧版本。
+    merged.retry = task.type === 'modpack-update' ? task.retry : (task.retry ?? prev.retry)
     if (isFallbackName(task) && prev.name && !isFallbackName(prev)) {
       // SSE 自动补卡：名字回退为 instanceId、类型一律记 'modpack'。这两项都只是
       // 渲染兜底，不能覆盖本地卡片（游戏安装是 'game'，名字由用户起）。
@@ -89,9 +106,10 @@ export function addTask(task: DownloadTask) {
 export function updateTask(id: string, updates: Partial<DownloadTask>) {
   // 重试会把卡片挂到新建的实例上：若 SSE 已给那个实例自动补过卡，这里必须收编，
   // 否则同一实例两张卡（自动卡没有 retry，表现为「重试过一次就没有重试按钮」）。
+  // 只收编安装类卡片：batch/file 卡与本实例共存是合法的，不能一并删掉。
   if (updates.instanceId) {
     const instanceId = updates.instanceId
-    tasks = tasks.filter((t) => t.id === id || t.instanceId !== instanceId)
+    tasks = tasks.filter((t) => t.id === id || t.instanceId !== instanceId || !isInstallCard(t))
   }
   tasks = tasks.map((t) => (t.id === id ? { ...t, ...updates } : t))
   // Debounce persistence: progress updates are high-frequency (~3/s from SSE),

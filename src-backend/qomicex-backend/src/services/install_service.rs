@@ -2269,14 +2269,28 @@ pub(crate) async fn download_batch_with_mirrors(
                         started = true;
                         let mut retried = false;
                         if state == TaskState::Failed {
-                            retried = auto_retry_failed(
-                                mgr,
-                                id,
-                                detail.as_deref(),
-                                &mut dest_retries,
-                                &mut auto_retries,
-                            )
-                            .await;
+                            // 广播事件可能落后于轮询：该任务已被 poll_task_states
+                            // 重新入队时，这条 Failed 是**过期事件**，按它记失败会把
+                            // 正在重试的批次误判为失败。以 manager 的实时状态为准。
+                            match mgr.state(id).await {
+                                Ok(TaskState::Failed) => {
+                                    retried = auto_retry_failed(
+                                        mgr,
+                                        id,
+                                        detail.as_deref(),
+                                        &mut dest_retries,
+                                        &mut auto_retries,
+                                        &mut task_speed,
+                                    )
+                                    .await;
+                                }
+                                Ok(_) => {
+                                    last_event = Instant::now();
+                                    continue;
+                                }
+                                // 任务已被移除：没有可对账的对象，按事件记录。
+                                Err(_) => {}
+                            }
                         }
                         if !retried {
                             apply_terminal_state(
@@ -2466,10 +2480,10 @@ fn is_dest_contention(reason: &str) -> bool {
     reason.contains("目标文件正在被另一个下载任务写入")
 }
 
-/// 批次内单文件瞬态失败的自动重试上限（issue #366）。
+/// 批次内单文件瞬态失败的自动重试上限。
 ///
-/// 整合包动辄数百个文件，任一文件一次网络抖动就判整批失败，用户只能整包重来；
-/// 重试走 `DownloadManager::retry`，ranged 任务按 .part 位图续传，不重下已有字节。
+/// 2 次的依据：下载器内部已含分段/流式重试与镜像轮换，批次层只是给「整个文件
+/// 被判失败」再补一次机会；再多只会让确定性故障的整批失败时间成倍拉长。
 const FILE_AUTO_RETRY_LIMIT: u32 = 2;
 
 /// 确定性失败（4xx，除 408/429）：重试同一个 URL 只会再拿到同一个响应。
@@ -2492,15 +2506,20 @@ async fn auto_retry_failed(
     reason: Option<&str>,
     dest_retries: &mut HashMap<u64, u32>,
     auto_retries: &mut HashMap<u64, u32>,
+    task_speed: &mut HashMap<u64, u64>,
 ) -> bool {
     let Some(reason) = reason else {
         return false;
     };
+    // 失败详情可能带签名 URL / 查询令牌：入 trace 前统一脱敏。
+    let reason = crate::util::url::redact_urls_in_text(reason);
+    let reason = reason.as_str();
     if is_dest_contention(reason) {
         let attempt = dest_retries.entry(id).or_insert(0);
         *attempt += 1;
         if *attempt <= 5 {
             tracing::warn!(id, attempt = *attempt, "目标文件被并发任务占用，稍后重试");
+            task_speed.remove(&id);
             return mgr.retry(id).await.is_ok();
         }
         return false;
@@ -2519,6 +2538,8 @@ async fn auto_retry_failed(
         reason,
         "文件下载失败，批次内自动重试"
     );
+    // 重试期间没有新的速度样本：清掉上一次尝试的速度，UI 不展示过期值。
+    task_speed.remove(&id);
     mgr.retry(id).await.is_ok()
 }
 
@@ -2631,8 +2652,15 @@ async fn poll_task_states(
             ) {
                 let detail = mgr.last_error(id).await;
                 if state == TaskState::Failed {
-                    if auto_retry_failed(mgr, id, detail.as_deref(), dest_retries, auto_retries)
-                        .await
+                    if auto_retry_failed(
+                        mgr,
+                        id,
+                        detail.as_deref(),
+                        dest_retries,
+                        auto_retries,
+                        task_speed,
+                    )
+                    .await
                     {
                         active = true;
                         continue;

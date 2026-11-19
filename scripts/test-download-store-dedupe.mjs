@@ -155,6 +155,38 @@ try {
   })
   check('batch 卡独立于安装卡', getTasks().length, 2)
 
+  // 6) 重试收编同实例卡片时，batch/file 卡必须保留（review：无关卡片消失）。
+  updateTask('inst-1', { instanceId: 'inst-1', status: 'queued' })
+  check('收编不影响 batch 卡', getTasks().length, 2)
+  check('batch 卡仍在', getTasks().some((t) => t.id === 'batch-1'), true)
+
+  // 7) 整合包更新卡合并后不得继承安装卡的 retry 描述符（review：更新重试变重装）。
+  clearAllTasks()
+  addTask(installCard({ id: 'inst-1', name: '我的整合包', retry: RETRY }))
+  addTask(installCard({ id: 'inst-1', type: 'modpack-update', name: '我的整合包' }))
+  check('更新卡不继承安装 retry', getTasks()[0].retry, undefined)
+
+  // 8) 启动加载时对已持久化的同实例重复卡去重（review：持久化重复卡残留）。
+  storage.set(
+    'qomicex-download-tasks',
+    JSON.stringify([
+      installCard({ id: 'auto-dup', name: 'inst-dup', instanceId: 'inst-dup' }),
+      installCard({
+        id: 'inst-dup',
+        instanceId: 'inst-dup',
+        name: '我的整合包',
+        retry: RETRY,
+      }),
+    ]),
+  )
+  const storePath = join(outDir, 'stores', 'downloadStore.js')
+  delete require.cache[require.resolve(storePath)]
+  const reloaded = require(storePath)
+  check('持久化重复卡只留一张', reloaded.getTasks().length, 1)
+  check('保留带 retry 的那张', reloaded.getTasks()[0].retry, RETRY)
+  // 后续断言仍用原模块实例（其内存状态没有被重新加载污染）。
+  storage.delete('qomicex-download-tasks')
+
   console.log(`downloadStore 去重契约全部通过（${checks} 项断言）`)
 } finally {
   rmSync(outDir, { recursive: true, force: true })
