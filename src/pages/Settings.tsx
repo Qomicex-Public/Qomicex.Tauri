@@ -939,6 +939,19 @@ export default function Settings() {
 
   const validCount = runtimes.filter((j) => j.state === 'Valid').length
 
+  const isWindows = !navigator.userAgent.includes('Mac') && !navigator.userAgent.includes('Linux')
+  const isMacos = navigator.userAgent.includes('Mac')
+
+  // 非 Windows 上提升档位需要 root（后端会按 normal 执行），所以只给可用的两档。
+  const prioritySelect = (
+    <Select value={settings.processPriority ?? 'normal'} onChange={(v) => update('processPriority', v as AppSettings['processPriority'])}>
+      <SelectOption value="normal">{t('settings.launcher.priorityNormal')}</SelectOption>
+      <SelectOption value="below_normal">{t('settings.launcher.priorityBelowNormal')}</SelectOption>
+      {isWindows && <SelectOption value="above_normal">{t('settings.launcher.priorityAboveNormal')}</SelectOption>}
+      {isWindows && <SelectOption value="high">{t('settings.launcher.priorityHigh')}</SelectOption>}
+    </Select>
+  )
+
   useEffect(() => {
     function refresh() {
       if (!loadedRef.current) return
@@ -1431,6 +1444,51 @@ export default function Settings() {
                     checked={settings.closeAfterLaunch}
                     onCheckedChange={(c) => update('closeAfterLaunch', c === true)}
                   />
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.gpuBoost')}
+                description={t('settings.launcher.gpuBoostDesc')}
+                control={
+                  isWindows ? (
+                    <Switch
+                      checked={settings.launchHardwareBoost !== false}
+                      onCheckedChange={(c) => update('launchHardwareBoost', c === true)}
+                    />
+                  ) : (
+                    <Tooltip content={t('settings.launcher.gpuBoostUnsupported')}>
+                      <Switch checked={settings.launchHardwareBoost !== false} disabled />
+                    </Tooltip>
+                  )
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.macGameMode')}
+                description={t('settings.launcher.macGameModeDesc')}
+                control={
+                  isMacos ? (
+                    <Switch
+                      checked={settings.launchHardwareBoost !== false}
+                      onCheckedChange={(c) => update('launchHardwareBoost', c === true)}
+                    />
+                  ) : (
+                    <Tooltip content={t('settings.launcher.macGameModeUnsupported')}>
+                      <Switch checked={settings.launchHardwareBoost !== false} disabled />
+                    </Tooltip>
+                  )
+                }
+              />
+              <SettingRow
+                label={t('settings.launcher.processPriority')}
+                description={t('settings.launcher.processPriorityDesc')}
+                control={
+                  isWindows ? (
+                    prioritySelect
+                  ) : (
+                    <Tooltip content={t('settings.launcher.priorityBoostUnsupported')}>
+                      {prioritySelect}
+                    </Tooltip>
+                  )
                 }
               />
             </SettingSection>

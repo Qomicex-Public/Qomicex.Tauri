@@ -1037,6 +1037,9 @@ async fn launch_instance(
                 return Err("启动已取消".to_string());
             }
 
+            // 独显偏好/游戏模式必须在进程创建前就位（Windows 在 CreateProcess 时读取偏好）。
+            crate::services::hardware::prepare_launch(&selected_java_path);
+
             // core.launch 细分阶段回调：natives（解压游戏文件）/ params（生成启动参数）。
             // 供启动 dialog 分步展示；进度快照直接覆盖（repairing 等历史阶段由前端 seen 集合判定）。
             let cb_tracker = tracker.clone();
@@ -1105,6 +1108,7 @@ async fn launch_instance(
                     return;
                 }
                 tracing::info!(instance = %instance_id, pid, "launch: game started");
+                crate::services::hardware::apply_priority(pid);
                 tracker.set_progress(
                     &instance_id,
                     LaunchProgress {
@@ -1131,6 +1135,7 @@ async fn launch_instance(
             }
             Err(err) => {
                 tracing::error!(instance = %instance_id, error = %err, "launch: failed");
+                crate::services::hardware::abort_launch();
                 // 用户取消：清掉进度即可，不写回 failed 终态（否则已取消的
                 // 流程被复活成错误进度，前端 dialog 关了又弹回）。
                 if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {

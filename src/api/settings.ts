@@ -114,6 +114,14 @@ export interface AppSettings {
    * 只对普通更新生效：强制更新（required）与跨通道切换（channelSwitch）一律仍走对话框。
    */
   updateAutoInstall?: boolean
+  /**
+   * 启动游戏时请求硬件加速。Windows：把本次使用的 java.exe 设为「高性能」显卡
+   * （写入 UserGpuPreferences，关开关后还原）。macOS：调用 Xcode 的 gamepolicyctl
+   * 开启系统游戏模式。缺失/null = 开启。
+   */
+  launchHardwareBoost?: boolean
+  /** 游戏进程优先级：normal（默认）/ below_normal / above_normal / high；非 Windows 只提供前两档 */
+  processPriority?: 'below_normal' | 'normal' | 'above_normal' | 'high'
   /** 资源文件下载命名格式（ENH-10）：cn-name-ver / name-cn-ver / cn-name / name-ver / name */
   fileNaming?: string
 }
@@ -174,6 +182,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ignoreSslCert: false,
   http1Parallel: false,
   updateAutoInstall: true,
+  launchHardwareBoost: true,
+  processPriority: 'normal',
 }
 
 let cached: AppSettings = { ...DEFAULT_SETTINGS }
@@ -213,6 +223,9 @@ export async function loadSettings(): Promise<AppSettings> {
         animationSpeed: data.animationSpeed ?? cached.animationSpeed ?? DEFAULT_SETTINGS.animationSpeed,
         animationsEnabled: data.animationsEnabled ?? cached.animationsEnabled ?? DEFAULT_SETTINGS.animationsEnabled,
         gpuAcceleration: data.gpuAcceleration ?? cached.gpuAcceleration ?? DEFAULT_SETTINGS.gpuAcceleration,
+        launchHardwareBoost:
+          data.launchHardwareBoost ?? cached.launchHardwareBoost ?? DEFAULT_SETTINGS.launchHardwareBoost,
+        processPriority: data.processPriority ?? cached.processPriority ?? DEFAULT_SETTINGS.processPriority,
       }
       loaded = true
       applyDownloadTimeoutSetting(cached)

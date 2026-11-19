@@ -11,6 +11,7 @@ pub mod error_report;
 pub mod export_tracker;
 pub mod file_mirror;
 pub mod game_log;
+pub mod hardware;
 pub mod install_service;
 pub mod install_tracker;
 pub mod instance;
