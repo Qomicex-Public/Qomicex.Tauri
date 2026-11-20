@@ -109,6 +109,12 @@ fn extract_backend() -> Option<std::path::PathBuf> {
 /// 清理历史遗留的 `{pid}-{BACKEND_EXE}` 副本（每个约 38 MB）。主路径被仍在运行的
 /// 旧后端占用时，每次启动都会写一个新副本且从不删除；正被占用的副本删除会失败，
 /// 忽略即可（下次启动再清）。只匹配「纯数字 PID + 连字符 + 本名」，不碰主副本。
+///
+/// 只清「一小时内没被写过」的副本：另一个启动器可能刚写完自己的副本、还没 spawn，
+/// 无条件清理会把它删掉（或把它踢回主路径，导致两个进程抢同一个 exe）。写入到
+/// spawn 之间只有毫秒级，一小时足以区分。
+const PID_COPY_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(3600);
+
 fn sweep_pid_copies(base: &std::path::Path) {
     let Ok(entries) = std::fs::read_dir(base) else {
         return;
@@ -121,9 +127,29 @@ fn sweep_pid_copies(base: &std::path::Path) {
         let Some(pid) = stem.strip_suffix('-') else {
             continue;
         };
-        if !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()) {
+        if pid.is_empty() || !pid.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .map(|age| age > PID_COPY_STALE_AFTER)
+            .unwrap_or(false);
+        if stale {
             let _ = std::fs::remove_file(entry.path());
         }
+    }
+}
+
+/// 记录后端退出方式：正常退出/崩溃打退出码（Windows 崩溃码高位为 1，如
+/// 0xC0000409），Unix 上被信号杀死时 `code()` 为 `None`，交给 `Debug` 输出信号，
+/// 不要把 `None` 伪造成 `0xFFFFFFFF`。
+fn log_backend_exit(status: std::process::ExitStatus) {
+    match status.code() {
+        Some(code) => tauri_log!("backend", "exited: code={code} (0x{:08X})", code as u32),
+        None => tauri_log!("backend", "exited: {status:?}"),
     }
 }
 
@@ -246,8 +272,7 @@ fn spawn_backend(app: &tauri::App, pipe_name: &Option<String>) {
             let Some(child) = guard.as_mut() else { return };
             match child.try_wait() {
                 Ok(Some(status)) => {
-                    let code = status.code().unwrap_or(-1) as u32;
-                    tauri_log!("backend", "exited: code={code} (0x{code:08X}) {status:?}");
+                    log_backend_exit(status);
                     return;
                 }
                 Ok(None) => {}
@@ -433,9 +458,15 @@ pub fn run() {
             let child = guard.take();
             drop(guard);
             if let Some(mut child) = child {
-                let _ = child.kill();
-                let _ = child.wait();
-                tauri_log!("backend", "killed");
+                // 启动器退出前一刻后端已自行崩溃：状态已可取，先记退出码，别只写 killed。
+                match child.try_wait() {
+                    Ok(Some(status)) => log_backend_exit(status),
+                    _ => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        tauri_log!("backend", "killed");
+                    }
+                }
             }
         }
     });
@@ -446,17 +477,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sweep_pid_copies_removes_only_pid_variants() {
+    fn sweep_pid_copies_removes_only_stale_pid_variants() {
         let base = std::env::temp_dir().join(format!("qomicex-sweep-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
         for name in [
-            "11492-qomicex-backend.exe",
+            "11492-qomicex-backend.exe", // 陈旧副本：应删
+            "11493-qomicex-backend.exe", // 刚写入、可能尚未 spawn：应留
             "qomicex-backend.exe",
             "Packet.dll",
         ] {
             std::fs::write(base.join(name), b"x").unwrap();
         }
+        let stale = std::fs::OpenOptions::new()
+            .write(true)
+            .open(base.join("11492-qomicex-backend.exe"))
+            .unwrap();
+        stale
+            .set_modified(std::time::SystemTime::now() - 2 * PID_COPY_STALE_AFTER)
+            .unwrap();
+        drop(stale);
 
         sweep_pid_copies(&base);
 
@@ -466,6 +506,7 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         assert!(!left.iter().any(|n| n.starts_with("11492-")), "{left:?}");
+        assert!(left.iter().any(|n| n.starts_with("11493-")), "{left:?}");
         assert!(left.iter().any(|n| n == "qomicex-backend.exe"), "{left:?}");
         assert!(left.iter().any(|n| n == "Packet.dll"), "{left:?}");
         let _ = std::fs::remove_dir_all(&base);
