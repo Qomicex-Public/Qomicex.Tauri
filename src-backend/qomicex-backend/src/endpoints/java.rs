@@ -1349,11 +1349,12 @@ fn resolve_java_executable(p: &str) -> Option<String> {
 /// 目录遍历深度上限。Windows 上指向自身或祖先的兼容联接（如
 /// `C:\ProgramData\Application Data`）会让无界递归一直往下走，在 1MiB 主线程栈上
 /// 直接爆栈并 abort（0xC0000409）。Java 家目录布局最多
-/// `<root>/<vendor>/<version>/bin/java.exe`，8 层足够。
+/// `<root>/<vendor>/<version>/bin/java.exe`，8 层足够（深度 8 的目录仍会读取，
+/// 只是不再向下递归）。
 const MAX_SCAN_DEPTH: usize = 8;
 
 fn collect_files_recursive(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
-    if depth >= MAX_SCAN_DEPTH {
+    if depth > MAX_SCAN_DEPTH {
         return;
     }
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -1644,6 +1645,10 @@ mod tests {
         for i in 0..20 {
             dir = dir.join(format!("d{i}"));
             std::fs::create_dir_all(&dir).unwrap();
+            if i == MAX_SCAN_DEPTH - 1 {
+                // 深度上限内的最深层目录仍要被读取
+                std::fs::write(dir.join("boundary.txt"), b"").unwrap();
+            }
         }
         std::fs::write(dir.join("deep.txt"), b"").unwrap();
 
@@ -1654,6 +1659,7 @@ mod tests {
             .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
             .collect();
         assert!(names.iter().any(|n| n == "shallow.txt"), "{names:?}");
+        assert!(names.iter().any(|n| n == "boundary.txt"), "{names:?}");
         assert!(
             !names.iter().any(|n| n == "deep.txt"),
             "深度超限的目录仍被遍历: {names:?}"
