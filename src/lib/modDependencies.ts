@@ -230,6 +230,50 @@ export function computeMissingDependencies(
 
 /** 把缺失依赖列表渲染成一行提示文本（Tooltip / 汇总用）。 */
 export function formatMissingDependency(dep: ModDependency): string {
-  const range = dep.versionRange?.trim()
-  return range ? `${dep.modId} (${range})` : dep.modId
+  const range = formatVersionConstraint(dep.versionRange ?? '')
+  return range ? `${dep.modId} ${range}` : dep.modId
+}
+
+/**
+ * 把版本区间转成可读文本（issue #373）。
+ *
+ * 原样拼 `epicfight ([20.13, ))` 会被读成「名字的一部分」。这里只翻译单区间：
+ * 下界/上界/精确值 → `≥ x` / `≤ x` / `= x`；`[0,)` 是这些 addon 常见的
+ * 「无实际约束」写法，直接不显示。复合表达式（`>=1.0 || <2.0`）原样返回，
+ * 猜不准就不猜，避免丢掉真实版本约束。
+ */
+function formatVersionConstraint(raw: string): string {
+  const range = raw.trim()
+  if (!range || range === '*') return ''
+  const parsed = parseVersionInterval(range)
+  if (!parsed) return range
+  const { lower, upper, lowerInclusive, upperInclusive } = parsed
+  if (!lower && !upper) return ''
+  if (lower && lower === upper) return `= ${lower}`
+  // 0 起步 = 不限制版本
+  if (/^0+(\.0+)*$/.test(lower) && !upper) return ''
+  if (lower && !upper) return `${lowerInclusive ? '≥' : '>'} ${lower}`
+  if (!lower && upper) return `${upperInclusive ? '≤' : '<'} ${upper}`
+  return `${lowerInclusive ? '≥' : '>'} ${lower}, ${upperInclusive ? '≤' : '<'} ${upper}`
+}
+
+/** 解析 `[1.0,)` / `(,1.20.1]` / `[1.0]` 这类单区间；不合语法返回 null。 */
+function parseVersionInterval(
+  range: string,
+): { lower: string; upper: string; lowerInclusive: boolean; upperInclusive: boolean } | null {
+  const open = range[0]
+  const close = range[range.length - 1]
+  if ((open !== '[' && open !== '(') || (close !== ']' && close !== ')')) return null
+  const parts = range.slice(1, -1).split(',')
+  if (parts.length > 2) return null
+  const lower = parts[0]?.trim() ?? ''
+  const upper = (parts[1] ?? '').trim()
+  // 单值 `[1.0]` 才是精确约束；`(1.0)` 之类按异形表达式处理
+  if (parts.length === 1 && !(lower && open === '[' && close === ']')) return null
+  return {
+    lower,
+    upper: parts.length === 1 ? lower : upper,
+    lowerInclusive: open === '[',
+    upperInclusive: close === ']',
+  }
 }

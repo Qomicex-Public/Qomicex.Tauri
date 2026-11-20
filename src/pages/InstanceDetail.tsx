@@ -34,6 +34,8 @@ import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
 import type { GameInstance, CreateInstanceRequest, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, LanGameEntry, GameSettingDto, FileEntry } from '../types/index.ts'
 import { getServers, addServer, deleteServer, pingServer, getLanGames, getModsMetadata, enrichMods, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata, getModUpdatesCache, checkModUpdates, getSchematics, deleteSchematic, renameSchematic, importSchematic } from '../api/instance-files.ts'
+import { searchResources } from '../api/resource.ts'
+import { lookupChineseEntry } from '../api/mcmod.ts'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
 import { ApiError } from '../api/client.ts'
@@ -781,14 +783,36 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   const missingDepsCount = missingDepsMap.size
 
   /**
-   * 「去下载前置」（issue #165）：拿到缺失的 mod id 后跳资源中心搜索。
-   * mod id 通常即 Modrinth/CurseForge 的 slug，故以 Modrinth 为默认源、
-   * category=mod，并带上本实例的游戏版本与加载器以缩小结果。
+   * 「去下载前置」（issue #165 / #373）：依赖 id 通常不是平台 slug，直接拿 id 搜命中率低
+   * （实测 `epicfight_awaken` / `annoyingvillagers` 双源 0 结果）。先用内置 mcmod 映射把
+   * id 解析成名称（`epicfight` → 史诗战斗）再搜；映射不到时退回 id。
+   *
+   * 源回退：先搜 Modrinth，`total === 0` 再搜 CurseForge——EpicFight 生态的前置很多
+   * 只在 CurseForge 上架（`wom` 在 Modrinth 没有 1.20.1 Forge 版本）。预检失败时按原
+   * 行为走 Modrinth，不阻塞跳转。
    */
-  const openDependencySearch = useCallback((depModId: string) => {
+  const openDependencySearch = useCallback(async (depModId: string) => {
+    const { cnName } = await lookupChineseEntry(depModId)
+    const keyword = cnName ?? depModId
+    const query = {
+      category: 'mod',
+      keyword,
+      pageSize: 1,
+      gameVersion: gameVersion || undefined,
+      loader: loader?.toLowerCase() || undefined,
+    }
+    let source = 'modrinth'
+    try {
+      if ((await searchResources({ ...query, source })).total === 0) {
+        const cf = await searchResources({ ...query, source: 'curseforge' })
+        if (cf.total > 0) source = 'curseforge'
+      }
+    } catch {
+      // 预检失败按原行为走 Modrinth；搜索页自己会展示错误
+    }
     const params = new URLSearchParams()
-    params.set('keyword', depModId)
-    params.set('source', 'modrinth')
+    params.set('keyword', keyword)
+    params.set('source', source)
     params.set('category', 'mod')
     if (gameVersion) params.set('gameVersion', gameVersion)
     if (loader) params.set('loader', loader.toLowerCase())
