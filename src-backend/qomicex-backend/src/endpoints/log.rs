@@ -16,7 +16,8 @@
 //! are implemented inline (see the notes below). axum's Query extractor already
 //! percent-decodes the `path` parameter, matching C# `Uri.UnescapeDataString`.
 
-use std::io::{Result as IoResult, Write};
+use std::fs::File;
+use std::io::{BufReader, BufWriter, Result as IoResult, Write};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::SystemTime;
@@ -28,6 +29,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 
 use chrono::{DateTime, Datelike, Local, Timelike};
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ApiError, ApiResult};
@@ -80,7 +83,7 @@ async fn list_logs(State(state): State<SharedState>) -> ApiResult<Json<Vec<LogEn
     Ok(Json(entries))
 }
 
-/// GET /api/logs/export?path=<base64-or-path>  ->  download a log file
+/// GET /api/logs/export?path=<base64-or-path>  ->  download a gzip-compressed log file
 async fn export_log(
     State(state): State<SharedState>,
     Query(q): Query<PathQuery>,
@@ -91,17 +94,19 @@ async fn export_log(
     let Some(path) = resolved else {
         return Err(ApiError::not_found("LOG_NOT_FOUND", "Log file not found"));
     };
-    let bytes = std::fs::read(&path)?;
-    let mut disposition = String::from("attachment");
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    std::io::copy(&mut File::open(&path)?, &mut encoder)?;
+    let bytes = encoder.finish()?;
+    let mut disposition = String::from("attachment; filename=\"log.gz\"");
     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
         if name.is_ascii() {
-            disposition = format!("attachment; filename=\"{name}\"");
+            disposition = format!("attachment; filename=\"{name}.gz\"");
         }
     }
     let mut resp = (StatusCode::OK, bytes).into_response();
     resp.headers_mut().insert(
         header::CONTENT_TYPE,
-        header::HeaderValue::from_static("application/octet-stream"),
+        header::HeaderValue::from_static("application/gzip"),
     );
     resp.headers_mut().insert(
         header::CONTENT_DISPOSITION,
@@ -111,7 +116,7 @@ async fn export_log(
     Ok(resp)
 }
 
-/// POST /api/logs/export-to  { path, dest }  ->  copy one log file to dest
+/// POST /api/logs/export-to  { path, dest }  ->  gzip one log file to dest
 async fn export_to(
     State(state): State<SharedState>,
     Json(body): Json<ExportRequest>,
@@ -128,10 +133,18 @@ async fn export_to(
             }
         }
     }
-    if let Err(e) = std::fs::copy(&path, &body.dest) {
+    if let Err(e) = write_gzip(&path, Path::new(&body.dest)) {
         return Err(ApiError::bad_request("COPY_FAILED", e.to_string()));
     }
     Ok(Json(OpenPathResponse { path: body.dest }))
+}
+
+/// 流式 gzip 压缩 `src` 到 `dest`（日志可能很大，不整份读进内存）。
+fn write_gzip(src: &Path, dest: &Path) -> IoResult<()> {
+    let mut reader = BufReader::new(File::open(src)?);
+    let mut encoder = GzEncoder::new(BufWriter::new(File::create(dest)?), Compression::default());
+    std::io::copy(&mut reader, &mut encoder)?;
+    encoder.finish()?.flush()
 }
 
 /// POST /api/logs/export-all-to  { dest }  ->  zip the whole logs dir to dest
@@ -589,4 +602,31 @@ fn write_u16(out: &mut Vec<u8>, v: u16) {
 
 fn write_u32(out: &mut Vec<u8>, v: u32) {
     out.write_all(&v.to_le_bytes()).unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+
+    #[test]
+    fn write_gzip_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("qomicex-log-gzip-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("a.log");
+        let dest = dir.join("a.log.gz");
+        let content = "[INFO] 中文日志行\n".repeat(200);
+        std::fs::write(&src, content.as_bytes()).unwrap();
+
+        write_gzip(&src, &dest).unwrap();
+
+        let bytes = std::fs::read(&dest).unwrap();
+        assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
+        let mut out = String::new();
+        flate2::read::GzDecoder::new(bytes.as_slice())
+            .read_to_string(&mut out)
+            .unwrap();
+        assert_eq!(out, content);
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
