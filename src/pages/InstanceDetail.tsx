@@ -34,7 +34,7 @@ import { getAccounts } from '../api/account.ts'
 import { getSystemInfo } from '../api/system.ts'
 import type { GameInstance, CreateInstanceRequest, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, LanGameEntry, GameSettingDto, FileEntry } from '../types/index.ts'
 import { getServers, addServer, deleteServer, pingServer, getLanGames, getModsMetadata, enrichMods, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata, getModUpdatesCache, checkModUpdates, getSchematics, deleteSchematic, renameSchematic, importSchematic } from '../api/instance-files.ts'
-import { searchResources } from '../api/resource.ts'
+import { searchResources, resolveResourceSlug } from '../api/resource.ts'
 import { lookupChineseEntry } from '../api/mcmod.ts'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
@@ -65,6 +65,15 @@ import { useI18n } from '../i18n/index.tsx'
 import { errorCodeToKey } from '../i18n/errors.ts'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 import SchematicPreviewDialog from '../components/SchematicPreviewDialog.tsx'
+
+/**
+ * 从 mcmod 中文名取括号里的英文名（`史诗战斗 (Epic Fight)` → `Epic Fight`）。
+ * 兜底搜索只用英文名：Modrinth / CurseForge 不索引中文名（issue #373）。
+ */
+function englishNameFromCn(cnName: string | null): string {
+  const match = cnName?.match(/\(([^()]*[A-Za-z][^()]*)\)\s*$/)
+  return match ? match[1].trim() : ''
+}
 
 const LOADER_COLORS: Record<string, string> = {
   forge: 'bg-orange-500/10 text-orange-500 border-orange-500/25',
@@ -783,23 +792,47 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   const missingDepsCount = missingDepsMap.size
 
   /**
-   * 「去下载前置」（issue #165 / #373）：依赖 id 通常不是平台 slug，直接拿 id 搜命中率低
-   * （实测 `epicfight_awaken` / `annoyingvillagers` 双源 0 结果）。先用内置 mcmod 映射把
-   * id 解析成名称（`epicfight` → 史诗战斗）再搜；映射不到时退回 id。
-   *
-   * 源回退：先搜 Modrinth，`total === 0` 再搜 CurseForge——EpicFight 生态的前置很多
-   * 只在 CurseForge 上架（`wom` 在 Modrinth 没有 1.20.1 Forge 版本）。预检失败时按原
-   * 行为走 Modrinth，不阻塞跳转。
+   * 「去下载前置」（issue #165 / #373）：依赖只给 mod id，而 id 往往就是平台 slug。
+   * 先用 slug 精确查（Modrinth `/project/{slug}`、CurseForge `slug=`），命中直接进工程详情；
+   * 查不到再用**英文名**兜底（中文名平台搜不到），最后退回 id。
+   * 源回退：Modrinth 优先，无结果再 CurseForge（EpicFight 生态的前置大多只在 CurseForge）。
    */
   const openDependencySearch = useCallback(async (depModId: string) => {
+    const loaderKey = loader?.toLowerCase() || undefined
+    const params = new URLSearchParams()
+    params.set('category', 'mod')
+    if (gameVersion) params.set('gameVersion', gameVersion)
+    if (loaderKey) params.set('loader', loaderKey)
+    if (instanceId) params.set('instanceId', instanceId)
+
+    for (const source of ['modrinth', 'curseforge']) {
+      // 依赖 id 常见下划线写法，平台 slug 用连字符（`epicfight_awaken` → `epicfight-awaken`）。
+      const slugs = depModId.includes('_') ? [depModId, depModId.replace(/_/g, '-')] : [depModId]
+      for (const slug of slugs) {
+        const hit = await resolveResourceSlug({
+          source,
+          slug,
+          category: 'mod',
+          gameVersion: gameVersion || undefined,
+          loader: loaderKey,
+        }).catch(() => null)
+        if (hit) {
+          params.set('source', hit.source)
+          params.set('from', 'instance')
+          navigate(`/resource-center/${encodeURIComponent(hit.id)}?${params.toString()}&expandBody=1`)
+          return
+        }
+      }
+    }
+
     const { cnName } = await lookupChineseEntry(depModId)
-    const keyword = cnName ?? depModId
+    const keyword = englishNameFromCn(cnName) || depModId
     const query = {
       category: 'mod',
       keyword,
       pageSize: 1,
       gameVersion: gameVersion || undefined,
-      loader: loader?.toLowerCase() || undefined,
+      loader: loaderKey,
     }
     let source = 'modrinth'
     try {
@@ -810,13 +843,8 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
     } catch {
       // 预检失败按原行为走 Modrinth；搜索页自己会展示错误
     }
-    const params = new URLSearchParams()
     params.set('keyword', keyword)
     params.set('source', source)
-    params.set('category', 'mod')
-    if (gameVersion) params.set('gameVersion', gameVersion)
-    if (loader) params.set('loader', loader.toLowerCase())
-    if (instanceId) params.set('instanceId', instanceId)
     navigate(`/resource-center?${params.toString()}`)
   }, [navigate, gameVersion, loader, instanceId])
 

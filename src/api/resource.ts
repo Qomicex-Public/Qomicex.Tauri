@@ -4,6 +4,33 @@
 import { get, post, put, del } from './client.ts'
 import type { ResourceSearchResponse, ResourceDetail, ResourceFile, ResourceVersion, ResolvedDependency, ResourceItem, ResourceFavorite, ResourceFavoriteFolder } from '../types/index.ts'
 
+export interface ResolvedResource {
+  source: string
+  id: string
+  slug: string
+  title: string
+}
+
+/**
+ * 精确 slug 解析（issue #373）：模组依赖只给 mod id，而 id 往往就是平台 slug。
+ * 返回 null = 该源没有此 slug，或它在当前实例的版本/加载器下没有可用文件。
+ */
+export function resolveResourceSlug(params: {
+  source: string
+  slug: string
+  category?: string
+  gameVersion?: string
+  loader?: string
+}): Promise<ResolvedResource | null> {
+  const q = new URLSearchParams()
+  q.set('source', params.source)
+  q.set('slug', params.slug)
+  if (params.category) q.set('category', params.category)
+  if (params.gameVersion) q.set('gameVersion', params.gameVersion)
+  if (params.loader) q.set('loader', params.loader)
+  return get<ResolvedResource | null>(`/resources/resolve?${q}`)
+}
+
 export function searchResources(params: {
   category?: string
   keyword?: string

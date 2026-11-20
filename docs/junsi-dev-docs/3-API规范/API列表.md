@@ -3192,3 +3192,14 @@ CurseForge 的作者可以关闭 Project Distribution Toggle。开关关闭后�
 - `GET /api/logs/export` 响应 `Content-Type: application/gzip`，`Content-Disposition` 文件名为 `<原文件名>.gz`。
 - `POST /api/logs/export-to` 把 gzip 数据流式写入 `dest`，`dest` 应以 `.gz` 结尾。
 
+
+
+### 2026-11-20 更新
+### GET `/api/resources/resolve?source=&slug=&category=&gameVersion=&loader=`
+
+按平台 slug 精确解析单个工程（issue #373，「下载前置」使用）。`source` 支持 `modrinth` / `curseforge`（Modrinth 走 `/v2/project/{slug}`，CurseForge 走 `slug=` 查询）。
+
+- 命中：返回 `{ source, id, slug, title }`，供前端直接跳工程详情。
+- 未命中：返回 `null`。
+- 给了 `gameVersion` / `loader` 时，要求该工程至少有一个匹配版本，否则按未命中处理。
+
