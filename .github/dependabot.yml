@@ -19,7 +19,7 @@ updates:
     labels:
       - "type: chore"
       - "area: ci"
-      - "status: needs-triage"
+      - "status: needs-triage · 待分诊"
     groups:
       actions:
         patterns:

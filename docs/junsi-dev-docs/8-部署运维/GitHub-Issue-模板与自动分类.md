@@ -1,6 +1,6 @@
 # GitHub Issue / PR 自动 Type 分类（标签体系 + 自动打标 + opencode 兜底 triage）
 
-最后更新：2026-09-27
+最后更新：2026-11-20
 
 ## 1. 背景与根因
 
@@ -24,32 +24,49 @@
 | ① 模板层 | `.github/ISSUE_TEMPLATE/*.yml` | `labels:` 自动打标签 + `type:` 写原生 Issue Type + `title:` 预置前缀 | 标签不存在；非模板 Issue |
 | ② 自动化层 | `.github/workflows/issue-triage.yml` | 确定性打标/互斥校正、PR 按 Conventional Commits 打标、`workflow_dispatch` 补录 | 无（纯 API） |
 | ③ 兜底层 | 同上的 `opencode fallback classification` step | 上两层判不出类型（空白 Issue / 无前缀标题）时用 opencode CLI 分类并补 `type:` / `area:` | `vars.ISSUE_TRIAGE_ENABLED=off`、缺 `OPENCODE_API_KEY`、模型不可用（均静默降级） |
+| ④ 机器人层 | `qomicex-bot`（独立仓库，GitHub App webhook） | 确定性补 `area:` / `priority:` / `size:`，并流转 `status:`（PR 全生命周期）；**不调 LLM** | App 未订阅 Issues / Pull request 事件，或未授予 Pull requests: Read |
 
 ① 依赖 ② 之外的**标签存在性**，由 `.github/labels.yml` + `.github/workflows/label-sync.yml` 保证：label-sync 在 main 分支且本文件变更时自动把标签同步到仓库。
 
 ## 3. 标签体系（`.github/labels.yml`）
 
-三个命名空间，`type:` 互斥，`status:` 由维护者手工维护，`area:` 可多个。
+六段命名空间：`type:` / `status:` / `priority:` 互斥，`area:` 可多个，`size:` 仅 PR，`policy:` 维护者手工。
+
+命名规则：`<命名空间>: <英文键> · <中文>`。语言无关的标准术语（`bug` / `feature` / `docs` / size 字母）不加中文；社区需要直接读的状态、优先级、模块加中文。
 
 | 前缀 | 取值 | 颜色 |
 |---|---|---|
 | `type:` | `type: bug` / `type: feature` / `type: improvement` / `type: docs` / `type: question` / `type: discussion` / `type: chore` | d73a4a / a2eeef / 84b6eb / 0075ca / d876e3 / c5def5 / ededed |
-| `status:` | `needs-triage` / `in-progress` / `blocked` / `duplicate` / `wontfix` / `invalid` / `fixed` | fbca04 / 1d76db / b60205 / cfd3d7 / ffffff / e4e669 / 818bd4 |
+| `status:` | `needs-triage · 待分诊` / `confirmed · 已确认` / `in-progress · 处理中` / `needs-info · 待补充` / `awaiting-review · 待审查` / `awaiting-merge · 待合并` / `done · 完成` / `fixed · 已修复` / `blocked · 受阻` / `deferred · 暂缓` / `duplicate · 重复` / `wontfix · 不修复` / `invalid · 无效` / `upstream · 第三方` | fbca04 / c2e0c6 / 1d76db / d4c5f9 / 5319e7 / 0e8a16 / 1a7f37 / 818bd4 / b60205 / cccccc / cfd3d7 / ffffff / e4e669 / fef2c0 |
+| `priority:` | `high · 高` / `medium · 中` / `low · 低` | b60205 / fbca04 / 0e8a16 |
 | `area:` | `frontend` / `backend` / `connector`（联机） / `updater` / `plugin` / `ci` / `docs` / `i18n` | 5319e7 |
+| `size:` | `XS` / `S` / `M` / `L` / `XL`（PR 改动行数 ≤10 / ≤60 / ≤200 / ≤600 / >600） | 3cbf00 / 0e8a16 / fbca04 / e99695 / b60205 |
+| `policy:` | `policy: skip`（豁免 PR 格式校验，仅维护者手工打） | ededed |
+
+生命周期：
+
+```
+issue：needs-triage → confirmed → in-progress → fixed
+       任一阶段可转 needs-info / blocked / deferred / upstream
+       终止态：duplicate / wontfix / invalid
+PR   ：awaiting-review → awaiting-merge → done
+```
 
 维护规则：
 
 - **只改 `.github/labels.yml`**，不要在 GitHub UI 手工建/改标签；push 到 main 即自动同步（也可 `Actions → Label Sync → Run workflow`）。
 - 新增标签必须同步补进 `.github/workflows/issue-triage.yml` 的 `ALLOWED_TYPE` / `ALLOWED_AREA` 白名单，否则 opencode 兜底打不上。
+- 标签名被 5 处精确匹配：`issue-triage.yml`（`NEEDS_TRIAGE`、`status: duplicate`、`ALLOWED_*`）、`ISSUE_TEMPLATE/*.yml` 的 `labels:`、`dependabot.yml` 的 `labels:`、`pr-policy.yml` 的 `policy: skip`、`qomicex-bot/src/labels.ts`。改名必须五处同步。
 - `delete-other-labels: false`，GitHub 内置标签（Bug/Enhancement/…）保留不动，存量 Issue 不会掉标签。
+- **旧 status 标签改名的迁移**：`status: needs-triage` 等 7 个旧名已改成双语名。合并后先跑一次 Label Sync 建出新标签，再跑 `Actions → Label Sync → Run workflow` 并勾选 `migrate_status`（给存量 issue 补新名、删旧名，可重复执行）。
 
 ## 4. 模板映射
 
 | 模板文件 | `type:` | `title:` | 自动 labels |
 |---|---|---|---|
-| `bug_report.yml` | `Bug` | `[Bug] <title>` | `type: bug`, `status: needs-triage` |
-| `feature_request.yml` | `Feature` | `[Feature] <title>` | `type: feature`, `status: needs-triage` |
-| `improvement_suggestion.yml` | `Task` | `[Improvement] <title>` | `type: improvement`, `status: needs-triage` |
+| `bug_report.yml` | `Bug` | `[Bug] <title>` | `type: bug`, `status: needs-triage · 待分诊` |
+| `feature_request.yml` | `Feature` | `[Feature] <title>` | `type: feature`, `status: needs-triage · 待分诊` |
+| `improvement_suggestion.yml` | `Task` | `[Improvement] <title>` | `type: improvement`, `status: needs-triage · 待分诊` |
 
 原生 Issue Type 只有三种，优化建议归入 `Task`，真正的类型区分由 `type:` 标签承担。
 
@@ -69,15 +86,29 @@ on:
 | Step | 实现 | 行为 |
 |---|---|---|
 | `Resolve target issue` | `actions/github-script@v9` | 解析编号（dispatch 输入 / issue / PR）→ `issues.get` → 输出 `number/is_pr/is_bot/has_type`，并把元数据+正文写入 `$RUNNER_TEMP/issue.md` |
-| `Deterministic type label` | `actions/github-script@v9` | 判据优先级：① 标题前缀 `^\[Bug\]` / `^\[Feature\]` / `^\[Improvement\]`；② issue 正文 marker：`### QML 版本号`、`### 复现步骤`→bug，`### 功能描述`→feature，`### 优化类型`→improvement；③ PR 标题 Conventional Commits 前缀：`feat/feature→type: feature`，`fix/perf/refactor/revert→type: bug`，`docs→type: docs`，`test/build/ci/style/chore→type: chore`。命中则补目标标签、移除其它 `type:`（互斥）、issue 若无 `status:` 则补 `status: needs-triage`；幂等，无变更则零 API 写 |
+| `Deterministic type label` | `actions/github-script@v9` | 判据优先级：① 标题前缀 `^\[Bug\]` / `^\[Feature\]` / `^\[Improvement\]`；② issue 正文 marker：`### QML 版本号`、`### 复现步骤`→bug，`### 功能描述`→feature，`### 优化类型`→improvement；③ PR 标题 Conventional Commits 前缀：`feat/feature→type: feature`，`fix/perf/refactor/revert→type: bug`，`docs→type: docs`，`test/build/ci/style/chore→type: chore`。命中则补目标标签、移除其它 `type:`（互斥）、issue 若无 `status:` 则补 `status: needs-triage · 待分诊`；幂等，无变更则零 API 写 |
 | `opencode fallback classification` | bash + `opencode run` | 仅当：非 PR 事件、非机器人、当前无 `type:` 标签、上一步未命中、`vars.ISSUE_TRIAGE_ENABLED != 'off'`。安装 opencode CLI → 非交互 `opencode run --model $MODEL -f issue.md "$(cat .github/opencode/issue-triage.md)"` → 用内联 `node -e` 从日志抓最后一个带 `type` 字段的 JSON 代码块。`continue-on-error: true`，失败只写日志 |
-| `Apply opencode classification` | `actions/github-script@v9` | 仅取白名单内的 `type:`/`area:` 且标签确实存在才补（**只加不删**，确定性结果优先）；`duplicate_of` 为有效且处于 open 的 issue 编号时，才发一条「疑似重复」评论并打 `status: duplicate` |
+| `Apply opencode classification` | `actions/github-script@v9` | 仅取白名单内的 `type:`/`area:` 且标签确实存在才补（**只加不删**，确定性结果优先）；`duplicate_of` 为有效且处于 open 的 issue 编号时，才发一条「疑似重复」评论并打 `status: duplicate · 重复` |
 
 `anomalyco/opencode/github@latest` 的 action 内部 `assertContextEvent("issue_comment", "pull_request_review_comment")`，**只能在评论事件运行**，所以「Issue 打开即自动分类」必须走 CLI 模式（本方案即如此）；评论触发的 `/oc` `/opencode` 仍由 `.github/workflows/opencode.yml` 承担，未改动。
 
 ### Job `backfill`（批量补录）
 
-`workflow_dispatch` 且 `issue_number` 留空时运行：列出所有 open 且无 `type:` 标签的 issue（排除 PR），取前 20 个补 `status: needs-triage`。要拿到完整 `type:` 分类，请对每个 issue 单独 `workflow_dispatch` 填编号（走 `triage` job 的三步全链路）。
+`workflow_dispatch` 且 `issue_number` 留空时运行：列出所有 open 且无 `type:` 标签的 issue（排除 PR），取前 20 个补 `status: needs-triage · 待分诊`。要拿到完整 `type:` 分类，请对每个 issue 单独 `workflow_dispatch` 填编号（走 `triage` job 的三步全链路）。
+
+### 机器人层（`qomicex-bot`，独立仓库）
+
+bot 通过 GitHub App webhook 收 `issues` / `pull_request` / `pull_request_review` 事件，用**确定性规则**补打本工作流覆盖不到的维度，全程不调 LLM：
+
+| 事件 | 动作 |
+|---|---|
+| `issues.opened` / `edited` | 标题前缀或正文 marker 判 `type:`；关键词表判 `area:`（下载/实例/账号→frontend+backend，联机/EasyTier→connector，更新通道→updater，插件/WASM→plugin，翻译→i18n，`.github`/CI→ci）；关键词表判 `priority:`；无 `status:` 补 `needs-triage` |
+| `pull_request.opened/reopened/synchronize` | 标题 Conventional Commits → `type:`；改动文件路径 → `area:`；`additions+deletions` → `size:`；`status: awaiting-review · 待审查`；PR 正文 `close[sd]/fix(es)?/resolve[sd] #N` → 对应 issue 转 `in-progress · 处理中` |
+| `pull_request_review.submitted`（approved） | `awaiting-review` → `awaiting-merge · 待合并` |
+| `pull_request.closed`（merged） | PR → `done · 完成`；关联 issue → `fixed · 已修复`（摘掉 `in-progress`） |
+| `pull_request.closed`（未合并） | 只摘 `awaiting-review` / `awaiting-merge`，不贴负面状态 |
+
+只补空缺：已有同名维度标签时不覆盖，维护者手工标签优先。bot 的标签名常量在 `qomicex-bot/src/labels.ts`，与本文件必须一致；`github.autoLabel` 可一键关闭。
 
 ## 6. 配置项
 
@@ -93,6 +124,7 @@ on:
 - `blank_issues_enabled: false`（`.github/ISSUE_TEMPLATE/config.yml`）堵住「绕过模板直接建 Issue」这条路；排障需要建空白 Issue 时可用 `gh issue create` 或临时开启。
 - `contact_links` 只写仓库真实存在的入口（官网 homepage、安全通告），**不要写 Discussions**——本仓库未开启 Discussions。
 - **改模板的 `labels:` 与字段名必须同步 `issue-triage.yml` 的判据**：Step 1 的 `ISSUE_BODY_MARKERS` 是精确字符串匹配 issue form 渲染后的 markdown 标题（`### QML 版本号` 等）。标题判据（`^\[Bug\]`）为主，正文 marker 为备。
+- **改 `status:` / `priority:` / `size:` 名字必须同步 `qomicex-bot/src/labels.ts`**：bot 用同名常量加标签，名字对不上时 GitHub 返回 422，bot 只会记 warning 并跳过该维度。
 
 ## 8. 排障
 
@@ -111,6 +143,7 @@ on:
 - `.github/ISSUE_TEMPLATE/{bug_report,feature_request,improvement_suggestion,config}.yml`
 - `.github/PULL_REQUEST_TEMPLATE.md`、`.github/dependabot.yml`
 - `.github/workflows/opencode.yml`（评论触发 `/oc`，未改动）、`.github/workflows/ocr-review.yml`（PR 审查，仅 `github-script` 升版）
+- `qomicex-bot/src/labels.ts`（机器人层标签常量与判据）、`qomicex-bot/src/labeler.ts`（打标编排）、`qomicex-bot/src/webhook.ts`（事件解析）
 
 ## 10. OpenCodeReview（OCR）审查：按需手动触发
 

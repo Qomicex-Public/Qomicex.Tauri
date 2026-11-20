@@ -1,14 +1,15 @@
 name: Label Sync
 
-# 把 .github/labels.yml 声明的标签同步到仓库（类型/状态/模块三段命名空间）。
+# 把 .github/labels.yml 声明的标签同步到仓库（类型/状态/优先级/模块/体积/流程六段命名空间）。
 # 只在本文件或 labels.yml 变更时自动跑，避免每次 push 都动仓库标签。
 #
 # 前提：issue form 的 `labels:` 前置元数据只会自动添加**仓库里已存在**的标签名，
 # 不存在的会被静默忽略（GitHub 官方文档 syntax-for-issue-forms）。
-# 因此本工作流合并后首次 push 就会把 type:/status:/area: 标签建出来，
-# 之后新提交的 Issue 打开即自动带上对应标签。
+# 因此本工作流合并后首次 push 就会把新标签建出来，之后新提交的 Issue 打开即自动带上。
 #
 # 手动执行：Actions → Label Sync → Run workflow。
+#   migrate_status=true：把 7 个旧 status 标签迁移到双语新名（一次性，可重复跑）。
+#   EndBug/label-sync 只增改不重命名，不跑这一步的话存量 issue 会一直挂着旧标签名。
 # 删除为 false：GitHub 内置标签（Bug / Enhancement / Documentation 等）保留不动。
 
 on:
@@ -18,6 +19,11 @@ on:
       - ".github/labels.yml"
       - ".github/workflows/label-sync.yml"
   workflow_dispatch:
+    inputs:
+      migrate_status:
+        description: "迁移旧 status 标签到新名（改动上线后跑一次）| Migrate legacy status labels"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -26,7 +32,7 @@ permissions:
 jobs:
   label-sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -36,3 +42,52 @@ jobs:
         with:
           config-file: .github/labels.yml
           delete-other-labels: false
+
+      # 一次性迁移：先给带旧标签的 issue/PR 补新标签，再删旧标签（GitHub 删标签会自动从 issue 上摘掉）
+      - name: Migrate legacy status labels
+        if: inputs.migrate_status
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const RENAMES = [
+              ['status: needs-triage', 'status: needs-triage · 待分诊'],
+              ['status: in-progress', 'status: in-progress · 处理中'],
+              ['status: blocked', 'status: blocked · 受阻'],
+              ['status: duplicate', 'status: duplicate · 重复'],
+              ['status: wontfix', 'status: wontfix · 不修复'],
+              ['status: invalid', 'status: invalid · 无效'],
+              ['status: fixed', 'status: fixed · 已修复']
+            ];
+            const owner = context.repo.owner, repo = context.repo.repo;
+            const repoLabels = (await github.paginate(github.rest.issues.listLabelsForRepo, {
+              owner, repo, per_page: 100
+            })).map(l => l.name);
+            if (!repoLabels.includes(RENAMES[0][1])) {
+              core.setFailed(`"${RENAMES[0][1]}" 还不存在，先跑一次不带 migrate_status 的 Label Sync`);
+              return;
+            }
+
+            for (const [oldName, newName] of RENAMES) {
+              if (!repoLabels.includes(oldName)) {
+                core.info(`旧标签 "${oldName}" 不存在，跳过`);
+                continue;
+              }
+              const items = await github.paginate(github.rest.issues.listForRepo, {
+                owner, repo, state: 'all', labels: oldName, per_page: 100
+              });
+              for (const item of items) {
+                await github.rest.issues.addLabels({ owner, repo, issue_number: item.number, labels: [newName] });
+                try {
+                  await github.rest.issues.removeLabel({ owner, repo, issue_number: item.number, name: oldName });
+                } catch (err) {
+                  // listForRepo 带 labels 过滤时可能混入已摘掉该标签的条目（PR 与 issue 共用一个标签空间）
+                  core.info(`#${item.number} 移除 "${oldName}" 失败（忽略）: ${err.message}`);
+                }
+              }
+              try {
+                await github.rest.issues.deleteLabel({ owner, repo, name: oldName });
+                core.notice(`"${oldName}" → "${newName}"：迁移 ${items.length} 条，旧标签已删除`);
+              } catch (err) {
+                core.warning(`删除旧标签 "${oldName}" 失败: ${err.message}`);
+              }
+            }

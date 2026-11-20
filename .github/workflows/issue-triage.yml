@@ -48,7 +48,7 @@ jobs:
         with:
           script: |
             const TYPE_LABEL_PREFIX = 'type: ';
-            const needsTriage = 'status: needs-triage';
+            const needsTriage = 'status: needs-triage · 待分诊';
             const open = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -136,7 +136,7 @@ jobs:
         with:
           script: |
             const TYPE_PREFIX = 'type: ';
-            const NEEDS_TRIAGE = 'status: needs-triage';
+            const NEEDS_TRIAGE = 'status: needs-triage · 待分诊';
             const empty = { kind: 'none', type: '', added: [], removed: [] };
 
             // 判据来自 .github/ISSUE_TEMPLATE/*.yml 的 title: 与 body 字段渲染标题，
@@ -307,7 +307,7 @@ jobs:
                     owner, repo, issue_number: number,
                     body: `疑似重复，请维护者确认。\nPossible duplicate of #${dup} — maintainers, please confirm.`
                   });
-                  await github.rest.issues.addLabels({ owner, repo, issue_number: number, labels: ['status: duplicate'] });
+                  await github.rest.issues.addLabels({ owner, repo, issue_number: number, labels: ['status: duplicate · 重复'] });
                 }
               } catch (err) {
                 core.info(`duplicate_of #${dup} unusable: ${err.message}`);

@@ -4,101 +4,193 @@
 # 也可在 Actions → Label Sync → Run workflow 手动执行。
 # 维护方式：只改本文件，不要手动在 GitHub UI 建/改标签，否则会在下次同步时被覆盖。
 #
-# 三段命名空间（与 issue/PR 模板、issue-triage.yml 的判定逻辑一一对应）：
-#   type: *    类型维度，互斥（一个 issue/PR 只有一个 type）
-#   status: *  状态维度，维护者手工维护，自动流程只补 status: needs-triage
-#   area: *    模块维度，可多个
+# 四段命名空间（与 issue/PR 模板、issue-triage.yml、qomicex-bot 的判定逻辑一一对应）：
+#   type: *      类型维度，互斥（一个 issue/PR 只有一个 type）
+#   status: *    状态维度，互斥；部分由 issue-triage.yml / qomicex-bot 自动流转
+#   priority: *  优先级维度，互斥；qomicex-bot 按关键词给初值，维护者可改
+#   area: *      模块维度，可多个
+#   size: *      PR 体积维度，互斥；qomicex-bot 按改动行数计算（issue 不用）
+#   policy: *    流程豁免开关，维护者手工
 #
-# 注意：GitHub 内置标签（Bug / Enhancement / Documentation / Duplicate / Fixed /
+# 命名规则：`<命名空间>: <英文键> · <中文>`。语言无关的标准术语（bug / feature /
+# docs / size 字母）不加中文；面向社区阅读的状态与优先级加中文。
+#
+# 注意：标签名被以下位置精确匹配，改名必须同步：
+#   .github/workflows/issue-triage.yml（NEEDS_TRIAGE、status: duplicate、ALLOWED_*）
+#   .github/ISSUE_TEMPLATE/*.yml 的 labels:、.github/dependabot.yml 的 labels:
+#   .github/workflows/pr-policy.yml（policy: skip）
+#   qomicex-bot/src/labels.ts
+#
+# GitHub 内置标签（Bug / Enhancement / Documentation / Duplicate / Fixed /
 # invalid / question / wontfix / good first issue / help wanted / Processing）
 # 不在本文件内，因此不会被覆盖或删除；delete-other-labels 为 false，两者共存。
 #
 # label-sync 输入格式：name / color（不含 #）/ description。
 
+# ---------- type：类型（互斥） ----------
+
 - name: "type: bug"
   color: "d73a4a"
-  description: "缺陷：预期行为未实现、崩溃、数据丢失（Bug: something is broken）"
+  description: "缺陷：预期行为未实现、崩溃、数据丢失 | Bug: broken behaviour, crash or data loss"
 
 - name: "type: feature"
   color: "a2eeef"
-  description: "新功能请求（Feature request）"
+  description: "新功能请求 | Feature request: capability that does not exist yet"
 
 - name: "type: improvement"
   color: "84b6eb"
-  description: "既有功能优化：性能 / 稳定性 / UI-UX / 易用性（Improvement）"
+  description: "既有功能优化：性能 / 稳定性 / UI-UX / 易用性 | Improvement to existing behaviour"
 
 - name: "type: docs"
   color: "0075ca"
-  description: "文档变更（Documentation）"
+  description: "文档变更 | Documentation change"
 
 - name: "type: question"
   color: "d876e3"
-  description: "提问与求助（Question）"
+  description: "提问与求助 | Question or support request"
 
 - name: "type: discussion"
   color: "c5def5"
-  description: "非正式讨论 / 想法征集（Discussion）"
+  description: "非正式讨论 / 想法征集 | Discussion without a concrete deliverable"
 
 - name: "type: chore"
   color: "ededed"
-  description: "工程杂项：构建 / 依赖 / CI / 重构（Chore）"
+  description: "工程杂项：构建 / 依赖 / CI / 重构 | Chore: build, deps, CI, refactor"
 
-- name: "status: needs-triage"
+# ---------- status：状态（互斥） ----------
+# issue 生命周期：needs-triage → confirmed → in-progress → fixed
+#                 （任一步可转 needs-info / blocked / deferred / upstream）
+#                 （终止：duplicate / wontfix / invalid）
+# PR 生命周期：awaiting-review → awaiting-merge → done
+
+- name: "status: needs-triage · 待分诊"
   color: "fbca04"
-  description: "待分诊：尚未确认是否处理（Needs triage）"
+  description: "待分诊：尚未确认是否处理 | Needs triage: not confirmed yet"
 
-- name: "status: in-progress"
+- name: "status: confirmed · 已确认"
+  color: "c2e0c6"
+  description: "已确认属实或值得做，等待排期 | Confirmed, waiting to be scheduled"
+
+- name: "status: in-progress · 处理中"
   color: "1d76db"
-  description: "已确认并正在处理（In progress）"
+  description: "已有 PR 或开发任务在推进 | In progress: PR or dev task exists"
 
-- name: "status: blocked"
-  color: "b60205"
-  description: "被其他 Issue / 外部因素阻塞（Blocked）"
+- name: "status: needs-info · 待补充"
+  color: "d4c5f9"
+  description: "等待作者补充复现步骤 / 日志 / 版本 | Waiting for the author's details"
 
-- name: "status: duplicate"
-  color: "cfd3d7"
-  description: "重复（Duplicate）"
+- name: "status: awaiting-review · 待审查"
+  color: "5319e7"
+  description: "PR 已提交，等待 AI 或人工代码审查 | PR submitted, awaiting review"
 
-- name: "status: wontfix"
-  color: "ffffff"
-  description: "不处理（Won't fix）"
+- name: "status: awaiting-merge · 待合并"
+  color: "0e8a16"
+  description: "PR 审查通过，等待合并 | PR approved, awaiting merge"
 
-- name: "status: invalid"
-  color: "e4e669"
-  description: "无效：无法复现 / 信息不足 / 使用方式有误（Invalid）"
+- name: "status: done · 完成"
+  color: "1a7f37"
+  description: "PR 已合并，工作交付完成 | PR merged, work delivered"
 
-- name: "status: fixed"
+- name: "status: fixed · 已修复"
   color: "818bd4"
-  description: "已修复，等待发布验证（Fixed）"
+  description: "修复已进主干，等待发布验证 | Fixed on main, awaiting release"
+
+- name: "status: blocked · 受阻"
+  color: "b60205"
+  description: "被其他 Issue / 上游 / 外部因素阻塞 | Blocked by another issue or external factor"
+
+- name: "status: deferred · 暂缓"
+  color: "cccccc"
+  description: "已确认但暂不排期 | Confirmed but deferred"
+
+- name: "status: duplicate · 重复"
+  color: "cfd3d7"
+  description: "与已有 Issue / PR 重复 | Duplicate of an existing issue or PR"
+
+- name: "status: wontfix · 不修复"
+  color: "ffffff"
+  description: "确认不作为处理 | Won't fix"
+
+- name: "status: invalid · 无效"
+  color: "e4e669"
+  description: "无效：无法复现 / 信息不足 / 使用方式有误 | Invalid: not reproducible or misused"
+
+- name: "status: upstream · 第三方"
+  color: "fef2c0"
+  description: "上游 / 模组 / 系统环境导致，不在本仓库修 | Caused by upstream, mods or the environment"
+
+# ---------- priority：优先级（互斥） ----------
+
+- name: "priority: high · 高"
+  color: "b60205"
+  description: "高：崩溃、数据丢失、大范围不可用 | High: crash, data loss, widespread breakage"
+
+- name: "priority: medium · 中"
+  color: "fbca04"
+  description: "中：局部功能异常或体验受损 | Medium: localised bug or degraded UX"
+
+- name: "priority: low · 低"
+  color: "0e8a16"
+  description: "低：不影响使用的建议与打磨 | Low: cosmetic or non-blocking suggestion"
+
+# ---------- area：模块（可多个） ----------
 
 - name: "area: frontend"
   color: "5319e7"
-  description: "前端 React / Vite / 插件 UI 包（Frontend）"
+  description: "前端 React / Vite / 插件 UI 包 | Frontend: React, Vite, plugin-ui"
 
 - name: "area: backend"
   color: "5319e7"
-  description: "Rust 后端 axum / qomicex-backend（Backend）"
+  description: "Rust 后端 axum / qomicex-backend | Backend: axum service"
 
 - name: "area: connector"
   color: "5319e7"
-  description: "联机 / SCF 协议 / EasyTier（Connector）"
+  description: "联机 / SCF 协议 / EasyTier | Connector: multiplayer protocol, EasyTier"
 
 - name: "area: updater"
   color: "5319e7"
-  description: "启动器自更新通道 / Updater（Updater）"
+  description: "启动器自更新通道 / Updater | Updater: release channels and self-update"
 
 - name: "area: plugin"
   color: "5319e7"
-  description: "插件系统 / plugin-ui / WASM 网关（Plugin system）"
+  description: "插件系统 / plugin-ui / WASM 网关 | Plugin system, WASM gateway"
 
 - name: "area: ci"
   color: "5319e7"
-  description: "CI / CD / GitHub Actions / 发布流水线（CI）"
+  description: "CI / CD / GitHub Actions / 发布流水线 | CI/CD and release pipeline"
 
 - name: "area: docs"
   color: "5319e7"
-  description: "文档与 ADR（Docs）"
+  description: "文档与 ADR | Documentation and ADRs"
 
 - name: "area: i18n"
   color: "5319e7"
-  description: "多语言资源（i18n）"
+  description: "多语言资源 | i18n resources"
+
+# ---------- size：PR 体积（互斥，仅 PR） ----------
+
+- name: "size: XS"
+  color: "3cbf00"
+  description: "极小改动：≤ 10 行 | Extra small: <= 10 changed lines"
+
+- name: "size: S"
+  color: "0e8a16"
+  description: "小改动：≤ 60 行 | Small: <= 60 changed lines"
+
+- name: "size: M"
+  color: "fbca04"
+  description: "中等改动：≤ 200 行 | Medium: <= 200 changed lines"
+
+- name: "size: L"
+  color: "e99695"
+  description: "大改动：≤ 600 行 | Large: <= 600 changed lines"
+
+- name: "size: XL"
+  color: "b60205"
+  description: "超大改动：> 600 行，需拆分评审 | Extra large: > 600 changed lines"
+
+# ---------- policy：流程豁免 ----------
+
+- name: "policy: skip"
+  color: "ededed"
+  description: "豁免 PR 格式校验（pr-policy.yml） | Skip PR policy checks"
