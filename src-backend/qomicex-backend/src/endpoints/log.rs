@@ -94,15 +94,11 @@ async fn export_log(
     let Some(path) = resolved else {
         return Err(ApiError::not_found("LOG_NOT_FOUND", "Log file not found"));
     };
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    std::io::copy(&mut File::open(&path)?, &mut encoder)?;
-    let bytes = encoder.finish()?;
-    let mut disposition = String::from("attachment; filename=\"log.gz\"");
-    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-        if name.is_ascii() {
-            disposition = format!("attachment; filename=\"{name}.gz\"");
-        }
-    }
+    let disposition = content_disposition(&path);
+    let src = path.clone();
+    let bytes = tokio::task::spawn_blocking(move || gzip_bytes(&src))
+        .await
+        .map_err(|e| ApiError::internal(format!("log export task failed: {e}")))??;
     let mut resp = (StatusCode::OK, bytes).into_response();
     resp.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -126,25 +122,76 @@ async fn export_to(
     let Some(path) = resolved else {
         return Err(ApiError::not_found("LOG_NOT_FOUND", "Log file not found"));
     };
-    if let Some(parent) = Path::new(&body.dest).parent() {
-        if !parent.as_os_str().is_empty() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                return Err(ApiError::bad_request("COPY_FAILED", e.to_string()));
-            }
-        }
+    let dest = PathBuf::from(&body.dest);
+    // 同路径（含符号链接）导出会把源日志替换成压缩数据，直接拒绝。
+    if is_same_file(&path, &dest) {
+        return Err(ApiError::bad_request(
+            "EXPORT_SAME_FILE",
+            "Destination is the source log file",
+        ));
     }
-    if let Err(e) = write_gzip(&path, Path::new(&body.dest)) {
+    // 目标可能是慢盘/网络盘：同步 IO 放阻塞线程池，避免占住 Tokio worker。
+    let src = path.clone();
+    let result = tokio::task::spawn_blocking(move || write_gzip(&src, &dest))
+        .await
+        .map_err(|e| ApiError::internal(format!("log export task failed: {e}")))?;
+    if let Err(e) = result {
         return Err(ApiError::bad_request("COPY_FAILED", e.to_string()));
     }
     Ok(Json(OpenPathResponse { path: body.dest }))
 }
 
 /// 流式 gzip 压缩 `src` 到 `dest`（日志可能很大，不整份读进内存）。
+///
+/// 先写同目录临时文件再 rename：`File::create` 会截断，并发导出同一 dest
+/// 或写到一半失败都会留下损坏/半截文件，并可能截断与 dest 同 inode 的硬链接。
 fn write_gzip(src: &Path, dest: &Path) -> IoResult<()> {
-    let mut reader = BufReader::new(File::open(src)?);
-    let mut encoder = GzEncoder::new(BufWriter::new(File::create(dest)?), Compression::default());
-    std::io::copy(&mut reader, &mut encoder)?;
-    encoder.finish()?.flush()
+    if let Some(parent) = dest.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let tmp = dest.with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
+    let written = (|| -> IoResult<()> {
+        let mut reader = BufReader::new(File::open(src)?);
+        let mut encoder =
+            GzEncoder::new(BufWriter::new(File::create(&tmp)?), Compression::default());
+        std::io::copy(&mut reader, &mut encoder)?;
+        encoder.finish()?.flush()?;
+        std::fs::rename(&tmp, dest)
+    })();
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// 整份压缩到内存（下载接口需要完整响应体）。
+fn gzip_bytes(src: &Path) -> IoResult<Vec<u8>> {
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    std::io::copy(&mut BufReader::new(File::open(src)?), &mut encoder)?;
+    encoder.finish()
+}
+
+/// 目标已存在时按规范化路径比较；不存在则不可能是源文件。
+fn is_same_file(src: &Path, dest: &Path) -> bool {
+    match (src.canonicalize(), dest.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// RFC 6266：ASCII 用 `filename=`，非 ASCII 补 `filename*=UTF-8''`（百分号编码）。
+fn content_disposition(path: &Path) -> String {
+    match path.file_name().and_then(|n| n.to_str()) {
+        Some(name) if name.is_ascii() => format!("attachment; filename=\"{name}.gz\""),
+        Some(name) => format!(
+            "attachment; filename=\"log.gz\"; filename*=UTF-8''{}",
+            urlencoding::encode(&format!("{name}.gz"))
+        ),
+        None => String::from("attachment; filename=\"log.gz\""),
+    }
 }
 
 /// POST /api/logs/export-all-to  { dest }  ->  zip the whole logs dir to dest
@@ -609,10 +656,15 @@ mod tests {
     use super::*;
     use std::io::Read;
 
-    #[test]
-    fn write_gzip_roundtrip() {
+    fn temp_dir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("qomicex-log-gzip-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn write_gzip_roundtrip() {
+        let dir = temp_dir();
         let src = dir.join("a.log");
         let dest = dir.join("a.log.gz");
         let content = "[INFO] 中文日志行\n".repeat(200);
@@ -628,5 +680,42 @@ mod tests {
             .unwrap();
         assert_eq!(out, content);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn write_gzip_leaves_hard_linked_source_intact() {
+        let dir = temp_dir();
+        let src = dir.join("a.log");
+        std::fs::write(&src, b"payload").unwrap();
+        let dest = dir.join("b.log.gz");
+        std::fs::hard_link(&src, &dest).unwrap();
+
+        write_gzip(&src, &dest).unwrap();
+
+        assert_eq!(std::fs::read(&src).unwrap(), b"payload");
+        assert_eq!(&std::fs::read(&dest).unwrap()[..2], &[0x1f, 0x8b]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn detects_same_file_only_when_dest_exists() {
+        let dir = temp_dir();
+        let src = dir.join("a.log");
+        std::fs::write(&src, b"x").unwrap();
+
+        assert!(is_same_file(&src, &src));
+        assert!(!is_same_file(&src, &dir.join("fresh.log.gz")));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn content_disposition_encodes_non_ascii_name() {
+        assert_eq!(
+            content_disposition(Path::new("qomicex-2026.log")),
+            "attachment; filename=\"qomicex-2026.log.gz\""
+        );
+        let d = content_disposition(Path::new("日志.log"));
+        assert!(d.is_ascii());
+        assert!(d.contains("filename*=UTF-8''%E6%97%A5%E5%BF%97.log.gz"));
     }
 }
