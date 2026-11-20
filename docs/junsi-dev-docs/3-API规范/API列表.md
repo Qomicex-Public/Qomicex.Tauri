@@ -3182,3 +3182,13 @@ CurseForge 的作者可以关闭 Project Distribution Toggle。开关关闭后�
 
 实例字段新增 `memoryMode`：缺失/null 与 `"auto"` 表示启动前按上述规则重算；`"custom"` 表示使用用户填写的 `maxMemory`。该字段随实例写入 `qomicex.json`。
 
+
+
+### 2026-11-20 更新
+### 日志导出压缩说明
+
+`GET /api/logs/export` 与 `POST /api/logs/export-to` 均输出 gzip 数据：
+
+- `GET /api/logs/export` 响应 `Content-Type: application/gzip`，`Content-Disposition` 文件名为 `<原文件名>.gz`。
+- `POST /api/logs/export-to` 把 gzip 数据流式写入 `dest`，`dest` 应以 `.gz` 结尾。
+
