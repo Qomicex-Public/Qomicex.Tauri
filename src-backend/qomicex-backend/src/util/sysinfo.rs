@@ -73,13 +73,61 @@ fn linux_pretty_name() -> Option<String> {
 
 /// 返回 (总物理内存, 可用物理内存)，单位 **MB**（与 C# SystemMemoryHelper 一致：
 /// 源为字节 / (1024*1024)）。
+///
+/// 可用内存经 [`normalize_available`] 归一：sysinfo 在 macOS 上把 available 算成
+/// `free + inactive + purgeable - compressor`，压缩内存高时 `saturating_sub` 会
+/// 直接饱和到 0，表现为「48GB 机器显示共 48GB / 已用 48GB / 剩余 0」（#375 同批反馈）。
 pub fn memory() -> (u64, u64) {
     let mut sys = System::new();
     sys.refresh_memory();
-    (
-        sys.total_memory() / (1024 * 1024),
-        sys.available_memory() / (1024 * 1024),
-    )
+    let total = sys.total_memory();
+    let raw_available = sys.available_memory();
+    let used = sys.used_memory();
+    let free = sys.free_memory();
+    let available = normalize_available(total, raw_available, used, free);
+    if total > 0 && available != raw_available {
+        log_implausible_memory(total, raw_available, used, free, available);
+    }
+    (total / (1024 * 1024), available / (1024 * 1024))
+}
+
+/// 把平台给出的 available 收敛成可信值（字节）。
+///
+/// 顺序：原值可信（0 < available <= total）→ 用原值；否则用 `total - used`
+/// （同一批 vm 统计的另一侧，macOS 上仍有效）→ 再退到 `free` → 最后退到 `total`
+/// （拿不到任何数据时宁可报"全空闲"，也不能报"全占用"：后者会让内存分配上限
+/// 与自动 -Xmx 直接塌到 512MB）。
+fn normalize_available(total: u64, available: u64, used: u64, free: u64) -> u64 {
+    if total == 0 {
+        return available;
+    }
+    if available > 0 && available <= total {
+        return available;
+    }
+    if used > 0 && used < total {
+        return total - used;
+    }
+    if free > 0 && free <= total {
+        return free;
+    }
+    total
+}
+
+/// 每个进程只记一次：这是平台数据异常，不是正常分支，重复刷屏没有信息增量。
+fn log_implausible_memory(total: u64, raw: u64, used: u64, free: u64, fixed: u64) {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        tracing::warn!(
+            event = "memory_stats_implausible",
+            total_bytes = total,
+            raw_available_bytes = raw,
+            used_bytes = used,
+            free_bytes = free,
+            normalized_available_bytes = fixed,
+            "平台返回的可用内存不可信，已归一"
+        );
+    });
 }
 
 /// 第一颗 CPU 的型号名（如 "Intel(R) Core(TM) i7-10750H CPU @ 2.60GHz"）。
@@ -111,5 +159,50 @@ mod tests {
         // Windows 上不应再裸显示环境变量 OS 的原始值（Windows_NT）
         #[cfg(target_os = "windows")]
         assert_ne!(name, "Windows_NT");
+    }
+
+    const GIB: u64 = 1024 * 1024 * 1024;
+
+    #[test]
+    fn plausible_available_is_kept() {
+        assert_eq!(
+            normalize_available(48 * GIB, 20 * GIB, 28 * GIB, 1 * GIB),
+            20 * GIB
+        );
+    }
+
+    #[test]
+    fn zero_available_falls_back_to_total_minus_used() {
+        // macOS：available 被 compressor 减到 0，used 仍有效
+        assert_eq!(
+            normalize_available(48 * GIB, 0, 31 * GIB, 2 * GIB),
+            17 * GIB
+        );
+    }
+
+    #[test]
+    fn available_above_total_is_rejected() {
+        assert_eq!(
+            normalize_available(16 * GIB, 40 * GIB, 12 * GIB, 1 * GIB),
+            4 * GIB
+        );
+    }
+
+    #[test]
+    fn falls_back_to_free_then_total_when_nothing_is_usable() {
+        assert_eq!(normalize_available(16 * GIB, 0, 0, 3 * GIB), 3 * GIB);
+        assert_eq!(normalize_available(16 * GIB, 0, 0, 0), 16 * GIB);
+    }
+
+    #[test]
+    fn memory_is_in_megabytes_and_consistent() {
+        let (total_mb, available_mb) = memory();
+        if total_mb > 0 {
+            assert!(available_mb > 0, "可用内存不应为 0（{total_mb} MB 总内存）");
+            assert!(
+                available_mb <= total_mb,
+                "可用 {available_mb} MB 不应超过总量 {total_mb} MB"
+            );
+        }
     }
 }
