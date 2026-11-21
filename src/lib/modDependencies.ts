@@ -249,9 +249,12 @@ function formatVersionConstraint(raw: string): string {
   if (!parsed) return range
   const { lower, upper, lowerInclusive, upperInclusive } = parsed
   if (!lower && !upper) return ''
-  if (lower && lower === upper) return `= ${lower}`
-  // 0 起步 = 不限制版本
-  if (/^0+(\.0+)*$/.test(lower) && !upper) return ''
+  if (lower && lower === upper) {
+    // 相等端点只有两端都闭才是精确版本；`(1.0,1.0)` 是空区间，原样保留
+    return lowerInclusive && upperInclusive ? `= ${lower}` : range
+  }
+  // 闭区间 0 起步 = 不限制版本；开区间 `(0,)` 仍是真实约束
+  if (/^0+(\.0+)*$/.test(lower) && !upper && lowerInclusive) return ''
   if (lower && !upper) return `${lowerInclusive ? '≥' : '>'} ${lower}`
   if (!lower && upper) return `${upperInclusive ? '≤' : '<'} ${upper}`
   return `${lowerInclusive ? '≥' : '>'} ${lower}, ${upperInclusive ? '≤' : '<'} ${upper}`

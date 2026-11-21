@@ -75,6 +75,17 @@ function englishNameFromCn(cnName: string | null): string {
   return match ? match[1].trim() : ''
 }
 
+/** 预检上限：网络卡住（`downloadTimeout=0`）时不能让「下载前置」点击一直无响应。 */
+const DEP_SEARCH_TIMEOUT_MS = 5000
+
+/** 超过 `ms` 未完成就按 null 处理；落败的请求继续跑，但它的结果不会再被使用。 */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([
+    promise.catch(() => null),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+  ])
+}
+
 const LOADER_COLORS: Record<string, string> = {
   forge: 'bg-orange-500/10 text-orange-500 border-orange-500/25',
   fabric: 'bg-cyan-500/10 text-cyan-400 border-cyan-400/25',
@@ -791,60 +802,80 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   /** 缺失依赖的模组数（顶部汇总横幅用），与筛选桶计数口径一致。 */
   const missingDepsCount = missingDepsMap.size
 
+  const depSearchSeqRef = useRef(0)
+
   /**
    * 「去下载前置」（issue #165 / #373）：依赖只给 mod id，而 id 往往就是平台 slug。
    * 先用 slug 精确查（Modrinth `/project/{slug}`、CurseForge `slug=`），命中直接进工程详情；
    * 查不到再用**英文名**兜底（中文名平台搜不到），最后退回 id。
    * 源回退：Modrinth 优先，无结果再 CurseForge（EpicFight 生态的前置大多只在 CurseForge）。
+   * 预检有总时限：超时/失败都按原行为直接跳搜索页，点击不能没有响应。
    */
   const openDependencySearch = useCallback(async (depModId: string) => {
+    const seq = ++depSearchSeqRef.current
+    const isCurrent = () => seq === depSearchSeqRef.current
     const loaderKey = loader?.toLowerCase() || undefined
-    const params = new URLSearchParams()
-    params.set('category', 'mod')
-    if (gameVersion) params.set('gameVersion', gameVersion)
-    if (loaderKey) params.set('loader', loaderKey)
-    if (instanceId) params.set('instanceId', instanceId)
+    const baseParams = () => {
+      const params = new URLSearchParams()
+      params.set('category', 'mod')
+      if (gameVersion) params.set('gameVersion', gameVersion)
+      if (loaderKey) params.set('loader', loaderKey)
+      if (instanceId) params.set('instanceId', instanceId)
+      return params
+    }
 
-    for (const source of ['modrinth', 'curseforge']) {
+    const hit = await withTimeout((async () => {
       // 依赖 id 常见下划线写法，平台 slug 用连字符（`epicfight_awaken` → `epicfight-awaken`）。
       const slugs = depModId.includes('_') ? [depModId, depModId.replace(/_/g, '-')] : [depModId]
-      for (const slug of slugs) {
-        const hit = await resolveResourceSlug({
-          source,
-          slug,
-          category: 'mod',
-          gameVersion: gameVersion || undefined,
-          loader: loaderKey,
-        }).catch(() => null)
-        if (hit) {
-          params.set('source', hit.source)
-          params.set('from', 'instance')
-          navigate(`/resource-center/${encodeURIComponent(hit.id)}?${params.toString()}&expandBody=1`)
-          return
+      for (const source of ['modrinth', 'curseforge']) {
+        for (const slug of slugs) {
+          const found = await resolveResourceSlug({
+            source,
+            slug,
+            category: 'mod',
+            gameVersion: gameVersion || undefined,
+            loader: loaderKey,
+          }).catch(() => null)
+          if (found) return found
         }
       }
+      return null
+    })(), DEP_SEARCH_TIMEOUT_MS)
+    // 期间用户又点了别的依赖或已离开：旧结果不能抢走当前目标
+    if (!isCurrent()) return
+    if (hit) {
+      const params = baseParams()
+      params.set('source', hit.source)
+      params.set('from', 'instance')
+      navigate(`/resource-center/${encodeURIComponent(hit.id)}?${params.toString()}&expandBody=1`)
+      return
     }
 
-    const { cnName } = await lookupChineseEntry(depModId)
-    const keyword = englishNameFromCn(cnName) || depModId
-    const query = {
-      category: 'mod',
-      keyword,
-      pageSize: 1,
-      gameVersion: gameVersion || undefined,
-      loader: loaderKey,
-    }
-    let source = 'modrinth'
-    try {
-      if ((await searchResources({ ...query, source })).total === 0) {
-        const cf = await searchResources({ ...query, source: 'curseforge' })
-        if (cf.total > 0) source = 'curseforge'
+    const target = await withTimeout((async () => {
+      const { cnName } = await lookupChineseEntry(depModId)
+      const keyword = englishNameFromCn(cnName) || depModId
+      const query = {
+        category: 'mod',
+        keyword,
+        pageSize: 1,
+        gameVersion: gameVersion || undefined,
+        loader: loaderKey,
       }
-    } catch {
-      // 预检失败按原行为走 Modrinth；搜索页自己会展示错误
-    }
-    params.set('keyword', keyword)
-    params.set('source', source)
+      let source = 'modrinth'
+      try {
+        if ((await searchResources({ ...query, source })).total === 0) {
+          const cf = await searchResources({ ...query, source: 'curseforge' })
+          if (cf.total > 0) source = 'curseforge'
+        }
+      } catch {
+        // 预检失败按原行为走 Modrinth；搜索页自己会展示错误
+      }
+      return { keyword, source }
+    })(), DEP_SEARCH_TIMEOUT_MS)
+    if (!isCurrent()) return
+    const params = baseParams()
+    params.set('keyword', target?.keyword ?? depModId)
+    params.set('source', target?.source ?? 'modrinth')
     navigate(`/resource-center?${params.toString()}`)
   }, [navigate, gameVersion, loader, instanceId])
 
