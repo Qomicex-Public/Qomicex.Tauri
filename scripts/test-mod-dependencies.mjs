@@ -65,6 +65,7 @@ function missingOf(mods, loader = 'forge') {
 }
 
 let computeMissingDependencies
+let formatMissingDependency
 
 try {
   execFileSync(
@@ -73,7 +74,7 @@ try {
     { stdio: 'inherit' },
   )
   writeFileSync(join(outDir, 'package.json'), '{"type":"commonjs"}')
-  ;({ computeMissingDependencies } = createRequire(import.meta.url)(
+  ;({ computeMissingDependencies, formatMissingDependency } = createRequire(import.meta.url)(
     // 带 `import type ../types` 时 tsc 的公共根变成 src，产物会落在 lib/ 下。
     existsSync(join(outDir, 'modDependencies.js'))
       ? join(outDir, 'modDependencies.js')
@@ -128,6 +129,18 @@ try {
   check('非 fabric 前缀不归一', missingOf([connector, mod('mymod.jar', 'my_mod'), needsOther]), {
     'other.jar': ['my-mod'],
   })
+
+  // issue #373：缺失依赖展示。原样拼 `epicfight ([20.13, ))` 会被当成名字的一部分，
+  // 这里锁住「区间翻成人话、无约束区间不显示、异形表达式原文保留」。
+  const fmt = (modId, versionRange) => formatMissingDependency({ modId, versionRange })
+  check('下界区间可读', fmt('epicfight', '[20.13, )'), 'epicfight ≥ 20.13')
+  check('0 起步区间不显示', fmt('wom', '[0,)'), 'wom')
+  check('上界区间可读', fmt('x', '(,1.20.1]'), 'x ≤ 1.20.1')
+  check('精确值可读', fmt('x', '[1.0]'), 'x = 1.0')
+  check('空区间保留原文', fmt('x', '(1.0,1.0)'), 'x (1.0,1.0)')
+  check('开区间零下界保留', fmt('x', '(0,)'), 'x > 0')
+  check('复合表达式保留原文', fmt('x', '>=1.0 || <2.0'), 'x >=1.0 || <2.0')
+  check('无区间只显示 id', fmt('x', ''), 'x')
 } finally {
   rmSync(outDir, { recursive: true, force: true })
 }

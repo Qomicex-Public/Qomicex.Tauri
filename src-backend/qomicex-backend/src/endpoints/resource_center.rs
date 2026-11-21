@@ -278,6 +278,7 @@ struct StartFetchQuery {
 pub fn router() -> Router<SharedState> {
     Router::new()
         .route("/resources/search", get(search))
+        .route("/resources/resolve", get(resolve))
         .route("/resources/categories", get(categories))
         .route("/resources/loaders", get(loaders))
         .route("/resources/{id}", get(detail))
@@ -1598,9 +1599,180 @@ async fn search_one(
 }
 
 // =====================================================================
-// Handlers: detail
+// Handlers: exact slug resolution (issue #373)
 // =====================================================================
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ResolveQuery {
+    #[serde(default)]
+    source: Option<String>,
+    slug: String,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    game_version: Option<String>,
+    #[serde(default)]
+    loader: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResolvedProjectDto {
+    source: String,
+    id: String,
+    slug: String,
+    title: String,
+}
+
+/// GET /api/resources/resolve?source=&slug=&category=&gameVersion=&loader=
+///
+/// 精确 slug 解析（issue #373）：模组依赖只给 mod id，而 id 常常就是平台 slug；
+/// 文本搜索会把 `wom` 搜成 `wom-plus` 之类的噪音。这里直接按 slug 取唯一工程，
+/// 并要求它在当前实例的版本/加载器下**至少有一个可用文件**——否则回退到名称搜索，
+/// 避免把用户送到装不上的工程。
+async fn resolve(
+    State(state): State<SharedState>,
+    Query(q): Query<ResolveQuery>,
+) -> ApiResult<Json<Option<ResolvedProjectDto>>> {
+    let slug = q.slug.trim();
+    if slug.is_empty() {
+        return Ok(Json(None));
+    }
+    let source = q.source.as_deref().unwrap_or("modrinth");
+    let category = q.category.as_deref().unwrap_or("mod");
+    let hit = if source.eq_ignore_ascii_case("modrinth") {
+        resolve_modrinth_slug(
+            &state.http_client,
+            slug,
+            category,
+            q.game_version.as_deref(),
+            q.loader.as_deref(),
+        )
+        .await
+    } else if source.eq_ignore_ascii_case("curseforge") {
+        resolve_curseforge_slug(
+            &state.http_client,
+            &state.curse_forge_api_key,
+            slug,
+            category,
+            q.game_version.as_deref(),
+            q.loader.as_deref(),
+        )
+        .await
+    } else {
+        None
+    };
+    Ok(Json(hit))
+}
+
+/// Modrinth：`/v2/project/{slug}` 精确取工程；给了版本/加载器时再确认有可用版本。
+async fn resolve_modrinth_slug(
+    client: &reqwest::Client,
+    slug: &str,
+    category: &str,
+    game_version: Option<&str>,
+    loader: Option<&str>,
+) -> Option<ResolvedProjectDto> {
+    let resp = client
+        .get(format!("https://api.modrinth.com/v2/project/{slug}"))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let project: Value = resp.json().await.ok()?;
+    if let Some(kind) = project.get("project_type").and_then(|v| v.as_str()) {
+        if !kind.eq_ignore_ascii_case(category) {
+            return None;
+        }
+    }
+    let mut params: Vec<(&str, String)> = Vec::new();
+    if let Some(gv) = game_version {
+        params.push(("game_versions", serde_json::json!([gv]).to_string()));
+    }
+    if let Some(l) = loader {
+        params.push(("loaders", serde_json::json!([l]).to_string()));
+    }
+    if !params.is_empty() {
+        let versions: Value = client
+            .get(format!(
+                "https://api.modrinth.com/v2/project/{slug}/version"
+            ))
+            .query(&params)
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+        if versions.as_array().is_none_or(|a| a.is_empty()) {
+            return None;
+        }
+    }
+    Some(ResolvedProjectDto {
+        source: "modrinth".to_string(),
+        id: project.get("id")?.as_str()?.to_string(),
+        slug: project
+            .get("slug")
+            .and_then(|v| v.as_str())
+            .unwrap_or(slug)
+            .to_string(),
+        title: project
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+    })
+}
+
+/// CurseForge：`slug=` 精确查询（文本搜索会把无关工程排在前面），带实例筛选项。
+async fn resolve_curseforge_slug(
+    client: &reqwest::Client,
+    api_key: &str,
+    slug: &str,
+    category: &str,
+    game_version: Option<&str>,
+    loader: Option<&str>,
+) -> Option<ResolvedProjectDto> {
+    let mut url = format!(
+        "https://api.curseforge.com/v1/mods/search?gameId=432&slug={}&pageSize=5",
+        urlencoding::encode(slug)
+    );
+    if let Some(class_id) = map_cf_class_id(Some(category)) {
+        url.push_str(&format!("&classId={class_id}"));
+    }
+    if let Some(gv) = game_version {
+        url.push_str(&format!("&gameVersion={}", urlencoding::encode(gv)));
+    }
+    if let Some(loader_id) = loader
+        .and_then(map_cf_loader)
+        .and_then(|v| v.into_iter().next())
+    {
+        url.push_str(&format!("&modLoaderType={loader_id}"));
+    }
+    let body = cf_get_raw(client, &url, api_key).await?;
+    let project = body.get("data")?.as_array()?.iter().find(|m| {
+        m.get("slug")
+            .and_then(|s| s.as_str())
+            .is_some_and(|s| s.eq_ignore_ascii_case(slug))
+    })?;
+    Some(ResolvedProjectDto {
+        source: "curseforge".to_string(),
+        id: project.get("id")?.as_i64()?.to_string(),
+        slug: project.get("slug")?.as_str()?.to_string(),
+        title: project
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+    })
+}
+
+// =====================================================================
+// Handlers: detail
+// =====================================================================
 async fn detail(
     State(state): State<SharedState>,
     AxumPath(id): AxumPath<String>,
