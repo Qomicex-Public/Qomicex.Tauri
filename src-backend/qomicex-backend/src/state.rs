@@ -411,10 +411,11 @@ fn spawn_downloader_log_forward(dm: &Arc<DownloadManager>) {
         loop {
             match rx.recv().await {
                 Ok(qomicex_downloader::DownloadEvent::Log { level, message }) => {
-                    // 下载 URL 可能带签名/令牌，落盘前统一脱敏。
-                    let message = crate::util::url::redact_urls_in_text(&message);
-                    let line = format!("[downloader:{level:?}] {message}");
-                    crate::services::trace::trace_append(line);
+                    crate::services::trace::trace_event(
+                        "downloader",
+                        &format!("{level:?}"),
+                        &message,
+                    );
                 }
                 Ok(_) => {}
                 Err(_) => break,

@@ -38,6 +38,73 @@ const FRAME_READ_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_s
 /// 每块读取大小：既让空闲超时能频繁重置，又避免为 1 GiB 帧发起兆级次系统调用。
 const FRAME_READ_CHUNK: usize = 1 << 20;
 
+/// 连接级错误：带上是流水线的哪一段失败的，日志才能区分「客户端正常关闭」
+/// 与「后端写入失败」。`phase` 只取固定字符串，便于检索聚合。
+struct ConnError {
+    phase: &'static str,
+    err: std::io::Error,
+}
+
+impl ConnError {
+    fn new(phase: &'static str, err: std::io::Error) -> Self {
+        Self { phase, err }
+    }
+
+    /// 对端主动断开（前端窗口关闭/刷新/进程退出）是常态，不该当 WARN。
+    fn expected_disconnect(&self) -> bool {
+        matches!(
+            self.err.kind(),
+            std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::UnexpectedEof
+                | std::io::ErrorKind::NotConnected
+        )
+    }
+}
+
+/// 单条连接的诊断信息：谁、在哪一段、为什么断的、是否影响用户。
+fn log_conn_error(conn_id: u64, transport: &str, peer: &str, e: ConnError) {
+    let expected = e.expected_disconnect();
+    let err = e.err;
+    let (kind, os_error) = (err.kind(), err.raw_os_error());
+    // 预期断连降 DEBUG（P1-4：Broken pipe 之前记 WARN，高频把真问题淹了）。
+    if expected {
+        tracing::debug!(
+            event = "ipc_connection_closed",
+            conn_id,
+            transport,
+            peer,
+            phase = e.phase,
+            err_kind = ?kind,
+            os_error = os_error.unwrap_or(0),
+            will_retry = false,
+            impact = "none",
+            "qipc connection closed by peer"
+        );
+    } else {
+        tracing::warn!(
+            event = "ipc_connection_error",
+            conn_id,
+            transport,
+            peer,
+            phase = e.phase,
+            err = %err,
+            err_kind = ?kind,
+            os_error = os_error.unwrap_or(0),
+            will_retry = false,
+            impact = "single-request",
+            "qipc connection error"
+        );
+    }
+}
+
+fn next_conn_id() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 #[cfg(windows)]
 pub async fn serve(
     app: Router,
@@ -60,9 +127,11 @@ pub async fn serve(
         let client = server;
         server = ServerOptions::new().create(&pipe_name)?;
         let app = app.clone();
+        let conn_id = next_conn_id();
+        let peer = pipe_name.clone();
         tokio::spawn(async move {
             if let Err(e) = handle_conn(app, client).await {
-                tracing::warn!("qipc connection error: {e}");
+                log_conn_error(conn_id, "qipc-pipe", &peer, e);
             }
         });
     }
@@ -90,9 +159,11 @@ pub async fn serve(
             r = listener.accept() => r?,
         };
         let app = app.clone();
+        let conn_id = next_conn_id();
+        let peer = sock_path.clone();
         tokio::spawn(async move {
             if let Err(e) = handle_conn(app, stream).await {
-                tracing::warn!("qipc connection error: {e}");
+                log_conn_error(conn_id, "qipc-unix", &peer, e);
             }
         });
     }
@@ -235,14 +306,20 @@ async fn read_frame_body_with<R: AsyncRead + Unpin>(
     Ok(())
 }
 
-async fn handle_conn<S>(app: Router, mut io: S) -> std::io::Result<()>
+async fn handle_conn<S>(app: Router, mut io: S) -> Result<(), ConnError>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let Some(req) = read_frame(&mut io).await? else {
+    let Some(req) = read_frame(&mut io)
+        .await
+        .map_err(|e| ConnError::new("read_request", e))?
+    else {
         return Ok(());
     };
-    let uri: Uri = req.path.parse().map_err(|e| bad("uri", e))?;
+    let uri: Uri = req
+        .path
+        .parse()
+        .map_err(|e| ConnError::new("parse_uri", bad("uri", e)))?;
     // 逐跳头由传输层重建，请求/响应两个方向都不透传：帧里本来就没有 content-length
     // （客户端 encode_request 会过滤），若调用方硬塞过期值会导致提取器读错长度。
     //
@@ -308,17 +385,30 @@ where
         out.extend_from_slice(&(v.len() as u16).to_le_bytes());
         out.extend_from_slice(v.as_bytes());
     }
-    io.write_all(&out).await?;
+    io.write_all(&out)
+        .await
+        .map_err(|e| ConnError::new("write_headers", e))?;
 
     while let Some(frame) = BodyExt::frame(&mut body).await {
         // trailer 帧直接丢弃；当前无端点使用 HTTP trailers
-        if let Ok(data) = frame.map_err(|e| bad("body", e))?.into_data() {
-            io.write_all(&(data.len() as u32).to_le_bytes()).await?;
-            io.write_all(&data).await?;
+        if let Ok(data) = frame
+            .map_err(|e| ConnError::new("read_body", bad("body", e)))?
+            .into_data()
+        {
+            io.write_all(&(data.len() as u32).to_le_bytes())
+                .await
+                .map_err(|e| ConnError::new("write_body", e))?;
+            io.write_all(&data)
+                .await
+                .map_err(|e| ConnError::new("write_body", e))?;
         }
     }
-    io.write_all(&0u32.to_le_bytes()).await?;
-    io.flush().await?;
+    io.write_all(&0u32.to_le_bytes())
+        .await
+        .map_err(|e| ConnError::new("write_body", e))?;
+    io.flush()
+        .await
+        .map_err(|e| ConnError::new("write_body", e))?;
     // 等客户端读完并断开再关本端：
     // Windows 命名管道在服务端关闭实例时会丢弃对端尚未读走的缓冲数据
     // （TCP 无此语义），直接返回会导致客户端读到截断响应。

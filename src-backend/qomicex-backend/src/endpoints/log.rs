@@ -324,9 +324,9 @@ async fn frontend_log(Json(body): Json<FrontendLogRequest>) -> ApiResult<StatusC
     }
     // 防滥用：单条上报最多 64KiB / 200 行；按字符截断，避免切断 UTF-8。
     let message: String = message.chars().take(64 * 1024).collect();
-    let message = crate::util::url::redact_urls_in_text(&message);
     for l in message.lines().take(200) {
-        crate::services::trace::trace_append(format!("[frontend:{level}] {l}"));
+        // 前端行没有时间戳：与后端行共用同一套前缀，才能按时间排序/聚合。
+        crate::services::trace::trace_event("frontend", level, l);
     }
     Ok(StatusCode::NO_CONTENT)
 }

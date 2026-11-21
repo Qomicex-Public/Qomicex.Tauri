@@ -22,6 +22,7 @@ pub mod launch_tracker;
 pub mod license;
 pub mod license_core;
 pub mod log_analysis;
+pub mod log_format;
 pub mod modpack_blocked;
 pub mod modpack_export;
 pub mod modpack_manifest;

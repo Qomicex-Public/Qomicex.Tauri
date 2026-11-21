@@ -26,25 +26,117 @@ fn init_tracing() {
     // 默认只开 info 级业务日志；tower_http 请求日志已由 TraceLayer 按 >=400 过滤，
     // 不再全局放行 debug（避免每请求两条 DEBUG 噪音）。RUST_LOG 环境变量可覆盖。
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    // 格式由 `services::log_format::UnifiedFormat` 全权决定（时间戳 + 级别 + service +
+    // startup_id），因此 with_ansi/with_target 这些默认格式器的选项在此不再适用；
+    // 该格式器不输出任何 ANSI 转义码。
     tracing_subscriber::fmt()
         .with_env_filter(filter)
-        // ⚠️ 强制关闭 ANSI 转义码：tracing-subscriber 的 `ansi` feature 会被
-        // easytier→kcp-sys 传递启用（`cfg!(feature = "ansi")` 全局求值），导致 fmt
-        // 默认向 TraceWriter 输出 `\x1b[32m` 等颜色码，实时日志（/diagnostics/trace）
-        // 在前端渲染为错误符号。即使 feature 已启用，`with_ansi(false)` 仍强制禁用。
-        .with_ansi(false)
-        // 简洁格式：`[2026-08-15 20:14:01.815] [INFO] [module] message`
-        // 去掉 span 上下文（request{method=...}）与长 target，日志行可读、便于提取。
-        .with_target(false)
-        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE)
         .with_writer(crate::services::trace::TraceWriter::default())
+        .event_format(crate::services::log_format::UnifiedFormat)
         .init();
     // 桥接 `log` crate 事件 → tracing：connector 的 log::info/warn/error! 自动进日志体系。
     tracing_log::LogTracer::init().ok();
 }
 
+/// 启动阶段跟踪：正常结束走 [`Startup::ready`]；中途 panic / 提前返回时 `Drop`
+/// 补一条 `app_start_failed`，并带上当时所处的阶段 —— 否则启动卡死时无从判断卡在哪。
+struct Startup {
+    started: std::time::Instant,
+    stage: &'static str,
+    ready: bool,
+}
+
+impl Startup {
+    fn begin() -> Self {
+        Self {
+            started: std::time::Instant::now(),
+            stage: "init",
+            ready: false,
+        }
+    }
+
+    fn stage(&mut self, stage: &'static str) {
+        self.stage = stage;
+        // INFO 而非 DEBUG：启动只有 5 个阶段，日志量可忽略，但这几行是启动卡住时唯一
+        // 能定位"卡在哪一步"的线索（默认级别下 DEBUG 看不见）。
+        tracing::info!(
+            event = "app_stage",
+            stage,
+            elapsed_ms = self.elapsed_ms(),
+            "启动阶段"
+        );
+    }
+
+    fn elapsed_ms(&self) -> u64 {
+        self.started.elapsed().as_millis() as u64
+    }
+
+    fn ready(&mut self, listen: &str) {
+        self.ready = true;
+        tracing::info!(
+            event = "app_ready",
+            listen,
+            duration_ms = self.elapsed_ms(),
+            "启动完成"
+        );
+    }
+}
+
+impl Drop for Startup {
+    fn drop(&mut self) {
+        if !self.ready {
+            tracing::error!(
+                event = "app_start_failed",
+                stage = self.stage,
+                duration_ms = self.elapsed_ms(),
+                "启动失败"
+            );
+        }
+    }
+}
+
+/// 启动环境快照：出问题时先看这一行，确认版本、路径、资源与监听方式。
+fn log_app_starting(state: &AppState, port: u16, pipe: Option<&str>, tcp_enabled: bool) {
+    let (total_mb, available_mb) = crate::util::sysinfo::memory();
+    let settings = state.settings.try_read().ok();
+    let game_dir = settings
+        .as_ref()
+        .map(|s| s.game_dir.clone())
+        .unwrap_or_default();
+    let log_level = settings
+        .as_ref()
+        .and_then(|s| s.log_level.clone())
+        .unwrap_or_else(|| "info".to_string());
+    tracing::info!(
+        event = "app_starting",
+        version = env!("CARGO_PKG_VERSION"),
+        pid = std::process::id(),
+        os = crate::util::sysinfo::os_name(),
+        os_display = %crate::util::sysinfo::os_display_name(),
+        arch = crate::util::sysinfo::architecture(),
+        data_dir = %state.data_dir.display(),
+        game_dir = %game_dir,
+        home_dir = %std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(std::path::PathBuf::from)
+            .map(|p| p.display().to_string())
+            .unwrap_or_default(),
+        cwd = %std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default(),
+        cpu = %crate::util::sysinfo::cpu_brand(),
+        memory_total_mb = total_mb,
+        memory_available_mb = available_mb,
+        log_level = %log_level,
+        tcp_enabled,
+        port,
+        ipc_pipe = pipe.unwrap_or(""),
+        "后端启动"
+    );
+}
+
 #[tokio::main]
 async fn main() {
+    let mut startup = Startup::begin();
+
     // 控制台代码页默认 936 (GBK)，UTF-8 中文日志输出到控制台会乱码；
     // 启动即切换为 UTF-8 代码页（SetConsoleOutputCP 仅在 Windows 存在）。
     #[cfg(windows)]
@@ -65,6 +157,7 @@ async fn main() {
 
     // 先构建 state（内部注册全局 trace 缓冲），再初始化 tracing 与 stdout/stderr 捕获，
     // 保证日志写入有目标可落。
+    startup.stage("state");
     let state = AppState::build();
     // 注册进程级 panic hook（后端崩溃 → 自动上报严重错误日志）。
     crate::services::error_report::install_panic_hook(
@@ -80,15 +173,26 @@ async fn main() {
         .unwrap_or(DEFAULT_PORT);
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
 
+    // IPC 管道：QOMICEX_IPC_PIPE 设置时启用（release 由 Tauri 注入）。
+    // QOMICEX_NO_TCP=1 关闭 TCP 监听（release 用，端口彻底消失）；
+    // dev/CI 默认保留 TCP 兼容 curl 冒烟与测试脚本。
+    let pipe_name = std::env::var("QOMICEX_IPC_PIPE").ok();
+    let tcp_enabled = std::env::var("QOMICEX_NO_TCP")
+        .map(|v| v != "1")
+        .unwrap_or(true);
+    log_app_starting(&state, port, pipe_name.as_deref(), tcp_enabled);
+
     // 预热 mcmod 中文名索引（首个 /mcmod/* 请求不再承担 5.5MB JSON 冷加载）。
     // 在 async 上下文里同步构建会阻塞当前 worker；这里放在 serve 之前的
     // 启动阶段执行，最坏情况只是延迟监听建立，不影响运行时请求。
+    startup.stage("prewarm");
     endpoints::mcmod::prewarm();
 
     // 崩溃恢复：进程在「整合包原地更新」的应用阶段被杀死会留下半更新实例。
     // 扫描各实例的 update-journal.json，状态停留在 applying 的立即回滚
     // （issue #118）。必须在开始服务之前做完 —— 否则用户可能先操作到
     // 一个半更新的实例。
+    startup.stage("rollback");
     let rolled_back = crate::services::modpack_update::rollback_pending_updates(&state.instance);
     if rolled_back > 0 {
         tracing::warn!(count = rolled_back, "启动时已回滚未完成的整合包更新");
@@ -100,15 +204,8 @@ async fn main() {
     endpoints::connector::spawn_startup_relay_refresh();
 
     // 外部管理器已拉起后端时（如 Tauri 开发期附加），可跳过自建监听逻辑的校验提示。
+    startup.stage("router");
     let app = app::build_router(std::sync::Arc::new(state));
-
-    // IPC 管道：QOMICEX_IPC_PIPE 设置时启用（release 由 Tauri 注入）。
-    // QOMICEX_NO_TCP=1 关闭 TCP 监听（release 用，端口彻底消失）；
-    // dev/CI 默认保留 TCP 兼容 curl 冒烟与测试脚本。
-    let pipe_name = std::env::var("QOMICEX_IPC_PIPE").ok();
-    let tcp_enabled = std::env::var("QOMICEX_NO_TCP")
-        .map(|v| v != "1")
-        .unwrap_or(true);
 
     // 共享 shutdown：TCP 的 graceful shutdown 与 qipc accept loop 同时退出，
     // 避免双开场景下 tcp_task 结束后 pipe_task 永久挂起（进程无法退出）。
@@ -138,6 +235,7 @@ async fn main() {
         });
     }
 
+    startup.stage("listen");
     let tcp_task = if tcp_enabled {
         let listener = tokio::net::TcpListener::bind(&addr)
             .await
@@ -159,6 +257,15 @@ async fn main() {
     } else {
         None
     };
+
+    let listen = match (tcp_enabled, pipe_name.as_deref()) {
+        (true, Some(p)) => format!("http://{addr} + ipc:{p}"),
+        (true, None) => format!("http://{addr}"),
+        (false, Some(p)) => format!("ipc:{p}"),
+        (false, None) => "none".to_string(),
+    };
+    // "就绪" = 两个监听都已建立（qipc 的 acceptor 在 task 内建 socket，竞争窗口可忽略）。
+    startup.ready(&listen);
 
     let pipe_task = pipe_name.map(|name| {
         let app = app.clone();
@@ -185,5 +292,34 @@ async fn main() {
     }
     if let Some(t) = pipe_task {
         t.await.ok();
+    }
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+
+    #[test]
+    fn unfinished_startup_logs_app_start_failed_with_stage() {
+        let out = crate::services::log_format::test_support::capture(|| {
+            let mut startup = Startup::begin();
+            startup.stage("listen");
+            // 未调用 ready() 即离开作用域 = 启动失败
+        });
+        assert!(out.contains("ERROR [backend]"), "{out}");
+        assert!(out.contains("event=app_start_failed"), "{out}");
+        assert!(out.contains("stage=listen"), "{out}");
+        assert!(out.contains("duration_ms="), "{out}");
+    }
+
+    #[test]
+    fn ready_startup_skips_the_failure_line() {
+        let out = crate::services::log_format::test_support::capture(|| {
+            let mut startup = Startup::begin();
+            startup.stage("listen");
+            startup.ready("http://127.0.0.1:5000");
+        });
+        assert!(out.contains("event=app_ready"), "{out}");
+        assert!(!out.contains("app_start_failed"), "{out}");
     }
 }

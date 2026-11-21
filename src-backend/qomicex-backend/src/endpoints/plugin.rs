@@ -725,7 +725,7 @@ async fn plugin_log(Json(body): Json<PluginLogRequest>) -> ApiResult<StatusCode>
     }
     let level = body.level.unwrap_or_else(|| "info".to_string());
     for line in body.message.lines() {
-        crate::services::trace::trace_append(format!("[plugin:{plugin_id}:{level}] {line}"));
+        crate::services::trace::trace_event(&format!("plugin:{plugin_id}"), &level, line);
     }
     Ok(StatusCode::NO_CONTENT)
 }

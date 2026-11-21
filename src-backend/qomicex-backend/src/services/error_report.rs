@@ -126,7 +126,7 @@ pub fn install_panic_hook(
             return;
         }
         let msg = info.to_string();
-        crate::services::trace::trace_append(format!("[panic] {msg}"));
+        crate::services::trace::trace_event("panic", "ERROR", &msg);
         let settings = settings.clone();
         let http = http.clone();
         std::thread::spawn(move || {
