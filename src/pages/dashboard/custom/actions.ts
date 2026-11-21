@@ -1,7 +1,8 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { getInstances, setDefaultInstance as apiSetDefaultInstance } from '../../../api/instance.ts'
+import { setDefaultInstance as apiSetDefaultInstance } from '../../../api/instance.ts'
+import { loadInstances } from '../../../stores/instancesStore.ts'
 import { loadSettings, openFolder } from '../../../api/settings.ts'
 import { openExternalUrl } from '../../../api/system.ts'
 import { NAV_PATHS, isSafeHttpsUrl, type NavTarget } from './schema.ts'
@@ -27,7 +28,7 @@ export interface WidgetActionContext {
 }
 
 async function findInstance(ref: string): Promise<GameInstance> {
-  const list = await getInstances()
+  const list = await loadInstances()
   const lower = ref.toLowerCase()
   const found = list.find((item) => item.id === ref) ?? list.find((item) => item.name.toLowerCase() === lower)
   if (!found) throw new Error(ref)

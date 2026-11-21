@@ -31,7 +31,7 @@ import { reportFrontendLog } from './api/logs.ts'
 import { logError, logWarn } from './lib/frontendLog.ts'
 import { pushConsole } from './lib/error-report.ts'
 import { I18nProvider, useI18n } from './i18n/index.tsx'
-import { RunningProvider, useRunning } from './contexts/RunningContext.tsx'
+import { RunningProvider, useRunningActions, useRunningState } from './contexts/RunningContext.tsx'
 import LaunchProgressDialog from './components/LaunchProgressDialog.tsx'
 import { CrashAnalysisDialog } from './components/CrashAnalysisDialog.tsx'
 import UpdateDialog from './components/UpdateDialog.tsx'
@@ -42,6 +42,8 @@ import { initApiTransport, isIpcMode } from './api/ipc.ts'
 import { resumePendingFavoriteInstalls, createFavoriteInstallDeps } from './lib/favoriteFolderInstall.ts'
 import { quickInstallViaDownloadCenterForFolder } from './lib/quickInstall.ts'
 import { subscribePendingFavoriteInstalls } from './stores/pendingFavoriteInstallStore.ts'
+import { useRunningInstances } from './stores/runningStore.ts'
+import ProgressStreamBridge from './components/ProgressStreamBridge.tsx'
 import { fetchUpdatePlan, fetchAutoInstallState, clearPendingInstall as clearPendingInstallFromApi, takeUpdateNotice, takeUpdateError, type UpdatePlan, type UpdateNotice, type UpdateError } from './api/update.ts'
 import { resolveChannel, stagedChannelMatchesCurrent } from './lib/updateChannel.ts'
 import { APP_INFO } from './constants/credits.ts'
@@ -87,7 +89,7 @@ function OverlayStoreBridge() {
 
 function RunningNotifyBridge() {
   const { notify } = useMessageBox()
-  const { setNotifyImpl } = useRunning()
+  const { setNotifyImpl } = useRunningActions()
   useEffect(() => { setNotifyImpl(notify) }, [notify, setNotifyImpl])
   return null
 }
@@ -134,9 +136,10 @@ function AppContent() {
   const { closeWithGuard, Provider } = useCloseGuard()
   const { alert, notify } = useMessageBox()
   const { t, lang } = useI18n()
-  const { crashDialogState, clearCrashDialog } = useRunning()
+  const { crashDialogState } = useRunningState()
+  const { clearCrashDialog } = useRunningActions()
   /** 正在运行的实例：自动安装前据此推迟，避免把用户正在玩的游戏连启动器一起关掉 */
-  const { runningInstances } = useRunning()
+  const runningInstances = useRunningInstances()
   const javaChecked = useRef(false)
   const [pendingUpdate, setPendingUpdate] = useState<UpdatePlan | null>(null)
   const [pendingUpdateRequired, setPendingUpdateRequired] = useState(false)
@@ -478,6 +481,8 @@ function AppContent() {
       <BrowserRouter>
         <RunningNotifyBridge />
         <TaskCompletionNotifier />
+        {/* 进度流等到后端就绪再连：冷启动时 IPC 通道尚未建立，失败后会每 1s 空转重连 */}
+        {backendState === 'ready' && <ProgressStreamBridge />}
         {/* 外部唤起（qomicex-launcher:// 深链，issue #127）：须在 Router 内（用 navigate）
             且在 RunningProvider 内（用 launchInstance）。冷启动链接要等后端就绪**且设置已加载**
             再消费——只看后端会让整合包安装读到默认 gameDir 而装错目录。 */}

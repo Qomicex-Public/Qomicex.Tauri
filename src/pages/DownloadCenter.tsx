@@ -1,7 +1,7 @@
 ﻿// Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
+import { useEffect, useState, useMemo, useCallback } from 'react'
 import { ArrowRight, Box, CheckCircle2, Coffee, Download, Hammer, ListChecks, Package, RotateCw, Square, Trash2, ChevronDown, Wrench } from 'lucide-react'
 import { RotateCw as RotateCwData, Trash2 as Trash2Data } from 'lucide'
 import { MorphIcon } from 'morphicons/react'
@@ -13,11 +13,11 @@ import { Tooltip } from '../components/ui'
 import { Tabs } from '../components/ui'
 import type { Tab } from '../components/ui'
 import { useNavigate } from 'react-router-dom'
-import { getTasks, subscribe, removeTask, updateTask, addTask } from '../stores/downloadStore.ts'
-import { pauseInstall, resumeInstall, cancelInstall, getInstallProgress, dropModpackStaging } from '../api/instance.ts'
-import { cancelResourceDownload, getResourceDownloadProgress } from '../api/resource-download.ts'
-import { cancelJavaDownload, pauseJavaDownload, resumeJavaDownload, getJavaDownloadProgress } from '../api/java.ts'
-import { refreshCustomRuntimes } from '../stores/javaStore.ts'
+import { getTasks, removeTask, updateTask } from '../stores/downloadStore.ts'
+import { useDownloadTasks } from '../hooks/useDownloadTasks.ts'
+import { pauseInstall, resumeInstall, cancelInstall, dropModpackStaging } from '../api/instance.ts'
+import { cancelResourceDownload } from '../api/resource-download.ts'
+import { cancelJavaDownload, pauseJavaDownload, resumeJavaDownload } from '../api/java.ts'
 import { useI18n } from '../i18n/index.tsx'
 import { formatBytes, normalizeSpeed } from '../lib/download-format.ts'
 import { groupTasks, readCollapsedGroups, writeCollapsedGroups } from '../lib/downloadGroups.ts'
@@ -25,11 +25,10 @@ import type { DownloadGroup, DownloadGroupKey } from '../lib/downloadGroups.ts'
 import InstallStepsList from '../components/InstallStepsList.tsx'
 import DownloadSpeedGraph from '../components/DownloadSpeedGraph.tsx'
 import { BlockedModsDialog } from '../components/BlockedModsDialog.tsx'
-import { getBlockedMods } from '../api/modpack-blocked.ts'
-import { ApiError } from '../api/client.ts'
+import { STATUS_CONFIG } from '../lib/downloadStatus.ts'
+import { dismissBackendTask, reconcileAwaitingTasks } from '../lib/progressSync.ts'
 
 import type { DownloadTask, InstallStepInfo } from '../types/index.ts'
-import { useDownloadSSE } from '../hooks/useDownloadSSE.ts'
 import { retryTask } from '../lib/retryTask.ts'
 
 type FilterMode = 'all' | 'downloading' | 'paused' | 'awaiting' | 'completed' | 'failed'
@@ -113,24 +112,8 @@ function TypeIcon({ taskType, className }: { taskType: string; className?: strin
   return <Icon className={className} />
 }
 
-/** Re-verify an SSE-absent file task at most this often, at most this many times. */
-const STALE_FILE_RECHECK_MS = 2000
-const STALE_FILE_MAX_CHECKS = 10
-
 const PLAY_ICON = 'M7 4l10 8-10 8z'
 const PAUSE_ICON = 'M7 4v16M17 4v16'
-
-const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
-  queued: { label: 'queued', color: 'text-muted-foreground bg-muted border-border' },
-  downloading: { label: 'downloading', color: 'text-blue-400 bg-blue-500/10 border-blue-500/25' },
-  paused: { label: 'paused', color: 'text-amber-400 bg-amber-500/10 border-amber-500/25' },
-  // 待补全：安装已落地但缺文件，等用户手动补齐（issue #291）。与 paused 同为琥珀色，
-  // 但语义不同（后者是用户主动暂停），卡片上用不同文案与操作区分。
-  'awaiting-files': { label: 'awaiting-files', color: 'text-amber-400 bg-amber-500/10 border-amber-500/25' },
-  completed: { label: 'completed', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/25' },
-  failed: { label: 'failed', color: 'text-red-400 bg-red-500/10 border-red-500/25' },
-  cancelled: { label: 'cancelled', color: 'text-gray-400 bg-gray-500/10 border-gray-500/25' },
-}
 
 /** 后端 install/modpack 管线实际会下发的 stage 值（install_service.rs / modpack.rs）。
  *  仅作为 t(`downloads.stage.*`) 的存在性白名单；未列出时回退通用文案。 */
@@ -176,54 +159,6 @@ const FILTER_TABS: Tab[] = [
 ]
 
 type TFunc = ReturnType<typeof useI18n>['t']
-
-/** 用户主动清除过的后端任务（instanceId）：SSE 保留窗口内不再自动补卡。
- * 持久化到 localStorage——刷新/重启后窗口内仍不复活（保留窗口 5 分钟，
- * 超过的条目在读取时按时间戳淘汰，集合不会无限增长）。 */
-const DISMISSED_KEY = 'qomicex.dismissedBackendTasks'
-const DISMISS_TTL_MS = 15 * 60 * 1000
-
-function loadDismissed(): Map<string, number> {
-  try {
-    const raw = localStorage.getItem(DISMISSED_KEY)
-    if (!raw) return new Map()
-    const obj = JSON.parse(raw) as Record<string, number>
-    const now = Date.now()
-    const out = new Map<string, number>()
-    for (const [id, at] of Object.entries(obj)) {
-      if (typeof at === 'number' && now - at < DISMISS_TTL_MS) out.set(id, at)
-    }
-    return out
-  } catch {
-    return new Map()
-  }
-}
-
-function saveDismissed(map: Map<string, number>) {
-  try {
-    localStorage.setItem(DISMISSED_KEY, JSON.stringify(Object.fromEntries(map)))
-  } catch { /* 配额/隐私模式：退化为仅内存 */ }
-}
-
-function dismissBackendTask(instanceId: string) {
-  const map = loadDismissed()
-  map.set(instanceId, Date.now())
-  saveDismissed(map)
-}
-
-function isBackendTaskDismissed(instanceId: string): boolean {
-  return loadDismissed().has(instanceId)
-}
-
-/** 清掉已离开 SSE 的登记（保留窗口过后该 id 不会再出现）。 */
-function pruneDismissed(liveIds: Set<string>) {
-  const map = loadDismissed()
-  let changed = false
-  for (const id of [...map.keys()]) {
-    if (!liveIds.has(id)) { map.delete(id); changed = true }
-  }
-  if (changed) saveDismissed(map)
-}
 
 /** 步骤显示标签：管线自带 label 优先（插件/新管线的命名通道），其次启动器
  * i18n 词条，都没有 → 原样显示 id（t() 对缺失 key 返回 key 本身）。 */
@@ -583,13 +518,16 @@ function TaskGroupSection({ group, collapsed, onToggle, t, onFix }: {
 export default function DownloadCenter() {
   const { t } = useI18n()
   const navigate = useNavigate()
-  const [tasks, setTasks] = useState<DownloadTask[]>(() => getTasks())
+  const tasks = useDownloadTasks()
   const [filter, setFilter] = useState<FilterMode>('all')
   const [clearing, setClearing] = useState(false)
   /** 已折叠的分组键。默认全部展开；持久化在独立 localStorage 键里（见 downloadGroups.ts）。 */
   const [collapsedGroups, setCollapsedGroups] = useState<DownloadGroupKey[]>(() => readCollapsedGroups())
   /** 正在补全待补文件的实例（打开 BlockedModsDialog）；null 表示对话框关闭。 */
   const [fixInstanceId, setFixInstanceId] = useState<string | null>(null)
+
+  // 进页面时对账一次待补全任务：用户可能在资源管理器里补齐了文件
+  useEffect(() => { reconcileAwaitingTasks(t) }, [t])
 
   const handleFix = useCallback((task: DownloadTask) => {
     if (!task.instanceId) return
@@ -628,358 +566,6 @@ export default function DownloadCenter() {
       return next
     })
   }, [])
-
-  useEffect(() => {
-    const unsub = subscribe(() => setTasks([...getTasks()]))
-    return unsub
-  }, [])
-
-  /**
-   * 进入下载中心时用磁盘清单刷新等待中的任务（issue #291）：用户可能在资源
-   * 管理器里直接把文件放进了 mods 目录，后端 GET 会核对并在清单清空时收尾。
-   * 实例已删除时后端返回 404，吞掉会让卡片永远停在等待态且没有移除入口。
-   */
-  const reconcileBlockedTask = useCallback((taskId: string, instId: string) => {
-    // 服务端搭建任务的等待态对账走 tracker 进度（它不是实例，modpack 的
-    // 阻塞清单端点会 404 → 此前把等待卡误刷成取消）。
-    const task = getTasks().find(t => t.id === taskId)
-    if (task?.kind === 'server') {
-      getInstallProgress(instId)
-        .then(p => {
-          // 后端 tracker 无条目（后端重启后内存记录丢失）返回 not-started。
-          // 若卡片还停在「待补全/进行中」，它会永远挂着且没有移除入口——转为
-          // 可清除的失败态并提示重新发起搭建。其余未知状态仍跳过：直接写入
-          // 会让 STATUS_CONFIG[status] 变 undefined、TaskCard 崩溃并持久化。
-          if (p?.status === 'not-started') {
-            const cur = getTasks().find(t => t.id === taskId)
-            if (cur && cur.status !== 'failed' && cur.status !== 'cancelled' && cur.status !== 'completed') {
-              updateTask(taskId, {
-                status: 'failed',
-                blockedFiles: undefined,
-                error: t('downloads.errors.serverTaskLost'),
-              })
-            }
-            return
-          }
-          if (!p || !(p.status in STATUS_CONFIG)) return
-          updateTask(taskId, {
-            status: p.status as DownloadTask['status'],
-            progress: Math.floor(p.progress),
-            blockedFiles: p.blockedFiles ?? undefined,
-          })
-        })
-        .catch(() => { /* 后端未起/任务回收：保持现状 */ })
-      return
-    }
-    getBlockedMods(instId)
-      .then(res => {
-        const count = (res.items ?? []).length
-        if (count > 0) {
-          updateTask(taskId, { status: 'awaiting-files', blockedFiles: count })
-        } else {
-          updateTask(taskId, {
-            status: 'completed',
-            progress: 100,
-            blockedFiles: undefined,
-            completedAt: new Date().toISOString(),
-          })
-        }
-      })
-      .catch((e: unknown) => {
-        if (e instanceof ApiError && e.status === 404) {
-          updateTask(taskId, { status: 'cancelled', blockedFiles: undefined })
-        }
-      })
-  }, [])
-
-  useEffect(() => {
-    for (const task of getTasks()) {
-      if (task.status !== 'awaiting-files' || !task.instanceId) continue
-      reconcileBlockedTask(task.id, task.instanceId)
-    }
-  }, [reconcileBlockedTask])
-
-  const { data: sseData, reconnectKey } = useDownloadSSE()
-  const prevInstallIds = useRef<Set<string>>(new Set())
-  const prevJavaIds = useRef<Set<string>>(new Set())
-  const checkedStaleJavaIds = useRef<Set<string>>(new Set())
-  const checkedStaleInstallIds = useRef<Set<string>>(new Set())
-  /**
-   * File tasks absent from the SSE payload get re-verified against the backend,
-   * because "absent" is ambiguous (not started yet / completed & evicted /
-   * backend restarted). Attempts are counted and throttled so this can't turn
-   * into an unbounded polling loop for a task that stays absent and active.
-   */
-  const staleFileChecks = useRef<Map<string, { attempts: number; lastAt: number }>>(new Map())
-
-  // Reset stale-check caches on SSE reconnect so zombie tasks get re-verified
-  useEffect(() => {
-    checkedStaleInstallIds.current = new Set()
-    checkedStaleJavaIds.current = new Set()
-    staleFileChecks.current = new Map()
-  }, [reconnectKey])
-
-  useEffect(() => {
-    if (!sseData) return
-
-    // 后端/插件发起的安装（如服务端搭建）没有本地任务卡片：自动补建。
-    // 只补进行中的任务；SSE 不推 completed，无需担心反复补卡。
-    const existingInstanceIds = new Set(getTasks().map(t => t.instanceId).filter(Boolean) as string[])
-    // 清理掉已消失的登记项（任务离开 SSE 后，同 id 不会再出现；防集合无限增长）
-    pruneDismissed(new Set(sseData.installs.map(i => i.instanceId)))
-    for (const inst of sseData.installs) {
-      if (existingInstanceIds.has(inst.instanceId)) continue
-      // 用户主动清除过的任务不复活（SSE 保留窗口内 failed/cancelled 仍会推送）。
-      // 未清除的终态任务**仍要建卡**：首次 SSE 数据里就是 failed 的任务
-      // （如服务端搭建一开始就失败）否则完全没有卡片与错误信息可看。
-      if (isBackendTaskDismissed(inst.instanceId)) continue
-      addTask({
-        id: inst.instanceId,
-        name: inst.title || inst.instanceId,
-        // 后端安装管线与整合包卡片同一渲染路径（分步进度等）；server 任务
-        // 借用 modpack 类型展示（无 retry 描述符 → 不显示重试按钮）。
-        type: 'modpack',
-        gameVersion: '',
-        status: 'downloading',
-        stage: inst.stage,
-        progress: Math.floor(inst.progress),
-        currentFile: inst.currentFile || undefined,
-        totalFiles: inst.totalFiles || undefined,
-        completedFiles: inst.completedFiles || undefined,
-        blockedFiles: inst.blockedFiles || undefined,
-        createdAt: new Date().toISOString(),
-        instanceId: inst.instanceId,
-        kind: inst.kind,
-        steps: inst.steps,
-      })
-    }
-
-    const ts = getTasks()
-    for (const task of ts) {
-      // 重试重建期间不参与对账：卡片还挂着旧 instanceId，后端那条失败记录仍在
-      // 保留窗口内，参与对账会把刚置的排队态刷回失败（issue #275）。
-      if (task.retryPending) continue
-      // awaiting-files 也要对账：它是非终态，后端补全完成后要靠 SSE 推 completed。
-      if (task.status !== 'queued' && task.status !== 'downloading' && task.status !== 'paused' && task.status !== 'awaiting-files') continue
-
-      if (task.type === 'java' && task.taskId) {
-        const match = sseData.javaDownloads.find((j) => j.taskId === task.taskId)
-        if (match) {
-          let newStatus: DownloadTask['status'] = 'downloading'
-          if (match.status === 'completed') newStatus = 'completed'
-          else if (match.status === 'cancelled') newStatus = 'cancelled'
-          else if (match.status === 'failed') newStatus = 'failed'
-          else if (match.status === 'paused') newStatus = 'paused'
-          else if (match.status === 'queued' || match.status === 'resolving') newStatus = 'queued'
-          updateTask(task.id, {
-            status: newStatus,
-            stage: match.status,
-            progress: Math.floor(match.progress),
-            speed: match.speed,
-            currentFile: match.fileName || undefined,
-            error: match.error || undefined,
-            completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
-          })
-          if (newStatus === 'completed') refreshCustomRuntimes()
-        } else if (!checkedStaleJavaIds.current.has(task.taskId)) {
-          checkedStaleJavaIds.current.add(task.taskId)
-          getJavaDownloadProgress(task.taskId).then(p => {
-            if (!p) {
-              updateTask(task.id, { status: 'failed', error: t('downloads.errors.taskExpired') })
-            } else if (p.status === 'failed') {
-              updateTask(task.id, { status: 'failed', error: p.error || t('downloads.errors.downloadFailed') })
-            } else if (p.status === 'cancelled') {
-              updateTask(task.id, { status: 'cancelled' })
-            } else if (p.status === 'completed') {
-              updateTask(task.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
-              refreshCustomRuntimes()
-            }
-          }).catch(() => {
-            updateTask(task.id, { status: 'failed', error: t('downloads.errors.cannotVerify') })
-          })
-        }
-        continue
-      }
-
-      if (task.type === 'file' && task.taskId) {
-        const match = sseData.resources.find((r) => r.sessionId === task.taskId)
-        if (match) {
-          let newStatus: DownloadTask['status'] = 'downloading'
-          if (match.status === 'completed') newStatus = 'completed'
-          else if (match.status === 'cancelled') newStatus = 'cancelled'
-          else if (match.status === 'failed') newStatus = 'failed'
-          updateTask(task.id, {
-            status: newStatus,
-            progress: newStatus === 'completed' ? 100 : Math.floor(match.progress),
-            speed: newStatus === 'completed' ? 0 : match.speed,
-            error: match.error || undefined,
-            currentFile: match.currentFile || undefined,
-            downloadedBytes: match.downloadedBytes,
-            totalBytes: match.totalBytes,
-            completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
-          })
-        } else {
-          // Session not in SSE — either not started yet, completed & removed, or backend restarted.
-          const prev = staleFileChecks.current.get(task.taskId)
-          const attempts = prev?.attempts ?? 0
-          const sinceLast = Date.now() - (prev?.lastAt ?? 0)
-          if (attempts >= STALE_FILE_MAX_CHECKS) {
-            updateTask(task.id, { status: 'failed', error: t('downloads.errors.statusUnknown') })
-          } else if (sinceLast >= STALE_FILE_RECHECK_MS) {
-            staleFileChecks.current.set(task.taskId, { attempts: attempts + 1, lastAt: Date.now() })
-            getResourceDownloadProgress(task.taskId).then(p => {
-              if (!p || p.status === 'not_found') {
-                updateTask(task.id, { status: 'failed', error: t('downloads.errors.taskExpired') })
-              } else if (p.status === 'completed') {
-                updateTask(task.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
-              } else if (p.status === 'failed' || p.status === 'cancelled') {
-                updateTask(task.id, { status: p.status, error: p.error || undefined })
-              }
-            }).catch(() => {
-              updateTask(task.id, { status: 'failed', error: t('downloads.errors.cannotVerify') })
-            })
-          }
-        }
-        continue
-      }
-
-if (task.instanceId && task.type !== 'batch') {
-        const match = sseData.installs.find((i) => i.instanceId === task.instanceId)
-        if (match) {
-          // 卡片重新出现在 SSE 里：允许它下一次消失时再做一次过期检查。
-          checkedStaleInstallIds.current.delete(task.instanceId)
-          let newStatus: DownloadTask['status'] = 'downloading'
-          if (match.status === 'completed') newStatus = 'completed'
-          else if (match.status === 'cancelled') newStatus = 'cancelled'
-          else if (match.status === 'failed') newStatus = 'failed'
-          // 整合包缺文件待补（issue #291）：安装管线已停止，等用户手动补齐。
-          else if (match.status === 'awaiting-files') newStatus = 'awaiting-files'
-          else if (match.isPaused) newStatus = 'paused'
-          updateTask(task.id, {
-            // 后端发起的任务（如服务端搭建）标题晚于首帧 SSE 到达：随快照回填
-            name: match.title || task.name,
-            status: newStatus,
-            stage: match.stage,
-            progress: Math.floor(match.progress),
-            speed: match.speed,
-            currentFile: match.currentFile || undefined,
-            totalFiles: match.totalFiles || undefined,
-            completedFiles: match.completedFiles || undefined,
-            currentFileProgress: match.currentFileProgress,
-            steps: match.steps,
-            // 回到终态时必须清空，否则补完后卡片还挂着「待补全」计数。
-            blockedFiles: newStatus === 'completed' || newStatus === 'cancelled'
-              ? undefined
-              : (match.blockedFiles ?? task.blockedFiles),
-            error: match.error || undefined,
-            completedAt: newStatus === 'completed' ? new Date().toISOString() : undefined,
-          })
-        } else if (!checkedStaleInstallIds.current.has(task.instanceId)) {
-          checkedStaleInstallIds.current.add(task.instanceId)
-          // 等待补全的任务不依赖 tracker（重启后后端没有这条记录）：以磁盘清单为准，
-          // 否则 not-started 会把「等用户补文件」误判成任务过期。
-          if (task.status === 'awaiting-files') {
-            reconcileBlockedTask(task.id, task.instanceId)
-            continue
-          }
-          getInstallProgress(task.instanceId).then(p => {
-            if (!p || p.status === 'not-started') {
-              const taskId = task.id
-              const instId = task.instanceId!
-              // 异步回包前卡片可能已被 SSE 推进到终态：按 id+instanceId 确认还是同一张卡。
-              const stillSameTask = () => {
-                const cur = getTasks().find((t) => t.id === taskId)
-                return !!cur && cur.instanceId === instId
-              }
-              const expired = () => {
-                if (!stillSameTask()) return
-                if (task.status === 'queued') {
-                  // Not-started may be a race with SSE push — wait 5s then re-check before removal
-                  setTimeout(() => {
-                    const cur = getTasks().find(t => t.id === taskId)
-                    if (!cur || cur.status !== 'queued') return
-                    getInstallProgress(instId).then(p2 => {
-                      if (!p2 || p2.status === 'not-started') removeTask(taskId)
-                      else if (p2.status === 'completed') {
-                        updateTask(taskId, {
-                          status: 'completed',
-                          progress: 100,
-                          completedAt: new Date().toISOString(),
-                        })
-                      }
-                    }).catch(() => {})
-                  }, 5000)
-                } else {
-                  updateTask(taskId, { status: 'failed', error: t('downloads.errors.taskExpired') })
-                }
-              }
-              // 重启后 tracker 是空的，但待补全清单还在磁盘上：那是「等用户补文件」，
-              // 不是过期。先查清单再决定，否则一重启就再也回不到补全入口。
-              if (task.kind === 'server' || task.kind === 'plugin') {
-                expired()
-                return
-              }
-              getBlockedMods(instId)
-                .then(res => {
-                  if (!stillSameTask()) return
-                  const count = (res.items ?? []).length
-                  if (count > 0) {
-                    updateTask(taskId, { status: 'awaiting-files', blockedFiles: count })
-                  } else {
-                    expired()
-                  }
-                })
-                .catch(expired)
-            } else if (p.status === 'completed') {
-              // 任务已完成后才被 SSE 剔除（get_all_active 不含 completed），
-              // 此处补正终态，否则任务会永远卡在"连接中/下载中"
-              updateTask(task.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
-            } else if (p.status === 'awaiting-files') {
-              // 后端重启后 SSE 缺项，但清单仍在：保留等待态，别降级成失败。
-              updateTask(task.id, {
-                status: 'awaiting-files',
-                progress: Math.floor(p.progress),
-                blockedFiles: p.blockedFiles ?? task.blockedFiles,
-              })
-            } else if (p.status === 'failed' || p.status === 'cancelled') {
-              updateTask(task.id, { status: p.status, error: p.error || undefined })
-            }
-          }).catch(() => {
-            updateTask(task.id, { status: 'failed', error: t('downloads.errors.cannotVerify') })
-          })
-        }
-      }
-    }
-
-    const currentIds = new Set(sseData.installs.map(i => i.instanceId))
-    for (const prevId of prevInstallIds.current) {
-      if (!currentIds.has(prevId)) {
-        const lost = getTasks().find(t => t.instanceId === prevId && (t.status === 'downloading' || t.status === 'paused'))
-        if (lost) {
-          getInstallProgress(prevId).then(p => {
-            if (p.status === 'completed') updateTask(lost.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
-            // not-started 交给磁盘恢复路径处理：这里判成 cancelled 会把待补全卡片直接关掉。
-            else if (p.status === 'failed' || p.status === 'cancelled') updateTask(lost.id, { status: p.status })
-          }).catch(() => {})
-        }
-      }
-    }
-    prevInstallIds.current = currentIds
-
-    const currentJavaIds = new Set(sseData.javaDownloads.map(j => j.taskId))
-    for (const prevId of prevJavaIds.current) {
-      if (!currentJavaIds.has(prevId)) {
-        const lost = getTasks().find(t => t.taskId === prevId && t.type === 'java' && (t.status === 'downloading' || t.status === 'paused'))
-        if (lost) {
-          getJavaDownloadProgress(prevId).then(p => {
-            if (p.status === 'completed') { updateTask(lost.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() }); refreshCustomRuntimes() }
-            else if (p.status === 'failed' || p.status === 'cancelled') updateTask(lost.id, { status: p.status })
-          }).catch(() => {})
-        }
-      }
-    }
-    prevJavaIds.current = currentJavaIds
-  }, [sseData, reconcileBlockedTask])
 
   const filterTabs = useMemo(() => FILTER_TABS.map((tab) => ({ ...tab, label: t(`downloads.filter.${tab.id}`) })), [t])
 

@@ -26,7 +26,7 @@ import type { ContextMenuItem } from '../components/ContextMenu.tsx'
 import { useMessageBox } from '../components/ui'
 import { scanVersions, getRemoteVersions, getLoaderVersions, getLoaderAddons } from '../api/versions.ts'
 import type { ScanResult } from '../api/versions.ts'
-import { createInstance, startInstall, getInstances, syncScan, repairInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, updateInstance, deleteInstance, getInstanceGroups, createInstanceGroup, updateInstanceGroup, deleteInstanceGroup } from '../api/instance.ts'
+import { createInstance, startInstall, syncScan, repairInstance, setDefaultInstance, clearDefaultInstance, updateInstance, deleteInstance, getInstanceGroups, createInstanceGroup, updateInstanceGroup, deleteInstanceGroup } from '../api/instance.ts'
 import type { InstanceGroup } from '../api/instance.ts'
 import { addTask, updateTask, getTasks } from '../stores/downloadStore.ts'
 import { Select, SelectOption, SelectDivider } from '../components/ui'
@@ -38,7 +38,8 @@ import { getSystemInfo } from '../api/system.ts'
 import { InstanceIcon } from '../components/InstanceIcon.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
 import { ApiError } from '../api/client.ts'
-import { getAccounts, deleteAccount } from '../api/account.ts'
+import { deleteAccount } from '../api/account.ts'
+import { loadAccounts } from '../stores/accountsStore.ts'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
@@ -46,10 +47,12 @@ import { useFavoritesStore } from '../stores/favoritesStore.ts'
 import { scheduleFavoriteInstall } from '../stores/pendingFavoriteInstallStore.ts'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
 import ImportDialog from '../components/ImportDialog.tsx'
-import { cacheInvalidate, cacheGet, cacheSet } from '../lib/simple-cache.ts'
+import { cacheInvalidate } from '../lib/simple-cache.ts'
+import { loadInstances, useInstancesStore } from '../stores/instancesStore.ts'
 import { logError } from '../lib/frontendLog.ts'
 import { logWindowUrl, openLogWindow } from '../lib/gameLogWindow.ts'
-import { useRunning } from '../contexts/RunningContext.tsx'
+import { useRunningActions } from '../contexts/RunningContext.tsx'
+import { useRunningInstances } from '../stores/runningStore.ts'
 
 interface ManagedDir {
   path: string
@@ -223,7 +226,8 @@ export default function Instances() {
   const navigate = useNavigate()
   const { t, lang } = useI18n()
   const { alert: msgAlert, prompt: msgPrompt, confirm: msgConfirm, notify } = useMessageBox()
-  const { launchInstance: ctxLaunchInstance, runningInstances } = useRunning()
+  const { launchInstance: ctxLaunchInstance } = useRunningActions()
+  const runningInstances = useRunningInstances()
   const { needsAccount, resolve: resolveAccountCheck, showNoAccount, showSelectAccount, handleAddAccount, handleGoToAccounts, handleCancelNoAccount, handleCancelSelect, handleSelectAccount } = useRequireDefaultAccount()
 
   const [scannedLocal, setScannedLocal] = useState<ScannedVersion[]>([])
@@ -231,11 +235,12 @@ export default function Instances() {
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
   const [search, setSearch] = useState('')
-  const [backedInstances, setBackedInstances] = useState<GameInstance[]>([])
+  const backedInstances = useInstancesStore((s) => s.instances)
+  const defaultInstanceId = useInstancesStore((s) => s.defaultInstance?.id ?? null)
+  const replaceInstances = useInstancesStore((s) => s.replace)
   const [settingsVersion, setSettingsVersion] = useState<ScannedVersion | null>(null)
   const [settingsTab, setSettingsTab] = useState<'basic' | 'repair'>('basic')
   const [repairAdded, setRepairAdded] = useState(false)
-  const [defaultInstanceId, setDefaultInstanceId] = useState<string | null>(null)
   const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [instanceRefreshKey, setInstanceRefreshKey] = useState(0)
@@ -243,7 +248,7 @@ export default function Instances() {
   const instancesReqRef = useRef(0)
 
   const refreshInstances = useCallback(() => {
-    cacheInvalidate('api-instances')
+    void useInstancesStore.getState().refresh()
     cacheInvalidate('api-instance-')
     setInstanceRefreshKey(k => k + 1)
   }, [])
@@ -369,7 +374,7 @@ export default function Instances() {
         if (stale()) return
         setScannedLocal(full)
         const instances = await syncScan(dir, full)
-        if (!stale()) setBackedInstances(instances)
+        if (!stale()) replaceInstances(instances)
       } catch (e) { logError('instances.scan.full', e, { dir }) }
       return
     }
@@ -377,24 +382,18 @@ export default function Instances() {
     // 没有待校正的条目 → fast 段拿到的就是已验证（缓存命中）的值，可以安全落盘。
     try {
       const instances = await syncScan(dir, versions)
-      if (!stale()) setBackedInstances(instances)
+      if (!stale()) replaceInstances(instances)
     } catch (e) { logError('instances.sync.fast', e, { dir }) }
-  }, [])
+  }, [replaceInstances])
 
   useEffect(() => {
     async function init() {
       setLoading(true)
-      const reqId = ++instancesReqRef.current
+      // 列表与默认实例由 store 持有：切页/返回不再重复请求，扫描结果也不会被旧快照覆盖
+      ++instancesReqRef.current
       try {
-        const cached = await cacheGet<Awaited<ReturnType<typeof getInstances>>>('api-instances')
-        if (cached) setBackedInstances(cached)
-        const [remote, instances, def, settings] = await Promise.all([getRemoteVersions(), getInstances(), getDefaultInstance(), apiLoadSettings()])
+        const [remote, , settings] = await Promise.all([getRemoteVersions(), loadInstances(), apiLoadSettings()])
         setRemoteVersions(remote)
-        // 与 doScan 的 syncScan 共用序号：getRemoteVersions 慢时本次 getInstances 会晚于
-        // syncScan 落状态，用旧快照覆盖新列表（失效实例记录丢失 → 删除被禁用）。仅最新请求生效。
-        if (reqId === instancesReqRef.current) setBackedInstances(instances)
-        cacheSet('api-instances', instances)
-        setDefaultInstanceId(def?.id ?? null)
         if (settings.gameDir) setCurrentDir(settings.gameDir)
       } catch (e) { logError('instances.init', e) } finally { setLoading(false) }
     }
@@ -705,7 +704,6 @@ export default function Instances() {
         modpackAuthor: v.modpack?.modpackAuthor,
         modpackSummary: v.modpack?.modpackSummary,
       })
-      setBackedInstances((prev) => [...prev, inst])
       return inst
     } catch (e) {
       await msgAlert(t('instances.createInstanceFailed', { error: e instanceof Error ? e.message : String(e) }))
@@ -793,7 +791,6 @@ export default function Instances() {
         modpackAuthor: v.modpack?.modpackAuthor,
         modpackSummary: v.modpack?.modpackSummary,
       })
-      setBackedInstances((prev) => [...prev, created])
       navigate(`/instances/${created.id}`)
     } catch (e) {
       await msgAlert(t('instances.createInstanceFailed', { error: e instanceof Error ? e.message : String(e) }))
@@ -818,16 +815,13 @@ export default function Instances() {
           modpackAuthor: v.modpack?.modpackAuthor,
           modpackSummary: v.modpack?.modpackSummary,
         })
-        setBackedInstances((prev) => [...prev, inst!])
       } catch { return }
     }
     try {
       if (defaultInstanceId === inst.id) {
         await clearDefaultInstance(inst.id)
-        setDefaultInstanceId(null)
       } else {
         await setDefaultInstance(inst.id)
-        setDefaultInstanceId(inst.id)
       }
     } catch (e) {
       // 切换默认实例失败时界面不更新，用户看到默认标识没变但不知道为何。
@@ -1345,8 +1339,7 @@ export default function Instances() {
     const cur = inst.customGroupIds ?? []
     const next = cur.includes(groupId) ? cur.filter(g => g !== groupId) : [...cur, groupId]
     try {
-      const updated = await updateInstance(inst.id, { customGroupIds: next } as Partial<CreateInstanceRequest>)
-      setBackedInstances(prev => prev.map(i => i.id === updated.id ? { ...i, customGroupIds: updated.customGroupIds } : i))
+      await updateInstance(inst.id, { customGroupIds: next } as Partial<CreateInstanceRequest>)
     } catch (e) {
       // 与上面分组保存共用同一条失败提示路径
       notifyGroupError('save', e)
@@ -1816,7 +1809,7 @@ export default function Instances() {
         onClose={() => setShowMicrosoftReauth(false)}
         onReauth={async () => {
           try {
-            const list = await getAccounts()
+            const list = await loadAccounts(true)
             const def = list.find((a) => a.isDefault)
             if (def) {
               try {

@@ -26,13 +26,14 @@ import { updateModsViaDownloadCenter } from '../lib/updateMods.ts'
 import { computeMissingDependencies } from '../lib/modDependencies.ts'
 import { useMessageBox } from '../components/ui'
 import { Skeleton } from '../components/ui'
-import { getInstance, updateInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, getDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting, getInstanceGroups, getMemoryRecommendation } from '../api/instance.ts'
+import { getInstance, updateInstance, deleteInstance, setDefaultInstance, clearDefaultInstance, verifyResources, repairResources, getInstallProgress, getGameSettings, setGameSetting, getInstanceGroups, getMemoryRecommendation } from '../api/instance.ts'
 import type { InstanceGroup } from '../api/instance.ts'
 import { openFolder, getSettings } from '../api/settings.ts'
-import { getRuntimes, getValidRuntimes, scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, subscribe } from '../stores/javaStore.ts'
-import { getAccounts } from '../api/account.ts'
+import { scanRuntimes, loadCustomRuntimes, hasAnyRuntimes, useJavaRuntimes } from '../stores/javaStore.ts'
+import { loadAccounts } from '../stores/accountsStore.ts'
+import { loadInstances, useInstancesStore } from '../stores/instancesStore.ts'
 import { getSystemInfo } from '../api/system.ts'
-import type { GameInstance, CreateInstanceRequest, JavaRuntime, Account, SystemInfo, ServerEntry, ServerState, LanGameEntry, GameSettingDto, FileEntry } from '../types/index.ts'
+import type { GameInstance, CreateInstanceRequest, Account, SystemInfo, ServerEntry, ServerState, LanGameEntry, GameSettingDto, FileEntry } from '../types/index.ts'
 import { getServers, addServer, deleteServer, pingServer, getLanGames, getModsMetadata, enrichMods, getModsCount, getModsProgress, batchEnableMods, batchDisableMods, batchDeleteMods, getResourcePacksMetadata, getShadersMetadata, getSavesMetadata, getScreenshotsMetadata, getDataPacksMetadata, getModUpdatesCache, checkModUpdates, getSchematics, deleteSchematic, renameSchematic, importSchematic } from '../api/instance-files.ts'
 import { searchResources, resolveResourceSlug } from '../api/resource.ts'
 import { lookupChineseEntry } from '../api/mcmod.ts'
@@ -42,7 +43,8 @@ import { ApiError } from '../api/client.ts'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { InstanceIcon, ICON_NAMES } from '../components/InstanceIcon.tsx'
-import { useRunning } from '../contexts/RunningContext.tsx'
+import { useRunningActions } from '../contexts/RunningContext.tsx'
+import { useRunningInstances } from '../stores/runningStore.ts'
 import { PageShell } from '../components/PageShell.tsx'
 import ModCard, { type ModViewMode } from '../components/ModCard.tsx'
 import VersionPickerDialog from '../components/VersionPickerDialog.tsx'
@@ -3096,7 +3098,7 @@ export default function InstanceDetailPage() {
     return instance.gameDir
   }, [instance])
   const [saving, setSaving] = useState(false)
-  const [, setRuntimes] = useState<JavaRuntime[]>(() => getRuntimes())
+  const javaRuntimes = useJavaRuntimes()
   const [accounts, setAccounts] = useState<Account[]>([])
   const [form, setForm] = useState<GameInstance | null>(null)
   const initialFormRef = useRef<GameInstance | null>(null)
@@ -3126,7 +3128,6 @@ export default function InstanceDetailPage() {
 
   const refreshDetail = useCallback(() => {
     cacheInvalidate('api-instance-')
-    cacheInvalidate('api-instances')
     setDetailRefreshKey(k => k + 1)
     setSavesRefresh(k => k + 1)
     setScreenshotsRefresh(k => k + 1)
@@ -3140,11 +3141,6 @@ export default function InstanceDetailPage() {
   }, [])
 
   useEffect(() => {
-    const unsub = subscribe(() => setRuntimes([...getRuntimes()]))
-    return unsub
-  }, [])
-
-  useEffect(() => {
     if (!id) return
     let cancelled = false
     async function load() {
@@ -3153,16 +3149,15 @@ export default function InstanceDetailPage() {
         const cacheKey = `api-instance-${id}`
         const cached = cacheGet<GameInstance>(cacheKey)
         if (cached) { setInstance(cached); setForm({ ...cached }); initialFormRef.current = cached }
-        const [inst, accts, sys, def] = await Promise.all([getInstance(id!), getAccounts(), getSystemInfo(), getDefaultInstance()])
+        const [inst, accts, sys] = await Promise.all([getInstance(id!), loadAccounts(), getSystemInfo(), loadInstances()])
         if (cancelled) return
         setInstance(inst)
         setForm({ ...inst })
         initialFormRef.current = inst
         cacheSet(cacheKey, inst)
-        setRuntimes([...getRuntimes()])
         setAccounts(accts)
         setSysInfo(sys)
-        setIsDefault(def?.id === id)
+        setIsDefault(useInstancesStore.getState().defaultInstance?.id === id)
         setMemoryMode(inst.memoryMode === 'custom' ? 'custom' : 'auto')
         getInstanceGroups().then(setGroups).catch(() => {})
       } catch { if (!cancelled) navigate('/instances') }
@@ -3199,7 +3194,8 @@ export default function InstanceDetailPage() {
     }
   }, [id])
 
-  const { launchInstance: ctxLaunchInstance, showLaunchError, runningInstances } = useRunning()
+  const { launchInstance: ctxLaunchInstance, showLaunchError } = useRunningActions()
+  const runningInstances = useRunningInstances()
   const { confirm, notify } = useMessageBox()
 
   /**
@@ -3222,7 +3218,6 @@ export default function InstanceDetailPage() {
   /** 更新完成后刷新概览数据（模组列表与实例记录都会变）。 */
   const handleModpackUpdateDone = useCallback(async () => {
     cacheInvalidate('api-instance-')
-    cacheInvalidate('api-instances')
     if (id) {
       try {
         const fresh = await getInstance(id)
@@ -3889,7 +3884,7 @@ export default function InstanceDetailPage() {
                 <SettingRow label={t('instanceDetail.settingsTab.javaRuntime')} control={
                   <Select value={form.javaPath ?? ''} onChange={(v) => update('javaPath', v || null)}>
                     <SelectOption value="">{t('instanceDetail.settingsTab.autoSelect')}</SelectOption>
-                    {getValidRuntimes().map((j, i) => (
+                    {javaRuntimes.filter((j) => j.state === 'Valid').map((j, i) => (
                       <SelectOption key={i} value={j.path}>{j.name} - {j.version} ({j.arch})</SelectOption>
                     ))}
                   </Select>

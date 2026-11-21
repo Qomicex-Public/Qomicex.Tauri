@@ -174,8 +174,15 @@ function withDefaultContentType(headers?: Record<string, string>): Record<string
 
 function ipcStream(path: string, onChunk: (text: string) => void, opts?: StreamOptions): StreamHandle {
   let closeFn: (() => void) | null = null
+  // close 可能发生在动态导入/setup 完成之前：必须记住请求，否则旧流会在清理后启动
+  let closed = false
+  const close = () => {
+    closed = true
+    closeFn?.()
+  }
   const done = (async () => {
     const { invoke, Channel } = await import('@tauri-apps/api/core')
+    if (closed) return
     const id = Math.random().toString(36).slice(2)
     await new Promise<void>((resolve, reject) => {
       let dead = false
@@ -201,11 +208,18 @@ function ipcStream(path: string, onChunk: (text: string) => void, opts?: StreamO
         else if (e.t === 'end') resolve()
       }
       closeFn = () => {
+        // 清理后排队到达的 chunk 不再交给消费者
+        dead = true
         invoke('ipc_stream_abort', { id }).catch(() => {})
         resolve()
       }
       if (opts?.signal) {
         opts.signal.addEventListener('abort', () => closeFn?.(), { once: true })
+      }
+      // import 结束到 closeFn 赋值之间也可能被 close()：先放手再启动
+      if (closed) {
+        closeFn()
+        return
       }
       invoke('ipc_stream', {
         id,
@@ -223,7 +237,7 @@ function ipcStream(path: string, onChunk: (text: string) => void, opts?: StreamO
       }).catch(reject)
     })
   })()
-  return { done, close: () => closeFn?.() }
+  return { done, close }
 }
 
 /**

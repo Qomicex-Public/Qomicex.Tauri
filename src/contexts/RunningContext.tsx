@@ -1,29 +1,20 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react'
+import { createContext, useContext, useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import type { ReactNode } from 'react'
 import { launchInstance as apiLaunchInstance, getLaunchProgress, cancelLaunch as apiCancelLaunch, getInstance } from '../api/instance.ts'
 import type { LaunchInstanceOptions } from '../api/instance.ts'
 import { getJavaRequirement, searchJava, getJavaDownloadCatalog, startJavaDownload, getJavaDownloadProgress, cancelJavaDownload } from '../api/java.ts'
 import { getProcessResourceUsage } from '../api/system.ts'
 import { ApiError } from '../api/client.ts'
-import type { ProcessResourceUsage } from '../api/system.ts'
 import { analyzeCrash } from '../api/crashDiagnostics.ts'
 import { getRuntimes } from '../stores/javaStore.ts'
 import { useMessageBox } from '../components/ui'
 import { useI18n } from '../i18n/index.tsx'
 import { hookable } from '../plugins/hookable.ts'
+import { useRunningStore } from '../stores/runningStore.ts'
 import type { LaunchResult, LaunchProgress, CrashDialogState } from '../types/index.ts'
-
-export interface RunningInstance {
-  instanceId: string
-  name: string
-  startedAt: number
-  stage: string
-  processId?: number | null
-  resourceUsage?: ProcessResourceUsage | null
-}
 
 export interface JavaCheckInfo {
   path?: string | null
@@ -31,25 +22,36 @@ export interface JavaCheckInfo {
   gameDir?: string
 }
 
-export interface RunningContextValue {
-  runningInstances: RunningInstance[]
+/** 高频状态（启动进度 0.5s、崩溃弹窗）：只有真正展示它的界面订阅。 */
+interface RunningStateValue {
   launchProgress: LaunchProgress | null
   launchingInstanceId: string | null
+  crashDialogState: CrashDialogState | null
+}
+
+/** 动作集合：引用稳定，订阅的组件不会随运行状态重渲染。 */
+interface RunningActionsValue {
   launchInstance: (id: string, name: string, javaInfo?: JavaCheckInfo, quickJoin?: LaunchInstanceOptions) => Promise<LaunchResult>
   watchInstance: (id: string, name: string) => void
   cancelLaunch: (id?: string) => Promise<void>
   killInstance: (id: string) => Promise<void>
   setNotifyImpl: (fn: (msg: string, type?: 'info' | 'success' | 'warning' | 'error') => void) => void
-  crashDialogState: CrashDialogState | null
   clearCrashDialog: () => void
   showLaunchError: (title: string, message: string, detail?: string | null, args?: string | null) => void
 }
 
-const RunningCtx = createContext<RunningContextValue | null>(null)
+const RunningStateCtx = createContext<RunningStateValue | null>(null)
+const RunningActionsCtx = createContext<RunningActionsValue | null>(null)
 
-export function useRunning(): RunningContextValue {
-  const ctx = useContext(RunningCtx)
-  if (!ctx) throw new Error('useRunning must be used within RunningProvider')
+export function useRunningState(): RunningStateValue {
+  const ctx = useContext(RunningStateCtx)
+  if (!ctx) throw new Error('useRunningState must be used within RunningProvider')
+  return ctx
+}
+
+export function useRunningActions(): RunningActionsValue {
+  const ctx = useContext(RunningActionsCtx)
+  if (!ctx) throw new Error('useRunningActions must be used within RunningProvider')
   return ctx
 }
 
@@ -59,12 +61,18 @@ export function RunningProvider({ children }: { children: ReactNode }) {
   // tRef：保持 useCallback 依赖稳定（t 随语言变化，但回调内始终取最新翻译）
   const tRef = useRef(t)
   tRef.current = t
-  const [runningInstances, setRunningInstances] = useState<RunningInstance[]>([])
   const [launchProgress, setLaunchProgress] = useState<LaunchProgress | null>(null)
   const [launchingInstanceId, setLaunchingInstanceId] = useState<string | null>(null)
   const [crashDialogState, setCrashDialogState] = useState<CrashDialogState | null>(null)
+  // 运行实例列表与资源遥测由 store 持有：1s 级 tick 只改 usage，不波及列表消费者。
+  const upsertRunning = useRunningStore((s) => s.upsert)
+  const removeRunning = useRunningStore((s) => s.remove)
+  const setUsage = useRunningStore((s) => s.setUsage)
+  const clearUsage = useRunningStore((s) => s.clearUsage)
   const pollRefs = useRef<Map<string, number>>(new Map())
   const resourcePollRefs = useRef<Map<string, number>>(new Map())
+  /** 资源轮询链序号：clear/重启时递增，旧链回包据此退出。 */
+  const resourceSeq = useRef<Map<string, number>>(new Map())
   // 轮询所有权标记：clearInstancePoll 后，飞行中的 fetch resolve 时据此退出，
   // 不复活 launchProgress（dialog 复现）也不重排下一跳（轮询链复活）
   const activePolls = useRef<Set<string>>(new Set())
@@ -100,27 +108,32 @@ export function RunningProvider({ children }: { children: ReactNode }) {
     activePolls.current.delete(id)
     const ref = pollRefs.current.get(id)
     if (ref) { clearTimeout(ref); pollRefs.current.delete(id) }
-    // 同时清理资源监控轮询
+    // 资源轮询链作废：在途请求返回后不得复活计时器或写入遥测
+    resourceSeq.current.set(id, (resourceSeq.current.get(id) ?? 0) + 1)
     const resRef = resourcePollRefs.current.get(id)
     if (resRef) { clearTimeout(resRef); resourcePollRefs.current.delete(id) }
-  }, [])
+    clearUsage(id)
+  }, [clearUsage])
 
   /** 轮询进程资源使用（CPU/内存），每秒更新一次。 */
   const startResourcePoll = useCallback((id: string, pid: number) => {
+    const seq = (resourceSeq.current.get(id) ?? 0) + 1
+    resourceSeq.current.set(id, seq)
+    const alive = () => resourceSeq.current.get(id) === seq
     const poll = async () => {
       try {
         const usage = await getProcessResourceUsage(pid)
-        setRunningInstances(prev => prev.map(r =>
-          r.instanceId === id ? { ...r, resourceUsage: usage } : r
-        ))
+        // 同一实例可能已重启：旧链的回包不能写入新运行的遥测
+        if (!alive()) return
+        setUsage(id, usage)
         resourcePollRefs.current.set(id, window.setTimeout(poll, 1000))
       } catch {
         // 进程可能已退出，停止轮询
-        resourcePollRefs.current.delete(id)
+        if (alive()) resourcePollRefs.current.delete(id)
       }
     }
     resourcePollRefs.current.set(id, window.setTimeout(poll, 1000))
-  }, [])
+  }, [setUsage])
 
   /** 轮询启动进度直到终态（running 注册进运行列表 / failed/crashed 弹窗 / completed 移除）。
    * 供 launchInstance（启动后）与 watchInstance（联机房主由后端代启，仅监听）复用。 */
@@ -136,7 +149,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
           // LaunchProgressDialog 会以 crashed 终态重新出现，造成二次弹窗）。
           setLaunchProgress(null)
           clearInstancePoll(id)
-          setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
+          removeRunning(id)
           setLaunchingInstanceId(null)
           notifyRef.current?.(tRef.current('running.gameCrashed'), 'error')
           // Auto-trigger crash analysis dialog
@@ -161,18 +174,18 @@ export function RunningProvider({ children }: { children: ReactNode }) {
         } else if (p.stage === 'completed') {
           setLaunchProgress(null)
           clearInstancePoll(id)
-          setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
+          removeRunning(id)
           setLaunchingInstanceId(null)
           notifyRef.current?.(tRef.current('running.gameExited'), 'info')
         } else if (p.stage === 'running') {
           setLaunchProgress(null)
-          setRunningInstances(prev => {
-            if (prev.some(r => r.instanceId === id)) return prev
+          // 5s 一次的启动轮询会反复进入本分支：已在运行列表则只续资源监控，不重复计数
+          if (!useRunningStore.getState().instances.some(r => r.instanceId === id)) {
             notifyRef.current?.(tRef.current('running.gameStarted'), 'success')
-            return [...prev, { instanceId: id, name, startedAt: Date.now(), stage: 'running', processId: p.processId }]
-          })
-          // 启动资源监控轮询
-          if (p.processId) {
+          }
+          upsertRunning({ instanceId: id, name, startedAt: Date.now(), stage: 'running', processId: p.processId })
+          // 资源监控链只能有一条：每 5s 无条件重启会累积无人回收的计时器
+          if (p.processId && !resourcePollRefs.current.has(id)) {
             startResourcePoll(id, p.processId)
           }
           pollRefs.current.set(id, window.setTimeout(poll, 5000))
@@ -183,13 +196,13 @@ export function RunningProvider({ children }: { children: ReactNode }) {
         } catch {
           if (!activePolls.current.has(id)) return
           clearInstancePoll(id)
-        setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
+        removeRunning(id)
         setLaunchProgress(null)
         setLaunchingInstanceId(null)
       }
     }
     pollRefs.current.set(id, window.setTimeout(poll, 500))
-  }, [clearInstancePoll])
+  }, [clearInstancePoll, removeRunning, startResourcePoll, upsertRunning])
 
   /** 监听一个由后端代启（联机 host/instance）的实例，进入运行列表并跟踪终态。 */
   const watchInstance = useCallback((id: string, name: string) => {
@@ -378,8 +391,8 @@ export function RunningProvider({ children }: { children: ReactNode }) {
       // 递增序号使 in-flight 的 launchInstance 失配，其 resolve 后不再复活轮询链
       bumpLaunchSeq(targetId)
       clearInstancePoll(targetId)
+      removeRunning(targetId)
     }
-    setRunningInstances(prev => prev.filter(r => r.instanceId !== targetId))
     if (targetId) {
       try { await apiCancelLaunch(targetId) } catch (e) {
         // 取消失败时界面仍会显示「已取消启动」，但后端进程可能还在跑；必须告知用户。
@@ -387,7 +400,7 @@ export function RunningProvider({ children }: { children: ReactNode }) {
       }
     }
     notifyRef.current?.(tRef.current('running.launchCancelled'), 'info')
-  }, [bumpLaunchSeq, clearInstancePoll])
+  }, [bumpLaunchSeq, clearInstancePoll, removeRunning])
 
   const killInstance = useCallback(async (id: string) => {
     try { await apiCancelLaunch(id) } catch (e) {
@@ -395,17 +408,35 @@ export function RunningProvider({ children }: { children: ReactNode }) {
       notifyRef.current?.(e instanceof ApiError ? e.displayMessage : String(e), 'error')
     }
     clearInstancePoll(id)
-    setRunningInstances(prev => prev.filter(r => r.instanceId !== id))
+    removeRunning(id)
     notifyRef.current?.(tRef.current('running.gameStopped'), 'info')
-  }, [clearInstancePoll])
+  }, [clearInstancePoll, removeRunning])
 
   useEffect(() => () => {
     for (const id of pollRefs.current.keys()) clearInstancePoll(id)
   }, [clearInstancePoll])
 
+  const stateValue = useMemo<RunningStateValue>(() => ({
+    launchProgress,
+    launchingInstanceId,
+    crashDialogState,
+  }), [launchProgress, launchingInstanceId, crashDialogState])
+
+  const actionsValue = useMemo<RunningActionsValue>(() => ({
+    launchInstance,
+    watchInstance,
+    cancelLaunch,
+    killInstance,
+    setNotifyImpl,
+    clearCrashDialog,
+    showLaunchError,
+  }), [launchInstance, watchInstance, cancelLaunch, killInstance, setNotifyImpl, clearCrashDialog, showLaunchError])
+
   return (
-    <RunningCtx.Provider value={{ runningInstances, launchProgress, launchingInstanceId, launchInstance, watchInstance, cancelLaunch, killInstance, setNotifyImpl, crashDialogState, clearCrashDialog, showLaunchError }}>
-      {children}
-    </RunningCtx.Provider>
+    <RunningActionsCtx.Provider value={actionsValue}>
+      <RunningStateCtx.Provider value={stateValue}>
+        {children}
+      </RunningStateCtx.Provider>
+    </RunningActionsCtx.Provider>
   )
 }

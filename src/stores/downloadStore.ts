@@ -121,6 +121,11 @@ export function updateTask(id: string, updates: Partial<DownloadTask>) {
   emitChange()
 }
 
+/** 安装管线卡片（game/modpack/modpack-update）：资源批次卡不算。 */
+export function isInstallTask(task: DownloadTask): boolean {
+  return isInstallCard(task)
+}
+
 export function removeTask(id: string) {
   tasks = tasks.filter((t) => t.id !== id)
   saveTasks()

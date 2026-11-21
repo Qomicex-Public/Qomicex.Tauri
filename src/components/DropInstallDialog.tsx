@@ -13,8 +13,8 @@ import { Input } from './ui'
 import { Label } from './ui'
 import { Separator } from './ui'
 import { useMessageBox } from './ui'
-import { getInstances } from '../api/instance.ts'
 import { installModpackDirect } from '../api/instance.ts'
+import { loadInstances as loadInstanceList } from '../stores/instancesStore.ts'
 import { loadSettings } from '../api/settings.ts'
 import { importLocalFile, modpackRequestTimeout } from '../api/drop-install.ts'
 import type { ClassifyFileResult } from '../api/drop-install.ts'
@@ -82,7 +82,7 @@ export default function DropInstallDialog({ group, onClose, preferredInstanceId 
       try {
         const settings = await loadSettings()
         const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
-        const raw = (await getInstances()).filter(i => norm(i.gameDir) === norm(settings.gameDir))
+        const raw = (await loadInstanceList()).filter(i => norm(i.gameDir) === norm(settings.gameDir))
         if (requestId !== requestIdRef.current) return
         const all = [...new Map(raw.map(i => [i.id, i])).values()]
           .filter(i => targetGroup.kind !== 'mod' || i.loader)

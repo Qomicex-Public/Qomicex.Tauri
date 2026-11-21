@@ -7,6 +7,7 @@ import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from '../
 import { Button } from '../components/ui'
 import { AccountAvatar } from '../components/AccountAvatar.tsx'
 import * as accountApi from '../api/account.ts'
+import { loadAccounts } from '../stores/accountsStore.ts'
 import { useI18n } from '../i18n/index.tsx'
 import type { Account } from '../types/index.ts'
 
@@ -25,7 +26,7 @@ export function AccountSelectDialog({ open, onClose, onSelect }: Props) {
   useEffect(() => {
     async function load() {
       try {
-        const list = await accountApi.getAccounts()
+        const list = await loadAccounts()
         setAccounts(list)
         const def = list.find(a => a.isDefault)
         setSelectedUuid(def?.uuid ?? null)

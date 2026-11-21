@@ -11,7 +11,7 @@ import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './u
 import { Button } from './ui'
 import { Input } from './ui'
 import { Select, SelectOption } from './ui'
-import { getInstances } from '../api/instance.ts'
+import { loadInstances as loadInstanceList } from '../stores/instancesStore.ts'
 import { getResourceVersions, getResourceDependencies } from '../api/resource.ts'
 import { loadSettings } from '../api/settings.ts'
 import { getInstalledFileNames, getModsMetadata } from '../api/instance-files.ts'
@@ -90,7 +90,7 @@ export default function ResourceInstallDialog({
       try {
         const settings = await loadSettings()
         const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
-        const raw = (await getInstances()).filter(i => norm(i.gameDir) === norm(settings.gameDir))
+        const raw = (await loadInstanceList()).filter(i => norm(i.gameDir) === norm(settings.gameDir))
         const all = [...new Map(raw.map(i => [i.id, i])).values()]
           .filter(i => category !== 'mod' || i.loader)
         setInstances(all)

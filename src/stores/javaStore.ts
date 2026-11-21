@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import { useSyncExternalStore } from 'react'
 import type { JavaRuntime } from '../types/index.ts'
 import { searchJava, getCustomJavaRuntimes, type JavaSearchMode } from '../api/java.ts'
 import { logError, logWarn } from '../lib/frontendLog.ts'
@@ -16,6 +17,8 @@ let scanMode: JavaSearchMode | null = null
 let listeners: Listener[] = []
 let scanPromise: Promise<JavaRuntime[]> | null = null
 let customLoaded = false
+/** 快照版本号：`getRuntimes()` 每次返回新数组，不能直接当 useSyncExternalStore 的快照。 */
+let version = 0
 
 function load(key: string): JavaRuntime[] {
   try {
@@ -49,6 +52,7 @@ function saveCustom() {
 }
 
 function emitChange() {
+  version += 1
   listeners.forEach((fn) => fn())
 }
 
@@ -59,9 +63,22 @@ export function getRuntimes(): JavaRuntime[] {
   return [...map.values()]
 }
 
-// 仅返回可用（state === 'Valid'）的 Java，供所有选择/列表界面过滤不可用项。
-export function getValidRuntimes(): JavaRuntime[] {
-  return getRuntimes().filter((r) => r.state === 'Valid')
+/** 响应式读取运行时列表：store 变更（扫描/自定义增删）时重渲染。 */
+export function useJavaRuntimes(): JavaRuntime[] {
+  return useSyncExternalStore(subscribe, getRuntimesSnapshot, getRuntimesSnapshot)
+}
+
+// 快照必须按引用稳定：render 期间调用 getRuntimes() 会每次新建数组，
+// 触发 useSyncExternalStore 的 "getSnapshot should be cached" 与无限重渲染。
+let snapshot: JavaRuntime[] = []
+let snapshotVersion = -1
+
+function getRuntimesSnapshot(): JavaRuntime[] {
+  if (snapshotVersion !== version) {
+    snapshot = getRuntimes()
+    snapshotVersion = version
+  }
+  return snapshot
 }
 
 export function getScanMode(): JavaSearchMode | null {
