@@ -103,9 +103,9 @@ bot 通过 GitHub App webhook 收 `issues` / `pull_request` / `pull_request_revi
 | 事件 | 动作 |
 |---|---|
 | `issues.opened` / `edited` | 标题前缀或正文 marker 判 `type:`；关键词表判 `area:`（下载/实例/账号→frontend+backend，联机/EasyTier→connector，更新通道→updater，插件/WASM→plugin，翻译→i18n，`.github`/CI→ci）；关键词表判 `priority:`；无 `status:` 补 `needs-triage` |
-| `pull_request.opened/reopened/synchronize` | 标题 Conventional Commits → `type:`；改动文件路径 → `area:`；`additions+deletions` → `size:`；`status: awaiting-review · 待审查`；PR 正文 `close[sd]/fix(es)?/resolve[sd] #N` → 对应 issue 转 `in-progress · 处理中` |
+| `pull_request.opened/reopened/synchronize/edited` | 标题 Conventional Commits → `type:`；改动文件路径 → `area:`；`additions+deletions` → `size:`；`status: awaiting-review · 待审查`；PR 正文 `close[sd]/fix(es)?/resolve[sd] #N` 或 `Refs #N` → 对应 issue 转 `in-progress · 处理中`（`edited` 只重判 type/area/size，不重置状态） |
 | `pull_request_review.submitted`（approved） | `awaiting-review` → `awaiting-merge · 待合并` |
-| `pull_request.closed`（merged） | PR → `done · 完成`；关联 issue → `fixed · 已修复`（摘掉 `in-progress`） |
+| `pull_request.closed`（merged） | PR → `done · 完成`；只有 closing 关键词关联的 issue → `fixed · 已修复`（摘掉 `in-progress`）；只写 `Refs` 的 issue 不动 |
 | `pull_request.closed`（未合并） | 只摘 `awaiting-review` / `awaiting-merge`，不贴负面状态 |
 
 只补空缺：已有同名维度标签时不覆盖，维护者手工标签优先。bot 的标签名常量在 `qomicex-bot/src/labels.ts`，与本文件必须一致；`github.autoLabel` 可一键关闭。
