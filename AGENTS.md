@@ -174,6 +174,16 @@ import { x } from './baz'        // 错误 — Vite 会报错
 - 图标↔图标切换用 `MorphIcon`；copy 反馈用 `CopyActionIcon`；异步操作用 `MorphActionIcon`。禁止手写 ternary 切换
 - 路由：`BrowserRouter` → `MessageBoxProvider` → `Layout.tsx` → 13 条路由（+ 1 条 `*` 通配 fallback）；`SplashScreen` 轮询 `/api/health` 成功后渲染。**路由仅在 `backendState === 'ready'` 时才注册**，否则渲染空 div
 
+### 状态层（关键，见 ADR-139）
+
+- 分层：`api/` 只做 HTTP 与错误映射；`lib/` 放纯逻辑；`stores/` 持有跨组件状态；`contexts/` 只放随组件树生命周期存在的状态与动作；`hooks/` 做组合。
+- 全局状态统一 zustand + selector。新增状态不要再写手写 pub-sub，也不要用 Context 承载服务端数据。
+- 服务端实体（实例 / 账户）由 `stores/instancesStore.ts` / `stores/accountsStore.ts` 唯一持有：页面与对话框用 `loadInstances()` / `loadAccounts()` / selector 读，**禁止直连** `getInstances()` / `getAccounts()`。写操作在 `api/` 里 `emit` 一个 `entityPatch` 变更，store 就地打补丁；只有无法从返回值推导的变更才用 `reload`。
+- 手写 store 的渲染读取必须用导出的 hook（`useDownloadTasks`、`useJavaRuntimes`），禁止组件里手写 `subscribe(() => setState([...getX()]))`。
+- 高频数据不进低频列表：资源遥测在 `runningStore` 的 `usage`，按实例 selector 订阅；Context 的 value 必须 `useMemo`，并拆成「状态 / 动作」两个 Context。
+- 全局事件流（`/progress/stream`）由 App 级 `ProgressStreamBridge` 唯一订阅，`downloadStore` 是进度唯一真相；页面只读 store，不要自己开流。
+- settings 用 `loadSettings()`（并发合并）与 `getSettings()` 快照；不要在组件里重新拉一遍。
+
 ### 后端约定
 
 - 端点模块在 `src-backend/qomicex-backend/src/endpoints/`，路由在 `app.rs` `build_router` 组装
