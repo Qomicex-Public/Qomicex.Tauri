@@ -3,6 +3,8 @@
 
 import React from "react";
 import ReactDOM from "react-dom/client";
+// 必须先于任何 rAF 消费者（GSAP 等）求值：它在导入期接管 window.requestAnimationFrame。
+import "./lib/fps-limiter.ts";
 import { installDragRegions } from "@qomicex/plugin-ui";
 import { installGlobalErrorLogging, logError } from "./lib/frontendLog.ts";
 import "./index.css";

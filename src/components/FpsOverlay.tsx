@@ -1,40 +1,37 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { getSettings, onSettingsChange } from '../api/settings.ts'
-import { createRafThrottle } from '../lib/fps-limiter.ts'
 
+/**
+ * 右上角帧率读数：测的是 rAF 的真实投递频率（`lib/fps-limiter.ts` 已把上限钳进去）。
+ * 以前每个组件自带节流器，读数只是"节流器自己的频率"，与界面实际渲染无关。
+ */
 export default function FpsOverlay() {
   const [fps, setFps] = useState(0)
   const [cap, setCap] = useState(() => getSettings().maxFrameRate ?? 0)
-  const frameCountRef = useRef(0)
-  const lastUpdateRef = useRef(performance.now())
+
+  useEffect(() => onSettingsChange(s => setCap(s.maxFrameRate ?? 0)), [])
 
   useEffect(() => {
-    const unsub = onSettingsChange(s => setCap(s.maxFrameRate ?? 0))
-    return unsub
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    const { throttle, rafId } = createRafThrottle(cap)
-
-    function tick() {
-      if (cancelled) return
-      frameCountRef.current++
+    let raf = 0
+    let frames = 0
+    let last = performance.now()
+    const tick = () => {
+      frames++
       const now = performance.now()
-      const elapsed = now - lastUpdateRef.current
+      const elapsed = now - last
       if (elapsed >= 1000) {
-        setFps(Math.round(frameCountRef.current * 1000 / elapsed))
-        frameCountRef.current = 0
-        lastUpdateRef.current = now
+        setFps(Math.round((frames * 1000) / elapsed))
+        frames = 0
+        last = now
       }
-      throttle(tick)
+      raf = requestAnimationFrame(tick)
     }
-    throttle(tick)
-    return () => { cancelled = true; cancelAnimationFrame(rafId.current) }
-  }, [cap])
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [])
 
   return (
     <div
