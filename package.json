@@ -22,6 +22,7 @@
     "test:deep-link": "node scripts/test-deep-link-parse.mjs",
     "test:list-enter-selection": "node scripts/test-list-enter-selection.mjs",
     "test:i18n-steps": "node scripts/test-i18n-step-keys.mjs",
+    "test:i18n-keys": "node scripts/test-i18n-keys.mjs",
     "test:mod-deps": "node scripts/test-mod-dependencies.mjs",
     "test:plugin-theme-sync": "node scripts/test-plugin-theme-sync.mjs",
     "test:plugin-sandbox-host": "node scripts/test-plugin-sandbox-host.mjs",
