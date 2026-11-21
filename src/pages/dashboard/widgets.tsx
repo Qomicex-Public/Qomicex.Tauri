@@ -7,7 +7,8 @@ import { createPortal } from 'react-dom'
 import { Check, ChevronDown, Megaphone, Play, User, X } from 'lucide-react'
 import { cn } from '../../lib/utils.ts'
 import { Button } from '../../components/ui'
-import { getAccounts, setDefaultAccount } from '../../api/account.ts'
+import { setDefaultAccount } from '../../api/account.ts'
+import { loadAccounts } from '../../stores/accountsStore.ts'
 import { getSettings, onSettingsChange } from '../../api/settings.ts'
 import { fetchAnnouncements, dismissAnnouncement } from '../../api/announcements.ts'
 import { AnnouncementDialog } from '../../components/AnnouncementDialog.tsx'
@@ -96,7 +97,7 @@ export function AccountWidget() {
   const openAccountDropdown = useCallback(async () => {
     if (accountsOpen) { setAccountsOpen(false); return }
     try {
-      const list = await getAccounts()
+      const list = await loadAccounts()
       setAllAccounts(list)
       setAccountsOpen(true)
     } catch { /* ignore */ }

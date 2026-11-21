@@ -14,7 +14,7 @@ import { Input } from '../components/ui'
 import { Label } from '../components/ui'
 import { useMessageBox } from '../components/ui'
 import { cn } from '../lib/utils.ts'
-import { cacheGet, cacheSet, cacheInvalidate } from '../lib/simple-cache.ts'
+import { loadAccounts, useAccountsStore } from '../stores/accountsStore.ts'
 import { invalidateAvatarCache } from '../api/skin.ts'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
@@ -112,7 +112,7 @@ export default function Accounts() {
     return loginMethod
   }
 
-  const [accounts, setAccounts] = useState<Account[]>([])
+  const accounts = useAccountsStore((s) => s.accounts)
   // 合规前置（ADR-117）：账户库里没有 Microsoft 正版账户时，不允许新增离线账户。
   // 后端 `AccountService::auto_set_default_on_save` 是同一规则的权威实现，这里只负责
   // 提前把入口挡住并给出说明。
@@ -202,9 +202,7 @@ export default function Accounts() {
 
   const refresh = useCallback(async () => {
     try {
-      const list = await accountApi.getAccounts()
-      setAccounts(list)
-      cacheSet('api-accounts', list)
+      const list = await loadAccounts(true)
       const fetches = list
         .filter((a) => a.loginMethod === 'Yggdrasil' && a.serverUrl && !accountApi.getCachedMeta(a.serverUrl))
         .map((a) => accountApi.getYggdrasilMeta(a.serverUrl!))
@@ -213,16 +211,9 @@ export default function Accounts() {
   }, [])
 
   const forceRefresh = useCallback(async () => {
-    cacheInvalidate('api-accounts')
     invalidateAvatarCache()
     await refresh()
   }, [refresh])
-
-  // show cached accounts immediately on mount
-  useEffect(() => {
-    const cached = cacheGet<Account[]>('api-accounts')
-    if (cached) setAccounts(cached)
-  }, [])
 
   useEffect(() => {
     accountApi.checkAccountsLost().then(async lost => {

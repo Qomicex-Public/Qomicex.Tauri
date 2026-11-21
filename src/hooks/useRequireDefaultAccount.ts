@@ -3,7 +3,7 @@
 
 import { useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import * as accountApi from '../api/account.ts'
+import { loadAccounts } from '../stores/accountsStore.ts'
 import type { Account } from '../types/index.ts'
 
 interface UseRequireDefaultAccountReturn {
@@ -28,7 +28,8 @@ export function useRequireDefaultAccount(): UseRequireDefaultAccountReturn {
 
   const checkAndResolve = useCallback(async (): Promise<boolean> => {
     try {
-      const accounts = await accountApi.getAccounts()
+      // 强制刷新：启动前必须看到账号的真实状态（可能刚在账号页改过默认）
+      const accounts = await loadAccounts(true)
       if (accounts.length === 0) {
         setShowNoAccount(true)
         return new Promise<boolean>((r) => { pendingResolveRef.current = r })

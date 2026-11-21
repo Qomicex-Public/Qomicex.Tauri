@@ -188,6 +188,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 let cached: AppSettings = { ...DEFAULT_SETTINGS }
 let loaded = false
+let inflight: Promise<AppSettings> | null = null
 const listeners = new Set<(s: AppSettings) => void>()
 
 /**
@@ -203,6 +204,15 @@ function applyDownloadTimeoutSetting(s: AppSettings) {
 }
 
 export async function loadSettings(): Promise<AppSettings> {
+  // 并发调用合并：App 启动、设置页、各安装对话框都会读设置，各自发起一轮
+  // /settings + /settings/data-dir 会把冷启动拖慢数倍。
+  if (!inflight) {
+    inflight = doLoadSettings().finally(() => { inflight = null })
+  }
+  return inflight
+}
+
+async function doLoadSettings(): Promise<AppSettings> {
   // 失败时不更新 cached、不置 loaded：backend 未就绪时若把 DEFAULT_SETTINGS
   // （initialized:false）当成已加载的真实设置，会让 App 误判"未初始化"而弹向导。
   for (let attempt = 0; attempt < 3; attempt++) {

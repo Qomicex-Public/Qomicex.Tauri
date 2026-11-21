@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { get, post, put, del } from './client.ts'
+import { accountsChanged } from '../lib/entityEvents.ts'
 import type {
   MicrosoftOAuthResponse,
   Account,
@@ -17,12 +18,15 @@ export function getAccount(uuid: string): Promise<Account> {
   return get<Account>(`/account/${uuid}`)
 }
 
-export function saveAccount(account: Account): Promise<Account> {
-  return post<Account>('/account', account)
+export async function saveAccount(account: Account): Promise<Account> {
+  const saved = await post<Account>('/account', account)
+  accountsChanged.emit({ type: 'upsert', account: saved })
+  return saved
 }
 
-export function deleteAccount(uuid: string): Promise<void> {
-  return del(`/account/${uuid}`)
+export async function deleteAccount(uuid: string): Promise<void> {
+  await del(`/account/${uuid}`)
+  accountsChanged.emit({ type: 'remove', uuid })
 }
 
 export function microsoftOAuth(): Promise<MicrosoftOAuthResponse> {
@@ -130,12 +134,15 @@ export function getDefaultAccount(): Promise<Account> {
   return get<Account>('/account/default')
 }
 
-export function setDefaultAccount(uuid: string): Promise<Account> {
-  return put<Account>(`/account/${uuid}/default`)
+export async function setDefaultAccount(uuid: string): Promise<Account> {
+  const account = await put<Account>(`/account/${uuid}/default`)
+  accountsChanged.emit({ type: 'default', account })
+  return account
 }
 
-export function clearDefaultAccount(): Promise<void> {
-  return del('/account/default')
+export async function clearDefaultAccount(): Promise<void> {
+  await del('/account/default')
+  accountsChanged.emit({ type: 'default', account: null })
 }
 
 export async function checkAccountsLost(): Promise<boolean> {
@@ -149,8 +156,10 @@ export function exportAccountBackup(path: string, password: string): Promise<{ a
 }
 
 /** 从口令备份还原账号（整体替换当前账号）；返回还原的账号数。 */
-export function importAccountBackup(path: string, password: string): Promise<{ accounts: number }> {
-  return post<{ accounts: number }>('/account/backup/import', { path, password })
+export async function importAccountBackup(path: string, password: string): Promise<{ accounts: number }> {
+  const res = await post<{ accounts: number }>('/account/backup/import', { path, password })
+  accountsChanged.emit({ type: 'reload' })
+  return res
 }
 
 const yggdrasilMetaCache = new Map<string, string>()

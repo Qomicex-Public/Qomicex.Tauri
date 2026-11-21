@@ -20,13 +20,14 @@ import { useMessageBox } from '../components/ui'
 import { ApiError } from '../api/client.ts'
 import * as connectorApi from '../api/connector.ts'
 import type { MatchInstancesResponse } from '../api/connector.ts'
-import { getInstances, getLaunchProgress } from '../api/instance.ts'
-import { useRunning } from '../contexts/RunningContext.tsx'
+import { getLaunchProgress } from '../api/instance.ts'
+import { useRunningActions } from '../contexts/RunningContext.tsx'
+import { loadInstances, useInstancesStore } from '../stores/instancesStore.ts'
 import { useI18n } from '../i18n/index.tsx'
 import { cropHeadFromSkin } from '../lib/skin-avatar.ts'
 import { buildRoomShareUrl } from '../lib/share.ts'
 import { ShareLinkDialog } from '../components/ShareLinkDialog.tsx'
-import type { ConnectorStatus, ConnectorPlayer, GameInstance, EasyTierStatus, NatTypeResult, LaunchProgress, KickReviewRequest } from '../types/index.ts'
+import type { ConnectorStatus, ConnectorPlayer, EasyTierStatus, NatTypeResult, LaunchProgress, KickReviewRequest } from '../types/index.ts'
 
 function fmtSpeed(bytesPerSec: number): string {
   if (bytesPerSec <= 0) return ''
@@ -251,13 +252,13 @@ export default function Connect() {
   const { t } = useI18n()
   const navigate = useNavigate()
   const { error: msgError } = useMessageBox()
-  const { launchInstance, watchInstance } = useRunning()
+  const { launchInstance, watchInstance } = useRunningActions()
   const [status, setStatus] = useState<ConnectorStatus>({
     mode: 'idle', roomCode: null, mcHost: null, mcPort: null, gameInfo: null, players: [], pendingKickReviews: [], kickedPlayers: [], error: null,
   })
   const [port, setPort] = useState('')
   const [code, setCode] = useState('')
-  const [instances, setInstances] = useState<GameInstance[]>([])
+  const instances = useInstancesStore((s) => s.instances)
   const [selectedInstance, setSelectedInstance] = useState('')
   const [hostSubMode, setHostSubMode] = useState<'instance' | 'scan'>('instance')
   const [busy, setBusy] = useState(false)
@@ -300,7 +301,7 @@ export default function Connect() {
 
   useEffect(() => {
     refreshStatus()
-    getInstances().then(setInstances).catch(() => {})
+    void loadInstances()
   }, [refreshStatus])
 
   useEffect(() => {

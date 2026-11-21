@@ -5,7 +5,7 @@ import { useRef } from 'react'
 import { RotateCw } from 'lucide-react'
 import { Dialog, DialogHeader, DialogTitle, DialogBody } from './ui'
 import InstallStepsList from './InstallStepsList.tsx'
-import { useRunning } from '../contexts/RunningContext.tsx'
+import { useRunningActions, useRunningState } from '../contexts/RunningContext.tsx'
 import { useI18n } from '../i18n/index.tsx'
 import { cn } from '../lib/utils.ts'
 import type { InstallStepInfo, LaunchProgress } from '../types/index.ts'
@@ -55,7 +55,8 @@ function deriveSteps(stage: string, lastStage: string, seen: ReadonlySet<string>
 
 export default function LaunchProgressDialog() {
   const { t } = useI18n()
-  const { launchProgress, crashDialogState, cancelLaunch } = useRunning()
+  const { launchProgress, crashDialogState } = useRunningState()
+  const { cancelLaunch } = useRunningActions()
   const lastStageRef = useRef('starting')
   const seenStagesRef = useRef<Set<string>>(new Set())
 

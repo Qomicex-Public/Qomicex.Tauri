@@ -4,7 +4,8 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Box, Gamepad2, Square, Cpu, MemoryStick } from 'lucide-react'
-import { useRunning } from '../contexts/RunningContext.tsx'
+import { useRunningActions } from '../contexts/RunningContext.tsx'
+import { useInstanceResourceUsage, useRunningInstances } from '../stores/runningStore.ts'
 import { Button } from '../components/ui'
 import { Card, CardContent } from '../components/ui'
 import { PageHeader } from '../components/PageHeader.tsx'
@@ -20,8 +21,27 @@ function formatElapsed(startedAt: number, now: number, t: ReturnType<typeof useI
   return t('running.timeHours', { hours: h, mins: min % 60 })
 }
 
+/** 资源遥测每秒更新：只让这一小块重渲染，不牵连整页卡片。 */
+function ResourceUsage({ instanceId }: { instanceId: string }) {
+  const usage = useInstanceResourceUsage(instanceId)
+  if (!usage) return null
+  return (
+    <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
+      <div className="flex items-center gap-1">
+        <Cpu className="h-3 w-3" />
+        <span>{usage.cpuUsage.toFixed(1)}%</span>
+      </div>
+      <div className="flex items-center gap-1">
+        <MemoryStick className="h-3 w-3" />
+        <span>{usage.memoryUsageMb.toFixed(0)} MB</span>
+      </div>
+    </div>
+  )
+}
+
 export default function RunningInstances() {
-  const { runningInstances, killInstance } = useRunning()
+  const { killInstance } = useRunningActions()
+  const runningInstances = useRunningInstances()
   const navigate = useNavigate()
   const pageRef = usePageAnimation()
   const { t } = useI18n()
@@ -72,18 +92,7 @@ export default function RunningInstances() {
                     {inst.processId && (
                       <p className="mt-1 text-xs text-muted-foreground/60">PID: {inst.processId}</p>
                     )}
-                    {inst.resourceUsage && (
-                      <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
-                        <div className="flex items-center gap-1">
-                          <Cpu className="h-3 w-3" />
-                          <span>{inst.resourceUsage.cpuUsage.toFixed(1)}%</span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <MemoryStick className="h-3 w-3" />
-                          <span>{inst.resourceUsage.memoryUsageMb.toFixed(0)} MB</span>
-                        </div>
-                      </div>
-                    )}
+                    <ResourceUsage instanceId={inst.instanceId} />
                   </div>
                   <Button
                     variant="outline"

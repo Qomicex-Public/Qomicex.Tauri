@@ -13,8 +13,7 @@ import type { LangChoice } from '../i18n/lang.ts'
 import { cn } from '../lib/utils.ts'
 import { saveSettings, setDataDir } from '../api/settings.ts'
 import type { AppSettings } from '../api/settings.ts'
-import { scanRuntimes, getRuntimes, refreshCustomRuntimes } from '../stores/javaStore.ts'
-import type { JavaRuntime } from '../types/index.ts'
+import { scanRuntimes, refreshCustomRuntimes, useJavaRuntimes } from '../stores/javaStore.ts'
 import { getJavaDownloadCatalog, startJavaDownload, getJavaDownloadProgress } from '../api/java.ts'
 import { getSystemInfo } from '../api/system.ts'
 import type { SystemInfo } from '../types/index.ts'
@@ -69,7 +68,7 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
   const [autoSelectSource, setAutoSelectSource] = useState(settings.autoSelectSource !== false)
   const [memoryMode, setMemoryMode] = useState<'auto' | 'custom'>(settings.memoryMode || 'auto')
   const [defaultMaxMemory, setDefaultMaxMemory] = useState(settings.defaultMaxMemory)
-  const [javaRuntimes, setJavaRuntimes] = useState<JavaRuntime[]>(() => getRuntimes())
+  const javaRuntimes = useJavaRuntimes()
   const [javaScanning, setJavaScanning] = useState(false)
   const [javaDownloads, setJavaDownloads] = useState<Record<number, JavaDownloadState>>({})
   const [saving, setSaving] = useState(false)
@@ -96,9 +95,6 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
     let cancelled = false
     setJavaScanning(true)
     scanRuntimes('deep')
-      .then((list) => {
-        if (!cancelled) setJavaRuntimes([...list])
-      })
       .catch(() => {})
       .finally(() => {
         if (!cancelled) setJavaScanning(false)
@@ -107,10 +103,8 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
   }, [open, isJavaStep])
 
   function rescanJava() {
-    setJavaRuntimes([])
     setJavaScanning(true)
     scanRuntimes('deep')
-      .then((list) => setJavaRuntimes([...list]))
       .catch(() => {})
       .finally(() => setJavaScanning(false))
   }
@@ -222,7 +216,6 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
         setJavaDownloads((d) => ({ ...d, [version]: { taskId, status: p.status, progress: p.progress } }))
         if (p.status === 'completed') {
           await refreshCustomRuntimes()
-          setJavaRuntimes([...getRuntimes()])
           return
         }
         if (p.status === 'failed' || p.status === 'cancelled') return

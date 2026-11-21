@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { Box, Compass, Download, FileText, Gamepad2, House, Menu, Network, Settings, User, type LucideIcon } from 'lucide-react'
 import { Button, Tooltip } from './ui'
-import { useRunning } from '../contexts/RunningContext.tsx'
+import { useHasRunningInstances } from '../stores/runningStore.ts'
 import { useI18n } from '../i18n/index.tsx'
 import { cn } from '../lib/utils.ts'
 import { PluginSidebarItems } from './PluginSidebarItems.tsx'
@@ -126,10 +126,9 @@ function BottomNavItem({ to, label, icon: IconComp, showPingDot }: { to: string;
 }
 
 export default function Sidebar() {
-  const { runningInstances } = useRunning()
+  const hasRunning = useHasRunningInstances()
   const { t } = useI18n()
   const [expanded, setExpanded] = useState(() => loadSidebarExpanded())
-  const hasRunning = runningInstances.length > 0
   const links = NAV_LINKS.map(l => ({ ...l, label: t(`layout.sidebar.${l.key}`) }))
   const navRef = useRef<HTMLUListElement>(null)
 

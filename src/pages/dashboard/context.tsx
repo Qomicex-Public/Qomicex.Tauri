@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react'
-import { getDefaultInstance } from '../../api/instance.ts'
-import { getDefaultAccount } from '../../api/account.ts'
 import { ApiError } from '../../api/client.ts'
-import { useRunning } from '../../contexts/RunningContext.tsx'
+import { useRunningActions } from '../../contexts/RunningContext.tsx'
+import { useInstancesStore } from '../../stores/instancesStore.ts'
+import { useAccountsStore } from '../../stores/accountsStore.ts'
 import { useRequireDefaultAccount } from '../../hooks/useRequireDefaultAccount.ts'
 import { useI18n } from '../../i18n/index.tsx'
 import type { GameInstance, Account } from '../../types/index.ts'
@@ -118,17 +118,18 @@ export function useDashboard() {
 
 export function DashboardProvider({ children }: { children: ReactNode }) {
   const { t } = useI18n()
-  const { launchInstance, showLaunchError } = useRunning()
-  const [defaultInstance, setDefaultInstance] = useState<GameInstance | null>(null)
-  const [defaultAccount, setDefaultAccountState] = useState<Account | null>(null)
+  const { launchInstance, showLaunchError } = useRunningActions()
+  const defaultInstance = useInstancesStore((s) => s.defaultInstance)
+  const defaultAccount = useAccountsStore((s) => s.defaultAccount)
   const [showMicrosoftReauth, setShowMicrosoftReauth] = useState(false)
   const [layout, setLayoutState] = useState<WidgetLayoutItem[]>(loadLayout)
   const [editing, setEditing] = useState(false)
   const accountCheck = useRequireDefaultAccount()
 
+  // 默认实例/账户由 store 持有：仪表盘切回来自动是最新值，不再各拉一次
   const refresh = useCallback(() => {
-    getDefaultInstance().then(inst => setDefaultInstance(inst)).catch(() => {})
-    getDefaultAccount().then(acc => setDefaultAccountState(acc as Account | null)).catch(() => {})
+    void useInstancesStore.getState().refresh()
+    void useAccountsStore.getState().refresh()
   }, [])
 
   useEffect(() => { refresh() }, [refresh])

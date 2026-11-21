@@ -28,7 +28,8 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import { translateCategory } from '../lib/categoryTranslations.ts'
 import { normalizeResourceKind } from '../lib/downloadGroups.ts'
 import { downloadTo } from '../api/resource-download.ts'
-import { getInstance, getDefaultInstance } from '../api/instance.ts'
+import { getInstance } from '../api/instance.ts'
+import { loadDefaultInstance } from '../stores/instancesStore.ts'
 import type { ResourceDetail, ResourceFile, ResourceVersion, GameInstance, ResolvedDependency } from '../types/index.ts'
 import { addTask } from '../stores/downloadStore.ts'
 import { useFavoritesStore, useFavoriteKeys, useFolderMap, favoriteKey } from '../stores/favoritesStore.ts'
@@ -608,7 +609,7 @@ export default function ResourceDetailPage() {
         try {
           const inst = instanceIdParam
             ? await getInstance(instanceIdParam)
-            : await getDefaultInstance()
+            : await loadDefaultInstance()
           if (inst && !cancelled) {
             setInstance(inst)
             if (inst.loader) {

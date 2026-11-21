@@ -8,11 +8,12 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
-import { useRunning } from '../contexts/RunningContext.tsx'
+import { useRunningActions } from '../contexts/RunningContext.tsx'
 import { usePluginStore } from '../stores/pluginStore.ts'
 import { logError } from '../lib/frontendLog.ts'
 import { getSettings } from '../api/settings.ts'
-import { getInstances, installModpackDirect, resolveModpack } from '../api/instance.ts'
+import { installModpackDirect, resolveModpack } from '../api/instance.ts'
+import { loadInstances } from '../stores/instancesStore.ts'
 import { addTask, getTasks, updateTask } from '../stores/downloadStore.ts'
 import { joinRoom } from '../api/connector.ts'
 import { installStorePlugin } from '../api/pluginStore.ts'
@@ -103,7 +104,7 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
   const navigate = useNavigate()
   const { confirm, notify } = useMessageBox()
   const { t } = useI18n()
-  const { launchInstance } = useRunning()
+  const { launchInstance } = useRunningActions()
   const loadPlugins = usePluginStore((s) => s.loadPlugins)
 
   // 用 ref 持有最新回调，避免依赖变化导致反复重挂监听（重挂窗口内的事件会丢）。
@@ -142,7 +143,7 @@ export default function DeepLinkHandler({ backendReady, settingsReady, blocked }
 
       switch (action.kind) {
         case 'launch': {
-          const list = await getInstances()
+          const list = await loadInstances(true)
           // 匹配规则见 `lib/deepLink.ts` 的 `matchLaunchTarget`：ID 优先，可带
           // `目录:实例名` 精确定位，且**同名多命中一律拒绝**而不是静默取第一个。
           const match = matchLaunchTarget(list, {

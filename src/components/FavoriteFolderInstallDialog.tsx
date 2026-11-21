@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { CheckCircle2, Circle, Layers, RotateCw } from 'lucide-react'
 import { cn } from '../lib/utils.ts'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Button, Select, SelectOption, useMessageBox } from './ui'
-import { getInstances } from '../api/instance.ts'
+import { loadInstances as loadInstanceList } from '../stores/instancesStore.ts'
 import { loadSettings } from '../api/settings.ts'
 import { useI18n } from '../i18n/index.tsx'
 import { quickInstallViaDownloadCenterForFolder } from '../lib/quickInstall.ts'
@@ -72,7 +72,7 @@ export default function FavoriteFolderInstallDialog({
       try {
         const settings = await loadSettings()
         const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
-        const raw = (await getInstances()).filter(
+        const raw = (await loadInstanceList()).filter(
           (i) => norm(i.gameDir) === norm(settings.gameDir) && !!i.loader,
         )
         const all = [...new Map(raw.map((i) => [i.id, i])).values()]

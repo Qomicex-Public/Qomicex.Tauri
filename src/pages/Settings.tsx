@@ -53,13 +53,12 @@ import {
   getJavaDownloadCatalog,
   startJavaDownload,
 } from '../api/java.ts'
-import { getRuntimes, getValidRuntimes, addRuntime, removeRuntime, scanRuntimes, loadCustomRuntimes, subscribe } from '../stores/javaStore.ts'
+import { getRuntimes, addRuntime, removeRuntime, scanRuntimes, loadCustomRuntimes, useJavaRuntimes } from '../stores/javaStore.ts'
 import { addTask } from '../stores/downloadStore.ts'
 import { getSystemInfo } from '../api/system.ts'
 import { ApiError, get, API_BASE } from '../api/client.ts'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl, revealItemInDir, openPath } from '@tauri-apps/plugin-opener'
-import type { JavaRuntime } from '../types/index.ts'
 import { DEFAULT_SETTINGS, saveSettings as apiSaveSettings, loadSettings as apiLoadSettings, getSettings, clearCache, clearCurseForgeCache, clearNeoForgeCache, clearFtbCache, clearModsListCache, clearModUpdatesCache, clearModpackTemp, getCacheStats, setDataDir, getSystemFonts } from '../api/settings.ts'
 import type { CacheStats, CacheDirStats } from '../api/settings.ts'
 import { cacheInvalidate } from '../lib/simple-cache.ts'
@@ -858,9 +857,9 @@ export default function Settings() {
   const settingsRef = useRef(settings)
   settingsRef.current = settings
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
-  const [runtimes, setRuntimesState] = useState<JavaRuntime[]>(() => getRuntimes())
+  const runtimes = useJavaRuntimes()
   const [showInvalid, setShowInvalid] = useState(false)
-  const listRuntimes = showInvalid ? getRuntimes() : getValidRuntimes()
+  const listRuntimes = showInvalid ? runtimes : runtimes.filter((j) => j.state === 'Valid')
   const [scanning, setScanning] = useState<'idle' | 'quick' | 'deep'>('idle')
   const javaAnimRef = useAnimatedList<HTMLDivElement>([listRuntimes.length, scanning], { y: 12, scale: 0.95 })
   const [javaStatus, setJavaStatus] = useState(() => t('settings.java.ready'))
@@ -893,11 +892,6 @@ export default function Settings() {
     }).catch(() => {}).finally(() => setSettingsLoaded(true))
     get<string[]>('/settings/backgrounds').then(setBackgrounds).catch(() => {})
     getSystemFonts().then(setFontList).catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    const unsub = subscribe(() => setRuntimesState([...getRuntimes()]))
-    return unsub
   }, [])
 
   useEffect(() => {
@@ -2023,7 +2017,7 @@ export default function Settings() {
                   control={
                     <Select value={settings.defaultJavaPath} onChange={(v) => update('defaultJavaPath', v)}>
                       <SelectOption value="">{t('settings.java.autoSelect')}</SelectOption>
-                      {getValidRuntimes().map((j, i) => (
+                      {runtimes.filter((j) => j.state === 'Valid').map((j, i) => (
                         <SelectOption key={i} value={j.path}>{j.name} - {j.version} ({j.arch})</SelectOption>
                       ))}
                     </Select>

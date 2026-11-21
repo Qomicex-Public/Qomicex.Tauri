@@ -5,6 +5,7 @@ import { get, post, put, del, API_BASE, ApiError } from './client.ts'
 import { uploadFile } from './ipc.ts'
 import { MODPACK_REQUEST_TIMEOUT_MS } from './drop-install.ts'
 import { hookable } from '../plugins/hookable.ts'
+import { instancesChanged } from '../lib/entityEvents.ts'
 import type { GameInstance, CreateInstanceRequest, LaunchResult, LaunchProgress, InstallProgressResponse, VerifyResourcesResult, RepairResourcesResult, GameSettingDto, ModpackParseResult, ModpackInstallRequest, ModpackInstallDirectRequest, ModpackInstallDirectResult, ModpackExportRequest, ModpackExportFileNode, ScannedVersion, MultiMcParseResult, MultiMcImportRequest, ModpackUpdateCheck, ModpackUpdatePreview } from '../types/index.ts'
 
 export async function getInstances(): Promise<GameInstance[]> {
@@ -49,19 +50,26 @@ export async function getDefaultInstance(): Promise<GameInstance | null> {
 }
 
 export async function setDefaultInstance(id: string): Promise<GameInstance> {
-  return put<GameInstance>(`/instance/${id}/default`)
+  const instance = await put<GameInstance>(`/instance/${id}/default`)
+  instancesChanged.emit({ type: 'default', instance })
+  return instance
 }
 
 export async function clearDefaultInstance(id: string): Promise<void> {
   await del(`/instance/${id}/default`)
+  instancesChanged.emit({ type: 'default', instance: null })
 }
 
 export async function createInstance(data: CreateInstanceRequest): Promise<GameInstance> {
-  return post<GameInstance>('/instance', data)
+  const instance = await post<GameInstance>('/instance', data)
+  instancesChanged.emit({ type: 'upsert', instance })
+  return instance
 }
 
 export async function updateInstance(id: string, data: Partial<CreateInstanceRequest>): Promise<GameInstance> {
-  return put<GameInstance>(`/instance/${id}`, data)
+  const instance = await put<GameInstance>(`/instance/${id}`, data)
+  instancesChanged.emit({ type: 'upsert', instance })
+  return instance
 }
 
 export interface MemoryRecommendation {
@@ -77,6 +85,7 @@ export function getMemoryRecommendation(instanceId: string): Promise<MemoryRecom
 
 export async function deleteInstance(id: string): Promise<void> {
   await del(`/instance/${id}`)
+  instancesChanged.emit({ type: 'remove', id })
 }
 
 // --- 实例自定义分组 ---
