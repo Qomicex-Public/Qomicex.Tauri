@@ -31,12 +31,18 @@ export interface AccountsSnapshot {
 export function patchInstances(state: InstancesSnapshot, change: InstancesChange): InstancesSnapshot {
   switch (change.type) {
     case 'upsert': {
-      const exists = state.instances.some((i) => i.id === change.instance.id)
+      const isDefaultInstance = state.defaultInstance?.id === change.instance.id
+      // 后端列表不带 isDefault 语义：默认实例的补丁要保住标记
+      const incoming = isDefaultInstance && !change.instance.isDefault
+        ? { ...change.instance, isDefault: true }
+        : change.instance
+      const exists = state.instances.some((i) => i.id === incoming.id)
       return {
         instances: exists
-          ? state.instances.map((i) => (i.id === change.instance.id ? change.instance : i))
-          : [...state.instances, change.instance],
-        defaultInstance: state.defaultInstance,
+          ? state.instances.map((i) => (i.id === incoming.id ? incoming : i))
+          : [...state.instances, incoming],
+        // 默认实例被更新（改 Java/内存/目录）时，启动链路读到必须是新对象
+        defaultInstance: isDefaultInstance ? incoming : state.defaultInstance,
       }
     }
     case 'remove':
@@ -44,11 +50,31 @@ export function patchInstances(state: InstancesSnapshot, change: InstancesChange
         instances: state.instances.filter((i) => i.id !== change.id),
         defaultInstance: state.defaultInstance?.id === change.id ? null : state.defaultInstance,
       }
-    case 'default':
-      return { instances: state.instances, defaultInstance: change.instance }
+    case 'default': {
+      // 列表标记与默认实例保持一致：安装对话框按 isDefault 预选目标实例
+      const defaultId = change.instance?.id
+      return {
+        instances: state.instances.map((i) => {
+          const isDefault = i.id === defaultId
+          return i.isDefault === isDefault ? i : { ...i, isDefault }
+        }),
+        defaultInstance: change.instance,
+      }
+    }
     case 'reload':
       return state
   }
+}
+
+/** 把默认实例标记压到列表上：后端列表不带该语义，store 是唯一真相。 */
+export function stampDefaultInstance(
+  instances: GameInstance[],
+  defaultInstance: GameInstance | null,
+): GameInstance[] {
+  return instances.map((i) => {
+    const isDefault = i.id === defaultInstance?.id
+    return i.isDefault === isDefault ? i : { ...i, isDefault }
+  })
 }
 
 export function patchAccounts(state: AccountsSnapshot, change: AccountsChange): AccountsSnapshot {

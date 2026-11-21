@@ -71,6 +71,8 @@ export function RunningProvider({ children }: { children: ReactNode }) {
   const clearUsage = useRunningStore((s) => s.clearUsage)
   const pollRefs = useRef<Map<string, number>>(new Map())
   const resourcePollRefs = useRef<Map<string, number>>(new Map())
+  /** 资源轮询链序号：clear/重启时递增，旧链回包据此退出。 */
+  const resourceSeq = useRef<Map<string, number>>(new Map())
   // 轮询所有权标记：clearInstancePoll 后，飞行中的 fetch resolve 时据此退出，
   // 不复活 launchProgress（dialog 复现）也不重排下一跳（轮询链复活）
   const activePolls = useRef<Set<string>>(new Set())
@@ -106,7 +108,8 @@ export function RunningProvider({ children }: { children: ReactNode }) {
     activePolls.current.delete(id)
     const ref = pollRefs.current.get(id)
     if (ref) { clearTimeout(ref); pollRefs.current.delete(id) }
-    // 同时清理资源监控轮询
+    // 资源轮询链作废：在途请求返回后不得复活计时器或写入遥测
+    resourceSeq.current.set(id, (resourceSeq.current.get(id) ?? 0) + 1)
     const resRef = resourcePollRefs.current.get(id)
     if (resRef) { clearTimeout(resRef); resourcePollRefs.current.delete(id) }
     clearUsage(id)
@@ -114,14 +117,19 @@ export function RunningProvider({ children }: { children: ReactNode }) {
 
   /** 轮询进程资源使用（CPU/内存），每秒更新一次。 */
   const startResourcePoll = useCallback((id: string, pid: number) => {
+    const seq = (resourceSeq.current.get(id) ?? 0) + 1
+    resourceSeq.current.set(id, seq)
+    const alive = () => resourceSeq.current.get(id) === seq
     const poll = async () => {
       try {
         const usage = await getProcessResourceUsage(pid)
+        // 同一实例可能已重启：旧链的回包不能写入新运行的遥测
+        if (!alive()) return
         setUsage(id, usage)
         resourcePollRefs.current.set(id, window.setTimeout(poll, 1000))
       } catch {
         // 进程可能已退出，停止轮询
-        resourcePollRefs.current.delete(id)
+        if (alive()) resourcePollRefs.current.delete(id)
       }
     }
     resourcePollRefs.current.set(id, window.setTimeout(poll, 1000))

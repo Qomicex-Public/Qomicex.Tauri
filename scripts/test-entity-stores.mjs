@@ -25,7 +25,10 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const source = join(repoRoot, 'src', 'lib', 'entityPatch.ts')
+const sources = [
+  join(repoRoot, 'src', 'lib', 'entityPatch.ts'),
+  join(repoRoot, 'src', 'lib', 'downloadStatus.ts'),
+]
 const tsc = join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc')
 
 const outDir = mkdtempSync(join(tmpdir(), 'qmx-entity-patch-'))
@@ -46,24 +49,28 @@ const acc = (uuid, extra = {}) => ({ uuid, name: uuid, isDefault: false, ...extr
 try {
   execFileSync(
     process.execPath,
-    [tsc, source, '--outDir', outDir, '--module', 'commonjs', '--target', 'es2020', '--skipLibCheck'],
+    [tsc, ...sources, '--outDir', outDir, '--module', 'commonjs', '--target', 'es2020', '--skipLibCheck'],
     { stdio: 'inherit' },
   )
   const require = createRequire(import.meta.url)
-  // tsc 按公共源目录推导 rootDir：entityPatch.ts 有 '../types/index.ts' 的类型导入，
-  // 输出落在 lib/ 子目录。
-  const { patchInstances, patchAccounts } = require(join(outDir, 'lib', 'entityPatch.js'))
+  // tsc 按公共源目录推导 rootDir：两个文件都在 src/lib，输出落在 lib/ 子目录。
+  const { patchInstances, patchAccounts, stampDefaultInstance } = require(join(outDir, 'lib', 'entityPatch.js'))
+  const { STATUS_CONFIG, isTaskStatus } = require(join(outDir, 'lib', 'downloadStatus.js'))
 
   const base = {
     instances: [inst('a'), inst('b'), inst('c')],
     defaultInstance: inst('b'),
   }
 
-  // 1) 已存在 → 原位替换，顺序不变
+  // 1) 已存在 → 原位替换，顺序不变；被更新的正是默认实例时默认对象同步替换
   const replaced = patchInstances(base, { type: 'upsert', instance: inst('b', { name: '新名字' }) })
   check('原位替换保持顺序', replaced.instances.map((i) => i.id), ['a', 'b', 'c'])
   check('替换写入新值', replaced.instances[1].name, '新名字')
-  check('替换不动默认项', replaced.defaultInstance.id, 'b')
+  check('默认实例被更新时默认对象同步替换', replaced.defaultInstance.name, '新名字')
+  check('默认实例补丁保住 isDefault 标记', replaced.defaultInstance.isDefault, true)
+
+  const replacedOther = patchInstances(base, { type: 'upsert', instance: inst('a', { name: '别的' }) })
+  check('更新非默认实例不动默认对象', replacedOther.defaultInstance, base.defaultInstance)
 
   // 2) 不存在 → 追加
   const appended = patchInstances(base, { type: 'upsert', instance: inst('d') })
@@ -78,10 +85,21 @@ try {
   const removedOther = patchInstances(base, { type: 'remove', id: 'a' })
   check('删除非默认实例保留默认', removedOther.defaultInstance.id, 'b')
 
-  // 5) default → 只改默认
+  // 5) default → 默认项与列表标记一起切换（安装对话框按 isDefault 预选）
   const nextDefault = patchInstances(base, { type: 'default', instance: inst('c') })
-  check('设置默认不动列表', nextDefault.instances, base.instances)
+  check('设置默认不改列表内容与顺序', nextDefault.instances.map((i) => i.id), ['a', 'b', 'c'])
+  check('设置默认同步列表标记', nextDefault.instances.map((i) => i.isDefault), [false, false, true])
   check('设置默认生效', nextDefault.defaultInstance.id, 'c')
+
+  const cleared = patchInstances(nextDefault, { type: 'default', instance: null })
+  check('清除默认后列表标记全 false', cleared.instances.map((i) => i.isDefault), [false, false, false])
+
+  // 5b) stampDefaultInstance：空默认也把残留标记清掉
+  check(
+    'stamp 按默认项重写标记',
+    stampDefaultInstance([inst('a', { isDefault: true }), inst('b')], inst('b')).map((i) => i.isDefault),
+    [false, true],
+  )
 
   // 6) reload 原样返回
   check('reload 原样返回', patchInstances(base, { type: 'reload' }), base)
@@ -111,6 +129,14 @@ try {
   check('账号切换默认同步列表标记', accDefault.accounts.map((a) => a.isDefault), [true, false])
   check('账号切换默认写入默认项', accDefault.defaultAccount.uuid, 'u1')
   check('账号 reload 原样返回', patchAccounts(accBase, { type: 'reload' }), accBase)
+
+  // 7) 状态表完整性 + 后端字符串校验（只认自有属性）
+  check('状态表覆盖全部任务状态', Object.keys(STATUS_CONFIG).sort(), [
+    'awaiting-files', 'cancelled', 'completed', 'downloading', 'failed', 'paused', 'queued',
+  ])
+  check('合法状态通过', isTaskStatus('awaiting-files'), true)
+  check('未知状态拒绝', isTaskStatus('bogus'), false)
+  check('原型键拒绝', isTaskStatus('constructor'), false)
 
   console.log(`entity-patch: ${checks} 项通过`)
 } finally {

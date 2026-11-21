@@ -301,7 +301,7 @@ export default function Connect() {
 
   useEffect(() => {
     refreshStatus()
-    void loadInstances()
+    void loadInstances().catch(() => { /* 列表加载失败：页面显示空列表，失败原因已记日志 */ })
   }, [refreshStatus])
 
   useEffect(() => {

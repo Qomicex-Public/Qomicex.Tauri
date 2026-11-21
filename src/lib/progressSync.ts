@@ -16,9 +16,9 @@ import { getJavaDownloadProgress } from '../api/java.ts'
 import { getResourceDownloadProgress } from '../api/resource-download.ts'
 import { openStream, createSseParser } from '../api/ipc.ts'
 import { ApiError } from '../api/client.ts'
-import { addTask, getTasks, removeTask, updateTask } from '../stores/downloadStore.ts'
+import { addTask, getTasks, isInstallTask, removeTask, updateTask } from '../stores/downloadStore.ts'
 import { refreshCustomRuntimes } from '../stores/javaStore.ts'
-import { STATUS_CONFIG } from './downloadStatus.ts'
+import { isTaskStatus } from './downloadStatus.ts'
 import type { DownloadTask, InstallStepInfo } from '../types/index.ts'
 
 export interface InstallState {
@@ -92,58 +92,59 @@ const STALE_FILE_RECHECK_MS = 2000
 const STALE_FILE_MAX_CHECKS = 10
 
 /** 用户主动清除过的后端任务（instanceId）：SSE 保留窗口内不再自动补卡。
- * 持久化到 localStorage——刷新/重启后窗口内仍不复活（保留窗口 5 分钟，
- * 超过的条目在读取时按时间戳淘汰，集合不会无限增长）。 */
+ * 会话内 Map 是真相，localStorage 只是跨重启的尽力持久化——写盘失败（配额/隐私模式）
+ * 不能导致下一帧把刚清除的卡片补回来。 */
 const DISMISSED_KEY = 'qomicex.dismissedBackendTasks'
 const DISMISS_TTL_MS = 15 * 60 * 1000
+const dismissed = new Map<string, number>()
+let dismissedHydrated = false
 
-function loadDismissed(): Map<string, number> {
+function hydrateDismissed() {
+  if (dismissedHydrated) return
+  dismissedHydrated = true
   try {
     const raw = localStorage.getItem(DISMISSED_KEY)
-    if (!raw) return new Map()
+    if (!raw) return
     const obj = JSON.parse(raw) as Record<string, number>
     const now = Date.now()
-    const out = new Map<string, number>()
     for (const [id, at] of Object.entries(obj)) {
-      if (typeof at === 'number' && now - at < DISMISS_TTL_MS) out.set(id, at)
+      if (typeof at === 'number' && now - at < DISMISS_TTL_MS) dismissed.set(id, at)
     }
-    return out
-  } catch {
-    return new Map()
-  }
+  } catch { /* 存储不可用：会话内登记仍生效 */ }
 }
 
-function saveDismissed(map: Map<string, number>) {
+function persistDismissed() {
   try {
-    localStorage.setItem(DISMISSED_KEY, JSON.stringify(Object.fromEntries(map)))
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify(Object.fromEntries(dismissed)))
   } catch { /* 配额/隐私模式：退化为仅内存 */ }
 }
 
 export function dismissBackendTask(instanceId: string) {
-  const map = loadDismissed()
-  map.set(instanceId, Date.now())
-  saveDismissed(map)
+  hydrateDismissed()
+  dismissed.set(instanceId, Date.now())
+  persistDismissed()
 }
 
 function isBackendTaskDismissed(instanceId: string): boolean {
-  return loadDismissed().has(instanceId)
+  hydrateDismissed()
+  return dismissed.has(instanceId)
 }
 
 /** 清掉已离开 SSE 的登记（保留窗口过后该 id 不会再出现）。 */
 function pruneDismissed(liveIds: Set<string>) {
-  const map = loadDismissed()
+  hydrateDismissed()
   let changed = false
-  for (const id of [...map.keys()]) {
-    if (!liveIds.has(id)) { map.delete(id); changed = true }
+  for (const id of [...dismissed.keys()]) {
+    if (!liveIds.has(id)) { dismissed.delete(id); changed = true }
   }
-  if (changed) saveDismissed(map)
+  if (changed) persistDismissed()
 }
 
 const prevInstallIds = new Set<string>()
 const prevJavaIds = new Set<string>()
 const checkedStaleJavaIds = new Set<string>()
 const checkedStaleInstallIds = new Set<string>()
-const staleFileChecks = new Map<string, { attempts: number; lastAt: number }>()
+const staleFileChecks = new Map<string, { attempts: number; lastAt: number; inFlight?: boolean }>()
 
 /**
  * 用磁盘清单刷新等待中的任务（issue #291）：用户可能在资源管理器里直接把文件放进了
@@ -151,30 +152,34 @@ const staleFileChecks = new Map<string, { attempts: number; lastAt: number }>()
  * 实例已删除时后端返回 404，吞掉会让卡片永远停在等待态且没有移除入口。
  */
 function reconcileBlockedTask(taskId: string, instId: string, t: Translate) {
+  /** 回包落地前必须仍是同一张「等补全」卡：用户可能已补齐（卡片转完成）或已重试换绑。 */
+  const stillAwaiting = () => {
+    const cur = getTasks().find(tk => tk.id === taskId)
+    return !!cur && cur.instanceId === instId && cur.status === 'awaiting-files'
+  }
   // 服务端搭建任务的等待态对账走 tracker 进度（它不是实例，modpack 的
-  // 阻塞清单端点会 404 → 此前把等待卡误刷成取消）。
+  // 阻塞清单端点会 404 → 此前把等待卡误刷成取消）。插件自报任务（kind='plugin'）
+  // 同样不是实例，必须走同一条路径，口径与 applySnapshot 的 tracker 分支一致。
   const task = getTasks().find(tk => tk.id === taskId)
-  if (task?.kind === 'server') {
+  if (task?.kind === 'server' || task?.kind === 'plugin') {
     getInstallProgress(instId)
       .then(p => {
+        if (!stillAwaiting()) return
         // 后端 tracker 无条目（后端重启后内存记录丢失）返回 not-started。
         // 若卡片还停在「待补全/进行中」，它会永远挂着且没有移除入口——转为
         // 可清除的失败态并提示重新发起搭建。其余未知状态仍跳过：直接写入
         // 会让 STATUS_CONFIG[status] 变 undefined、TaskCard 崩溃并持久化。
         if (p?.status === 'not-started') {
-          const cur = getTasks().find(tk => tk.id === taskId)
-          if (cur && cur.status !== 'failed' && cur.status !== 'cancelled' && cur.status !== 'completed') {
-            updateTask(taskId, {
-              status: 'failed',
-              blockedFiles: undefined,
-              error: t('downloads.errors.serverTaskLost'),
-            })
-          }
+          updateTask(taskId, {
+            status: 'failed',
+            blockedFiles: undefined,
+            error: t('downloads.errors.serverTaskLost'),
+          })
           return
         }
-        if (!p || !(p.status in STATUS_CONFIG)) return
+        if (!p || !isTaskStatus(p.status)) return
         updateTask(taskId, {
-          status: p.status as DownloadTask['status'],
+          status: p.status,
           progress: Math.floor(p.progress),
           blockedFiles: p.blockedFiles ?? undefined,
         })
@@ -184,6 +189,7 @@ function reconcileBlockedTask(taskId: string, instId: string, t: Translate) {
   }
   getBlockedMods(instId)
     .then(res => {
+      if (!stillAwaiting()) return
       const count = (res.items ?? []).length
       if (count > 0) {
         updateTask(taskId, { status: 'awaiting-files', blockedFiles: count })
@@ -197,16 +203,29 @@ function reconcileBlockedTask(taskId: string, instId: string, t: Translate) {
       }
     })
     .catch((e: unknown) => {
+      if (!stillAwaiting()) return
       if (e instanceof ApiError && e.status === 404) {
         updateTask(taskId, { status: 'cancelled', blockedFiles: undefined })
       }
     })
 }
 
+/** 回查结果只允许写仍处于进行态的卡片：SSE 可能已把它推进到终态。 */
+function applyIfActive(taskId: string, patch: Partial<DownloadTask>) {
+  const cur = getTasks().find(tk => tk.id === taskId)
+  if (!cur) return
+  if (cur.status !== 'queued' && cur.status !== 'downloading' && cur.status !== 'paused' && cur.status !== 'awaiting-files') return
+  updateTask(taskId, patch)
+}
+
 function applySnapshot(payload: ProgressPayload, t: Translate) {
   // 后端/插件发起的安装（如服务端搭建）没有本地任务卡片：自动补建。
   // 只补进行中的任务；SSE 不推 completed，无需担心反复补卡。
-  const existingInstanceIds = new Set(getTasks().map(tk => tk.instanceId).filter(Boolean) as string[])
+  // 只看安装卡：资源集成的 batch 卡也带 instanceId，但它是另一条聚合链，
+  // 不能因为同实例有批次卡就跳过补建安装卡（否则该安装完全看不到进度）。
+  const existingInstanceIds = new Set(
+    getTasks().filter(isInstallTask).map(tk => tk.instanceId).filter(Boolean) as string[],
+  )
   // 清理掉已消失的登记项（任务离开 SSE 后，同 id 不会再出现；防集合无限增长）
   pruneDismissed(new Set(payload.installs.map(i => i.instanceId)))
   for (const inst of payload.installs) {
@@ -265,26 +284,28 @@ function applySnapshot(payload: ProgressPayload, t: Translate) {
         if (newStatus === 'completed') refreshCustomRuntimes()
       } else if (!checkedStaleJavaIds.has(task.taskId)) {
         checkedStaleJavaIds.add(task.taskId)
+        const taskId = task.id
         getJavaDownloadProgress(task.taskId).then(p => {
           if (!p) {
-            updateTask(task.id, { status: 'failed', error: t('downloads.errors.taskExpired') })
+            applyIfActive(taskId, { status: 'failed', error: t('downloads.errors.taskExpired') })
           } else if (p.status === 'failed') {
-            updateTask(task.id, { status: 'failed', error: p.error || t('downloads.errors.downloadFailed') })
+            applyIfActive(taskId, { status: 'failed', error: p.error || t('downloads.errors.downloadFailed') })
           } else if (p.status === 'cancelled') {
-            updateTask(task.id, { status: 'cancelled' })
+            applyIfActive(taskId, { status: 'cancelled' })
           } else if (p.status === 'completed') {
-            updateTask(task.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
+            applyIfActive(taskId, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
             refreshCustomRuntimes()
           }
         }).catch(() => {
-          updateTask(task.id, { status: 'failed', error: t('downloads.errors.cannotVerify') })
+          applyIfActive(taskId, { status: 'failed', error: t('downloads.errors.cannotVerify') })
         })
       }
       continue
     }
 
     if (task.type === 'file' && task.taskId) {
-      const match = payload.resources.find((r) => r.sessionId === task.taskId)
+      const fileTaskId = task.taskId
+      const match = payload.resources.find((r) => r.sessionId === fileTaskId)
       if (match) {
         let newStatus: DownloadTask['status'] = 'downloading'
         if (match.status === 'completed') newStatus = 'completed'
@@ -302,23 +323,29 @@ function applySnapshot(payload: ProgressPayload, t: Translate) {
         })
       } else {
         // Session not in SSE — either not started yet, completed & removed, or backend restarted.
-        const prev = staleFileChecks.get(task.taskId)
+        const prev = staleFileChecks.get(fileTaskId)
         const attempts = prev?.attempts ?? 0
         const sinceLast = Date.now() - (prev?.lastAt ?? 0)
-        if (attempts >= STALE_FILE_MAX_CHECKS) {
-          updateTask(task.id, { status: 'failed', error: t('downloads.errors.statusUnknown') })
+        const taskId = task.id
+        if (prev?.inFlight) {
+          // 还有一次回查在途：等它结束再判定，不能因为计数到顶就报未知
+        } else if (attempts >= STALE_FILE_MAX_CHECKS) {
+          applyIfActive(taskId, { status: 'failed', error: t('downloads.errors.statusUnknown') })
         } else if (sinceLast >= STALE_FILE_RECHECK_MS) {
-          staleFileChecks.set(task.taskId, { attempts: attempts + 1, lastAt: Date.now() })
-          getResourceDownloadProgress(task.taskId).then(p => {
+          staleFileChecks.set(fileTaskId, { attempts: attempts + 1, lastAt: Date.now(), inFlight: true })
+          getResourceDownloadProgress(fileTaskId).then(p => {
             if (!p || p.status === 'not_found') {
-              updateTask(task.id, { status: 'failed', error: t('downloads.errors.taskExpired') })
+              applyIfActive(taskId, { status: 'failed', error: t('downloads.errors.taskExpired') })
             } else if (p.status === 'completed') {
-              updateTask(task.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
+              applyIfActive(taskId, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
             } else if (p.status === 'failed' || p.status === 'cancelled') {
-              updateTask(task.id, { status: p.status, error: p.error || undefined })
+              applyIfActive(taskId, { status: p.status, error: p.error || undefined })
             }
           }).catch(() => {
-            updateTask(task.id, { status: 'failed', error: t('downloads.errors.cannotVerify') })
+            applyIfActive(taskId, { status: 'failed', error: t('downloads.errors.cannotVerify') })
+          }).finally(() => {
+            const entry = staleFileChecks.get(fileTaskId)
+            if (entry) staleFileChecks.set(fileTaskId, { ...entry, inFlight: false })
           })
         }
       }
@@ -368,7 +395,7 @@ function applySnapshot(payload: ProgressPayload, t: Translate) {
           if (!p || p.status === 'not-started') {
             const taskId = task.id
             const instId = task.instanceId!
-            // 异步回包前卡片可能已被 SSE 推进到终态：按 id+instanceId 确认还是同一张卡。
+            // 异步回包前卡片可能已被 SSE 推进到终态/已被重试换绑：按 id+instanceId+状态确认。
             const stillSameTask = () => {
               const cur = getTasks().find((tk) => tk.id === taskId)
               return !!cur && cur.instanceId === instId
@@ -378,9 +405,12 @@ function applySnapshot(payload: ProgressPayload, t: Translate) {
               if (task.status === 'queued') {
                 // Not-started may be a race with SSE push — wait 5s then re-check before removal
                 setTimeout(() => {
+                  // 复查期间可能已重试（换绑到新实例）或已被推进：任何一项变化都放弃这次判定
                   const cur = getTasks().find(tk => tk.id === taskId)
-                  if (!cur || cur.status !== 'queued') return
+                  if (!cur || cur.status !== 'queued' || cur.instanceId !== instId || cur.retryPending) return
                   getInstallProgress(instId).then(p2 => {
+                    const now = getTasks().find(tk => tk.id === taskId)
+                    if (!now || now.status !== 'queued' || now.instanceId !== instId || now.retryPending) return
                     if (!p2 || p2.status === 'not-started') removeTask(taskId)
                     else if (p2.status === 'completed') {
                       updateTask(taskId, {
@@ -392,7 +422,7 @@ function applySnapshot(payload: ProgressPayload, t: Translate) {
                   }).catch(() => {})
                 }, 5000)
               } else {
-                updateTask(taskId, { status: 'failed', error: t('downloads.errors.taskExpired') })
+                applyIfActive(taskId, { status: 'failed', error: t('downloads.errors.taskExpired') })
               }
             }
             // 重启后 tracker 是空的，但待补全清单还在磁盘上：那是「等用户补文件」，
@@ -406,7 +436,7 @@ function applySnapshot(payload: ProgressPayload, t: Translate) {
                 if (!stillSameTask()) return
                 const count = (res.items ?? []).length
                 if (count > 0) {
-                  updateTask(taskId, { status: 'awaiting-files', blockedFiles: count })
+                  applyIfActive(taskId, { status: 'awaiting-files', blockedFiles: count })
                 } else {
                   expired()
                 }
@@ -415,19 +445,19 @@ function applySnapshot(payload: ProgressPayload, t: Translate) {
           } else if (p.status === 'completed') {
             // 任务已完成后才被 SSE 剔除（get_all_active 不含 completed），
             // 此处补正终态，否则任务会永远卡在"连接中/下载中"
-            updateTask(task.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
+            applyIfActive(task.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
           } else if (p.status === 'awaiting-files') {
             // 后端重启后 SSE 缺项，但清单仍在：保留等待态，别降级成失败。
-            updateTask(task.id, {
+            applyIfActive(task.id, {
               status: 'awaiting-files',
               progress: Math.floor(p.progress),
               blockedFiles: p.blockedFiles ?? task.blockedFiles,
             })
           } else if (p.status === 'failed' || p.status === 'cancelled') {
-            updateTask(task.id, { status: p.status, error: p.error || undefined })
+            applyIfActive(task.id, { status: p.status, error: p.error || undefined })
           }
         }).catch(() => {
-          updateTask(task.id, { status: 'failed', error: t('downloads.errors.cannotVerify') })
+          applyIfActive(task.id, { status: 'failed', error: t('downloads.errors.cannotVerify') })
         })
       }
     }
@@ -436,12 +466,14 @@ function applySnapshot(payload: ProgressPayload, t: Translate) {
   const currentIds = new Set(payload.installs.map(i => i.instanceId))
   for (const prevId of prevInstallIds) {
     if (!currentIds.has(prevId)) {
-      const lost = getTasks().find(tk => tk.instanceId === prevId && (tk.status === 'downloading' || tk.status === 'paused'))
+      // 只认安装卡：同实例的资源批次卡不走安装 tracker 的结论
+      const lost = getTasks().find(tk => isInstallTask(tk) && tk.instanceId === prevId && (tk.status === 'downloading' || tk.status === 'paused'))
       if (lost) {
+        const lostId = lost.id
         getInstallProgress(prevId).then(p => {
-          if (p.status === 'completed') updateTask(lost.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
+          if (p.status === 'completed') applyIfActive(lostId, { status: 'completed', progress: 100, completedAt: new Date().toISOString() })
           // not-started 交给磁盘恢复路径处理：这里判成 cancelled 会把待补全卡片直接关掉。
-          else if (p.status === 'failed' || p.status === 'cancelled') updateTask(lost.id, { status: p.status })
+          else if (p.status === 'failed' || p.status === 'cancelled') applyIfActive(lostId, { status: p.status })
         }).catch(() => {})
       }
     }
@@ -454,9 +486,10 @@ function applySnapshot(payload: ProgressPayload, t: Translate) {
     if (!currentJavaIds.has(prevId)) {
       const lost = getTasks().find(tk => tk.taskId === prevId && tk.type === 'java' && (tk.status === 'downloading' || tk.status === 'paused'))
       if (lost) {
+        const lostId = lost.id
         getJavaDownloadProgress(prevId).then(p => {
-          if (p.status === 'completed') { updateTask(lost.id, { status: 'completed', progress: 100, completedAt: new Date().toISOString() }); refreshCustomRuntimes() }
-          else if (p.status === 'failed' || p.status === 'cancelled') updateTask(lost.id, { status: p.status })
+          if (p.status === 'completed') { applyIfActive(lostId, { status: 'completed', progress: 100, completedAt: new Date().toISOString() }); refreshCustomRuntimes() }
+          else if (p.status === 'failed' || p.status === 'cancelled') applyIfActive(lostId, { status: p.status })
         }).catch(() => {})
       }
     }
@@ -507,9 +540,14 @@ export function startProgressSync(t: Translate): () => void {
       if (!cancelled) timer = setTimeout(connect, 1000)
       return
     }
-    // 流结束时才 flush：中途 flush 会把被切断的半行提前吐出
+    // 流结束时才 flush：中途 flush 会把被切断的半行提前吐出。
+    // 正常结算（HTTP EOF / IPC end）也必须重连：后端重启或空闲断流后，
+    // 桥接不会重新挂载，不重连就再也没有进度。
     handle.done
-      .then(() => feed.flush())
+      .then(() => {
+        feed.flush()
+        if (!cancelled) timer = setTimeout(connect, 1000)
+      })
       .catch(() => {
         if (!cancelled) timer = setTimeout(connect, 1000)
       })

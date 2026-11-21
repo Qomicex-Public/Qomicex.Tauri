@@ -251,6 +251,8 @@ export async function resolveModpack(source: string, projectId: string, versionI
 
 export async function startModpackInstall(data: ModpackInstallRequest): Promise<{ message: string; instanceId: string }> {
   const res = await post<{ message: string; versionId: string }>('/modpack/install', data)
+  // 后端已建实例记录：广播重拉，安装对话框的候选列表才能看到新实例
+  instancesChanged.emit({ type: 'reload' })
   return { message: res.message, instanceId: res.versionId }
 }
 
@@ -320,7 +322,9 @@ export async function installModpackDirect(
   data: ModpackInstallDirectRequest,
   timeoutMs = MODPACK_REQUEST_TIMEOUT_MS,
 ): Promise<ModpackInstallDirectResult> {
-  return post<ModpackInstallDirectResult>('/modpack/install-direct', data, { timeoutMs })
+  const res = await post<ModpackInstallDirectResult>('/modpack/install-direct', data, { timeoutMs })
+  instancesChanged.emit({ type: 'reload' })
+  return res
 }
 
 /** 解析 MultiMC 实例文件夹（Tauri 目录选择器选中）。 */

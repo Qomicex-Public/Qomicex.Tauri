@@ -1,8 +1,10 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import type { DownloadTask } from '../types/index.ts'
+
 /** 任务状态 → 展示配置。进度对账也用它校验后端状态，避免出现未定义的卡片状态。 */
-export const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
+export const STATUS_CONFIG = {
   queued: { label: 'queued', color: 'text-muted-foreground bg-muted border-border' },
   downloading: { label: 'downloading', color: 'text-blue-400 bg-blue-500/10 border-blue-500/25' },
   paused: { label: 'paused', color: 'text-amber-400 bg-amber-500/10 border-amber-500/25' },
@@ -12,4 +14,9 @@ export const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   completed: { label: 'completed', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/25' },
   failed: { label: 'failed', color: 'text-red-400 bg-red-500/10 border-red-500/25' },
   cancelled: { label: 'cancelled', color: 'text-gray-400 bg-gray-500/10 border-gray-500/25' },
+} satisfies Record<DownloadTask['status'], { label: string; color: string }>
+
+/** 后端下发的状态字符串不保证在表内：只认自有属性，避免读到 `constructor` 之类的原型键。 */
+export function isTaskStatus(status: string): status is DownloadTask['status'] {
+  return Object.prototype.hasOwnProperty.call(STATUS_CONFIG, status)
 }
