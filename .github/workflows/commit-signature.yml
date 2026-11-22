@@ -1,0 +1,46 @@
+name: Commit Signature
+
+# 要求 PR 头分支上的每个提交都带 GitHub 的 verified 标记（提交已签名，且签名邮箱
+# 是该 GitHub 账号的已验证邮箱）。
+#
+# 用 pull_request_target 而不是 pull_request：workflow 定义永远取自默认分支，
+# 落后于 main 的老 PR 不必 rebase 也能被检查。本任务不 checkout PR 代码、不执行
+# PR 内容，只用 API 读每个提交的 verification 字段。
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  signed-commits:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const commits = await github.paginate(github.rest.pulls.listCommits, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100
+            })
+            const bad = commits.filter((c) => c.commit.verification?.verified !== true)
+            if (bad.length === 0) {
+              core.info(`${commits.length} 个提交均为 verified`)
+              return
+            }
+            core.setFailed(
+              [
+                `${bad.length}/${commits.length} 个提交没有 verified 标记：`,
+                ...bad.map(
+                  (c) =>
+                    `  ${c.sha.slice(0, 7)} ${c.commit.verification?.reason || 'unknown'} ${c.commit.message.split('\n')[0]}`
+                ),
+                '修复：提交时签名（git commit -S，gpg 或 ssh 签名均可），并确认提交邮箱是 GitHub 账号已验证的邮箱。'
+              ].join('\n')
+            )
