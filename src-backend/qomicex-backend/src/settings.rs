@@ -112,14 +112,20 @@ pub(crate) fn default_game_dir() -> String {
 /// 不能用进程 cwd：macOS 从 Finder/Launchpad 启动时 cwd 是 `/`，相对 `.minecraft`
 /// 会拼成 `/.minecraft`（日志里 `abs_dir=/.minecraft versions_exists=false` 即此，
 /// 用户看到的是"一个实例都没有"）。返回的第二个值是来源，供日志定性。
+///
+/// 主目录拿不到（极端环境）时才退到 cwd，并把 `path_source` 标成 `cwd` —— 至少
+/// 日志能看出这是"没有主目录"的机器，而不是又一次静默解错。
 pub fn resolve_game_dir(raw: &str) -> (PathBuf, &'static str) {
     let path = PathBuf::from(raw.trim());
     if path.is_absolute() {
         return (path, "absolute");
     }
-    match dirs::home_dir() {
-        Some(home) => (home.join(&path), "home"),
-        None => (path, "relative"),
+    if let Some(home) = dirs::home_dir() {
+        return (home.join(&path), "home");
+    }
+    match std::env::current_dir() {
+        Ok(cwd) => (cwd.join(&path), "cwd"),
+        Err(_) => (path, "relative"),
     }
 }
 

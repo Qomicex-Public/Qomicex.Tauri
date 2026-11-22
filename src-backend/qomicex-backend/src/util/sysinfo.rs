@@ -94,9 +94,12 @@ pub fn memory() -> (u64, u64) {
 /// 把平台给出的 available 收敛成可信值（字节）。
 ///
 /// 顺序：原值可信（0 < available <= total）→ 用原值；否则用 `total - used`
-/// （同一批 vm 统计的另一侧，macOS 上仍有效）→ 再退到 `free` → 最后退到 `total`
-/// （拿不到任何数据时宁可报"全空闲"，也不能报"全占用"：后者会让内存分配上限
-/// 与自动 -Xmx 直接塌到 512MB）。
+/// （同一批 vm 统计的另一侧，macOS 上仍有效）→ 再退到 `free` → 最后退到
+/// **total / 2**。
+///
+/// 最后一级不是"报全空闲"：拿不到任何内存统计时按「可用不超过一半物理内存」估计。
+/// 报 `total` 会让自动 `-Xmx` 取到 70% 物理内存（如 48GB 机器给 33GB），大概率
+/// 直接把游戏 OOM 掉；宁可偏保守、让用户手动调高，并留一条 WARN 说明是估算值。
 fn normalize_available(total: u64, available: u64, used: u64, free: u64) -> u64 {
     if total == 0 {
         return available;
@@ -110,7 +113,7 @@ fn normalize_available(total: u64, available: u64, used: u64, free: u64) -> u64 
     if free > 0 && free <= total {
         return free;
     }
-    total
+    total / 2
 }
 
 /// 每个进程只记一次：这是平台数据异常，不是正常分支，重复刷屏没有信息增量。
@@ -189,9 +192,10 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_to_free_then_total_when_nothing_is_usable() {
+    fn falls_back_to_free_then_half_of_total_when_nothing_is_usable() {
         assert_eq!(normalize_available(16 * GIB, 0, 0, 3 * GIB), 3 * GIB);
-        assert_eq!(normalize_available(16 * GIB, 0, 0, 0), 16 * GIB);
+        // 什么都拿不到时按一半物理内存估：报 total 会让自动 -Xmx 取到 70% 物理内存。
+        assert_eq!(normalize_available(16 * GIB, 0, 0, 0), 8 * GIB);
     }
 
     #[test]

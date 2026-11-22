@@ -328,8 +328,11 @@ fn scan_impl(
     // 自动修复只在 full 段做。fast 段的 gameVersion 是 JSON 链的猜测值，把它
     // 写回 instances.json 会在 full 段失败/超时后永久留下脏数据（ADR-084 决策 4）。
     if full_mode {
-        fix_instance_game_versions(&state.instance, &result, game_dir);
-        fix_instance_loaders(&state.instance, &result, game_dir);
+        // 用**解析后**的绝对路径比较：调用方可能传相对 gameDir，而实例里存的
+        // 是绝对路径，直接拿原串比会一个都匹配不上，修复静默失效。
+        let resolved_game_dir = abs_dir.to_string_lossy();
+        fix_instance_game_versions(&state.instance, &result, &resolved_game_dir);
+        fix_instance_loaders(&state.instance, &result, &resolved_game_dir);
     }
 
     Ok(Json(ScanVersionsResponse {
