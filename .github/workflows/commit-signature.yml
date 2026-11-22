@@ -6,6 +6,10 @@ name: Commit Signature
 # 用 pull_request_target 而不是 pull_request：workflow 定义永远取自默认分支，
 # 落后于 main 的老 PR 不必 rebase 也能被检查。本任务不 checkout PR 代码、不执行
 # PR 内容，只用 API 读每个提交的 verification 字段。
+#
+# 启用方式：合并后把 signed-commits 加进规则集的 required status checks。
+# 加之前就开着的 PR 不会自动产生这个检查（没有事件触发），需要 reopen 或推一次
+# 提交，否则该检查会一直停在 Expected 并挡住合并。
 
 on:
   pull_request_target:
@@ -23,12 +27,35 @@ jobs:
       - uses: actions/github-script@v9
         with:
           script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number
+            })
+            const eventHead = context.payload.pull_request.head.sha
+            // 检查结果只会挂到事件里的 head SHA。两者不一致说明评估期间被强推过，
+            // 这一轮结论对不上当前代码，直接作废（新 push 会触发新的运行）。
+            if (pr.data.head.sha !== eventHead) {
+              core.setFailed(
+                `PR head 已变化：事件 ${eventHead.slice(0, 7)} / 当前 ${pr.data.head.sha.slice(0, 7)}`
+              )
+              return
+            }
+
             const commits = await github.paginate(github.rest.pulls.listCommits, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: context.payload.pull_request.number,
               per_page: 100
             })
+
+            // pulls.listCommits 最多返回 250 个提交，拿满上限说明列表可能被截断：
+            // 宁可失败，也不能因为看不到后面的提交就放行。
+            if (commits.length >= 250) {
+              core.setFailed('PR 提交数达到 API 上限 250，无法完整校验签名；请拆分 PR')
+              return
+            }
+
             const bad = commits.filter((c) => c.commit.verification?.verified !== true)
             if (bad.length === 0) {
               core.info(`${commits.length} 个提交均为 verified`)
