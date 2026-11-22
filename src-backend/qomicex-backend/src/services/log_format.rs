@@ -37,19 +37,50 @@ pub fn timestamp() -> String {
     chrono::Utc::now().format(TIME_FORMAT).to_string()
 }
 
-/// 把一条非 tracing 日志（downloader / 前端 / 插件 / 子进程输出）格式化成统一行。
+/// 把第一条非 tracing 日志（downloader / 前端 / 插件 / 子进程输出）格式化成统一行。
 ///
 /// `level` 用 `tracing` 的级别词汇（`ERROR`/`WARN`/`INFO`/`DEBUG`），子进程原始输出
-/// 这类无级别来源用 `LOG`。
+/// 这类无级别来源用 `LOG`。`service` / `level` 来自调用方，可能含插件可控字符串
+/// （插件 id、上报的级别），必须净化：级别收敛到白名单、service 去掉空白与方括号，
+/// 否则一个换行或 `INFO [backend] startup_id=` 就能伪造日志行。
 pub fn format_line(service: &str, level: &str, message: &str) -> String {
     format!(
         "{} {:<5} [{}] startup_id={} {}",
         timestamp(),
-        level.to_ascii_uppercase(),
-        service,
+        normalize_level(level),
+        normalize_service(service),
         startup_id(),
         sanitize(message)
     )
+}
+
+/// 级别白名单：未知值一律记 `LOG`，不允许把任意文本塞进级别位。
+fn normalize_level(level: &str) -> &'static str {
+    let upper = level.trim().to_ascii_uppercase();
+    match upper.as_str() {
+        "ERROR" => "ERROR",
+        "WARN" => "WARN",
+        "INFO" => "INFO",
+        "DEBUG" => "DEBUG",
+        "TRACE" => "DEBUG",
+        _ => "LOG",
+    }
+}
+
+/// service 只保留 `[A-Za-z0-9_.:-]`，其余字符替换为 `_`（长度也钳到 64）。
+fn normalize_service(service: &str) -> String {
+    const MAX: usize = 64;
+    service
+        .chars()
+        .take(MAX)
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':' | '@') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 /// 该行是否已带统一前缀（避免 [`crate::services::trace::trace_append`] 二次加前缀）。
@@ -272,6 +303,32 @@ mod tests {
         assert!(is_sensitive("API_KEY"));
         assert!(!is_sensitive("api_key_id"));
         assert!(!is_sensitive("path"));
+    }
+
+    /// 插件可控的 service / level 不能伪造日志行。
+    #[test]
+    fn service_and_level_cannot_forge_a_line() {
+        let line = format_line(
+            "plugin:evil\n2026-11-21T00:00:00.000Z INFO  [backend] startup_id=deadbeef",
+            "warn ] [backend] startup_id=deadbeef",
+            "real message",
+        );
+        assert_eq!(line.lines().count(), 1, "{line}");
+        // 伪造级别里的 `] [backend]` 不在白名单 → 降级为 LOG；service 里的换行/空格/方括号
+        // 被替换成 `_`（evil 之后的内容仍可见，但不再构成一条新的日志前缀）。
+        assert!(line.contains(" LOG   [plugin:evil_"), "{line}");
+        assert!(line.ends_with(" real message"), "{line}");
+        assert!(
+            !line.contains("] real"),
+            "service 里的伪造前缀不应原样保留: {line}"
+        );
+    }
+
+    #[test]
+    fn unknown_level_is_log() {
+        assert_eq!(normalize_level("verbose"), "LOG");
+        assert_eq!(normalize_level(" warn "), "WARN");
+        assert_eq!(normalize_level("trace"), "DEBUG");
     }
 
     /// 格式契约（含 startup_id 注入、空值省略、敏感字段脱敏）：用真实的

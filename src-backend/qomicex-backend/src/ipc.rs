@@ -64,7 +64,11 @@ impl ConnError {
 }
 
 /// 单条连接的诊断信息：谁、在哪一段、为什么断的、是否影响用户。
-fn log_conn_error(conn_id: u64, transport: &str, peer: &str, e: ConnError) {
+///
+/// `endpoint` 是本次连接所在的**本地**监听端点（命名管道名 / unix socket 路径）。
+/// 传输层拿不到客户端身份（命名管道无对端地址，unix socket 多为匿名），所以不叫
+/// `peer` —— 免得读日志的人以为它指向客户端。
+fn log_conn_error(conn_id: u64, transport: &str, endpoint: &str, e: ConnError) {
     let expected = e.expected_disconnect();
     let err = e.err;
     let (kind, os_error) = (err.kind(), err.raw_os_error());
@@ -74,7 +78,7 @@ fn log_conn_error(conn_id: u64, transport: &str, peer: &str, e: ConnError) {
             event = "ipc_connection_closed",
             conn_id,
             transport,
-            peer,
+            endpoint,
             phase = e.phase,
             err_kind = ?kind,
             os_error = os_error.unwrap_or(0),
@@ -87,7 +91,7 @@ fn log_conn_error(conn_id: u64, transport: &str, peer: &str, e: ConnError) {
             event = "ipc_connection_error",
             conn_id,
             transport,
-            peer,
+            endpoint,
             phase = e.phase,
             err = %err,
             err_kind = ?kind,
@@ -105,17 +109,25 @@ fn next_conn_id() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
+/// QIPC 监听主循环（命名管道），可带就绪信号：**绑定成功**后立刻 send。
+///
+/// 调用方（main）据此决定 `app_ready`：只有拿到信号才算监听就绪；task 提前返回
+/// （绑定失败）时 sender 被丢弃 → 接收端拿到 Err，启动按失败处理。
 #[cfg(windows)]
-pub async fn serve(
+pub async fn serve_with_ready(
     app: Router,
     pipe_name: String,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
+    ready: Option<tokio::sync::oneshot::Sender<()>>,
 ) -> std::io::Result<()> {
     use tokio::net::windows::named_pipe::ServerOptions;
     let mut server = ServerOptions::new()
         .first_pipe_instance(true)
         .create(&pipe_name)?;
     tracing::info!("qipc listening on named pipe {pipe_name}");
+    if let Some(tx) = ready {
+        let _ = tx.send(());
+    }
     loop {
         tokio::select! {
             _ = shutdown.changed() => {
@@ -128,20 +140,22 @@ pub async fn serve(
         server = ServerOptions::new().create(&pipe_name)?;
         let app = app.clone();
         let conn_id = next_conn_id();
-        let peer = pipe_name.clone();
+        let endpoint = pipe_name.clone();
         tokio::spawn(async move {
             if let Err(e) = handle_conn(app, client).await {
-                log_conn_error(conn_id, "qipc-pipe", &peer, e);
+                log_conn_error(conn_id, "qipc-pipe", &endpoint, e);
             }
         });
     }
 }
 
+/// QIPC 监听主循环（unix socket）；`ready` 在 `bind` 成功后 send。
 #[cfg(unix)]
-pub async fn serve(
+pub async fn serve_with_ready(
     app: Router,
     sock_path: String,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
+    ready: Option<tokio::sync::oneshot::Sender<()>>,
 ) -> std::io::Result<()> {
     use tokio::net::UnixListener;
     let _ = std::fs::remove_file(&sock_path); // 清理上次残留
@@ -150,6 +164,9 @@ pub async fn serve(
     }
     let listener = UnixListener::bind(&sock_path)?;
     tracing::info!("qipc listening on unix socket {sock_path}");
+    if let Some(tx) = ready {
+        let _ = tx.send(());
+    }
     loop {
         let (stream, _) = tokio::select! {
             _ = shutdown.changed() => {
@@ -160,10 +177,10 @@ pub async fn serve(
         };
         let app = app.clone();
         let conn_id = next_conn_id();
-        let peer = sock_path.clone();
+        let endpoint = sock_path.clone();
         tokio::spawn(async move {
             if let Err(e) = handle_conn(app, stream).await {
-                log_conn_error(conn_id, "qipc-unix", &peer, e);
+                log_conn_error(conn_id, "qipc-unix", &endpoint, e);
             }
         });
     }
@@ -694,7 +711,7 @@ mod tests {
         let app = test_app();
         let name = pipe_name();
         let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let server = tokio::spawn(serve(app, name.clone(), shutdown_rx));
+        let server = tokio::spawn(serve_with_ready(app, name.clone(), shutdown_rx, None));
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let mut conn = Conn::open(&name).await;
@@ -742,7 +759,7 @@ mod tests {
 
         let name = pipe_name();
         let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let server = tokio::spawn(serve(app, name.clone(), shutdown_rx));
+        let server = tokio::spawn(serve_with_ready(app, name.clone(), shutdown_rx, None));
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let mut conn = Conn::open(&name).await;
@@ -788,7 +805,7 @@ mod tests {
         let name = pipe_name();
         // sender 必须保活：全部 drop 时 watch 的 changed() 立即就绪，serve 会直接退出
         let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let server = tokio::spawn(serve(app, name.clone(), shutdown_rx));
+        let server = tokio::spawn(serve_with_ready(app, name.clone(), shutdown_rx, None));
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         // 缓冲 JSON 响应
@@ -834,7 +851,7 @@ mod tests {
         let app = test_app();
         let name = pipe_name();
         let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let server = tokio::spawn(serve(app, name.clone(), shutdown_rx));
+        let server = tokio::spawn(serve_with_ready(app, name.clone(), shutdown_rx, None));
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let body = br#"{"model":"x","stream":true}"#;
@@ -868,7 +885,7 @@ mod tests {
         let app = test_app();
         let name = pipe_name();
         let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let server = tokio::spawn(serve(app, name.clone(), shutdown_rx));
+        let server = tokio::spawn(serve_with_ready(app, name.clone(), shutdown_rx, None));
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let body = br#"{"a":1}"#;

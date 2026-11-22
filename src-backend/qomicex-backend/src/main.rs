@@ -80,6 +80,18 @@ impl Startup {
             "启动完成"
         );
     }
+
+    /// 显式失败：落一条 `app_start_failed` 并标记已收尾（避免 `Drop` 再打一条）。
+    fn fail(&mut self, stage: &'static str) {
+        self.stage = stage;
+        self.ready = true;
+        tracing::error!(
+            event = "app_start_failed",
+            stage,
+            duration_ms = self.elapsed_ms(),
+            "启动失败"
+        );
+    }
 }
 
 impl Drop for Startup {
@@ -155,8 +167,13 @@ async fn main() {
     #[cfg(debug_assertions)]
     crate::dev_env::load();
 
-    // 先构建 state（内部注册全局 trace 缓冲），再初始化 tracing 与 stdout/stderr 捕获，
-    // 保证日志写入有目标可落。
+    // 日志 sink 与 tracing 必须在**构建 state 之前**就位：AppState::build 里任何
+    // panic 都要能落一条 app_start_failed（Startup 的 Drop）+ 原始 panic 文本
+    // （stdout/stderr 捕获）。注册晚了一步，这批最早的启动事件就静默丢失。
+    crate::services::trace::ensure_sinks();
+    init_tracing();
+    crate::services::trace::start_io_capture();
+
     startup.stage("state");
     let state = AppState::build();
     // 注册进程级 panic hook（后端崩溃 → 自动上报严重错误日志）。
@@ -164,8 +181,6 @@ async fn main() {
         state.settings.clone(),
         state.http_client.clone(),
     );
-    init_tracing();
-    crate::services::trace::start_io_capture();
 
     let port = std::env::var("QOMICEX_PORT")
         .ok()
@@ -264,17 +279,32 @@ async fn main() {
         (false, Some(p)) => format!("ipc:{p}"),
         (false, None) => "none".to_string(),
     };
-    // "就绪" = 两个监听都已建立（qipc 的 acceptor 在 task 内建 socket，竞争窗口可忽略）。
-    startup.ready(&listen);
 
+    // qipc 的 socket/管道在 task 内建立，绑定失败必须算**启动失败**：
+    // 先等 task 给出「已监听」信号再报 app_ready，否则日志里会是
+    // 「启动完成」紧跟一条「qipc server failed」，而 release 只有 IPC 一条通道，
+    // 后端实际不可用。
+    let (ipc_ready_tx, ipc_ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let has_ipc = pipe_name.is_some();
     let pipe_task = pipe_name.map(|name| {
         let app = app.clone();
         tokio::spawn(async move {
-            if let Err(e) = ipc::serve(app, name, shutdown_for_pipe).await {
-                tracing::error!("qipc server failed: {e}");
+            match ipc::serve_with_ready(app, name, shutdown_for_pipe, Some(ipc_ready_tx)).await {
+                Ok(()) => {}
+                Err(e) => tracing::error!(
+                    event = "qipc_server_failed",
+                    err = %e,
+                    "qipc server failed"
+                ),
             }
         })
     });
+    if has_ipc && ipc_ready_rx.await.is_err() {
+        startup.fail("listen");
+        std::process::exit(1);
+    }
+    startup.ready(&listen);
+
     drop(app);
 
     if !tcp_enabled {

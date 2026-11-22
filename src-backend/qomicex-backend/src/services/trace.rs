@@ -32,14 +32,16 @@ pub fn trace_broadcast() -> broadcast::Sender<String> {
         .clone()
 }
 
-/// 注册全局缓冲（重复注册忽略）。
-pub fn init_global_trace(buffer: Arc<TraceBufferStore>) {
-    let _ = TRACE_BUFFER.set(buffer);
-}
-
-/// 注册全局文件日志（重复注册忽略）。
-pub fn init_file_log(log: Arc<FileLog>) {
-    let _ = FILE_LOG.set(log);
+/// 确保全局缓冲 + 文件日志已注册（幂等），返回缓冲指针。
+///
+/// 必须在 `init_tracing` 之前调用：`tracing` 的 formatter 走 `trace_append`，
+/// 而它依赖这两个 sink。注册晚了，启动最早那批事件（含 `app_start_failed`）会静默丢失。
+pub fn ensure_sinks() -> Arc<TraceBufferStore> {
+    let buffer = TRACE_BUFFER
+        .get_or_init(|| Arc::new(TraceBufferStore::default()))
+        .clone();
+    let _ = FILE_LOG.get_or_init(|| Arc::new(FileLog::new()));
+    buffer
 }
 
 /// 追加一条外部日志（downloader / 前端 / 插件 / 子进程输出）：统一成

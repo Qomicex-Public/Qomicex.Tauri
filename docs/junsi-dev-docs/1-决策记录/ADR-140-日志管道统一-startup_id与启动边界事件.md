@@ -49,6 +49,10 @@
 
 ## 未采纳 / 待排期
 
+- **日志查看器按 `LOG` / `DEBUG` 分桶筛选**：需要在 7 个语言里新增筛选项文案，
+  且要先定「子进程原始输出」是否算独立级别（现在 `inferLevel` 把它归到 INFO，
+  行内仍保留 `LOG` 与 `[stdout]`/`[stderr]` 标记）。
+
 - **downloader 结构化字段**（`total_bytes` / `total_segments` / `segment_index` 取代
   `total=Some(24758786)` 这类 Debug 输出）：需要改 qomicex-downloader 子模块并单独提交，
   本次只在后端侧统一了前缀与级别。
