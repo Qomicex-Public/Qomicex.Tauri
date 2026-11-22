@@ -16,9 +16,11 @@ const nativeRaf = window.requestAnimationFrame.bind(window)
 
 let capFps = 0
 let nextId = 1
-let pending = new Map<number, FrameCb>()
+const pending = new Map<number, FrameCb>()
 let rafId = 0
-let lastFlush = 0
+// 下一次允许投递的时间点（0 = 立刻）。按栅格推进而不是"距上次满 interval"，
+// 否则显示刷新率上限与设定值不能整除时会系统性掉帧（144Hz 上 60fps 掉成 48fps）。
+let nextAt = 0
 
 function schedule() {
   if (!rafId) rafId = nativeRaf(flush)
@@ -27,16 +29,26 @@ function schedule() {
 function flush(now: number) {
   rafId = 0
   if (pending.size === 0) return
-  // 还没到下一帧的时间点：把这一轮的 vsync 让掉，下次 vsync 再判。
-  // 留 1ms 容差，避免 vsync 抖动（16.6/33.3ms）让 60fps 上限掉成 30fps。
-  if (capFps > 0 && now - lastFlush < 1000 / capFps - 1) {
-    schedule()
-    return
+  if (capFps > 0) {
+    const interval = 1000 / capFps
+    // 首次进入 / 上限刚变更：以当前 vsync 为起点，避免等一整帧。
+    if (nextAt === 0) nextAt = now
+    // 留 1ms 容差，避免 vsync 抖动（16.6/16.7ms）让 60fps 上限掉成 30fps。
+    if (now + 1 < nextAt) {
+      schedule()
+      return
+    }
+    nextAt += interval
+    // 落后一帧以上（切后台、长卡顿）就重新对齐，避免连发补帧把动画"快进"。
+    // shortcut: 上限受 vsync 栅格限制，144Hz 上设 60fps 实测约 58fps（无法整除）。
+    if (nextAt < now) nextAt = now + interval
   }
-  lastFlush = now
-  const batch = pending
-  pending = new Map()
-  for (const cb of batch.values()) {
+  // 逐条取、取到再删：同一个批次里的回调可能被 cancelAnimationFrame 撤掉，
+  // 快照后统一执行会让已取消的回调仍然跑一次（更新到过期 UI）。
+  for (const id of [...pending.keys()]) {
+    const cb = pending.get(id)
+    if (!cb) continue
+    pending.delete(id)
     // 与原生 rAF 一致：一个回调抛错不能拖死同帧其它回调，也不能停掉整个循环。
     try {
       cb(now)
@@ -46,7 +58,6 @@ function flush(now: number) {
       })
     }
   }
-  // 回调里新排的帧在 `flush` 期间已各自 schedule 过，这里只在还没排时补一次。
   schedule()
 }
 
@@ -70,6 +81,6 @@ export function setFrameCap(fps: number): void {
   const next = Number.isFinite(fps) && fps > 0 ? fps : 0
   if (next === capFps) return
   capFps = next
-  // 从「不限」切到「限」时重新计时，避免第一帧被误判为"尚未到点"而白等一轮。
-  lastFlush = performance.now()
+  // 重新计时：从「不限」切到「限」或改档位时，第一帧不该被"尚未到点"白等一轮。
+  nextAt = 0
 }
