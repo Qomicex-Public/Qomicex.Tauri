@@ -10,7 +10,7 @@ on:
 
 jobs:
   changes:
-    # rust 分析实测 1056s（抽取 8m54s + 查询 7.5m，--threads=4），且 CodeQL 对
+    # rust 分析实测 1056s（抽取 534s + 查询 450s，--threads=4），且 CodeQL 对
     # Rust 没有可复用的分析缓存，每个 PR 都要重付一遍。只在 PR 真碰了 Rust
     # 代码时跑：被 job 级 if 跳过的检查上报 success，required check 不会卡住。
     # 非 PR 事件（push main / 每周定时）不判定，一律跑全量。
@@ -40,26 +40,15 @@ jobs:
               - '.github/codeql/**'
               - '.github/workflows/codeql.yml'
 
-  analyze:
-    name: Analyze
-    needs: [changes]
-    # 输出为空（changes 被跳过或失败）时按「要跑」处理：宁可慢，不可漏扫。
-    if: |
-      !cancelled() &&
-      (github.event_name != 'pull_request' ||
-       matrix.language != 'rust' ||
-       needs.changes.outputs.rust != 'false')
+  analyze-js:
+    # job 级 if 里不能用 matrix 上下文，两种语言拆成两个作业。
+    # 作业名必须与规则集里的 required check 完全一致。
+    name: Analyze (javascript-typescript)
     runs-on: ubuntu-latest
     permissions:
       actions: read
       contents: read
       security-events: write
-
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [ 'javascript-typescript', 'rust' ]
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -67,11 +56,11 @@ jobs:
           submodules: recursive
           token: ${{ secrets.QOMICEX_PAT || github.token }}
 
-      # CodeQL 2.26+：rust 仅支持 build-mode: none（源码静态提取，无需构建）
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
-          languages: ${{ matrix.language }}
+          languages: javascript-typescript
+          # CodeQL 2.26+：rust 仅支持 build-mode: none（源码静态提取，无需构建）
           build-mode: none
           # 排除 rust/path-injection；理由见该配置文件的注释。
           config-file: ./.github/codeql/codeql-config.yml
@@ -79,4 +68,35 @@ jobs:
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:
-          category: "/language:${{ matrix.language }}"
+          category: '/language:javascript-typescript'
+
+  analyze-rust:
+    name: Analyze (rust)
+    needs: [changes]
+    # 输出为空（changes 被跳过或失败）时按「要跑」处理：宁可慢，不可漏扫。
+    if: |
+      !cancelled() &&
+      (github.event_name != 'pull_request' || needs.changes.outputs.rust != 'false')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.QOMICEX_PAT || github.token }}
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: rust
+          build-mode: none
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: '/language:rust'
