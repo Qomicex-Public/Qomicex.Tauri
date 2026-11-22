@@ -96,8 +96,11 @@ async-trait = "0.1"
 # `ServiceExt::oneshot` 只在测试里用；主依赖不需要 util 特性。
 tower = { version = "0.5", features = ["util"] }
 
+# fat LTO + codegen-units = 1 是最慢的编译配置：依赖只出 bitcode，整程序优化全压在
+# 最后一次链接上，4 核 runner 上 Windows 后端要 20 分钟以上，sccache 也缓存不到。
+# 换成 thin + 16 个编译单元，用约 3-9% 的体积换构建时间；opt-level 保持 "s"。
 [profile.release]
-lto = true
-codegen-units = 1
+lto = "thin"
+codegen-units = 16
 opt-level = "s"
 strip = true
