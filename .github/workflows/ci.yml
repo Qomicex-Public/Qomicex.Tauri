@@ -6,6 +6,12 @@ on:
   push:
     branches: [ main ]
 
+# 同一 PR 的新提交直接取消上一轮：连推时不留两份全量 CI 并行抢 4 核。
+# main 的 push 不取消，避免主干检查被半途掐断。
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   # 后端配置注入（issue #159）：appsettings.json 不再入库，由 build.rs 以
   # appsettings.example.json 为模板 + 这两个环境变量在构建期生成。
@@ -14,7 +20,36 @@ env:
   MICROSOFT_CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID }}
 
 jobs:
+  changes:
+    # 只决定「这轮值不值得跑重活」。写反了更安全：先认定代码动了，只有
+    # 全部改动都命中「纯文本」排除项时才为 false。
+    # 被 job 级 if 跳过的检查上报 success（不是 pending），required check 不会卡住；
+    # 反之用 workflow 级 paths 过滤会让检查永远停在 pending。
+    # 下游一律用 `!= 'false'` 判断：判定步骤失败、输出为空时照旧全跑，不会漏检。
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          predicate-quantifier: some-with-excludes
+          filters: |
+            code:
+              - '**'
+              - '!**/*.md'
+              - '!docs/**'
+              - '!.github/ISSUE_TEMPLATE/**'
+              - '!.github/PULL_REQUEST_TEMPLATE.md'
+              - '!LICENSE'
+
   frontend-check:
+    needs: [changes]
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -35,9 +70,12 @@ jobs:
       - run: pnpm audit --audit-level moderate || true
 
   backend-check:
+    needs: [changes]
     if: |
-      github.event_name == 'push' ||
-      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+      !cancelled() &&
+      needs.changes.outputs.code != 'false' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -46,7 +84,7 @@ jobs:
           submodules: recursive
           token: ${{ secrets.QOMICEX_PAT }}
       - uses: dtolnay/rust-toolchain@stable
-      - uses: swatinem/rust-cache@v2
+      - uses: ./.github/actions/setup-rust-cache
       - name: Setup connector build
         id: connector
         uses: ./.github/actions/setup-connector-build
@@ -133,6 +171,8 @@ jobs:
           exit $TEST_EXIT
 
   plugin-ui-check:
+    needs: [changes]
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -146,6 +186,8 @@ jobs:
       - run: pnpm --filter @qomicex/plugin-ui audit --audit-level moderate || true
 
   frontend-lint:
+    needs: [changes]
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
