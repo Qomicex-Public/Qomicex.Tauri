@@ -96,8 +96,12 @@ async-trait = "0.1"
 # `ServiceExt::oneshot` 只在测试里用；主依赖不需要 util 特性。
 tower = { version = "0.5", features = ["util"] }
 
+# fat LTO 的整程序优化全压在最后一次链接上，4 核 runner 上 Windows 后端要 20 分钟
+# 以上，sccache 也缓存不到。只把 LTO 换成 thin：同源码同机器实测 11m30s → 7m06s，
+# 体积 36.4MB → 37.2MB（+2.2%）。codegen-units 保持 1——切 16 个单元能再省 1m40s，
+# 但体积会到 42.8MB（+17.6%），换不来。
 [profile.release]
-lto = true
+lto = "thin"
 codegen-units = 1
 opt-level = "s"
 strip = true
