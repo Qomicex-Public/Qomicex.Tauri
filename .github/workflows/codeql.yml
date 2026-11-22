@@ -34,6 +34,7 @@ jobs:
               - 'qomicex-downloader-rust/**'
               - 'qomicex-connector-rust/**'
               - 'Qomicex.Updater/**'
+              - 'packages/qomicex-cli/templates/plugin-wasm/**'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - '.cargo/**'
