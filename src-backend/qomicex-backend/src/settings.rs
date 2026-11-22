@@ -107,6 +107,36 @@ pub(crate) fn default_game_dir() -> String {
     official_game_dir().to_string_lossy().into_owned()
 }
 
+/// 解析 `gameDir`：绝对路径原样返回，相对路径按**用户主目录**展开。
+///
+/// 不能用进程 cwd：macOS 从 Finder/Launchpad 启动时 cwd 是 `/`，相对 `.minecraft`
+/// 会拼成 `/.minecraft`（日志里 `abs_dir=/.minecraft versions_exists=false` 即此，
+/// 用户看到的是"一个实例都没有"）。返回的第二个值是来源，供日志定性。
+///
+/// 主目录拿不到（极端环境）时才退到 cwd，并把 `path_source` 标成 `cwd` —— 至少
+/// 日志能看出这是"没有主目录"的机器，而不是又一次静默解错。
+pub fn resolve_game_dir(raw: &str) -> (PathBuf, &'static str) {
+    let path = PathBuf::from(raw.trim());
+    if path.is_absolute() {
+        return (path, "absolute");
+    }
+    if let Some(home) = dirs::home_dir() {
+        return (home.join(&path), "home");
+    }
+    match std::env::current_dir() {
+        Ok(cwd) => (cwd.join(&path), "cwd"),
+        Err(_) => (path, "relative"),
+    }
+}
+
+/// 把 `gameDir` 归一成绝对路径（`settings.json` 里只存绝对路径）。
+pub(crate) fn normalize_game_dir(raw: &str) -> String {
+    if raw.trim().is_empty() {
+        return default_game_dir();
+    }
+    resolve_game_dir(raw).0.to_string_lossy().into_owned()
+}
+
 #[cfg(test)]
 mod default_dir_tests {
     use super::*;
@@ -463,6 +493,9 @@ fn normalize_loaded_settings(s: &mut SettingsResponse) {
     ) {
         s.process_priority = Some("normal".to_string());
     }
+    // `gameDir` 落盘后必须是绝对路径：相对值只可能来自旧配置/手改，交给
+    // [`normalize_game_dir`] 一次解析干净，避免每个消费点各自按 cwd 猜。
+    s.game_dir = normalize_game_dir(&s.game_dir);
 }
 
 /// 旧版「分别选择具体源」→ 新版「一个偏好 + 一个自动开关」的迁移。
@@ -1081,5 +1114,34 @@ mod relay_node_tests {
             normalize_loaded_settings(&mut s);
             assert_eq!(s.auto_select_source, Some(true));
         }
+    }
+}
+
+#[cfg(test)]
+mod game_dir_tests {
+    use super::*;
+
+    #[test]
+    fn absolute_game_dir_is_kept() {
+        let raw = if cfg!(windows) { r"C:\mc" } else { "/opt/mc" };
+        assert_eq!(normalize_game_dir(raw), raw);
+        assert_eq!(resolve_game_dir(raw).1, "absolute");
+    }
+
+    /// macOS 从 Finder 启动时 cwd 是 `/`：相对 `.minecraft` 必须落到主目录，
+    /// 而不是 `/.minecraft`（用户日志里的 `abs_dir=/.minecraft`）。
+    #[test]
+    fn relative_game_dir_uses_home_not_cwd() {
+        let (resolved, source) = resolve_game_dir(".minecraft");
+        if let Some(home) = dirs::home_dir() {
+            assert_eq!(source, "home");
+            assert_eq!(resolved, home.join(".minecraft"));
+            assert_ne!(resolved, PathBuf::from("/.minecraft"));
+        }
+    }
+
+    #[test]
+    fn empty_game_dir_falls_back_to_official_dir() {
+        assert_eq!(normalize_game_dir("   "), default_game_dir());
     }
 }

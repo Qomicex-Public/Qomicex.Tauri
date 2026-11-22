@@ -272,6 +272,10 @@ async fn put_settings(
     body.relay_nodes = settings::validate_relay_nodes(body.relay_nodes.as_deref())
         .map_err(|e| ApiError::bad_request("CONNECTOR_RELAY_INVALID", e))?;
 
+    // `gameDir` 与 load_settings 同一规则：只存绝对路径。前端在设置未加载成功时
+    // 会退回本地默认值 `.minecraft`，若原样落盘，macOS GUI 启动就会拼成 `/.minecraft`。
+    body.game_dir = settings::normalize_game_dir(&body.game_dir);
+
     settings::save_settings(&body)?;
     state
         .curseforge_fetch

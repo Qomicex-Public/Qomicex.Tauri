@@ -2239,7 +2239,7 @@ export default function Settings() {
                   label={t('settings.appearance.maxFrameRate')}
                   description={t('settings.appearance.maxFrameRateDesc')}
                   control={
-                    <Select value={String(settings.maxFrameRate)} onChange={(v) => update('maxFrameRate', Number(v))} className="w-48">
+                    <Select value={String(settings.maxFrameRate ?? 0)} onChange={(v) => update('maxFrameRate', Number(v))} className="w-48">
                       <SelectOption value="0">{t('settings.appearance.maxFrameRateUnlimited')}</SelectOption>
                       <SelectOption value="30">30 FPS</SelectOption>
                       <SelectOption value="60">60 FPS</SelectOption>

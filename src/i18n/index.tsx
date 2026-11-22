@@ -26,6 +26,20 @@ interface I18nContextValue {
 
 const I18nContext = createContext<I18nContextValue | null>(null)
 
+/**
+ * 缺失 key 每个（语言, key）只报一次：同一个 key 在一次渲染循环里会被调用几十次，
+ * 逐次告警会在日志里刷成一行几百字，真正的新缺失反而看不见。
+ */
+const reportedMissing = new Set<string>()
+
+function warnOnce(kind: 'missing key' | 'non-string value for key', key: string, lang: Lang) {
+  if (!import.meta.env.DEV) return
+  const id = `${kind}:${lang}:${key}`
+  if (reportedMissing.has(id)) return
+  reportedMissing.add(id)
+  console.warn(`[i18n] ${kind}: ${key} (${lang})`)
+}
+
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLang] = useState<Lang>(() => resolveLang(localStorage.getItem(STORAGE_KEY)))
 
@@ -70,12 +84,12 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       if (val && typeof val === 'object' && part in val) {
         val = (val as Record<string, unknown>)[part]
       } else {
-        if (import.meta.env.DEV) console.warn(`[i18n] missing key: ${String(key)} (${lang})`)
+        warnOnce('missing key', String(key), lang)
         return String(key)
       }
     }
     if (typeof val !== 'string') {
-      if (import.meta.env.DEV) console.warn(`[i18n] non-string value for key: ${String(key)} (${lang})`)
+      warnOnce('non-string value for key', String(key), lang)
       return String(key)
     }
     if (!params) return val

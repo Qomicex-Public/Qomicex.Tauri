@@ -107,6 +107,34 @@ pub async fn report_logs(
     Ok(true)
 }
 
+/// 上报前抹掉本机绝对路径里的家目录：日志尾部现在含 `home_dir` / `data_dir` /
+/// `game_dir`，直接上传等于把用户名一起发出去。本地日志保持原样（排障需要）。
+///
+/// 只替换家目录前缀，不是通用脱敏：路径若在其它盘符（如 `D:\`）下仍会保留，属已知
+/// 取舍（见 ADR-140「脱敏」一节）。
+fn redact_local_paths(text: &str) -> String {
+    let Some(home) = dirs::home_dir() else {
+        return text.to_string();
+    };
+    let home = home.to_string_lossy();
+    if home.is_empty() {
+        return text.to_string();
+    }
+    text.replace(home.as_ref(), "~")
+}
+
+#[cfg(test)]
+#[test]
+fn redacts_home_prefix_only() {
+    let Some(home) = dirs::home_dir() else { return };
+    let home = home.to_string_lossy().into_owned();
+    let line = format!("data_dir={home}/data game_dir={home}/.minecraft");
+    let out = redact_local_paths(&line);
+    assert!(!out.contains(&home), "{out}");
+    assert!(out.contains("data_dir=~/data"), "{out}");
+    assert!(out.contains("game_dir=~/.minecraft"), "{out}");
+}
+
 /// 注册进程级 panic hook（后端"崩溃"通道）：
 /// 1. 保留默认 panic 输出；2. 记录 `[panic] ...` 进 trace；
 /// 3. 进程内只上报一次：独立线程 + 自建 tokio runtime 上报
@@ -126,7 +154,7 @@ pub fn install_panic_hook(
             return;
         }
         let msg = info.to_string();
-        crate::services::trace::trace_append(format!("[panic] {msg}"));
+        crate::services::trace::trace_event("panic", "ERROR", &msg);
         let settings = settings.clone();
         let http = http.clone();
         std::thread::spawn(move || {
@@ -150,14 +178,14 @@ pub fn install_panic_hook(
 
                 let mut entries = vec![ClientLogEntry {
                     level: "error".to_string(),
-                    message: format!("[backend panic] {msg}"),
+                    message: redact_local_paths(&format!("[backend panic] {msg}")),
                     stack: None,
                     device_info: None,
                 }];
                 for line in tail {
                     entries.push(ClientLogEntry {
                         level: "info".to_string(),
-                        message: line.clone(),
+                        message: redact_local_paths(line),
                         stack: None,
                         device_info: None,
                     });
@@ -187,6 +215,17 @@ pub(crate) mod tests {
             Some(v) => std::env::set_var(key, v),
             None => std::env::remove_var(key),
         }
+    }
+
+    #[test]
+    fn redacts_home_prefix_in_reported_lines() {
+        let Some(home) = dirs::home_dir() else { return };
+        let home = home.to_string_lossy().into_owned();
+        let line = format!("data_dir={home}/data game_dir={home}/.minecraft");
+        let out = redact_local_paths(&line);
+        assert!(!out.contains(&home), "{out}");
+        assert!(out.contains("data_dir=~/data"), "{out}");
+        assert!(out.contains("game_dir=~/.minecraft"), "{out}");
     }
 
     #[test]

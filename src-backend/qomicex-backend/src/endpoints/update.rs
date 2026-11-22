@@ -107,7 +107,16 @@ async fn plan(
         ""
     };
 
-    tracing::info!("checking update plan for current={current} channel={channel} os={os} arch={arch} mode={mode}");
+    tracing::info!(
+        event = "update_check_started",
+        current = %current,
+        channel = %channel,
+        os = os,
+        arch = arch,
+        mode = mode,
+        "update check"
+    );
+    let started = std::time::Instant::now();
     let request = state
         .http_client
         .get(format!("{UPSTREAM_BASE}{UPDATE_PLAN_PATH}"))
@@ -129,7 +138,9 @@ async fn plan(
 
     let status = response.status();
     if status == StatusCode::NO_CONTENT {
-        return Ok(Json(UpdatePlanResponse::no_update("up-to-date")));
+        let plan = UpdatePlanResponse::no_update("up-to-date");
+        log_update_decision(&plan, current, &channel, started);
+        return Ok(Json(plan));
     }
     let text = response
         .text()
@@ -163,7 +174,35 @@ async fn plan(
             plan.package_url = Some(format!("{prefix}{url}"));
         }
     }
+    log_update_decision(&plan, current, &channel, started);
     Ok(Json(plan))
+}
+
+/// 更新结论：一行说清「是否更新、为什么、走哪个通道、耗时」。
+///
+/// 只打候选版本的那条旧日志（`update plan: current=... candidate=...`）无法回答
+/// "到底更不更新"，得从后续 downloader 日志反推；现在结论与依据在同一条里。
+fn log_update_decision(
+    plan: &UpdatePlanResponse,
+    current: &str,
+    channel: &str,
+    started: std::time::Instant,
+) {
+    tracing::info!(
+        event = "update_decision",
+        current,
+        channel,
+        candidate = plan.version.as_deref().unwrap_or(""),
+        should_update = plan.has_update,
+        reason = plan.reason.as_deref().unwrap_or(if plan.has_update {
+            "update-available"
+        } else {
+            "no-update"
+        }),
+        channel_switch = plan.channel_switch.unwrap_or(false),
+        duration_ms = started.elapsed().as_millis() as u64,
+        "update decision"
+    );
 }
 
 /// 硬件绑定的机器码（供上游许可证通道钉住 + 灰度门控）。

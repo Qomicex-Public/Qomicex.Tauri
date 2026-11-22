@@ -115,7 +115,7 @@ export default function FavoriteImportDialog({ path, onClose, onImported }: Prop
       </DialogBody>
 
       <DialogFooter>
-        <Button variant="secondary" onClick={onClose} disabled={importing}>{t('dialogs.common.cancel')}</Button>
+        <Button variant="secondary" onClick={onClose} disabled={importing}>{t('common.cancel')}</Button>
         <Button onClick={handleImport} disabled={!path || importing}>
           <MorphActionIcon active={importing} busy={RotateCwData} rest={UploadData} className="mr-1.5 h-3.5 w-3.5" />
           {importing ? t('resource.favorites.transfer.importing') : t('resource.favorites.transfer.confirm')}

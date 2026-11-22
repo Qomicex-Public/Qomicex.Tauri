@@ -14,6 +14,7 @@
 // 设置变更时调用 [`applySettingsToDom`]。
 
 import type { AppSettings } from '../api/settings.ts'
+import { setFrameCap } from './fps-limiter.ts'
 
 /**
  * 把一份设置应用到 `<html>`（CSS 变量 + dataset）。
@@ -29,12 +30,14 @@ export function applySettingsToDom(s: AppSettings): void {
   const enabled = s.animationsEnabled !== false
   const speed = s.animationSpeed ?? 1
   const maxFps = s.maxFrameRate ?? 0
-  const fpsScale = maxFps > 0 ? 60 / maxFps : 1
   root.dataset.animEnabled = String(enabled)
   // 缺失 = 开启（默认开）。这一项此前只在 App.tsx 设置，设置页改动不会即时生效。
   root.dataset.animGpu = String(s.gpuAcceleration !== false)
   root.dataset.maxFps = String(maxFps)
-  root.style.setProperty('--anim-duration-multiplier', String((1 / speed) * fpsScale))
+  // 帧率上限由全局 rAF 节流器兑现（`lib/fps-limiter.ts`），**不进时长**：
+  // 把 60/fps 乘进时长只会让动画变慢，帧率一点没降（issue #375）。
+  setFrameCap(maxFps)
+  root.style.setProperty('--anim-duration-multiplier', String(1 / speed))
 
   // ---- 字体 ----
   applyFont(s.fontFamily)

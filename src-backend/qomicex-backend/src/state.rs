@@ -32,9 +32,7 @@ use crate::services::plugin_process::PluginProcessService;
 use crate::services::resource_favorite::ResourceFavoriteService;
 use crate::services::resource_favorite_folder::ResourceFavoriteFolderService;
 use crate::services::scan_cache::VersionScanCache;
-use crate::services::trace::{
-    init_file_log, FileLog, LogLevelManager, TraceBufferStore, TraceDumpService,
-};
+use crate::services::trace::{LogLevelManager, TraceBufferStore, TraceDumpService};
 use crate::services::world_view::WorldViewService;
 use crate::settings;
 use crate::settings::SettingsResponse;
@@ -254,11 +252,9 @@ impl AppState {
         let resource_favorites = Arc::new(ResourceFavoriteService::new());
         let resource_favorite_folders = Arc::new(ResourceFavoriteFolderService::new());
         let account = Arc::new(AccountService::new().unwrap_or_default());
-        let trace_buffer = Arc::new(TraceBufferStore::default());
-        // 注册为全局 trace 缓冲：实时日志（TraceWriter / stderr 捕获）写入此处
-        crate::services::trace::init_global_trace(trace_buffer.clone());
-        // 文件日志：trace 行持续落盘（崩溃/重启后日志仍在）
-        init_file_log(Arc::new(FileLog::new()));
+        // 全局 trace 缓冲 + 文件日志（幂等）：main 已在 init_tracing 之前注册过，
+        // 这里取同一个 Arc，保证 /diagnostics/trace 读到的就是 tracing 写入的那份。
+        let trace_buffer = crate::services::trace::ensure_sinks();
         let trace_dump = Arc::new(TraceDumpService::new(trace_buffer.clone()));
 
         // 启动时套用已保存的日志级别（对应 Program.cs 中 levelManager.SetLevel）。
@@ -411,10 +407,11 @@ fn spawn_downloader_log_forward(dm: &Arc<DownloadManager>) {
         loop {
             match rx.recv().await {
                 Ok(qomicex_downloader::DownloadEvent::Log { level, message }) => {
-                    // 下载 URL 可能带签名/令牌，落盘前统一脱敏。
-                    let message = crate::util::url::redact_urls_in_text(&message);
-                    let line = format!("[downloader:{level:?}] {message}");
-                    crate::services::trace::trace_append(line);
+                    crate::services::trace::trace_event(
+                        "downloader",
+                        &format!("{level:?}"),
+                        &message,
+                    );
                 }
                 Ok(_) => {}
                 Err(_) => break,

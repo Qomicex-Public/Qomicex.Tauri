@@ -32,30 +32,40 @@ pub fn trace_broadcast() -> broadcast::Sender<String> {
         .clone()
 }
 
-/// 注册全局缓冲（重复注册忽略）。
-pub fn init_global_trace(buffer: Arc<TraceBufferStore>) {
-    let _ = TRACE_BUFFER.set(buffer);
-}
-
-/// 注册全局文件日志（重复注册忽略）。
-pub fn init_file_log(log: Arc<FileLog>) {
-    let _ = FILE_LOG.set(log);
-}
-
-/// 向全局缓冲追加一行（未初始化时静默丢弃），广播到 SSE 订阅者，并双写到文件日志。
+/// 确保全局缓冲 + 文件日志已注册（幂等），返回缓冲指针。
 ///
-/// tracing 的 fmt 行自带 `[YYYY-MM-DD HH:MM:SS.mmm]` 前缀；downloader / frontend /
-/// plugin 等直接走 `trace_append` 的行没有时间戳，这里统一补上，否则用户日志无法
-/// 按时间对齐事件。
-pub fn trace_append(line: String) {
-    let line = if line.starts_with("[20") {
-        line
+/// 必须在 `init_tracing` 之前调用：`tracing` 的 formatter 走 `trace_append`，
+/// 而它依赖这两个 sink。注册晚了，启动最早那批事件（含 `app_start_failed`）会静默丢失。
+pub fn ensure_sinks() -> Arc<TraceBufferStore> {
+    let buffer = TRACE_BUFFER
+        .get_or_init(|| Arc::new(TraceBufferStore::default()))
+        .clone();
+    let _ = FILE_LOG.get_or_init(|| Arc::new(FileLog::new()));
+    buffer
+}
+
+/// 追加一条外部日志（downloader / 前端 / 插件 / 子进程输出）：统一成
+/// `<时间戳> <LEVEL> [<service>] startup_id=<id> <message>` 后再落缓冲与文件。
+///
+/// URL 脱敏在这里做一次即可 —— 所有外部来源都经过本函数，调用方无需各自处理。
+pub fn trace_event(service: &str, level: &str, message: &str) {
+    let message = crate::util::url::redact_urls_in_text(message);
+    trace_append(crate::services::log_format::format_line(
+        service, level, &message,
+    ));
+}
+
+/// 追加一行原文：已带统一前缀的原样写入，否则补前缀（`service=app`，级别 `LOG`）。
+pub fn trace_raw(line: &str) {
+    if crate::services::log_format::is_formatted(line) {
+        trace_append(line.to_string());
     } else {
-        format!(
-            "[{}] {line}",
-            chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f")
-        )
-    };
+        trace_event("app", "LOG", line);
+    }
+}
+
+/// 追加一行已经带统一前缀的日志（driver：缓冲 + SSE + 文件）。
+pub fn trace_append(line: String) {
     if let Some(b) = TRACE_BUFFER.get() {
         b.append(line.clone());
     }
@@ -317,7 +327,7 @@ impl Write for TraceWriter {
         let mut rest = String::new();
         for line in pending.split_inclusive('\n') {
             if line.ends_with('\n') {
-                trace_append(line.trim_end_matches(['\n', '\r']).to_string());
+                trace_raw(line.trim_end_matches(['\n', '\r']));
             } else {
                 rest.push_str(line);
             }
@@ -356,12 +366,13 @@ pub fn start_io_capture() {
     }
 }
 
-/// 捕获线程公共处理：写缓冲（带来源 tag）+ 回显原句柄。
+/// 捕获线程公共处理：写缓冲（service = stdout/stderr）+ 回显原句柄。
+/// 子进程/核心库的 `println!` / `eprintln!` 没有级别信息，统一记为 `LOG`。
 fn handle_captured(tag: &str, line: String, echo: impl Fn(&[u8])) {
     for part in line.split('\n') {
         let t = part.trim_end_matches('\r');
         if !t.is_empty() {
-            trace_append(format!("[{tag}] {t}"));
+            trace_event(tag, "LOG", t);
         }
     }
     echo(line.as_bytes());
