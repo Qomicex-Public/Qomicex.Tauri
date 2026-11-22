@@ -9,8 +9,46 @@ on:
     - cron: '0 0 * * 1'
 
 jobs:
+  changes:
+    # rust 分析实测 1056s（抽取 8m54s + 查询 7.5m，--threads=4），且 CodeQL 对
+    # Rust 没有可复用的分析缓存，每个 PR 都要重付一遍。只在 PR 真碰了 Rust
+    # 代码时跑：被 job 级 if 跳过的检查上报 success，required check 不会卡住。
+    # 非 PR 事件（push main / 每周定时）不判定，一律跑全量。
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'src-backend/**'
+              - 'src-tauri/**'
+              - 'qomicex-core-rust/**'
+              - 'qomicex-downloader-rust/**'
+              - 'qomicex-connector-rust/**'
+              - 'Qomicex.Updater/**'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.cargo/**'
+              - '.github/codeql/**'
+              - '.github/workflows/codeql.yml'
+
   analyze:
     name: Analyze
+    needs: [changes]
+    # 输出为空（changes 被跳过或失败）时按「要跑」处理：宁可慢，不可漏扫。
+    if: |
+      !cancelled() &&
+      (github.event_name != 'pull_request' ||
+       matrix.language != 'rust' ||
+       needs.changes.outputs.rust != 'false')
     runs-on: ubuntu-latest
     permissions:
       actions: read

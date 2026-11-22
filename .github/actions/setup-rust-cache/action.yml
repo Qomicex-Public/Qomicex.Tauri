@@ -1,0 +1,27 @@
+name: Setup Rust build cache
+description: >
+  所有 Rust 编译作业共用的缓存前置：编译产物交给 sccache（GitHub Actions cache
+  后端）。
+
+  本仓没有根 workspace：swatinem/rust-cache 默认只缓存 <仓库根>/target（不存在），
+  真实产物在 src-backend/qomicex-backend/target、src-tauri/target 等各自的
+  目录里。历史缓存条目实测只有 0-6MB（release 上是 982B），等于每次冷编译。
+  因此 target 交给 sccache 按 crate 复用，rust-cache 只保留 cargo registry/git。
+
+runs:
+  using: composite
+  steps:
+    - uses: mozilla-actions/sccache-action@v0.0.11
+
+    - name: Enable sccache
+      shell: bash
+      run: |
+        # GITHUB_ENV 是 job 级，后续 cargo 步骤（含 tauri build 里的 cargo）都能看到。
+        # 关掉 incremental：它会给每次编译塞不同的 -C incremental 参数，sccache 命中率归零。
+        echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+        echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+        echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+
+    - uses: swatinem/rust-cache@v2
+      with:
+        cache-targets: false
