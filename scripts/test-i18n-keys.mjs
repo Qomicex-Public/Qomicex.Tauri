@@ -9,12 +9,15 @@
 // `dialogs.common.cancel` 这种键名，而构建与 typecheck 都不会报错
 // （t 的签名接受 `string & {}`，写错的字面量照样通过）。
 //
-// 数据来源：
-//   A) src/**/*.{ts,tsx} 里 `t('...')` 的字面量 key（含 `t("...")`）；
+// 数据来源（都不执行任何被检查的文件内容）：
+//   A) src/**/*.{ts,tsx} 里 `t('...')` / `t("...")` 的字面量 key（含跨行写法）；
 //      跳过模板字符串与拼接出来的动态 key。
-//   B) qomicex-tauri-i18n/src/<lang>/<namespace>.ts 的默认导出（键名即文件名，
-//      与 qomicex-tauri-i18n/src/<lang>/index.ts 的组装方式一致）。
+//   B) qomicex-tauri-i18n/src/<lang>/<namespace>.ts 的对象字面量，按 token 扫描出
+//      叶子路径（键名即文件名，与 <lang>/index.ts 的组装方式一致）。
 // 逐语言比对，任一 key 在任一语言缺失即 FAIL（退出码 1）。
+//
+// 不 eval 语言文件：词条文件随 i18n 子模块进来，用 `new Function`/`eval` 解析等于
+// 谁改一条翻译就能在开发者/CI 机器上执行任意代码（评审意见）。
 //
 // 用法：pnpm run test:i18n-keys
 
@@ -46,58 +49,137 @@ function walk(dir, out = []) {
   return out
 }
 
-/** 读取 <lang>/<ns>.ts 的默认导出对象；行号用于报错定位。 */
+/** 注释替换成空格（保留换行，行号不漂）；字符串里的 `//` 不算注释。 */
+function stripComments(src) {
+  let out = ''
+  let i = 0
+  while (i < src.length) {
+    const c = src[i]
+    if (c === '"' || c === "'" || c === '`') {
+      let j = i + 1
+      out += c
+      while (j < src.length && src[j] !== c) {
+        if (src[j] === '\\') {
+          out += src[j] + (src[j + 1] ?? '')
+          j += 2
+          continue
+        }
+        out += src[j]
+        j++
+      }
+      out += src[j] ?? ''
+      i = j + 1
+      continue
+    }
+    if (c === '/' && src[i + 1] === '/') {
+      while (i < src.length && src[i] !== '\n') {
+        out += ' '
+        i++
+      }
+      continue
+    }
+    if (c === '/' && src[i + 1] === '*') {
+      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) {
+        out += src[i] === '\n' ? '\n' : ' '
+        i++
+      }
+      out += '  '
+      i += 2
+      continue
+    }
+    out += c
+    i++
+  }
+  return out
+}
+
+/** 极简 token 化：字符串字面量、标识符（当 key 文本）、以及 { } : 标点。 */
+function tokenize(src) {
+  const tokens = []
+  let i = 0
+  while (i < src.length) {
+    const c = src[i]
+    if (c === '"' || c === "'" || c === '`') {
+      let j = i + 1
+      let v = ''
+      while (j < src.length && src[j] !== c) {
+        if (src[j] === '\\') {
+          v += src[j + 1] ?? ''
+          j += 2
+          continue
+        }
+        v += src[j]
+        j++
+      }
+      tokens.push({ t: 'key', v })
+      i = j + 1
+      continue
+    }
+    if (c === '{' || c === '}' || c === ':') {
+      tokens.push({ t: c })
+      i++
+      continue
+    }
+    if (/[A-Za-z0-9_$]/.test(c)) {
+      let j = i
+      while (j < src.length && /[A-Za-z0-9_$]/.test(src[j])) j++
+      tokens.push({ t: 'key', v: src.slice(i, j) })
+      i = j
+      continue
+    }
+    i++
+  }
+  return tokens
+}
+
+/** 从对象字面量抽取叶子路径（`a: { b: 'x' }` → `a.b`）；非对象值不算命名空间。 */
+function collectLeafPaths(src, namespace, out) {
+  const tokens = tokenize(src)
+  const scope = []
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i]
+    if (tok.t === '}') {
+      scope.pop()
+      continue
+    }
+    if (tok.t === 'key' && tokens[i + 1]?.t === ':') {
+      if (tokens[i + 2]?.t === '{') {
+        scope.push(tok.v)
+      } else {
+        out.add([namespace, ...scope, tok.v].join('.'))
+      }
+      i++ // 跳过 ':'
+    }
+  }
+}
+
 function readLocale(lang) {
   const dir = join(I18N_DIR, lang)
   if (!existsSync(dir)) return null
-  const tree = {}
+  const keys = new Set()
   for (const name of readdirSync(dir)) {
     if (!name.endsWith('.ts') || name === 'index.ts') continue
     const ns = name.slice(0, -3)
-    const text = readFileSync(join(dir, name), 'utf8')
-    const body = text
-      .replace(/^\s*\/\/.*$/gm, '')
+    const src = stripComments(readFileSync(join(dir, name), 'utf8'))
       .replace(/export\s+default/, '')
       .replace(/\bas\s+const\b/g, '')
-      .replace(/;\s*$/, '')
-    try {
-      tree[ns] = new Function(`return (${body})`)()
-    } catch (e) {
-      console.error(`[test-i18n-keys] 无法解析 ${lang}/${name}: ${e.message}`)
-      process.exit(1)
-    }
+    collectLeafPaths(src, ns, keys)
   }
-  return tree
+  return keys
 }
 
-function hasKey(tree, key) {
-  let node = tree
-  for (const part of key.split('.')) {
-    if (!node || typeof node !== 'object' || !(part in node)) return false
-    node = node[part]
-  }
-  return typeof node === 'string'
-}
-
-/** 收集 `t('literal')` 的 key 与首个出现位置。 */
+/** 收集 `t('literal')` 的 key 与首个出现位置（整文件扫描，支持跨行实参）。 */
 function collectUsedKeys() {
   const used = new Map()
-  const files = walk(SRC).filter(
-    (p) => /\.(ts|tsx)$/.test(p) && !p.endsWith('.d.ts'),
-  )
+  const files = walk(SRC).filter((p) => /\.(ts|tsx)$/.test(p) && !p.endsWith('.d.ts'))
   for (const file of files) {
-    const text = readFileSync(file, 'utf8')
-    const lines = text.split('\n')
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]
-      // 跳过注释行，避免文档里的示例 key 被当成真实调用
-      if (/^\s*(\/\/|\*)/.test(line)) continue
-      for (const m of line.matchAll(/\bt\(\s*(['"])([^'"]+)\1/g)) {
-        const key = m[2]
-        if (!KEY_RE.test(key)) continue
-        if (!used.has(key)) {
-          used.set(key, `${relative(ROOT, file)}:${i + 1}`)
-        }
+    const text = stripComments(readFileSync(file, 'utf8'))
+    for (const m of text.matchAll(/\bt\(\s*(['"])([^'"]+)\1/g)) {
+      const key = m[2]
+      if (!KEY_RE.test(key)) continue
+      if (!used.has(key)) {
+        const line = text.slice(0, m.index).split('\n').length
+        used.set(key, `${relative(ROOT, file)}:${line}`)
       }
     }
   }
@@ -107,18 +189,18 @@ function collectUsedKeys() {
 const used = collectUsedKeys()
 const locales = new Map()
 for (const lang of LANGS) {
-  const tree = readLocale(lang)
-  if (!tree) {
+  const keys = readLocale(lang)
+  if (!keys) {
     console.error(`[test-i18n-keys] 缺少语言目录：${lang}`)
     process.exit(1)
   }
-  locales.set(lang, tree)
+  locales.set(lang, keys)
 }
 
 const missing = []
 for (const [key, where] of used) {
-  for (const [lang, tree] of locales) {
-    if (!hasKey(tree, key)) missing.push({ key, lang, where })
+  for (const [lang, keys] of locales) {
+    if (!keys.has(key)) missing.push({ key, lang, where })
   }
 }
 

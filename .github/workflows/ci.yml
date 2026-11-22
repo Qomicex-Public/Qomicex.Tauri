@@ -181,6 +181,9 @@ jobs:
       # 步骤名 i18n 覆盖护栏：后端安装管线里的 step id 必须在 downloads.steps 有词条，
       # 否则下载中心卡片直接显示 `downloads.steps.<id>` 键名（Technic Solder 期3 漏过 4 个）。
       - run: pnpm run test:i18n-steps
+      # 静态 i18n key 护栏：`t('字面量')` 必须在每个语言的资源里都有词条 —— 缺失时
+      # release 用户直接看到键名（t() 原样返回 key，告警只在 DEV 打）。
+      - run: pnpm run test:i18n-keys
       # 插件主题同步的注册/注销配对护栏：registerThemeSync 的返回值丢弃会让已卸载
       # 的 iframe 被模块级 Set 永久持有（每次启用/禁用循环泄漏一个 iframe 及其 DOM）。
       - run: pnpm run test:plugin-theme-sync
