@@ -44,7 +44,39 @@
 - settings.rs 新增 launchHardwareBoost / processPriority 字段；前端 Settings 页与 7 语言文案同步
 - 系统副作用：Windows 会写入 HKCU 注册表（按 exe 生效，影响同一 java.exe 的其它用法），macOS 会临时改变全局游戏模式
 
+## 修订：2026-11-23（v1.1，macOS 游戏模式失效）
+
+用户反馈「装了 Xcode 仍吃不到游戏模式」。复核代码后确认两处确定缺陷：
+
+1. 只认 `/Applications/Xcode.app/Contents/Developer/usr/bin/gamepolicyctl` 一条路径。
+   Xcode-beta、非默认安装位置、只装 Command Line Tools 的用户全部被 `is_file()`
+   挡掉，且只打 `debug` 级日志，用户和我们都看不到。
+2. `status()` 的 stderr 被丢进 `Stdio::null()`，`set on` 之后也从不回读状态，
+   无法区分「工具没跑起来」和「跑了但策略没生效」。
+
+改法：
+
+- 定位顺序改为 `xcrun --find gamepolicyctl` → `xcode-select -p` + `usr/bin/gamepolicyctl`
+  → `/Applications/Xcode.app` / `Xcode-beta.app` 兜底；结果进程内缓存。
+- 捕获 stderr 并归类（Xcode 版本不匹配的 dyld 符号缺失 / Xcode 许可未接受 / 权限不足），
+  以 `warn` 落日志；`set on` 成功后用 `game-mode status` 回读，未出现
+  `forced always on` 即告警。
+- Intel Mac（`target_arch != aarch64`）直接跳过并记日志：Game Mode 只在 Apple Silicon 上存在。
+- 新增 `src-tauri/Info.plist`（Tauri 构建期合并进 bundle）：`LSApplicationCategoryType`
+  = `public.app-category.games`、`GCSupportsGameMode`、`LSSupportsGameMode`。
+
+依据与边界：
+
+- Apple 工程师确认 Info.plist 属性本身不继承给 java 子进程；但 Steam 与官方启动器靠
+  launcher 身份让 `gamepolicyd` 把其拉起的 java 记为 `labelReason=launcher` 的游戏候选
+  （PrismLauncher#1644 实测）。这套标记因此是「让子进程进入候选」的路径，能否命中仍取决于
+  系统版本与全屏状态，故保留 gamepolicyctl 作为强制开关。
+- macOS 26 上 gamepolicyctl 常因 `GamePolicy.framework` 符号缺失直接 abort；此时只能依赖
+  上面的 plist 标记，日志会写明原因。
+- 前置条件不变：游戏必须全屏且前台，Game Mode 才会真正启用。
+
 ## 修订记录
 | 日期 | 版本 | 修改内容 | 修改人 |
 |---|---|---|---|
 | 2026-11-19 | v1.0 | 初版创建 | AI Agent |
+| 2026-11-23 | v1.1 | macOS 游戏模式：工具定位改为 xcrun/xcode-select 链、补 stderr 与状态回读、Intel 跳过、新增 Info.plist 游戏标记 | AI Agent |
