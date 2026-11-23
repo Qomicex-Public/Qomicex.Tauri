@@ -51,7 +51,7 @@ pub fn prepare_launch(java_path: &str) {
     windows::apply_gpu_preference(java_path);
     #[cfg(target_os = "macos")]
     macos::enable_game_mode();
-    #[cfg(not(windows))]
+    #[cfg(unix)]
     let _ = java_path;
 }
 
@@ -294,9 +294,8 @@ mod windows {
 mod game_mode {
     use std::path::PathBuf;
 
-    /// 工具候选：先看 `xcode-select -p` 选中的 Developer 目录（跟随自定义安装位置与
-    /// Xcode-beta），再退回两个常见安装目录。只装 Command Line Tools 时 Developer 目录
-    /// 指向 `/Library/Developer/CommandLineTools`，其中没有 gamepolicyctl，兜底不能省。
+    /// 只装 Command Line Tools 时 `xcode-select -p` 指向
+    /// `/Library/Developer/CommandLineTools`，其中没有 gamepolicyctl，兜底不能省。
     pub(super) fn candidates(developer_dir: Option<&str>) -> Vec<PathBuf> {
         let mut out = Vec::with_capacity(3);
         if let Some(dir) = developer_dir.map(str::trim).filter(|dir| !dir.is_empty()) {
@@ -310,7 +309,6 @@ mod game_mode {
         out
     }
 
-    /// 把 gamepolicyctl 的 stderr 翻成一句能直接照做的提示。
     pub(super) fn classify_failure(stderr: &str) -> &'static str {
         let lower = stderr.to_ascii_lowercase();
         if lower.contains("symbol not found") {
@@ -324,7 +322,6 @@ mod game_mode {
         }
     }
 
-    /// `set on` 只有在策略被强制时才算真的生效。
     pub(super) fn forced_always_on(status_stdout: &str) -> bool {
         status_stdout
             .to_ascii_lowercase()
@@ -341,6 +338,28 @@ mod game_mode {
             .take(400)
             .collect()
     }
+
+    /// 多行摘要：`game-mode status` 的策略说明在第二、三行，只取首行会把原因吞掉。
+    pub(super) fn excerpt(text: &str, max_lines: usize) -> String {
+        let mut out = String::new();
+        for line in text
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .take(max_lines)
+        {
+            if !out.is_empty() {
+                out.push_str(" | ");
+            }
+            out.push_str(line);
+        }
+        out.chars().take(400).collect()
+    }
+
+    /// `sysctl -n hw.optional.arm64` 的输出判定：Rosetta 下仍为 1。
+    pub(super) fn is_arm64_capability(stdout: &str) -> bool {
+        stdout.trim() == "1"
+    }
 }
 
 /// `test` 也编译：没有 Mac 的开发机与 CI 上，macOS 专属代码至少能过一遍类型检查
@@ -350,51 +369,54 @@ mod game_mode {
 mod macos {
     use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::OnceLock;
+    use std::time::{Duration, Instant};
 
     use super::{game_mode, qml_dir};
+
+    /// 子进程上限。xcrun / gamepolicyctl 正常在 100ms 内返回；挂住时不能把启动流程一起挂死。
+    const TOOL_TIMEOUT: Duration = Duration::from_secs(3);
+    const POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+    /// 进程内并发启动的实例数：多个实例同时跑时，最后一个退出才还原全局策略。
+    static ACTIVE: AtomicUsize = AtomicUsize::new(0);
 
     /// 存在即表示「是我们打开的全局游戏模式」，进程退出/异常路径据此复位。
     pub(super) fn marker() -> PathBuf {
         qml_dir().join("mac-game-mode.on")
     }
 
-    fn output(program: &Path, args: &[&str]) -> Option<String> {
-        Command::new(program)
+    /// 带超时的子进程调用。`Command::output()` 没有截止时间，工具挂住会把
+    /// 同步的 `prepare_launch` 一起挂住，游戏永远起不来。
+    fn output_bounded(program: &Path, args: &[&str]) -> Result<String, String> {
+        let mut child = Command::new(program)
             .args(args)
             .stdin(Stdio::null())
-            .output()
-            .ok()
-            .filter(|out| out.status.success())
-            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
-    }
-
-    /// 定位 gamepolicyctl。写死 `/Applications/Xcode.app/...` 会让 Xcode-beta、
-    /// 非默认安装位置、只装 Command Line Tools 的用户全部静默跳过。
-    fn tool() -> Option<&'static Path> {
-        static TOOL: OnceLock<Option<PathBuf>> = OnceLock::new();
-        TOOL.get_or_init(|| {
-            // xcrun 跟随 DEVELOPER_DIR 与自定义安装位置，是最可靠的一条。
-            if let Some(found) = output(Path::new("/usr/bin/xcrun"), &["--find", "gamepolicyctl"]) {
-                if !found.is_empty() && Path::new(&found).is_file() {
-                    return Some(PathBuf::from(found));
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("无法执行 {}: {e}", program.display()))?;
+        let deadline = Instant::now() + TOOL_TIMEOUT;
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "{} 超过 {}s 未返回，已终止",
+                        program.display(),
+                        TOOL_TIMEOUT.as_secs()
+                    ));
                 }
+                Ok(None) => std::thread::sleep(POLL_INTERVAL),
+                Err(e) => return Err(format!("等待 {} 失败: {e}", program.display())),
             }
-            let developer_dir = output(Path::new("/usr/bin/xcode-select"), &["-p"]);
-            game_mode::candidates(developer_dir.as_deref())
-                .into_iter()
-                .find(|path| path.is_file())
-        })
-        .as_deref()
-    }
-
-    fn run(args: &[&str]) -> Result<String, String> {
-        let tool = tool().ok_or_else(|| "未找到 gamepolicyctl".to_string())?;
-        let out = Command::new(tool)
-            .args(args)
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| format!("无法执行 {}: {e}", tool.display()))?;
+        }
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("读取 {} 输出失败: {e}", program.display()))?;
         if out.status.success() {
             return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
         }
@@ -406,10 +428,57 @@ mod macos {
         ))
     }
 
+    /// 定位 gamepolicyctl。写死 `/Applications/Xcode.app/...` 会让 Xcode-beta、
+    /// 非默认安装位置、只装 Command Line Tools 的用户全部静默跳过。
+    fn locate_tool() -> Option<PathBuf> {
+        // xcrun 跟随 DEVELOPER_DIR 与自定义安装位置，是最可靠的一条。
+        if let Ok(found) = output_bounded(Path::new("/usr/bin/xcrun"), &["--find", "gamepolicyctl"])
+        {
+            let found = found.trim();
+            if !found.is_empty() && Path::new(found).is_file() {
+                return Some(PathBuf::from(found));
+            }
+        }
+        let developer_dir = output_bounded(Path::new("/usr/bin/xcode-select"), &["-p"]).ok();
+        game_mode::candidates(developer_dir.as_deref())
+            .into_iter()
+            .find(|path| path.is_file())
+    }
+
+    /// 只缓存成功：用户装完 Xcode 或切了 `xcode-select` 之后不必重启启动器。
+    fn tool() -> Option<&'static Path> {
+        static TOOL: OnceLock<PathBuf> = OnceLock::new();
+        if let Some(path) = TOOL.get() {
+            return Some(path.as_path());
+        }
+        let found = locate_tool()?;
+        Some(TOOL.get_or_init(|| found).as_path())
+    }
+
+    fn run(args: &[&str]) -> Result<String, String> {
+        let tool = tool().ok_or_else(|| "未找到 gamepolicyctl".to_string())?;
+        output_bounded(tool, args)
+    }
+
+    /// Game Mode 只在 Apple Silicon 上存在。`cfg!(target_arch)` 是编译期值，
+    /// x86_64 包在 Apple Silicon 上以 Rosetta 运行时会误判成 Intel，因此按硬件能力判定。
+    fn apple_silicon() -> bool {
+        if cfg!(target_arch = "aarch64") {
+            return true;
+        }
+        output_bounded(Path::new("/usr/sbin/sysctl"), &["-n", "hw.optional.arm64"])
+            .map(|out| game_mode::is_arm64_capability(&out))
+            .unwrap_or(false)
+    }
+
+    fn write_marker() -> std::io::Result<()> {
+        std::fs::create_dir_all(qml_dir())?;
+        std::fs::write(marker(), b"on")
+    }
+
     pub(super) fn enable_game_mode() {
-        // Game Mode 只在 Apple Silicon 上存在；Intel 机器设了也不会生效。
-        if !cfg!(target_arch = "aarch64") {
-            tracing::warn!("macOS 游戏模式：Intel Mac 不支持 Game Mode，跳过");
+        if !apple_silicon() {
+            tracing::warn!("macOS 游戏模式：非 Apple Silicon，系统不提供 Game Mode，跳过");
             return;
         }
         let Some(tool) = tool() else {
@@ -418,30 +487,46 @@ mod macos {
             );
             return;
         };
-        match run(&["game-mode", "set", "on"]) {
-            Ok(_) => {
-                // set on 返回 0 不代表系统真的强制了策略，回读一次再判定。
-                let status = run(&["game-mode", "status"]).unwrap_or_default();
-                if !game_mode::forced_always_on(&status) {
-                    tracing::warn!(
-                        tool = %tool.display(),
-                        status = %game_mode::first_line(&status),
-                        "macOS 游戏模式：set on 返回成功但策略未生效（系统仍按自动策略）"
-                    );
-                }
-                let _ = std::fs::create_dir_all(qml_dir());
-                if let Err(e) = std::fs::write(marker(), b"on") {
-                    tracing::warn!(error = %e, "写入 macOS 游戏模式标记失败");
-                }
-            }
-            Err(e) => {
-                tracing::warn!(tool = %tool.display(), error = %e, "macOS 游戏模式：开启失败")
+        if let Err(e) = run(&["game-mode", "set", "on"]) {
+            tracing::warn!(tool = %tool.display(), error = %e, "macOS 游戏模式：开启失败");
+            return;
+        }
+        ACTIVE.fetch_add(1, Ordering::SeqCst);
+
+        // set on 返回 0 不代表系统真的强制了策略，回读一次再判定。
+        match run(&["game-mode", "status"]) {
+            Ok(status) if game_mode::forced_always_on(&status) => {}
+            Ok(status) => tracing::warn!(
+                status = %game_mode::excerpt(&status, 3),
+                "macOS 游戏模式：set on 返回成功但策略未生效（系统仍按自动策略）"
+            ),
+            Err(e) => tracing::warn!(
+                error = %e,
+                "macOS 游戏模式：状态回读失败，无法确认策略是否生效"
+            ),
+        }
+
+        if let Err(e) = write_marker() {
+            // 标记写不进去就没有还原依据，立刻还原，避免全局策略一直留在 forced。
+            tracing::warn!(error = %e, "写入 macOS 游戏模式标记失败，立即还原");
+            if run(&["game-mode", "set", "auto"]).is_ok() {
+                let _ = ACTIVE.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                    Some(n.saturating_sub(1))
+                });
             }
         }
     }
 
     pub(super) fn disable_game_mode() {
         if !marker().is_file() {
+            return;
+        }
+        let previous = ACTIVE
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                Some(n.saturating_sub(1))
+            })
+            .unwrap_or(0);
+        if previous > 1 {
             return;
         }
         match run(&["game-mode", "set", "auto"]) {
@@ -611,7 +696,9 @@ mod priority_tests {
 
 #[cfg(test)]
 mod game_mode_tests {
-    use super::game_mode::{candidates, classify_failure, first_line, forced_always_on};
+    use super::game_mode::{
+        candidates, classify_failure, excerpt, first_line, forced_always_on, is_arm64_capability,
+    };
     use std::path::PathBuf;
 
     #[test]
@@ -663,6 +750,29 @@ mod game_mode_tests {
     fn first_line_is_trimmed_and_bounded() {
         assert_eq!(first_line("\n  boom  \nsecond"), "boom");
         assert_eq!(first_line(""), "");
-        assert_eq!(first_line(&"x".repeat(1000)).chars().count(), 400);
+        let long = "x".repeat(1000);
+        assert_eq!(first_line(&long), "x".repeat(400));
+    }
+
+    #[test]
+    fn excerpt_keeps_the_policy_lines() {
+        // status 的第二、三行才是「为什么没强制」，只取首行会把原因吞掉。
+        let status = "Game mode is on.\nGame mode enablement policy is currently disabled. \
+                      Game mode is forced always on.\n";
+        let joined = excerpt(status, 3);
+        assert!(joined.contains("Game mode is on."));
+        assert!(joined.contains("forced always on"));
+        assert_eq!(excerpt(status, 1), "Game mode is on.");
+        assert_eq!(excerpt("", 3), "");
+        assert!(excerpt(&"y".repeat(1000), 3).chars().count() <= 400);
+    }
+
+    #[test]
+    fn arm64_capability_reads_sysctl_output() {
+        assert!(is_arm64_capability("1\n"));
+        assert!(is_arm64_capability("1"));
+        assert!(!is_arm64_capability("0\n"));
+        assert!(!is_arm64_capability(""));
+        assert!(!is_arm64_capability("hw.optional.arm64: 1"));
     }
 }
