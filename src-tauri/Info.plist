@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Tauri 构建期把本文件合并进 bundle 的 Info.plist。
+	     让 gamepolicyd 把本启动器拉起的 java 进程当作游戏候选（Steam 与官方启动器
+	     同款机制）；Game Mode 仍需游戏全屏，且仅 Apple Silicon 支持。 -->
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.games</string>
+	<key>GCSupportsGameMode</key>
+	<true/>
+	<key>LSSupportsGameMode</key>
+	<true/>
+</dict>
+</plist>

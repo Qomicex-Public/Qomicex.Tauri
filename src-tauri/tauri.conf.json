@@ -47,6 +47,9 @@
           "libwebkit2gtk-4.1-0"
         ]
       }
+    },
+    "macOS": {
+      "infoPlist": "./Info.plist"
     }
   },
   "plugins": {
