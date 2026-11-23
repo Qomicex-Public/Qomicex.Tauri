@@ -255,19 +255,25 @@ jobs:
         with:
           path: ~\AppData\Local\tauri
           key: tauri-bundler-${{ runner.os }}
-      # link.exe 是单线程的，链接是 Windows 这一段的固定大头。rust-lld 随 Rust
-      # 工具链自带，外部实测同样链接量 212-263s → 148-174s（-25~30%）；产物仍是
-      # MSVC 工具链产物。找不到就退回默认 link.exe。
+      # link.exe 是单线程的，链接是 Windows 这一段的固定大头。rust-lld 不在 PATH 上，
+      # 它在 <sysroot>/lib/rustlib/<triple>/bin/；找不到再退回 VS 的 lld-link.exe。
+      # 最后显式 exit 0：上面 any 命令的 $LASTEXITCODE 非零会让 pwsh 步骤整体失败。
       - name: Prefer rust-lld
         shell: pwsh
         run: |
-          $lld = (rustup which rust-lld 2>$null)
-          if ($lld -and (Test-Path $lld)) {
+          $sysroot = (rustc --print sysroot)
+          $candidates = @(
+            (Join-Path $sysroot "lib/rustlib/x86_64-pc-windows-msvc/bin/rust-lld.exe"),
+            "C:\Program Files\LLVM\bin\lld-link.exe"
+          )
+          $lld = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if ($lld) {
             "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$lld" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
             Write-Output "linker: $lld"
           } else {
-            Write-Output "::warning::rust-lld 不可用，退回 link.exe"
+            Write-Output "::warning::未找到 rust-lld / lld-link，退回 link.exe"
           }
+          exit 0
       # src-tauri 用 include_bytes! 把下面阶段的 backend.exe / Packet.dll / wintun.dll
       # / updater.exe 编进主程序，而后端这时还没编完。先放空占位文件，让 src-tauri 的
       # 依赖树并行编起来；真实产物替换后由 cargo clean -p 强制重编这一个 crate。
@@ -458,19 +464,25 @@ jobs:
         with:
           path: ~\AppData\Local\tauri
           key: tauri-bundler-${{ runner.os }}
-      # link.exe 是单线程的，链接是 Windows 这一段的固定大头。rust-lld 随 Rust
-      # 工具链自带，外部实测同样链接量 212-263s → 148-174s（-25~30%）；产物仍是
-      # MSVC 工具链产物。找不到就退回默认 link.exe。
+      # link.exe 是单线程的，链接是 Windows 这一段的固定大头。rust-lld 不在 PATH 上，
+      # 它在 <sysroot>/lib/rustlib/<triple>/bin/；找不到再退回 VS 的 lld-link.exe。
+      # 最后显式 exit 0：上面 any 命令的 $LASTEXITCODE 非零会让 pwsh 步骤整体失败。
       - name: Prefer rust-lld
         shell: pwsh
         run: |
-          $lld = (rustup which rust-lld 2>$null)
-          if ($lld -and (Test-Path $lld)) {
+          $sysroot = (rustc --print sysroot)
+          $candidates = @(
+            (Join-Path $sysroot "lib/rustlib/aarch64-pc-windows-msvc/bin/rust-lld.exe"),
+            "C:\Program Files\LLVM\bin\lld-link.exe"
+          )
+          $lld = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if ($lld) {
             "CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER=$lld" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
             Write-Output "linker: $lld"
           } else {
-            Write-Output "::warning::rust-lld 不可用，退回 link.exe"
+            Write-Output "::warning::未找到 rust-lld / lld-link，退回 link.exe"
           }
+          exit 0
       # src-tauri 用 include_bytes! 把下面阶段的 backend.exe / Packet.dll / wintun.dll
       # / updater.exe 编进主程序，而后端这时还没编完。先放空占位文件，让 src-tauri 的
       # 依赖树并行编起来；真实产物替换后由 cargo clean -p 强制重编这一个 crate。
