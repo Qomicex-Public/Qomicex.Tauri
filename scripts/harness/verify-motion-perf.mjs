@@ -116,6 +116,7 @@ function printResults(results, executablePath) {
     pad('场景', 22) +
       pad('帧数', 6) +
       pad('p50', 8) +
+      pad('p95', 8) +
       pad('max', 8) +
       pad('>16ms', 8) +
       pad('>32ms', 8) +
@@ -126,6 +127,7 @@ function printResults(results, executablePath) {
       pad(r.label, 22) +
         pad(r.frames, 6) +
         pad(`${r.p50.toFixed(1)}`, 8) +
+        pad(`${r.p95.toFixed(1)}`, 8) +
         pad(`${r.max.toFixed(1)}`, 8) +
         pad(r.over16, 8) +
         pad(r.over32, 8) +
@@ -165,8 +167,6 @@ try {
   await page.waitForTimeout(600)
   await clickRoute(page, '/')
   await page.waitForTimeout(600)
-
-  const results = []
 
   // 页面转场：整页 opacity + 位移，子树里有 backdrop-filter 卡片时最贵。
   for (const href of ['/instances', '/settings', '/']) {

@@ -50,8 +50,8 @@ export function Tabs({ tabs, activeTab, onChange, className, orientation = 'hori
     )}>
       <div
         ref={indicatorRef}
-        className="anim-transition absolute rounded-lg bg-primary/10 transition-[top,left,width,height] ease-[var(--ease-emphasized)]"
-        style={{ top: 0, left: 0, width: 0, height: 0, transitionDuration: 'var(--motion-slow)' }}
+        className="anim-transition absolute rounded-lg bg-primary/10 transition-[top,left,width,height] ease-[var(--ease-emphasized,cubic-bezier(0.16,1,0.3,1))]"
+        style={{ top: 0, left: 0, width: 0, height: 0, transitionDuration: 'var(--motion-slow, 260ms)' }}
       />
       {tabs.map((tab, i) => {
         // 竖排且分组名变化时插入分组标题（首个分组用 pt-0，避免顶部多余留白）
@@ -73,7 +73,7 @@ export function Tabs({ tabs, activeTab, onChange, className, orientation = 'hori
               ref={(el) => { if (el) tabsRef.current.set(tab.id, el) }}
               onClick={() => onChange(tab.id)}
               className={cn(
-                'anim-transition flex items-center gap-2.5 rounded-lg px-3.5 py-2.5 text-left text-sm transition-[color,background-color] duration-[var(--motion-fast)] ease-[var(--ease-standard)] relative z-10',
+                'anim-transition flex items-center gap-2.5 rounded-lg px-3.5 py-2.5 text-left text-sm transition-[color,background-color] duration-[var(--motion-fast,120ms)] ease-[var(--ease-standard,cubic-bezier(0.2,0,0,1))] relative z-10',
                 isActive
                   ? 'font-medium text-primary'
                   : 'text-muted-foreground hover:bg-accent hover:text-foreground',

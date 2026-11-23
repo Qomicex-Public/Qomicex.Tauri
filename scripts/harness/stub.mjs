@@ -256,17 +256,8 @@ const server = createServer(async (req, res) => {
       sendJson(res, 200, MOCK.accounts[0] ?? null)
       return
     }
-    // --- /api/progress/stream：保持长连接，否则前端每秒重连一次 ---
-    if (path === '/api/progress/stream' && method === 'GET') {
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-        ...cors,
-      })
-      res.write(': connected\n\n')
-      return
-    }
+    // --- /api/progress/stream 有意不 mock：harness 的 routeApiToStub 用 arrayBuffer()
+    // 转发响应，长连接会让 Playwright 的路由永不 fulfill；404 让前端按 1s 退避重连。 ---
     // --- POST /api/store/check-updates (插件静默更新轮询，返回空列表) ---
     if (path === '/api/store/check-updates' && method === 'POST') {
       sendJson(res, 200, { updates: [] })

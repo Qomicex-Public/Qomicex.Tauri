@@ -10,7 +10,7 @@ export function PageHeader({ title, subtitle, actions, onBack }: { title: ReactN
     <div className="flex items-center justify-between gap-4">
       <div className="flex items-center gap-3 min-w-0">
         {onBack && (
-          <button onClick={onBack} className="anim-transition flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,transform] duration-[var(--motion-fast)] ease-[var(--ease-standard)] hover:bg-accent hover:text-foreground active:scale-[0.97]">
+          <button onClick={onBack} className="anim-transition flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,transform] duration-[var(--motion-fast,120ms)] ease-[var(--ease-standard,cubic-bezier(0.2,0,0,1))] hover:bg-accent hover:text-foreground active:scale-[0.97]">
             <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
           </button>
         )}
