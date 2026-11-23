@@ -256,14 +256,17 @@ jobs:
           path: ~\AppData\Local\tauri
           key: tauri-bundler-${{ runner.os }}
       # link.exe 是单线程的，链接是 Windows 这一段的固定大头。rust-lld 不在 PATH 上，
-      # 它在 <sysroot>/lib/rustlib/<triple>/bin/；找不到再退回 VS 的 lld-link.exe。
-      # 最后显式 exit 0：上面 any 命令的 $LASTEXITCODE 非零会让 pwsh 步骤整体失败。
+      # 它在 <sysroot>/lib/rustlib/<host>/bin/；host 必须是宿主三元组——ARM64 作业在
+      # x64 runner 上交叉编译，可执行的 rust-lld 在 x64 目录下（lld 本身能跨架构链接）。
+      # 找不到再退回 VS 的 lld-link.exe。末尾显式 exit 0：残留的 $LASTEXITCODE 非零
+      # 会让 pwsh 步骤整体失败。
       - name: Prefer rust-lld
         shell: pwsh
         run: |
           $sysroot = (rustc --print sysroot)
+          $hostTriple = ((rustc -vV) | Where-Object { $_ -like 'host: *' }) -replace '^host:\s*', ''
           $candidates = @(
-            (Join-Path $sysroot "lib/rustlib/x86_64-pc-windows-msvc/bin/rust-lld.exe"),
+            (Join-Path $sysroot "lib/rustlib/$hostTriple/bin/rust-lld.exe"),
             "C:\Program Files\LLVM\bin\lld-link.exe"
           )
           $lld = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
@@ -465,14 +468,17 @@ jobs:
           path: ~\AppData\Local\tauri
           key: tauri-bundler-${{ runner.os }}
       # link.exe 是单线程的，链接是 Windows 这一段的固定大头。rust-lld 不在 PATH 上，
-      # 它在 <sysroot>/lib/rustlib/<triple>/bin/；找不到再退回 VS 的 lld-link.exe。
-      # 最后显式 exit 0：上面 any 命令的 $LASTEXITCODE 非零会让 pwsh 步骤整体失败。
+      # 它在 <sysroot>/lib/rustlib/<host>/bin/；host 必须是宿主三元组——ARM64 作业在
+      # x64 runner 上交叉编译，可执行的 rust-lld 在 x64 目录下（lld 本身能跨架构链接）。
+      # 找不到再退回 VS 的 lld-link.exe。末尾显式 exit 0：残留的 $LASTEXITCODE 非零
+      # 会让 pwsh 步骤整体失败。
       - name: Prefer rust-lld
         shell: pwsh
         run: |
           $sysroot = (rustc --print sysroot)
+          $hostTriple = ((rustc -vV) | Where-Object { $_ -like 'host: *' }) -replace '^host:\s*', ''
           $candidates = @(
-            (Join-Path $sysroot "lib/rustlib/aarch64-pc-windows-msvc/bin/rust-lld.exe"),
+            (Join-Path $sysroot "lib/rustlib/$hostTriple/bin/rust-lld.exe"),
             "C:\Program Files\LLVM\bin\lld-link.exe"
           )
           $lld = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
