@@ -237,6 +237,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-pc-windows-msvc }
       - uses: ./.github/actions/setup-rust-cache
+        with:
+          sccache: 'true'
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }
@@ -253,18 +255,18 @@ jobs:
         with:
           path: ~\AppData\Local\tauri
           key: tauri-bundler-${{ runner.os }}
-      # link.exe 是单线程的，thin LTO 下链接是 Windows 这一段的固定大头；
-      # lld-link 是 VS 自带的 LLVM 链接器，产物仍出自 MSVC 工具链。
-      # 找不到就退回默认链接器，不让这一步把发布挂掉。
-      - name: Prefer lld-link
+      # link.exe 是单线程的，链接是 Windows 这一段的固定大头。rust-lld 随 Rust
+      # 工具链自带，外部实测同样链接量 212-263s → 148-174s（-25~30%）；产物仍是
+      # MSVC 工具链产物。找不到就退回默认 link.exe。
+      - name: Prefer rust-lld
         shell: pwsh
         run: |
-          $lld = Get-Command lld-link.exe -ErrorAction SilentlyContinue
-          if ($lld) {
-            "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$($lld.Source)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            Write-Output "linker: $($lld.Source)"
+          $lld = (rustup which rust-lld 2>$null)
+          if ($lld -and (Test-Path $lld)) {
+            "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$lld" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            Write-Output "linker: $lld"
           } else {
-            Write-Output "::warning::lld-link.exe 不在 PATH，退回 link.exe"
+            Write-Output "::warning::rust-lld 不可用，退回 link.exe"
           }
       # src-tauri 用 include_bytes! 把下面阶段的 backend.exe / Packet.dll / wintun.dll
       # / updater.exe 编进主程序，而后端这时还没编完。先放空占位文件，让 src-tauri 的
@@ -428,6 +430,8 @@ jobs:
       - name: Install cross target for pinned toolchain
         run: rustup target add aarch64-pc-windows-msvc
       - uses: ./.github/actions/setup-rust-cache
+        with:
+          sccache: 'true'
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }
@@ -444,18 +448,18 @@ jobs:
         with:
           path: ~\AppData\Local\tauri
           key: tauri-bundler-${{ runner.os }}
-      # link.exe 是单线程的，thin LTO 下链接是 Windows 这一段的固定大头；
-      # lld-link 是 VS 自带的 LLVM 链接器，产物仍出自 MSVC 工具链。
-      # 找不到就退回默认链接器，不让这一步把发布挂掉。
-      - name: Prefer lld-link
+      # link.exe 是单线程的，链接是 Windows 这一段的固定大头。rust-lld 随 Rust
+      # 工具链自带，外部实测同样链接量 212-263s → 148-174s（-25~30%）；产物仍是
+      # MSVC 工具链产物。找不到就退回默认 link.exe。
+      - name: Prefer rust-lld
         shell: pwsh
         run: |
-          $lld = Get-Command lld-link.exe -ErrorAction SilentlyContinue
-          if ($lld) {
-            "CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER=$($lld.Source)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            Write-Output "linker: $($lld.Source)"
+          $lld = (rustup which rust-lld 2>$null)
+          if ($lld -and (Test-Path $lld)) {
+            "CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER=$lld" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            Write-Output "linker: $lld"
           } else {
-            Write-Output "::warning::lld-link.exe 不在 PATH，退回 link.exe"
+            Write-Output "::warning::rust-lld 不可用，退回 link.exe"
           }
       # src-tauri 用 include_bytes! 把下面阶段的 backend.exe / Packet.dll / wintun.dll
       # / updater.exe 编进主程序，而后端这时还没编完。先放空占位文件，让 src-tauri 的
