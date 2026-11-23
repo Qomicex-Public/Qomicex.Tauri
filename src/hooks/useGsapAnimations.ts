@@ -181,6 +181,9 @@ export function usePopupAnimation(open: boolean): RefObject<HTMLDivElement | nul
  *  避免几百个 backdrop-filter 卡片同时进 tween 造成主线程卡顿 */
 const MAX_ANIMATE_ITEMS = 35
 
+/** 模糊/液态材质下每张卡片每帧都要重采样背景，同屏进 tween 的数量再压一档。 */
+const MAX_ANIMATE_ITEMS_GLASS = 12
+
 /**
  * 交错列表动画（性能优化版）
  * 用于列表/网格子元素的入场/退场动画：
@@ -251,6 +254,9 @@ export function useAnimatedList<T extends HTMLElement>(
     }
 
     const speed = settings.animationSpeed ?? 1
+    const budget = (document.documentElement.dataset.material ?? 'default') === 'default'
+      ? MAX_ANIMATE_ITEMS
+      : MAX_ANIMATE_ITEMS_GLASS
     const allChildren = Array.from(el.children) as HTMLElement[]
     if (allChildren.length === 0) return
 
@@ -280,7 +286,7 @@ export function useAnimatedList<T extends HTMLElement>(
       (n): n is HTMLElement & { dataset: { key: string } } =>
         !!n.dataset.key && !newKeys.has(n.dataset.key)
     )
-    removed.slice(0, MAX_ANIMATE_ITEMS).forEach((node) => {
+    removed.slice(0, budget).forEach((node) => {
         const recorded = prevRectsRef.current.get(node.dataset.key)
         const left = recorded?.left ?? 0
         const top = recorded?.top ?? 0
@@ -312,7 +318,7 @@ export function useAnimatedList<T extends HTMLElement>(
 
     // 进入动画：只动画本次新增项（按 data-key diff）；首屏/整页替换退化为前 35 个。
     // 详见 selectEnterItems 注释（issue #355）。
-    const children = selectEnterItems(allChildren, prevChildren, MAX_ANIMATE_ITEMS)
+    const children = selectEnterItems(allChildren, prevChildren, budget)
 
     const from: gsap.TweenVars = { opacity: 0 }
     const to: gsap.TweenVars = {

@@ -17,6 +17,7 @@
     "dev:backend": "cargo run --manifest-path src-backend/qomicex-backend/Cargo.toml",
     "harness": "node scripts/harness/run.mjs",
     "harness:verify-settings-scroll": "node scripts/harness/verify-settings-scroll.mjs",
+    "harness:verify-motion": "node scripts/harness/verify-motion-perf.mjs",
     "test:update-channel": "node scripts/test-update-channel.mjs",
     "test:update-history": "node scripts/test-update-history.mjs",
     "test:deep-link": "node scripts/test-deep-link-parse.mjs",

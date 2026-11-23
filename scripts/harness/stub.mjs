@@ -63,6 +63,43 @@ const MOCK = {
   wasmList: { plugins: [] },
   settingsState: {},
   pluginStates: {},
+  // 实例/账户：固定 24 条，足够铺满首屏网格（交错入场最多动画 35 项），
+  // 让转场与列表动画的测量有真实数量的卡片。
+  instances: Array.from({ length: 24 }, (_, i) => ({
+    id: `stub-instance-${i + 1}`,
+    name: `Stub 实例 ${i + 1}`,
+    gameVersion: ['1.20.1', '1.21.1', '1.19.2', '1.18.2'][i % 4],
+    loader: ['Fabric', 'Forge', 'NeoForge', 'Quilt'][i % 4],
+    loaderVersion: '0.15.0',
+    javaPath: 'C:/stub/java/bin/java.exe',
+    maxMemory: 4096,
+    gameDir: 'C:/stub/.minecraft',
+    accountName: 'StubPlayer',
+    accountUuid: '00000000000000000000000000000001',
+    accessToken: null,
+    jvmArgs: null,
+    lastPlayed: new Date(Date.now() - i * 86400000).toISOString(),
+    playTime: 3600 * (i + 1),
+    isHidden: false,
+    versionIsolation: true,
+    isDefault: i === 0,
+    icon: null,
+    iconData: null,
+    modpackName: null,
+    modpackVersion: null,
+    modpackAuthor: null,
+    modpackSummary: null,
+    resolvedGameDir: null,
+  })),
+  accounts: [{
+    name: 'StubPlayer',
+    uuid: '00000000000000000000000000000001',
+    token: 'stub',
+    accessToken: 'stub',
+    refreshToken: 'stub',
+    loginMethod: 'offline',
+    isDefault: true,
+  }],
 }
 
 // --mock file.json 合并覆盖
@@ -195,6 +232,39 @@ const server = createServer(async (req, res) => {
     // --- /api/settings/data-dir ---
     if (path === '/api/settings/data-dir' && method === 'GET') {
       sendJson(res, 200, { dataDir: MOCK.appSettings.dataDir ?? '.qomicex-harness' })
+      return
+    }
+
+    // --- 实例 / 账户：首页与实例页要真实卡片才能量到交错入场与整页转场的代价 ---
+    if (path === '/api/instance' && method === 'GET') {
+      sendJson(res, 200, MOCK.instances)
+      return
+    }
+    if (path === '/api/instance-groups' && method === 'GET') {
+      sendJson(res, 200, [])
+      return
+    }
+    if (path === '/api/instance/default' && method === 'GET') {
+      sendJson(res, 200, MOCK.instances[0] ?? null)
+      return
+    }
+    if (path === '/api/account' && method === 'GET') {
+      sendJson(res, 200, MOCK.accounts)
+      return
+    }
+    if (path === '/api/account/default' && method === 'GET') {
+      sendJson(res, 200, MOCK.accounts[0] ?? null)
+      return
+    }
+    // --- /api/progress/stream：保持长连接，否则前端每秒重连一次 ---
+    if (path === '/api/progress/stream' && method === 'GET') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        ...cors,
+      })
+      res.write(': connected\n\n')
       return
     }
     // --- POST /api/store/check-updates (插件静默更新轮询，返回空列表) ---
