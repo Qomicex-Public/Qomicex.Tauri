@@ -19,6 +19,8 @@ runs:
   steps:
     - uses: dtolnay/rust-toolchain@stable
     - uses: ./.github/actions/setup-rust-cache
+      with:
+        sccache: 'true'
 
     - name: Setup connector build
       id: connector

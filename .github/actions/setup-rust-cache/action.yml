@@ -1,19 +1,35 @@
 name: Setup Rust build cache
 description: >
-  所有 Rust 编译作业共用的缓存前置：编译产物交给 sccache（GitHub Actions cache
-  后端）。
+  所有 Rust 编译作业共用的缓存前置。
 
-  本仓没有根 workspace：swatinem/rust-cache 默认只缓存 <仓库根>/target（不存在），
-  真实产物在 src-backend/qomicex-backend/target、src-tauri/target 等各自的
-  目录里。历史缓存条目实测只有 0-6MB（release 上是 982B），等于每次冷编译。
-  因此 target 交给 sccache 按 crate 复用，rust-cache 只保留 cargo registry/git。
+  缓存额度（GitHub Actions 仓库上限 10GB）只给决定壁钟的作业：Windows 两个架构
+  和 PR 门禁（CI backend-check / release quality-gate）。Linux / macOS 的 release
+  作业不开 sccache —— 它们本来就在 20 分钟以内，低于 Windows 那一段，缓存对整条
+  workflow 的完成时间没有贡献，却会把额度挤掉（实测写满后 sccache 退化成
+  effective_cache_mode=ReadOnly，cache_writes=0，命中率归零）。
+
+  rust-cache 只留 cargo registry/git：本仓没有根 workspace，它的默认 target 缓存
+  路径 <仓库根>/target 不存在，历史条目只有 0-6MB。
+
+inputs:
+  sccache:
+    description: '是否启用 sccache 编译缓存（只给 Windows 与 PR 门禁开）'
+    required: false
+    default: 'false'
 
 runs:
   using: composite
   steps:
+    # 版本必须钉住：action 默认拉 sccache latest，2026-11-23 发布的 v0.20.0 在
+    # Windows 上连 `sccache rustc -vV` 都返回 exit 2，cargo 连编译器版本都探不到，
+    # 所有 Rust 作业直接红。升级前先在 PR 上跑通再改这里。
     - uses: mozilla-actions/sccache-action@v0.0.11
+      if: inputs.sccache == 'true'
+      with:
+        version: v0.19.0
 
     - name: Enable sccache
+      if: inputs.sccache == 'true'
       shell: bash
       run: |
         # GITHUB_ENV 是 job 级，后续 cargo 步骤（含 tauri build 里的 cargo）都能看到。
