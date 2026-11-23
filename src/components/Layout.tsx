@@ -167,12 +167,8 @@ export default function Layout() {
 
     const speed = settings.animationSpeed ?? 1
 
-    // 模糊材质下每帧都要重新采样背景：整页位移会把页内所有 backdrop-filter 卡片
-    // 一起重算，是切页掉帧最明显的一种组合。这类材质只做透明度，位移留给纯色/半透明材质。
-    const blurred = (document.documentElement.dataset.material ?? 'default') !== 'default'
-
     // 立即设置 opacity: 0，避免内容闪现
-    gsap.set(el, { opacity: 0, y: blurred ? 0 : 8 })
+    gsap.set(el, { opacity: 0, y: 8 })
 
     // 等待 DOM 更新后执行动画
     requestAnimationFrame(() => {

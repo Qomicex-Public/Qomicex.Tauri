@@ -17,12 +17,14 @@
  *   pnpm run harness:verify-motion -- --cpu-throttle 4  # 节流 4x，放大低配机上的主线程开销
  *   pnpm run harness:verify-motion -- --material frosted --headed
  *
+ * 脚本自己在 :1421 起 Vite（strictPort）：复用 :1420 上别人跑的 dev server 会量到
+ * 另一个工作区的代码，结论直接作废。
+ *
  * `--material` 只改 `data-material` 属性，对 frosted/acrylic/aero 这类纯 CSS 材质有效；
  * 液态玻璃由组件渲染（quidlass），要量它得在设置页里切。
  */
 import {
   TAURI_MOCK,
-  VITE_URL,
   createProcessGroup,
   launchChromium,
   routeApiToStub,
@@ -140,7 +142,8 @@ const group = createProcessGroup()
 const results = []
 let executable = '(未启动)'
 try {
-  await startServices({ group })
+  // 固定用自己的端口：复用别人 1420 上的 dev server 会量到另一个工作区的代码。
+  const { viteUrl } = await startServices({ group, vitePort: 1421 })
   const { browser, context, executablePath } = await launchChromium({ headed: HEADED })
   executable = executablePath
   const page = await context.newPage()
@@ -154,7 +157,7 @@ try {
     await cdp.send('Emulation.setCPUThrottlingRate', { rate: CPU_THROTTLE })
   }
 
-  await page.goto(`${VITE_URL}/`, { waitUntil: 'domcontentloaded' })
+  await page.goto(`${viteUrl}/`, { waitUntil: 'domcontentloaded' })
   // 路由只在 backendState === 'ready' 后注册，SplashScreen 通过 /api/health 判定；
   // 侧边栏是 <main> 的兄弟节点，选择器不能挂在 main 下。
   await page.waitForSelector('a[href="/instances"]', { timeout: 30000 })

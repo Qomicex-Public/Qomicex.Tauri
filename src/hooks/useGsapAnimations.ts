@@ -181,9 +181,6 @@ export function usePopupAnimation(open: boolean): RefObject<HTMLDivElement | nul
  *  避免几百个 backdrop-filter 卡片同时进 tween 造成主线程卡顿 */
 const MAX_ANIMATE_ITEMS = 35
 
-/** 模糊/液态材质下每张卡片每帧都要重采样背景，同屏进 tween 的数量再压一档。 */
-const MAX_ANIMATE_ITEMS_GLASS = 12
-
 /**
  * 交错列表动画（性能优化版）
  * 用于列表/网格子元素的入场/退场动画：
@@ -254,10 +251,6 @@ export function useAnimatedList<T extends HTMLElement>(
     }
 
     const speed = settings.animationSpeed ?? 1
-    // 材质优先读设置：列表可能在后端就绪后立刻填充，而 data-material 要等设置加载完才写入。
-    const material =
-      settings.componentMaterial ?? document.documentElement.dataset.material ?? 'default'
-    const budget = material === 'default' ? MAX_ANIMATE_ITEMS : MAX_ANIMATE_ITEMS_GLASS
     const allChildren = Array.from(el.children) as HTMLElement[]
     if (allChildren.length === 0) return
 
@@ -282,14 +275,12 @@ export function useAnimatedList<T extends HTMLElement>(
     // 克隆不能 append 到 React 管理的容器（会被下一次 reconciliation 清除），
     // 因此挂到 body 层用 fixed 定位（视口坐标），播完再移除。
     // 只给前 MAX_ANIMATE_ITEMS 个被移除项做退出动画（避免大量 blur 卡片同时进 tween）。
-    // 退场与入场共用同一份预算：两边各取满会让同屏 tween 数翻倍。
     const newKeys = new Set(allChildren.map((c) => c.dataset.key))
     const removed = prevChildren.filter(
       (n): n is HTMLElement & { dataset: { key: string } } =>
         !!n.dataset.key && !newKeys.has(n.dataset.key)
     )
-    const exitCount = Math.min(removed.length, Math.floor(budget / 2))
-    removed.slice(0, exitCount).forEach((node) => {
+    removed.slice(0, MAX_ANIMATE_ITEMS).forEach((node) => {
         const recorded = prevRectsRef.current.get(node.dataset.key)
         const left = recorded?.left ?? 0
         const top = recorded?.top ?? 0
@@ -321,7 +312,7 @@ export function useAnimatedList<T extends HTMLElement>(
 
     // 进入动画：只动画本次新增项（按 data-key diff）；首屏/整页替换退化为前 35 个。
     // 详见 selectEnterItems 注释（issue #355）。
-    const children = selectEnterItems(allChildren, prevChildren, budget - exitCount)
+    const children = selectEnterItems(allChildren, prevChildren, MAX_ANIMATE_ITEMS)
 
     const from: gsap.TweenVars = { opacity: 0 }
     const to: gsap.TweenVars = {

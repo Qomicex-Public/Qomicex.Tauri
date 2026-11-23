@@ -139,10 +139,14 @@ export function createProcessGroup() {
  * 起 stub mock server，并确保 Vite dev 在跑（未运行则自动 spawn）。返回时两者都已就绪。
  * `mock` 为 stub 的额外 mock 配置（如限制活跃插件列表）。
  *
+ * `vitePort` 默认 1420（插件调试，复用用户自己起的 dev server）。性能测量必须传别的端口：
+ * 复用别人的 1420 会量到另一个工作区的代码，结论直接作废。
+ *
  * stub 必须是本次启动的那一个：端口被占用时直接报错，而不是默默用别人的 mock 跑完。
  * Vite 反过来——用户自己起的 dev server 按文档复用，不算本次服务，退出时不杀。
  */
-export async function startServices({ group, mock } = {}) {
+export async function startServices({ group, mock, vitePort = 1420 } = {}) {
+  const viteUrl = `http://127.0.0.1:${vitePort}`
   const stubArgs = [join(ROOT, 'scripts/harness/stub.mjs'), '--port', String(STUB_PORT), '--plugin-dir', PLUGINS_DIR]
   if (mock) stubArgs.push('--mock', mock)
   const stub = group.spawnProc('stub', process.execPath, stubArgs)
@@ -154,21 +158,24 @@ export async function startServices({ group, mock } = {}) {
       : `stub 未就绪：${STUB_URL}/api/health`)
   }
 
-  const viteAlreadyRunning = await respondsOk(VITE_URL)
+  // 非默认端口一律自己起：strictPort 让端口被占时直接失败，而不是悄悄换端口/复用别人的服务。
+  const viteAlreadyRunning = vitePort === 1420 ? await respondsOk(viteUrl) : false
   if (!viteAlreadyRunning) {
-    console.log('[harness] Vite dev 未运行，自动启动 (pnpm run dev)…')
-    const vite = group.spawnProc('vite', 'pnpm', ['run', 'dev'], { shell: true })
-    const viteReady = await waitForOwned({ child: vite, url: VITE_URL, timeoutMs: 90000 })
+    console.log(`[harness] 启动 Vite dev (:${vitePort})…`)
+    const vite = group.spawnProc('vite', 'pnpm', ['exec', 'vite', '--port', String(vitePort), '--strictPort'], { shell: true })
+    const viteReady = await waitForOwned({ child: vite, url: viteUrl, timeoutMs: 90000 })
     if (!viteReady.ok) {
       // 抢不到端口但端口上确实起来了（用户同时启动 dev server）→ 复用，别误报失败
-      if (await respondsOk(VITE_URL, 3000)) {
+      if (vitePort === 1420 && await respondsOk(viteUrl, 3000)) {
         console.log('[harness] Vite 由已有进程提供，复用它（退出时不会杀掉）')
       } else {
-        throw new Error(viteReady.exited !== null ? `Vite 启动失败（exit ${viteReady.exited}）` : `Vite 未就绪：${VITE_URL}`)
+        throw new Error(viteReady.exited !== null
+          ? `Vite 启动失败（exit ${viteReady.exited}）：:${vitePort} 可能已被占用`
+          : `Vite 未就绪：${viteUrl}`)
       }
     }
   }
-  return { viteAlreadyRunning }
+  return { viteAlreadyRunning, viteUrl }
 }
 
 /**
