@@ -487,7 +487,15 @@ mod macos {
             );
             return;
         };
+
+        // 先写标记再改策略：标记是唯一的还原依据，写不进去就宁可不开，
+        // 否则会留下一个退出时无法回收的全局 forced 状态。
+        if let Err(e) = write_marker() {
+            tracing::warn!(error = %e, "写入 macOS 游戏模式标记失败，跳过");
+            return;
+        }
         if let Err(e) = run(&["game-mode", "set", "on"]) {
+            let _ = std::fs::remove_file(marker());
             tracing::warn!(tool = %tool.display(), error = %e, "macOS 游戏模式：开启失败");
             return;
         }
@@ -504,16 +512,6 @@ mod macos {
                 error = %e,
                 "macOS 游戏模式：状态回读失败，无法确认策略是否生效"
             ),
-        }
-
-        if let Err(e) = write_marker() {
-            // 标记写不进去就没有还原依据，立刻还原，避免全局策略一直留在 forced。
-            tracing::warn!(error = %e, "写入 macOS 游戏模式标记失败，立即还原");
-            if run(&["game-mode", "set", "auto"]).is_ok() {
-                let _ = ACTIVE.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
-                    Some(n.saturating_sub(1))
-                });
-            }
         }
     }
 
