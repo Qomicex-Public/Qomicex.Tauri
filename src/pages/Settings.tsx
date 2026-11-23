@@ -1314,7 +1314,7 @@ export default function Settings() {
   }
 
   return (
-    <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask">
+    <PageShell className="p-8 space-y-6 overflow-y-auto scroll-fade-mask stagger-rise">
       <PageHeader title={t('layout.sidebar.settings')} />
 
       <div className="flex gap-4">

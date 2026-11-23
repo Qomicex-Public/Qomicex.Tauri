@@ -67,7 +67,11 @@ export function ContextMenu({ items, children }: ContextMenuProps) {
       {open && createPortal(
         <div
           ref={menuRef}
-          className="fixed z-50 min-w-[160px] max-h-[min(320px,calc(100vh-16px))] overflow-y-auto rounded-lg border border-border bg-popover p-1 shadow-lg animate-in fade-in zoom-in-95"
+          className={cn(
+            'fixed z-50 min-w-[160px] max-h-[min(320px,calc(100vh-16px))] overflow-y-auto rounded-lg border border-border bg-popover p-1 shadow-lg animate-in fade-in zoom-in-95',
+            // 从光标所在的角展开（向上翻时从底边），比从中心放大更像"菜单从点击处弹出"。
+            pos.flipY ? 'origin-bottom-left' : 'origin-top-left'
+          )}
           style={{ left: pos.x, top: pos.y }}
         >
           {items.map((item, i) => (

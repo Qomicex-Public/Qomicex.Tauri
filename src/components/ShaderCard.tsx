@@ -91,7 +91,7 @@ export default function ShaderCard({ shader, instanceId, gameDir, gameVersion, l
     <ContextMenu items={contextItems}>
       <Card
         className={cn(
-          'group cursor-pointer select-none border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm',
+          'group row-hover cursor-pointer select-none border-border/60 bg-card/95 transition-[border-color,box-shadow] hover:border-primary/20 hover:shadow-sm',
           compact ? 'mod-row-compact rounded-lg' : 'mod-row-detailed',
           selected && 'border-primary/40 bg-primary/[0.03]'
         )}

@@ -91,7 +91,7 @@ export default function SaveCard({ save, instanceId, onRefresh, selected, onSele
 
   return (
     <ContextMenu items={contextItems}>
-    <Card className={cn('group cursor-pointer border-border/60 bg-card/95 transition-all hover:border-primary/20 hover:shadow-sm', selected && 'border-primary/40 bg-primary/[0.03]')} onClick={onSelect}>
+    <Card className={cn('group row-hover cursor-pointer border-border/60 bg-card/95 transition-[border-color,box-shadow] hover:border-primary/20 hover:shadow-sm', selected && 'border-primary/40 bg-primary/[0.03]')} onClick={onSelect}>
       {/* 复选框展开时由左侧 padding 让出空间，避免与图标重叠（同 Mod 卡片） */}
       {/* 基础内边距 p-4 必须恒在条件外：放进 else 分支会在选中时被 pl-10 顶掉，
           只剩 CardContent 默认的 pt-0 —— 选中一项后内容整体上跳 16px、卡片矮 8px

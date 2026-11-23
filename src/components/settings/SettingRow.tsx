@@ -32,7 +32,7 @@ export function SettingRow({ label, description, control, onClick, className }: 
       onClick={onClick}
       className={cn(
         'flex w-full items-center justify-between gap-4 px-4 py-3 text-left',
-        onClick && 'cursor-pointer transition-colors hover:bg-accent/50',
+        onClick && 'row-hover cursor-pointer',
         className
       )}
     >

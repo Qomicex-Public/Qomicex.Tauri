@@ -1,96 +1,71 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useRef, useEffect, ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import gsap from 'gsap'
 import { getSettings } from '../api/settings.ts'
 
 interface ContentTransitionProps {
-  isLoading: boolean
+  loading: boolean
   skeleton: ReactNode
   children: ReactNode
   className?: string
 }
 
 /**
- * 骨架图→内容切换过渡组件
- * 当从骨架图切换到实际内容时，提供平滑的高度和透明度过渡
+ * 骨架图 → 内容的切换过渡。
+ *
+ * 骨架图和内容不能同时挂载（内容在数据没到时不该渲染），所以按阶段切：
+ * loading 结束先把骨架图淡出并轻微缩小，动画结束再换成内容并让它淡入上移。
+ * 直接用 `display` 在同一个渲染里切换会把退场动画吃掉 —— 节点那一刻已经不可见。
  */
-export function ContentTransition({
-  isLoading,
-  skeleton,
-  children,
-  className
-}: ContentTransitionProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const contentRef = useRef<HTMLDivElement>(null)
+export function ContentTransition({ loading, skeleton, children, className }: ContentTransitionProps) {
+  const [showSkeleton, setShowSkeleton] = useState(loading)
   const skeletonRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const mountedRef = useRef(false)
 
   useEffect(() => {
-    const container = containerRef.current
-    const content = contentRef.current
-    const skeletonEl = skeletonRef.current
-    if (!container || !content || !skeletonEl) return
-
-    const settings = getSettings()
-    if (!settings.animationsEnabled) return
-
-    const speed = settings.animationSpeed ?? 1
-    const duration = 0.3 / speed
-
-    if (isLoading) {
-      // 切换到骨架图
-      gsap.to(content, {
-        opacity: 0,
-        scale: 0.98,
-        duration: duration / 2,
-        ease: 'power2.in'
-      })
-      gsap.fromTo(skeletonEl,
-        { opacity: 0, scale: 0.98 },
-        {
-          opacity: 1,
-          scale: 1,
-          duration: duration / 2,
-          ease: 'power3.out',
-          force3D: settings.gpuAcceleration !== false,
-        }
-      )
-    } else {
-      // 切换到实际内容
-      gsap.to(skeletonEl, {
-        opacity: 0,
-        scale: 0.98,
-        duration: duration / 2,
-        ease: 'power2.in'
-      })
-      gsap.fromTo(content,
-        { opacity: 0, scale: 0.98 },
-        {
-          opacity: 1,
-          scale: 1,
-          duration,
-          ease: 'power3.out',
-          force3D: settings.gpuAcceleration !== false,
-        }
-      )
+    if (loading) {
+      setShowSkeleton(true)
+      return
     }
-  }, [isLoading])
+    const settings = getSettings()
+    const el = skeletonRef.current
+    if (!el || settings.animationsEnabled === false) {
+      setShowSkeleton(false)
+      return
+    }
+    const speed = settings.animationSpeed ?? 1
+    const tween = gsap.to(el, {
+      opacity: 0,
+      scale: 0.98,
+      duration: 0.12 / speed,
+      ease: 'power2.in',
+      onComplete: () => setShowSkeleton(false),
+    })
+    return () => { tween.kill() }
+  }, [loading])
+
+  useEffect(() => {
+    const el = contentRef.current
+    if (!el || showSkeleton) return
+    const first = !mountedRef.current
+    mountedRef.current = true
+    // 首次挂载由页面自己的入场动画负责，这里只处理「骨架图换内容」这一次。
+    if (first) return
+    const settings = getSettings()
+    if (settings.animationsEnabled === false) return
+    const speed = settings.animationSpeed ?? 1
+    gsap.fromTo(el,
+      { opacity: 0, y: 6 },
+      { opacity: 1, y: 0, duration: 0.2 / speed, ease: 'power3.out', clearProps: 'transform' }
+    )
+  }, [showSkeleton])
 
   return (
-    <div ref={containerRef} className={className}>
-      <div
-        ref={skeletonRef}
-        style={{ display: isLoading ? 'block' : 'none' }}
-      >
-        {skeleton}
-      </div>
-      <div
-        ref={contentRef}
-        style={{ display: isLoading ? 'none' : 'block' }}
-      >
-        {children}
-      </div>
+    <div className={className}>
+      {showSkeleton ? <div ref={skeletonRef}>{skeleton}</div> : <div ref={contentRef}>{children}</div>}
     </div>
   )
 }
