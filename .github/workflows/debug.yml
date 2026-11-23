@@ -207,6 +207,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-pc-windows-msvc }
       - uses: ./.github/actions/setup-rust-cache
+        with:
+          sccache: 'true'
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }
@@ -308,6 +310,8 @@ jobs:
       - name: Install cross target for pinned toolchain
         run: rustup target add aarch64-pc-windows-msvc
       - uses: ./.github/actions/setup-rust-cache
+        with:
+          sccache: 'true'
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }

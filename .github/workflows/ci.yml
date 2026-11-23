@@ -85,6 +85,8 @@ jobs:
           token: ${{ secrets.QOMICEX_PAT }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: ./.github/actions/setup-rust-cache
+        with:
+          sccache: 'true'
       - name: Setup connector build
         id: connector
         uses: ./.github/actions/setup-connector-build
