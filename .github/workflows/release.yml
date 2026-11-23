@@ -94,6 +94,12 @@ on:
           - both
           - arm64
           - x64
+      publish:
+        # 只构建、不发版：验证构建时长或试跑改动时用，避免把测试产物推到更新通道。
+        description: '是否发版（false = 只构建产物，不创建 Release、不改更新清单）'
+        required: false
+        default: true
+        type: boolean
   release:
     types: [published]
 
@@ -231,6 +237,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { targets: x86_64-pc-windows-msvc }
       - uses: ./.github/actions/setup-rust-cache
+        with:
+          sccache: 'true'
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }
@@ -241,6 +249,46 @@ jobs:
         uses: ./.github/actions/setup-connector-build
         with:
           pat: ${{ secrets.QOMICEX_PAT }}
+      # tauri 打包工具（nsis-3.11.zip / nsis_tauri_utils.dll）每次 release 都重下，
+      # 缓存这个目录省掉下载与解压。
+      - uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\tauri
+          key: tauri-bundler-${{ runner.os }}
+      # link.exe 是单线程的，链接是 Windows 这一段的固定大头。rust-lld 不在 PATH 上，
+      # 它在 <sysroot>/lib/rustlib/<host>/bin/；host 必须是宿主三元组——ARM64 作业在
+      # x64 runner 上交叉编译，可执行的 rust-lld 在 x64 目录下（lld 本身能跨架构链接）。
+      # 找不到再退回 VS 的 lld-link.exe。末尾显式 exit 0：残留的 $LASTEXITCODE 非零
+      # 会让 pwsh 步骤整体失败。
+      - name: Prefer rust-lld
+        shell: pwsh
+        run: |
+          $sysroot = (rustc --print sysroot)
+          $hostTriple = ((rustc -vV) | Where-Object { $_ -like 'host: *' }) -replace '^host:\s*', ''
+          $candidates = @(
+            (Join-Path $sysroot "lib/rustlib/$hostTriple/bin/rust-lld.exe"),
+            "C:\Program Files\LLVM\bin\lld-link.exe"
+          )
+          $lld = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if ($lld) {
+            "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$lld" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            Write-Output "linker: $lld"
+          } else {
+            Write-Output "::warning::未找到 rust-lld / lld-link，退回 link.exe"
+          }
+          exit 0
+      # src-tauri 用 include_bytes! 把下面阶段的 backend.exe / Packet.dll / wintun.dll
+      # / updater.exe 编进主程序，而后端这时还没编完。先放空占位文件，让 src-tauri 的
+      # 依赖树并行编起来；真实产物替换后由 cargo clean -p 强制重编这一个 crate。
+      - name: Prepare binary placeholders
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
+          foreach ($name in @("backend.exe", "Packet.dll", "wintun.dll", "updater.exe")) {
+            New-Item -ItemType File -Force "src-tauri/binaries/$name" | Out-Null
+          }
+      # backend 与 src-tauri 是独立 target 目录，可以并行编译；tauri build 之后仍会
+      # 调 cargo，只有 launcher 需要重编（见 Stage backend binary 末尾的 clean）。
       - name: Build Rust backend
         shell: pwsh
         env:
@@ -248,9 +296,25 @@ jobs:
           VC_LTL: ""
           YY_THUNKS: ""
         run: |
+          # x64 的 host 就是目标架构：不传 --target，产物落在 src-tauri/target/release，
+          # 与后面 `tauri build`（同样不传 --target）共用同一份产物；传了 --target 会落到
+          # target/x86_64-pc-windows-msvc/release，tauri build 反而重新编一遍。
+          $tauriLog = Join-Path $env:RUNNER_TEMP "tauri-cargo-build.log"
+          $tauriJob = Start-Process -FilePath "cargo" -NoNewWindow -PassThru -ArgumentList @(
+            "build", "--release", "--manifest-path", "src-tauri/Cargo.toml", "-j", "2"
+          ) -RedirectStandardOutput $tauriLog -RedirectStandardError "$tauriLog.err"
+
           $features = @()
           if ("${{ needs.setup.outputs.licenseRequired }}" -eq "true") { $features = @("--features", "license-required") }
           cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target x86_64-pc-windows-msvc @features
+          if ($LASTEXITCODE -ne 0) { throw "backend build failed" }
+
+          $tauriJob.WaitForExit()
+          if ($tauriJob.ExitCode -ne 0) {
+            Get-Content -Path $tauriLog -Tail 40
+            Get-Content -Path "$tauriLog.err" -Tail 40
+            throw "src-tauri cargo build failed: $($tauriJob.ExitCode)"
+          }
       - name: Stage backend binary
         shell: pwsh
         run: |
@@ -264,6 +328,13 @@ jobs:
           # 自更新器（Qomicex.Updater submodule）：include_bytes 嵌入主程序
           cargo build --release --manifest-path Qomicex.Updater/Cargo.toml --target x86_64-pc-windows-msvc
           Copy-Item -Force Qomicex.Updater/target/x86_64-pc-windows-msvc/release/qomicex-updater.exe src-tauri/binaries/updater.exe
+          # 占位文件已被真实产物替换：清掉 launcher 的产物，确保 tauri build 重新
+          # include_bytes（只有这一个 crate 重编，其余依赖复用并行编译的结果）。
+          cargo clean --release --manifest-path src-tauri/Cargo.toml -p qomicex-launcher
+          # 兜底断言：产物必须比它嵌入的后端大，否则说明嵌进去的是占位文件。
+          $staged = (Get-Item "src-tauri/binaries/backend.exe").Length
+          if ((Get-Item "src-tauri/binaries/updater.exe").Length -lt 100000) { throw "updater.exe 疑似占位文件" }
+          Write-Output "staged backend bytes: $staged"
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       # tauri 用 `pnpm exec` 调起，不要写回 `pnpm run tauri -- build`：
@@ -277,6 +348,11 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ needs.setup.outputs.displayVersion }}"
+          # 断言主程序是在真实二进制就位之后重编的：占位文件方案若没触发重编，
+          # exe 的修改时间会早于 backend.exe，产物里就是空后端。
+          $exe = Get-Item "src-tauri/target/release/Qomicex Launcher.exe"
+          $be = Get-Item "src-tauri/binaries/backend.exe"
+          if ($exe.LastWriteTime -lt $be.LastWriteTime) { throw "主程序比后端旧（$($exe.LastWriteTime) < $($be.LastWriteTime)），include_bytes 未取到真实产物" }
           Write-Output "=== Bundle dir contents ==="
           $bundleDir = "src-tauri/target/release/bundle"
           Get-ChildItem -Recurse -Path $bundleDir | Select-Object FullName
@@ -373,6 +449,8 @@ jobs:
       - name: Install cross target for pinned toolchain
         run: rustup target add aarch64-pc-windows-msvc
       - uses: ./.github/actions/setup-rust-cache
+        with:
+          sccache: 'true'
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7.0.0
         with: { node-version: '22', cache: pnpm }
@@ -383,6 +461,46 @@ jobs:
         uses: ./.github/actions/setup-connector-build
         with:
           pat: ${{ secrets.QOMICEX_PAT }}
+      # tauri 打包工具（nsis-3.11.zip / nsis_tauri_utils.dll）每次 release 都重下，
+      # 缓存这个目录省掉下载与解压。
+      - uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\tauri
+          key: tauri-bundler-${{ runner.os }}
+      # link.exe 是单线程的，链接是 Windows 这一段的固定大头。rust-lld 不在 PATH 上，
+      # 它在 <sysroot>/lib/rustlib/<host>/bin/；host 必须是宿主三元组——ARM64 作业在
+      # x64 runner 上交叉编译，可执行的 rust-lld 在 x64 目录下（lld 本身能跨架构链接）。
+      # 找不到再退回 VS 的 lld-link.exe。末尾显式 exit 0：残留的 $LASTEXITCODE 非零
+      # 会让 pwsh 步骤整体失败。
+      - name: Prefer rust-lld
+        shell: pwsh
+        run: |
+          $sysroot = (rustc --print sysroot)
+          $hostTriple = ((rustc -vV) | Where-Object { $_ -like 'host: *' }) -replace '^host:\s*', ''
+          $candidates = @(
+            (Join-Path $sysroot "lib/rustlib/$hostTriple/bin/rust-lld.exe"),
+            "C:\Program Files\LLVM\bin\lld-link.exe"
+          )
+          $lld = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if ($lld) {
+            "CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER=$lld" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            Write-Output "linker: $lld"
+          } else {
+            Write-Output "::warning::未找到 rust-lld / lld-link，退回 link.exe"
+          }
+          exit 0
+      # src-tauri 用 include_bytes! 把下面阶段的 backend.exe / Packet.dll / wintun.dll
+      # / updater.exe 编进主程序，而后端这时还没编完。先放空占位文件，让 src-tauri 的
+      # 依赖树并行编起来；真实产物替换后由 cargo clean -p 强制重编这一个 crate。
+      - name: Prepare binary placeholders
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
+          foreach ($name in @("backend.exe", "Packet.dll", "wintun.dll", "updater.exe")) {
+            New-Item -ItemType File -Force "src-tauri/binaries/$name" | Out-Null
+          }
+      # backend 与 src-tauri 是独立 target 目录，可以并行编译；tauri build 之后仍会
+      # 调 cargo，只有 launcher 需要重编（见 Stage backend binary 末尾的 clean）。
       - name: Build Rust backend
         shell: pwsh
         env:
@@ -390,9 +508,24 @@ jobs:
           VC_LTL: ""
           YY_THUNKS: ""
         run: |
+          $target = "aarch64-pc-windows-msvc"
+          $tauriLog = Join-Path $env:RUNNER_TEMP "tauri-cargo-build.log"
+          $tauriJob = Start-Process -FilePath "cargo" -NoNewWindow -PassThru -ArgumentList @(
+            "build", "--release", "--manifest-path", "src-tauri/Cargo.toml",
+            "--target", $target, "-j", "2"
+          ) -RedirectStandardOutput $tauriLog -RedirectStandardError "$tauriLog.err"
+
           $features = @()
           if ("${{ needs.setup.outputs.licenseRequired }}" -eq "true") { $features = @("--features", "license-required") }
-          cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target aarch64-pc-windows-msvc @features
+          cargo build --release --manifest-path src-backend/qomicex-backend/Cargo.toml --target $target @features
+          if ($LASTEXITCODE -ne 0) { throw "backend build failed" }
+
+          $tauriJob.WaitForExit()
+          if ($tauriJob.ExitCode -ne 0) {
+            Get-Content -Path $tauriLog -Tail 40
+            Get-Content -Path "$tauriLog.err" -Tail 40
+            throw "src-tauri cargo build failed: $($tauriJob.ExitCode)"
+          }
       - name: Stage backend binary
         shell: pwsh
         run: |
@@ -406,6 +539,9 @@ jobs:
           # 自更新器（Qomicex.Updater submodule）：include_bytes 嵌入主程序
           cargo build --release --manifest-path Qomicex.Updater/Cargo.toml --target aarch64-pc-windows-msvc
           Copy-Item -Force Qomicex.Updater/target/aarch64-pc-windows-msvc/release/qomicex-updater.exe src-tauri/binaries/updater.exe
+          # 占位文件已被真实产物替换：清掉 launcher 的产物，确保 tauri build 重新
+          # include_bytes（只有这一个 crate 重编，其余依赖复用并行编译的结果）。
+          cargo clean --release --target aarch64-pc-windows-msvc --manifest-path src-tauri/Cargo.toml -p qomicex-launcher
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @qomicex/plugin-ui build
       - run: pnpm exec tauri build --bundles nsis --target aarch64-pc-windows-msvc
@@ -416,6 +552,11 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ needs.setup.outputs.displayVersion }}"
+          # 断言主程序是在真实二进制就位之后重编的：占位文件方案若没触发重编，
+          # exe 的修改时间会早于 backend.exe，产物里就是空后端。
+          $exe = Get-Item "src-tauri/target/aarch64-pc-windows-msvc/release/Qomicex Launcher.exe"
+          $be = Get-Item "src-tauri/binaries/backend.exe"
+          if ($exe.LastWriteTime -lt $be.LastWriteTime) { throw "主程序比后端旧（$($exe.LastWriteTime) < $($be.LastWriteTime)），include_bytes 未取到真实产物" }
           Write-Output "=== Bundle dir contents ==="
           $bundleDir = "src-tauri/target/aarch64-pc-windows-msvc/release/bundle"
           Get-ChildItem -Recurse -Path $bundleDir | Select-Object FullName
@@ -1569,6 +1710,7 @@ jobs:
     # 由首个步骤打 warning 提示。
     if: |
       !cancelled() &&
+      github.event.inputs.publish != 'false' &&
       needs.setup.result == 'success' &&
       needs.quality-gate.result == 'success' &&
       (needs.windows-x64.result == 'success' || needs.windows-x64.result == 'skipped') &&
