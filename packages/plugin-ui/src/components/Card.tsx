@@ -16,7 +16,7 @@ const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElemen
     // 否则近乎不透明的底色会盖住玻璃效果（卡片发黑）；底色由主题 CSS 统一提供。
     const cls = liquid
       ? cn("rounded-xl border border-border text-card-foreground shadow", className, "bg-transparent")
-      : cn("rounded-xl border border-border bg-card text-card-foreground shadow glass-surface", className)
+      : cn("anim-row rounded-xl border border-border bg-card text-card-foreground shadow glass-surface", className)
 
     if (liquid) {
       // 液态玻璃：用 quidlass 的 LiquidGlass 画布/位移实现真液态扭曲与弹性。

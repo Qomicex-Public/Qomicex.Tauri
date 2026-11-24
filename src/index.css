@@ -395,12 +395,19 @@
 
 /* 表格/紧凑行：只做背景与颜色，不做位移 */
 .anim-row {
-  transition-property: background-color, color, border-color;
+  transition-property: background-color, color, border-color, box-shadow;
   transition-duration: calc(200ms * var(--anim-duration-multiplier, 1));
   transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 }
 .anim-row:hover {
   transition-duration: calc(100ms * var(--anim-duration-multiplier, 1));
+}
+
+/* 导航/选中指示条：位移带回弹，透明度单独一条 */
+.anim-indicator {
+  transition:
+    transform calc(300ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity calc(200ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* 非玻璃卡片：hover 上浮 2px（玻璃卡禁用，见 ADR-141） */
@@ -411,6 +418,13 @@
 }
 .anim-lift:hover {
   transform: translateY(-2px);
+}
+
+/* 出现/消失：只做透明度与短位移（滚动到顶、启动屏等） */
+.anim-fade {
+  transition:
+    opacity calc(180ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.16, 1, 0.3, 1),
+    transform calc(200ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* 日志容器：允许像编辑框一样框选复制。
@@ -441,16 +455,18 @@
   border-width: var(--card-border-width, 1px);
 }
 
+/* 材质规则（ADR-141）：模糊已上移到 Layout 的全窗口静态层，卡片只负责
+   半透明填充、描边与内高光——不再持有 backdrop-filter，动画时可以自由移动。
+   四档之间靠透明度/纹理/阴影区分。 */
+
 :root[data-material="frosted"] .glass-surface {
-  background-color: hsl(var(--card) / 0.6);
-  -webkit-backdrop-filter: blur(var(--glass-blur, 18px)) saturate(150%);
-  backdrop-filter: blur(var(--glass-blur, 18px)) saturate(150%);
+  background-color: hsl(var(--card) / 0.62);
+  border-color: hsl(var(--card-foreground) / 0.10);
+  box-shadow: inset 0 1px 0 hsl(var(--card-foreground) / 0.06);
 }
 
 :root[data-material="acrylic"] .glass-surface {
-  background-color: hsl(var(--card) / 0.25);
-  -webkit-backdrop-filter: blur(15px) saturate(120%);
-  backdrop-filter: blur(15px) saturate(120%);
+  background-color: hsl(var(--card) / 0.34);
   border: 1px solid hsl(var(--card-foreground) / 0.15);
   border-top: 1px solid hsl(var(--card-foreground) / 0.25);
   border-radius: 8px;
@@ -460,7 +476,7 @@
 }
 
 :root[data-material="aero"] .glass-surface {
-  background-color: hsl(var(--card) / 0.2);
+  background-color: hsl(var(--card) / 0.42);
   background-image: repeating-linear-gradient(
     45deg,
     transparent,
@@ -469,8 +485,7 @@
     hsl(var(--card-foreground) / 0.03) 6px
   );
   background-blend-mode: overlay;
-  -webkit-backdrop-filter: blur(16px) saturate(1.8);
-  backdrop-filter: blur(16px) saturate(1.8);
+
   border: 1px solid hsl(var(--card-foreground) / 0.2);
   box-shadow:
     inset 0 1px 0 hsl(var(--card-foreground) / 0.3),

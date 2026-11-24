@@ -35,8 +35,8 @@ export function Tabs({ tabs, activeTab, onChange, className, orientation = 'hori
     if (activeEl && indicator) {
       // offsetTop/Left 相对 offsetParent（本容器，已 relative），故竖排/横排共用；
       // 分组标题会推低后续按钮，offsetTop 自动包含该偏移。
-      indicator.style.top = `${activeEl.offsetTop}px`
-      indicator.style.left = `${activeEl.offsetLeft}px`
+      // 位置用 transform（不触发重排），宽高仍走 transition。
+      indicator.style.transform = `translate(${activeEl.offsetLeft}px, ${activeEl.offsetTop}px)`
       indicator.style.width = `${activeEl.offsetWidth}px`
       indicator.style.height = `${activeEl.offsetHeight}px`
     }
@@ -50,8 +50,8 @@ export function Tabs({ tabs, activeTab, onChange, className, orientation = 'hori
     )}>
       <div
         ref={indicatorRef}
-        className="absolute bg-primary/10 rounded-lg transition-all duration-200"
-        style={{ top: 0, left: 0, width: 0, height: 0 }}
+        className="anim-indicator absolute left-0 top-0 rounded-lg bg-primary/10"
+        style={{ transform: 'translate(0, 0)', width: 0, height: 0 }}
       />
       {tabs.map((tab, i) => {
         // 竖排且分组名变化时插入分组标题（首个分组用 pt-0，避免顶部多余留白）
@@ -97,11 +97,13 @@ export function Tabs({ tabs, activeTab, onChange, className, orientation = 'hori
   )
 }
 
-export function TabContent({ activeTab, tabId, children, className }: {
+export function TabContent({ activeTab, tabId, children, className, direction = 'horizontal' }: {
   activeTab: string
   tabId: string
   children: ReactNode
   className?: string
+  /** 内容出现方向：横排 tab 从下、竖排 tab 从右 */
+  direction?: 'horizontal' | 'vertical'
 }) {
   const prevRef = useRef(activeTab)
   const mountedRef = useRef(false)
@@ -112,11 +114,12 @@ export function TabContent({ activeTab, tabId, children, className }: {
   }, [activeTab])
 
   const justMounted = !mountedRef.current
+  const anim = direction === 'vertical' ? 'animate-slide-in-right' : 'animate-slide-in-up'
 
   if (activeTab !== tabId) return null
 
   return (
-    <div className={cn(justMounted ? '' : 'animate-slide-in-right', className)}>
+    <div className={cn(justMounted ? '' : anim, className)}>
       {children}
     </div>
   )

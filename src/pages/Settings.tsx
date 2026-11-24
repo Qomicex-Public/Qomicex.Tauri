@@ -1328,7 +1328,7 @@ export default function Settings() {
         </div>
 
         <div className="flex-1 min-w-0 space-y-4">
-          <TabContent activeTab={category} tabId="launcher">
+          <TabContent direction="vertical" activeTab={category} tabId="launcher">
             <div className="space-y-6">
             <SettingSection title={t('settings.category.basic')} icon={<SettingsIcon className="h-4 w-4" />}>
               <SettingRow
@@ -1883,7 +1883,7 @@ export default function Settings() {
 
             </div>
           </TabContent>
-          <TabContent activeTab={category} tabId="java">
+          <TabContent direction="vertical" activeTab={category} tabId="java">
             <div className="space-y-6">
               <SettingSection title={t('settings.java.title')} icon={<Coffee className="h-4 w-4" />}>
                 <div className="flex items-center justify-between gap-4 px-4 py-3">
@@ -2118,7 +2118,7 @@ export default function Settings() {
             </div>
           </TabContent>
 
-          <TabContent activeTab={category} tabId="appearance">
+          <TabContent direction="vertical" activeTab={category} tabId="appearance">
             <div className="space-y-6">
               <SettingSection title={t('settings.appearance.title')} icon={<Palette className="h-4 w-4" />}>
                 <SettingRow
@@ -2620,11 +2620,11 @@ export default function Settings() {
             </div>
           </TabContent>
 
-          <TabContent activeTab={category} tabId="toolbox"><ToolboxTab /></TabContent>
-          <TabContent activeTab={category} tabId="plugins"><PluginStoreTab /></TabContent>
-          <TabContent activeTab={category} tabId="about"><AboutTab sysInfo={sysInfo} licenseStatus={licenseStatus} onOpenLicenseDialog={() => setLicenseDialogOpen(true)} autoInstall={settings.updateAutoInstall !== false} onAutoInstallChange={(next) => update('updateAutoInstall', next)} /></TabContent>
-          <TabContent activeTab={category} tabId="logs"><LogTab /></TabContent>
-          <TabContent activeTab={category} tabId="debug"><DebugTab /></TabContent>
+          <TabContent direction="vertical" activeTab={category} tabId="toolbox"><ToolboxTab /></TabContent>
+          <TabContent direction="vertical" activeTab={category} tabId="plugins"><PluginStoreTab /></TabContent>
+          <TabContent direction="vertical" activeTab={category} tabId="about"><AboutTab sysInfo={sysInfo} licenseStatus={licenseStatus} onOpenLicenseDialog={() => setLicenseDialogOpen(true)} autoInstall={settings.updateAutoInstall !== false} onAutoInstallChange={(next) => update('updateAutoInstall', next)} /></TabContent>
+          <TabContent direction="vertical" activeTab={category} tabId="logs"><LogTab /></TabContent>
+          <TabContent direction="vertical" activeTab={category} tabId="debug"><DebugTab /></TabContent>
 
           <Dialog open={addDialogOpen} onClose={() => setAddDialogOpen(false)}>
             <DialogHeader onClose={() => setAddDialogOpen(false)}>

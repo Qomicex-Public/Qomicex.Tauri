@@ -1009,7 +1009,7 @@ export default function Instances() {
         ) : remoteViewMode === 'grid' ? (
           <div ref={remoteGridAnimRef} className="grid max-h-[520px] grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
             {sortedRemote.map((v) => (
-              <button key={v.id} data-key={v.id} onClick={() => selectRemoteVersion(v)} className="group glass-surface flex flex-col gap-1.5 rounded-lg border bg-card p-3 text-left transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5">
+              <button key={v.id} data-key={v.id} onClick={() => selectRemoteVersion(v)} className="group glass-surface flex flex-col gap-1.5 rounded-lg border bg-card p-3 text-left anim-row hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5">
                 <div className="flex items-center gap-1.5">
                   <Box className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <span className="truncate text-sm font-medium">{v.id}</span>
@@ -1024,7 +1024,7 @@ export default function Instances() {
         ) : (
           <div ref={remoteListAnimRef} className="max-h-[520px] space-y-2 overflow-y-auto pr-1">
             {sortedRemote.map((v) => (
-              <div key={v.id} data-key={v.id} role="button" tabIndex={0} onClick={() => selectRemoteVersion(v)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRemoteVersion(v) } }} className="group glass-surface flex w-full cursor-pointer items-center justify-between gap-4 rounded-xl border bg-card p-4 text-left transition-all hover:border-primary/30 hover:shadow-sm">
+              <div key={v.id} data-key={v.id} role="button" tabIndex={0} onClick={() => selectRemoteVersion(v)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRemoteVersion(v) } }} className="group glass-surface flex w-full cursor-pointer items-center justify-between gap-4 rounded-xl border bg-card p-4 text-left anim-row hover:border-primary/30 hover:shadow-sm">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="flex items-center gap-2">
@@ -1688,7 +1688,7 @@ export default function Instances() {
           <div ref={gridAnimRef} className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {filtered.map((v, vi) => (
               <ContextMenu key={listKeyOf(v, vi)} items={buildInstanceContextItems(v)}>
-                <div data-key={listKeyOf(v, vi)} className="group glass-surface relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => openVersionSettings(v)}>
+                <div data-key={listKeyOf(v, vi)} className="group glass-surface relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center anim-row hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => openVersionSettings(v)}>
                 <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={getLoadersForVersion(v)[0]?.type} className="mb-3 h-16 w-16 rounded-2xl" />
                 <h3 className="w-full truncate text-sm font-medium leading-tight">{v.name}</h3>
                 {getInstanceForVersion(v)?.remark && (
@@ -1742,7 +1742,7 @@ export default function Instances() {
           <div ref={listAnimRef} className="space-y-3">
             {filtered.map((v, vi) => (
               <ContextMenu key={listKeyOf(v, vi)} items={buildInstanceContextItems(v)}>
-                <div data-key={listKeyOf(v, vi)} className="group glass-surface flex items-center gap-4 rounded-xl border bg-card px-5 py-4 transition-all hover:border-primary/30 hover:shadow-sm">
+                <div data-key={listKeyOf(v, vi)} className="group glass-surface flex items-center gap-4 rounded-xl border bg-card px-5 py-4 anim-row hover:border-primary/30 hover:shadow-sm">
                 <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={getLoadersForVersion(v)[0]?.type} className="h-12 w-12 shrink-0 rounded-xl" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">

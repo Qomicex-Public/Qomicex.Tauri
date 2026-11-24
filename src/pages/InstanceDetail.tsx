@@ -59,6 +59,8 @@ import SaveCard from '../components/SaveCard.tsx'
 import ScreenshotCard from '../components/ScreenshotCard.tsx'
 import DataPackCard from '../components/DataPackCard.tsx'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
+import { useDelayedFlag } from '../hooks/useDelayedFlag.ts'
+import { ContentTransition } from '../components/ContentTransition.tsx'
 import { useListSelection } from '../hooks/useListSelection.ts'
 import { useDebug } from '../components/DebugContext.tsx'
 import { logWindowUrl, openLogWindow } from '../lib/gameLogWindow.ts'
@@ -527,6 +529,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loadProgress, setLoadProgress] = useState<{ current: number; total: number } | null>(null)
+  const showSkeleton = useDelayedFlag(loading)
   const [versionDialogMod, setVersionDialogMod] = useState<ModMetadata | null>(null)
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
   const [updates, setUpdates] = useState<ModUpdateEntry[]>([])
@@ -1137,7 +1140,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
             </div>
           )}
 
-          {loading ? (
+          <ContentTransition loading={loading} skeletonVisible={showSkeleton} skeleton={
             <div className="space-y-3 p-4">
               {loadProgress && loadProgress.total > 0 && (
                 <div className="space-y-1.5">
@@ -1177,7 +1180,8 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                 ))}
               </div>
             </div>
-          ) : loadError ? (
+          }>
+            {loadError ? (
             <div className="py-8 text-center text-sm text-destructive">
               {t('instanceDetail.mods.loadFailed', { error: loadError })}
             </div>
@@ -1213,6 +1217,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
               </div>
             </DragSelectArea>
           )}
+          </ContentTransition>
       </SettingSection>
 
       <I18nBatchToolbar
@@ -3665,7 +3670,7 @@ export default function InstanceDetailPage() {
         </div>
 
         <div className="flex-1 min-w-0 overflow-y-auto scroll-fade-mask relative pb-8" style={{ transform: 'translateZ(0)' }}>
-          <TabContent activeTab={tab} tabId="overview">
+          <TabContent direction="vertical" activeTab={tab} tabId="overview">
             <div className="space-y-4">
               <SettingSection title={t('instances.basicInfo')} icon={<Info className="h-4 w-4" />}>
                 <div className="grid grid-cols-2 gap-4 p-4 text-sm">
@@ -4008,15 +4013,15 @@ export default function InstanceDetailPage() {
             </div>
           )}
 
-          <TabContent activeTab={tab} tabId="saves"><SavesTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} refreshKey={savesRefresh} onRefresh={() => setSavesRefresh(k => k + 1)} onQuickJoinWorld={(name) => handleQuickLaunch({ joinWorld: name })} running={runningInstances.some(r => r.instanceId === id)} /></TabContent>
-          <TabContent activeTab={tab} tabId="screenshots"><ScreenshotsTab instanceId={id!} gameDir={gameDir} refreshKey={screenshotsRefresh} onRefresh={() => setScreenshotsRefresh(k => k + 1)} /></TabContent>
-          <TabContent activeTab={tab} tabId="mods"><ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={gameDir} refreshKey={modsRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-mods`); setModsRefresh(k => k + 1) }} /></TabContent>
-          <TabContent activeTab={tab} tabId="resourcepacks"><ResourcePacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={resourcePacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-resourcepacks`); setResourcePacksRefresh(k => k + 1) }} /></TabContent>
-          <TabContent activeTab={tab} tabId="shaderpacks"><ShadersTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={shadersRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-shaders`); setShadersRefresh(k => k + 1) }} /></TabContent>
-          <TabContent activeTab={tab} tabId="datapacks"><DataPacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={dataPacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-datapacks`); setDataPacksRefresh(k => k + 1) }} /></TabContent>
-          <TabContent activeTab={tab} tabId="schematics"><SchematicsTab instanceId={id!} gameDir={gameDir} refreshKey={schematicsRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-schematics`); setSchematicsRefresh(k => k + 1) }} /></TabContent>
-          <TabContent activeTab={tab} tabId="servers"><ServersTab instanceId={id!} refreshKey={serversRefresh} onRefresh={() => setServersRefresh(k => k + 1)} onQuickJoinServer={(ip) => handleQuickLaunch({ joinServer: ip })} /></TabContent>
-          <TabContent activeTab={tab} tabId="gamesettings"><GameSettingsTab instanceId={id!} refreshKey={gameSettingsRefresh} onRefresh={() => setGameSettingsRefresh(k => k + 1)} /></TabContent>
+          <TabContent direction="vertical" activeTab={tab} tabId="saves"><SavesTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} refreshKey={savesRefresh} onRefresh={() => setSavesRefresh(k => k + 1)} onQuickJoinWorld={(name) => handleQuickLaunch({ joinWorld: name })} running={runningInstances.some(r => r.instanceId === id)} /></TabContent>
+          <TabContent direction="vertical" activeTab={tab} tabId="screenshots"><ScreenshotsTab instanceId={id!} gameDir={gameDir} refreshKey={screenshotsRefresh} onRefresh={() => setScreenshotsRefresh(k => k + 1)} /></TabContent>
+          <TabContent direction="vertical" activeTab={tab} tabId="mods"><ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={gameDir} refreshKey={modsRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-mods`); setModsRefresh(k => k + 1) }} /></TabContent>
+          <TabContent direction="vertical" activeTab={tab} tabId="resourcepacks"><ResourcePacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={resourcePacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-resourcepacks`); setResourcePacksRefresh(k => k + 1) }} /></TabContent>
+          <TabContent direction="vertical" activeTab={tab} tabId="shaderpacks"><ShadersTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={shadersRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-shaders`); setShadersRefresh(k => k + 1) }} /></TabContent>
+          <TabContent direction="vertical" activeTab={tab} tabId="datapacks"><DataPacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={dataPacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-datapacks`); setDataPacksRefresh(k => k + 1) }} /></TabContent>
+          <TabContent direction="vertical" activeTab={tab} tabId="schematics"><SchematicsTab instanceId={id!} gameDir={gameDir} refreshKey={schematicsRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-schematics`); setSchematicsRefresh(k => k + 1) }} /></TabContent>
+          <TabContent direction="vertical" activeTab={tab} tabId="servers"><ServersTab instanceId={id!} refreshKey={serversRefresh} onRefresh={() => setServersRefresh(k => k + 1)} onQuickJoinServer={(ip) => handleQuickLaunch({ joinServer: ip })} /></TabContent>
+          <TabContent direction="vertical" activeTab={tab} tabId="gamesettings"><GameSettingsTab instanceId={id!} refreshKey={gameSettingsRefresh} onRefresh={() => setGameSettingsRefresh(k => k + 1)} /></TabContent>
         </div>
       </div>
       <AccountSelectDialog

@@ -7,6 +7,8 @@ import { MorphActionIcon } from './MorphActionIcon.tsx'
 import { Button, Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Input, Skeleton, TabContent, Tabs, useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
+import { useDelayedFlag } from '../hooks/useDelayedFlag.ts'
+import { ContentTransition } from './ContentTransition.tsx'
 import { PluginCard } from './PluginCard.tsx'
 import { PluginIcon } from './PluginIcon.tsx'
 import { resolvePluginAssetUrl, deactivatePlugin } from '../plugins/plugin-loader.tsx'
@@ -198,6 +200,7 @@ export default function PluginStoreManage() {
   )
 
   const pluginAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading], { y: 12, scale: 0.95 })
+  const showSkeleton = useDelayedFlag(loading)
 
   return (
     <div>
@@ -230,7 +233,7 @@ export default function PluginStoreManage() {
         {pluginsMsg && (
           <div className="mb-4 rounded bg-primary/10 px-4 py-2 text-sm text-primary">{pluginsMsg}</div>
         )}
-        {loading ? (
+        <ContentTransition loading={loading} skeletonVisible={showSkeleton} skeleton={
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {Array.from({ length: 4 }).map((_, i) => (
               <Skeleton key={i} className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3">
@@ -244,7 +247,8 @@ export default function PluginStoreManage() {
               </Skeleton>
             ))}
           </div>
-        ) : plugins.length === 0 ? (
+        }>
+        {plugins.length === 0 ? (
           <div className="flex min-h-[200px] items-center justify-center">
             <p className="text-muted-foreground">{t('settings.plugins.noneInstalled')}</p>
           </div>
@@ -282,6 +286,7 @@ export default function PluginStoreManage() {
             })}
           </div>
         )}
+        </ContentTransition>
         {plugins.length > 0 && filtered.length === 0 && (
           <p className="py-6 text-center text-sm text-muted-foreground">{t('settings.plugins.noMatch')}</p>
         )}

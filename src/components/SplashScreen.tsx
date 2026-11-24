@@ -32,7 +32,7 @@ export function SplashScreen({ state, onRetry }: SplashScreenProps) {
     if (state === 'ready') {
       setProgress(100)
       setExiting(true)
-      const t = setTimeout(() => setMounted(false), 600)
+      const t = setTimeout(() => setMounted(false), 320)
       return () => clearTimeout(t)
     }
   }, [state])
@@ -42,8 +42,8 @@ export function SplashScreen({ state, onRetry }: SplashScreenProps) {
   return (
     <div
       className={cn(
-        'fixed inset-0 z-[9999] flex flex-col items-center justify-center gap-8 bg-background cursor-default select-none',
-        exiting && 'opacity-0 transition-opacity duration-500'
+        'anim-fade fixed inset-0 z-[9999] flex flex-col items-center justify-center gap-8 bg-background cursor-default select-none',
+        exiting && 'opacity-0'
       )}
     >
       {/* 顶部 36px 拖动条（与主窗口 TitleBar 等高）：启动阶段只保留这一条可拖，

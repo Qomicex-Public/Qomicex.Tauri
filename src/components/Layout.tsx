@@ -102,6 +102,8 @@ export default function Layout() {
   const [bg, setBg] = useState('')
   const [opacity, setOpacity] = useState(() => getSettings().bgOverlayOpacity ?? 78)
   const [blur, setBlur] = useState(() => getSettings().bgBlur ?? 0)
+  const [material, setMaterial] = useState(() => getSettings().componentMaterial ?? 'default')
+  const [glassBlur, setGlassBlur] = useState(() => getSettings().glassBlur ?? 18)
   const [bgAnim, setBgAnim] = useState(() => getSettings().backgroundAnimationsEnabled !== false)
   const [bgVideo, setBgVideo] = useState(() => getSettings().backgroundVideoEnabled === true)
   const randomBgRef = useRef('')
@@ -135,6 +137,8 @@ export default function Layout() {
     return onSettingsChange((s) => {
       setOpacity(s.bgOverlayOpacity ?? 78)
       setBlur(s.bgBlur ?? 0)
+      setMaterial(s.componentMaterial ?? 'default')
+      setGlassBlur(s.glassBlur ?? 18)
       setBgAnim(s.backgroundAnimationsEnabled !== false)
       setBgVideo(s.backgroundVideoEnabled === true)
       // `--radius` 由 applySettingsToDom（App/Settings 共用实现）负责写入；
@@ -186,7 +190,20 @@ export default function Layout() {
     return 'image'
   }, [bg])
 
-  const bgFilter = blur > 0 ? `blur(${blur}px)` : undefined
+  // 材质模糊上移到「整页静态模糊层」（ADR-141）：参与动画的卡片不再持有
+  // backdrop-filter，动画期间不会出现「不糊、结束才跳出来」。
+  // 背景模糊与材质模糊取最大值，避免叠成两次模糊；动态壁纸封顶 12px。
+  const materialBlur = material === 'default' ? 0 : Math.max(0, glassBlur)
+  const desiredBlur = Math.max(blur, materialBlur)
+  const dynamicBg = bgType === 'video' || bgType === 'animation'
+  const layerBlur = dynamicBg ? Math.min(12, desiredBlur) : desiredBlur
+  const layerStyle: CSSProperties | undefined = layerBlur > 0
+    ? {
+        backdropFilter: `blur(${layerBlur}px) saturate(1.5)`,
+        WebkitBackdropFilter: `blur(${layerBlur}px) saturate(1.5)`,
+      }
+    : undefined
+
   // 渲染背景：静态图恒显示；视频仅在「播放视频」开启时显示（关闭则不渲染，仅留遮罩底色）；
   // 动图在「播放动图」开启时显示，关闭时用 canvas 截首帧静态渲染。
   const renderBg = bgType === 'image' || (bgType === 'video' && bgVideo) || bgType === 'animation'
@@ -208,14 +225,16 @@ export default function Layout() {
               loop
               playsInline
               className="fixed inset-0 z-0 h-full w-full object-cover"
-              style={{ filter: bgFilter }}
             />
           ) : bgType === 'animation' && !bgAnim ? (
-            <FrozenAnimation src={bg} className="fixed inset-0 z-0 h-full w-full object-cover" style={{ filter: bgFilter }} />
+            <FrozenAnimation src={bg} className="fixed inset-0 z-0 h-full w-full object-cover" />
           ) : (
-            <img src={bg} alt="" className="fixed inset-0 z-0 h-full w-full object-cover" style={{ filter: bgFilter }} />
+            <img src={bg} alt="" className="fixed inset-0 z-0 h-full w-full object-cover" />
           )}
           <div className="fixed inset-0 z-0" style={{ backgroundColor: `hsl(var(--background)/${(opacity / 100).toFixed(2)})` }} />
+          {layerStyle && (
+            <div aria-hidden className="pointer-events-none fixed inset-0 z-0" style={layerStyle} />
+          )}
         </>
       )}
       <div className="relative z-10 flex flex-1 min-w-0">
@@ -223,7 +242,7 @@ export default function Layout() {
         <div className="flex flex-1 flex-col min-w-0">
           {!isLinux && !isMacos && <TitleBar />}
           <div className="relative flex flex-1 min-w-0 overflow-hidden">
-            <div className="absolute inset-0 bg-background/50" style={{ backdropFilter: blur > 0 ? `blur(${blur}px)` : 'none' }} />
+            <div className="absolute inset-0 bg-background/50" />
             <main className="relative z-10 flex min-h-0 overflow-hidden flex-1">
               <Outlet />
             </main>

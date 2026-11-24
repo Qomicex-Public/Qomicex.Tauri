@@ -113,7 +113,7 @@ export function AccountWidget() {
 
   return (
     <div className={cn(
-      'glass-surface relative flex h-full flex-col rounded-xl border border-border/30 bg-card/70 backdrop-blur-md',
+      'glass-surface relative flex h-full flex-col rounded-xl border border-border/30 bg-card/70',
       h > 1 ? 'p-4' : 'justify-center px-3',
     )}>
       {h > 1 && <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">{t('dashboard.account')}</p>}
@@ -195,7 +195,7 @@ export function InstanceWidget() {
   const compact = h < 2
 
   return (
-    <div className={cn('glass-surface flex h-full items-center justify-between gap-4 rounded-xl border border-border/30 bg-card/70 backdrop-blur-md', compact ? 'px-4' : 'px-6')}>
+    <div className={cn('glass-surface flex h-full items-center justify-between gap-4 rounded-xl border border-border/30 bg-card/70', compact ? 'px-4' : 'px-6')}>
       <div className="flex min-w-0 items-center gap-4">
         <InstanceIcon icon={defaultInstance?.icon} iconData={defaultInstance?.iconData} loader={defaultInstance?.loader} className={cn('shrink-0 rounded-xl', compact ? 'h-10 w-10' : 'h-12 w-12')} imgClassName="rounded-xl" />
         {defaultInstance ? (
@@ -288,7 +288,7 @@ export function AnnouncementWidget() {
       <div
         onClick={() => setDialogOpen(true)}
         className={cn(
-          'glass-surface flex h-full cursor-pointer flex-col rounded-xl border border-border/30 bg-card/70 backdrop-blur-md transition-colors hover:bg-card/80',
+          'glass-surface flex h-full cursor-pointer flex-col rounded-xl border border-border/30 bg-card/70 transition-colors hover:bg-card/80',
           h > 1 ? 'p-4' : 'justify-center px-4 py-2',
         )}
       >

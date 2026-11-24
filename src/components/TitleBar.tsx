@@ -43,7 +43,7 @@ export function TitleBar() {
   }, [])
 
   return (
-    <div data-qomicex-drag-region className="flex h-9 shrink-0 touch-none select-none items-center justify-end bg-background/50 backdrop-blur-sm">
+    <div data-qomicex-drag-region className="flex h-9 shrink-0 touch-none select-none items-center justify-end bg-background/50">
       {/* header:right 插件槽（dashboard widgets 等）整槽禁拖，内部交互自理；
           SlotHost 不透传额外属性，故外包一层挂 data-qomicex-drag-region={false} */}
       <div data-qomicex-drag-region={false} className="flex h-full items-center">
@@ -56,14 +56,14 @@ export function TitleBar() {
         <button
           onClick={() => win.minimize()}
           data-qomicex-drag-region={false}
-          className="flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 transition-all duration-150 hover:bg-white/10 hover:text-foreground active:bg-white/20"
+          className="anim-tap flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 hover:bg-white/10 hover:text-foreground active:bg-white/20"
         >
           <MinIcon />
         </button>
         <button
           onClick={() => win.toggleMaximize()}
           data-qomicex-drag-region={false}
-          className="flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 transition-all duration-150 hover:bg-white/10 hover:text-foreground active:bg-white/20"
+          className="anim-tap flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 hover:bg-white/10 hover:text-foreground active:bg-white/20"
         >
           <MorphIcon
             icon={maximized ? RESTORE_ICON : MAXIMIZE_ICON}
@@ -78,7 +78,7 @@ export function TitleBar() {
         <button
           onClick={safeClose}
           data-qomicex-drag-region={false}
-          className="flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 transition-all duration-150 hover:bg-destructive/80 hover:text-destructive-foreground active:bg-destructive"
+          className="anim-tap flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 hover:bg-destructive/80 hover:text-destructive-foreground active:bg-destructive"
         >
           <CloseIcon />
         </button>

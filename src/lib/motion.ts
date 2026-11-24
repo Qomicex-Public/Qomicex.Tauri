@@ -46,12 +46,12 @@ export function gpuVars(m: Motion = readMotion()): { force3D?: boolean } {
 }
 
 /**
- * 是否包含玻璃表面。玻璃元素的祖先被 transform/opacity 提升为合成层后，
- * WebView2 会停止重采样 backdrop-filter（见 ADR-141 5.1）。
- * 含玻璃的区块只能做自身 opacity，不允许位移。
+ * 是否仍持有自己的背景采样层。
+ *
+ * ADR-141 之后 .glass-surface 不再使用 backdrop-filter（材质模糊上移到整页静态层），
+ * 因此卡片可以自由位移/缩放；只有液态玻璃（quidlass 自绘层，已下架）仍需特殊对待。
  */
 export function containsGlass(el: Element | null): boolean {
   if (!el) return false
-  return el.matches('.glass-surface, [data-liquid-glass]') ||
-    !!el.querySelector('.glass-surface, [data-liquid-glass]')
+  return el.matches('[data-liquid-glass]') || !!el.querySelector('[data-liquid-glass]')
 }

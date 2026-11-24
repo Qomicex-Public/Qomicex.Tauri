@@ -12,6 +12,8 @@ import rehypeRaw from 'rehype-raw'
 import remarkGfm from 'remark-gfm'
 import { PageHeader } from '../components/PageHeader.tsx'
 import { PageShell } from '../components/PageShell.tsx'
+import { ContentTransition } from '../components/ContentTransition.tsx'
+import { useDelayedFlag } from '../hooks/useDelayedFlag.ts'
 import { Button } from '../components/ui'
 import { MinecraftText } from '../components/MinecraftText.tsx'
 import { Select, SelectOption } from '../components/ui'
@@ -222,6 +224,7 @@ export default function ResourceDetailPage() {
   const [versions, setVersions] = useState<ResourceVersion[]>([])
   const [instance, setInstance] = useState<GameInstance | null>(null)
   const [loading, setLoading] = useState(true)
+  const showSkeleton = useDelayedFlag(loading)
   const [loadingVersions, setLoadingVersions] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [versionsError, setVersionsError] = useState<string | null>(null)
@@ -763,7 +766,7 @@ export default function ResourceDetailPage() {
       <div className="flex-1 min-h-0 overflow-y-auto scroll-fade-mask">
         <div className="space-y-6 p-8">
 
-      {loading ? (
+      <ContentTransition loading={loading} skeletonVisible={showSkeleton} skeleton={
         <div className="space-y-6">
           <Card className="overflow-hidden">
             <CardContent className="p-0">
@@ -809,7 +812,8 @@ export default function ResourceDetailPage() {
             </Card>
           </div>
         </div>
-      ) : error || !detail ? (
+      }>
+      {error || !detail ? (
         <Card className="p-8">
           <div className="space-y-2 text-center">
             <p className="text-sm font-medium text-foreground">{t('resourceDetail.loadFailed')}</p>
@@ -1249,6 +1253,7 @@ export default function ResourceDetailPage() {
           </div>
         </>
       )}
+      </ContentTransition>
         </div>
       </div>
 
