@@ -186,11 +186,10 @@ export function useAnimatedList<T extends HTMLElement>(
       clone.dataset.animClone = ''
       clonesRef.current.add(clone)
       document.body.appendChild(clone)
-      // 玻璃克隆保持同一约束：只淡出，不位移/缩放
-      const glass = containsGlass(entry.el)
       gsap.to(clone, {
         opacity: 0,
-        ...(glass ? {} : { y: -8, scale: 0.96 }),
+        y: -8,
+        scale: 0.96,
         duration: exitDuration,
         ease: 'power2.in',
         force3D: motion.gpu,
@@ -274,7 +273,6 @@ export function useAnimatedList<T extends HTMLElement>(
       const entry = next.get(move.key)
       if (!entry || !inViewport(entry)) continue
       const node = entry.el
-      if (containsGlass(node)) continue
       animatedRef.current.add(node)
       // 只停位移补间：保留可能还在跑的入场 opacity（否则该行会停在半透明）
       gsap.killTweensOf(node, 'x,y')

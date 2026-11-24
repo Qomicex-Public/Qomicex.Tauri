@@ -137,6 +137,24 @@ try {
   check('骨架溶解：加载完成后占位已移除', skeletonAfter === 0, `${skeletonAfter} 个残留`)
 
   await page.waitForTimeout(900)
+
+  // --- 场景 2b：中途删除——剩余条目要 FLIP 让位、退场要有克隆 ---
+  const flip = await page.evaluate(() => new Promise((resolve) => {
+    const card = document.querySelector('main [data-key]')
+    if (!card) return resolve({ moved: false, clone: 0 })
+    let target = card
+    while (target.parentElement && target.parentElement.querySelectorAll('[data-key]').length === 1) {
+      target = target.parentElement
+    }
+    const root = target.parentElement
+    root.removeChild(target)
+    setTimeout(() => resolve({
+      moved: Array.from(root.children).some((n) => n.style.transform !== ''),
+      clone: document.querySelectorAll('[data-anim-clone]').length,
+    }), 120)
+  }))
+  check('列表退场：剩余条目有 FLIP 让位', flip.moved, JSON.stringify(flip))
+  check('列表退场：出现退场克隆', flip.clone > 0, `${flip.clone} 个`)
   const frames = await page.evaluate(() => window.__qmxFrames ?? [])
   const withCards = frames.filter((f) => f.opacity !== null)
   const dipped = withCards.some((f) => f.opacity < 0.99)
