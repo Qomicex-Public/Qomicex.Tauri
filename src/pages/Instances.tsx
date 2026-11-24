@@ -1001,7 +1001,7 @@ export default function Instances() {
         </div>
 
         {sortedRemote.length === 0 ? (
-          <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 py-20 text-center text-muted-foreground">
+          <div className="animate-in fade-in flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 py-20 text-center text-muted-foreground">
             <Box className="mb-3 h-8 w-8 opacity-30" />
             <p className="text-sm font-medium">{t('instances.noRemoteMatch')}</p>
             <p className="mt-1 text-xs text-muted-foreground/70">{t('instances.noRemoteMatchHint')}</p>

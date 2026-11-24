@@ -158,15 +158,16 @@ export function Combobox({ value, onChange, options, placeholder, emptyText = ''
             {filtered.length === 0 ? (
               <div className="px-3 py-2 text-xs text-muted-foreground">{emptyText}</div>
             ) : (
-              filtered.map((opt) => (
+              filtered.map((opt, i) => (
                 <button
                   key={opt.value}
                   type="button"
                   onMouseDown={() => commit(opt.value)}
                   className={cn(
-                    'flex w-full items-center rounded-md px-3 py-1.5 text-left text-sm transition-colors',
+                    'animate-zoom-fade-in flex w-full items-center rounded-md px-3 py-1.5 text-left text-sm transition-colors',
                     opt.value === value ? 'bg-primary/10 font-medium text-primary' : 'text-foreground hover:bg-accent'
                   )}
+                  style={{ animationDelay: `${Math.min(i * 12, 120)}ms`, animationFillMode: 'both' }}
                 >
                   {opt.label}
                 </button>
