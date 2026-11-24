@@ -21,6 +21,7 @@
     "test:update-history": "node scripts/test-update-history.mjs",
     "test:deep-link": "node scripts/test-deep-link-parse.mjs",
     "test:list-enter-selection": "node scripts/test-list-enter-selection.mjs",
+    "verify:anim": "node scripts/verify-anim.mjs",
     "test:i18n-steps": "node scripts/test-i18n-step-keys.mjs",
     "test:i18n-keys": "node scripts/test-i18n-keys.mjs",
     "test:mod-deps": "node scripts/test-mod-dependencies.mjs",

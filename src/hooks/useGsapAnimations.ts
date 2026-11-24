@@ -105,8 +105,11 @@ export function useAnimatedList<T extends HTMLElement>(
     if (!motion.enabled) return
     if (children.length === 0 && prevSnapshot.size === 0) return
 
-    // 滚动期间的变更不播动画：与滚动抢帧只会更卡
-    if (performance.now() - lastScrollAtRef.current < SCROLL_QUIET_MS) return
+    // 滚动期间的变更不播动画：与滚动抢帧只会更卡。
+    // 首屏例外：页面挂载时浏览器可能因滚动锚定补发一次 scroll，若一并跳过，
+    // 进场动画会随机丢失（现象就是「有时候没有逐个进入」）。
+    const initial = prevSnapshot.size === 0
+    if (!initial && performance.now() - lastScrollAtRef.current < SCROLL_QUIET_MS) return
 
     const prevRects: ListRectInput[] = [...prevSnapshot.entries()].map(([key, entry]) => ({
       key, top: entry.top, left: entry.left,
