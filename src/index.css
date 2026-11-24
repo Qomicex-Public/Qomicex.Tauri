@@ -475,18 +475,16 @@
   border-width: var(--card-border-width, 1px);
 }
 
-/* 材质规则（ADR-141）：模糊已上移到 Layout 的全窗口静态层，卡片只负责
-   半透明填充、描边与内高光——不再持有 backdrop-filter，动画时可以自由移动。
-   四档之间靠透明度/纹理/阴影区分。 */
-
 :root[data-material="frosted"] .glass-surface {
-  background-color: hsl(var(--card) / 0.62);
-  border-color: hsl(var(--card-foreground) / 0.10);
-  box-shadow: inset 0 1px 0 hsl(var(--card-foreground) / 0.06);
+  background-color: hsl(var(--card) / 0.6);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 18px)) saturate(150%);
+  backdrop-filter: blur(var(--glass-blur, 18px)) saturate(150%);
 }
 
 :root[data-material="acrylic"] .glass-surface {
-  background-color: hsl(var(--card) / 0.34);
+  background-color: hsl(var(--card) / 0.25);
+  -webkit-backdrop-filter: blur(15px) saturate(120%);
+  backdrop-filter: blur(15px) saturate(120%);
   border: 1px solid hsl(var(--card-foreground) / 0.15);
   border-top: 1px solid hsl(var(--card-foreground) / 0.25);
   border-radius: 8px;
@@ -496,7 +494,7 @@
 }
 
 :root[data-material="aero"] .glass-surface {
-  background-color: hsl(var(--card) / 0.42);
+  background-color: hsl(var(--card) / 0.2);
   background-image: repeating-linear-gradient(
     45deg,
     transparent,
@@ -505,6 +503,8 @@
     hsl(var(--card-foreground) / 0.03) 6px
   );
   background-blend-mode: overlay;
+  -webkit-backdrop-filter: blur(16px) saturate(1.8);
+  backdrop-filter: blur(16px) saturate(1.8);
 
   border: 1px solid hsl(var(--card-foreground) / 0.2);
   box-shadow:

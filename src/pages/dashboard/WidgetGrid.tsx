@@ -91,7 +91,7 @@ export function WidgetGrid({ widgets }: { widgets: WidgetEntry[] }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {editing && (
-        <div className="glass-surface mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/30 bg-card/70 px-4 py-2.5">
+        <div className="glass-surface mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border/30 bg-card/70 px-4 py-2.5 backdrop-blur-md">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Pencil className="h-3.5 w-3.5" />
             {t('dashboard.editMode')}
@@ -125,7 +125,7 @@ export function WidgetGrid({ widgets }: { widgets: WidgetEntry[] }) {
       )}
 
       {addPanelOpen && editing && (
-        <div className="glass-surface mb-4 rounded-xl border border-border/30 bg-card/70 p-4">
+        <div className="glass-surface mb-4 rounded-xl border border-border/30 bg-card/70 p-4 backdrop-blur-md">
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">{t('dashboard.addWidget')}</p>
           <div className="flex flex-wrap gap-2">
             {hiddenEntries.length > 0 ? hiddenEntries.map(w => (

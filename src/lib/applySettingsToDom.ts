@@ -71,7 +71,7 @@ export function applySettingsToDom(s: AppSettings): void {
 
   // ---- 对话框透明度 ----
   // 0-100 → 0-1；默认 75（半透明，独立于卡片材质）
-  const dialogOpacity = Math.min(100, Math.max(0, s.dialogOpacity ?? 88))
+  const dialogOpacity = Math.min(100, Math.max(0, s.dialogOpacity ?? 75))
   root.style.setProperty('--dialog-opacity', String(dialogOpacity / 100))
 }
 

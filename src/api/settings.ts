@@ -171,7 +171,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   cardOpacity: 50,
   cardBorderColor: '',
   cardBorderWidth: 1,
-  dialogOpacity: 88,
+  dialogOpacity: 75,
   initialized: false,
   autoReportErrors: true,
   telemetryEnabled: false,

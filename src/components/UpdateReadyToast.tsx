@@ -64,7 +64,7 @@ export default function UpdateReadyToast() {
           }
         }}
         className={cn(
-          'glass-surface pointer-events-auto flex w-fit max-w-[min(92vw,560px)] cursor-pointer items-center gap-3 rounded-xl border border-border/50 bg-popover/90 py-2.5 pl-3 pr-2 text-sm shadow-2xl transition-all duration-300 hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          'glass-surface pointer-events-auto flex w-fit max-w-[min(92vw,560px)] cursor-pointer items-center gap-3 rounded-xl border border-border/50 bg-popover/90 py-2.5 pl-3 pr-2 text-sm shadow-2xl backdrop-blur-lg transition-all duration-300 hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
           active ? 'animate-zoom-fade-in' : 'animate-zoom-fade-out',
         )}
       >

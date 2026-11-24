@@ -43,7 +43,7 @@ export function TitleBar() {
   }, [])
 
   return (
-    <div data-qomicex-drag-region className="flex h-9 shrink-0 touch-none select-none items-center justify-end bg-background/50">
+    <div data-qomicex-drag-region className="flex h-9 shrink-0 touch-none select-none items-center justify-end bg-background/50 backdrop-blur-sm">
       {/* header:right 插件槽（dashboard widgets 等）整槽禁拖，内部交互自理；
           SlotHost 不透传额外属性，故外包一层挂 data-qomicex-drag-region={false} */}
       <div data-qomicex-drag-region={false} className="flex h-full items-center">

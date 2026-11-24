@@ -61,8 +61,6 @@ function Dialog({ open, onClose, children, className, closeOnBackdrop = true, cl
       if (content) {
         closeTimerRef.current = gsap.to(content, {
           opacity: 0,
-          scale: 0.95,
-          y: 8,
           duration,
           ease: EASE_OUT,
           ...withGpu({}),
@@ -97,8 +95,8 @@ function Dialog({ open, onClose, children, className, closeOnBackdrop = true, cl
     )
     gsap.fromTo(
       content,
-      { opacity: 0, scale: 0.95, y: 8 },
-      { opacity: 1, scale: 1, y: 0, duration, ease: EASE_IN, ...withGpu({}) }
+      { opacity: 0 },
+      { opacity: 1, duration, ease: EASE_IN, ...withGpu({}) }
     )
     // 内容分块入场：标题/正文/操作区各错开 20ms，比整块缩放更有层次
     const sections = Array.from(content.children) as HTMLElement[]
@@ -136,12 +134,12 @@ function Dialog({ open, onClose, children, className, closeOnBackdrop = true, cl
       <div
         ref={contentRef}
         className={cn(
-          "relative z-10 w-full max-w-lg max-h-[calc(100vh-2rem)] overflow-y-auto rounded-xl border bg-popover/90 p-0 shadow-2xl glass-surface",
+          "relative z-10 w-full max-w-lg max-h-[calc(100vh-2rem)] overflow-y-auto rounded-xl border bg-popover/90 backdrop-blur-lg p-0 shadow-2xl glass-surface",
           className
         )}
         // 对话框透明度由宿主设置经 --dialog-opacity 注入；inline 优先级高于
         // index.css 非分层的 .glass-surface 材质规则，使该设置独立于组件材质。
-        style={{ backgroundColor: 'hsl(var(--popover) / var(--dialog-opacity, 0.88))' }}
+        style={{ backgroundColor: 'hsl(var(--popover) / var(--dialog-opacity, 0.75))' }}
       >
         {children}
       </div>

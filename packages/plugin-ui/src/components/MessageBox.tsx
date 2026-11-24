@@ -245,7 +245,7 @@ function MessageBoxProvider({ children, messages = defaultMessages }: { children
         <div
           key={toast.count}
           className={cn(
-            'fixed bottom-6 right-6 z-[100] flex w-fit max-w-[min(92vw,520px)] items-center gap-2.5 rounded-xl border border-border/50 bg-popover/90 px-4 py-3 text-sm shadow-2xl glass-surface',
+            'fixed bottom-6 right-6 z-[100] flex w-fit max-w-[min(92vw,520px)] items-center gap-2.5 rounded-xl border border-border/50 bg-popover/90 px-4 py-3 text-sm shadow-2xl backdrop-blur-lg glass-surface',
             toast.open ? 'animate-zoom-fade-in' : 'animate-zoom-fade-out pointer-events-none'
           )}
         >

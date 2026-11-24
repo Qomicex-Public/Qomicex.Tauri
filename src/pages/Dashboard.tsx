@@ -38,7 +38,7 @@ function DashboardContent() {
       id: `plugin:${reg.pluginId}:${i}` as WidgetId,
       label: reg.pluginId,
       node: (
-        <div className="glass-surface h-full overflow-hidden rounded-xl border border-border/30 bg-card/70 [&>*]:h-full">
+        <div className="glass-surface h-full overflow-hidden rounded-xl border border-border/30 bg-card/70 backdrop-blur-md [&>*]:h-full">
           {reg.render()}
         </div>
       ),
