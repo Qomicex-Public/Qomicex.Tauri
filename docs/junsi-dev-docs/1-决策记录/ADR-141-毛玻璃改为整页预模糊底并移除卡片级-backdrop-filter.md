@@ -1,6 +1,6 @@
 # ADR-141 毛玻璃改为整页预模糊底，移除卡片级 backdrop-filter
 
-状态：已批准，待实施
+状态：已撤销（v1.2，B7.1~B7.3 回滚）
 日期：2026-11-24
 关联：[动画系统](../2-架构设计/动画系统.md)、[UI 动画优化方案](../6-UI/UI动画优化方案.md) 5.1、ADR-035（glassEffect/glassBlur）、ADR-036（组件材质）、ADR-042（glass-surface 接入）、ADR-075（亮色液态玻璃）、issue #327
 
@@ -81,6 +81,26 @@ Dialog / Toast / Dropdown / Menu / Popover 浮在页面内容之上，背景层�
 
 `useGlassRepaint` 保留，但降级为兜底（材质切换、媒体加载、模态遮罩）。动画正确性不再依赖它；`queueGlassRepaint()` 仍由动画原语在结束时调用，覆盖少数保留 `backdrop-filter` 的元素。
 
+## 回滚记录（2026-11-24，v1.2）
+
+实施后收到实测反馈，三项与预期不符，决定回滚 B7.1~B7.3，保留 B7.0（液态玻璃下架）与动画侧的重采样/opacity 约束：
+
+1. **背景模糊滑块失效**：静态层用 `max(bgBlur, glassBlur)`，材质非 default 时 `glassBlur=18` 恒定盖过 `bgBlur=0..18` 区间，用户把「背景模糊」拉到 0 仍然一片模糊。
+2. **组件模糊消失**：卡片去掉了 `backdrop-filter`，在深色主题下 0.6 透明度的近黑色填充没有模糊提亮，观感从「毛玻璃」退化为「黑块」。
+3. **多出一层暗色块**：叠加的整页模糊层与内容区外壳叠加后，静态壁纸/视频下的明暗分布与预期不一致，出现成片暗块。
+
+回滚内容：
+
+- `Layout` 恢复媒体 `filter: blur(bgBlur)` 与内容区外壳的 `backdrop-filter`，删除整页模糊层与 `materialBlur` 计算；
+- `.glass-surface` 恢复四档 `backdrop-filter`，透明度回到 0.6 / 0.25 / 0.2；
+- 浮层（Dialog/Toast/侧栏/标题栏/首页小组件）恢复 `backdrop-blur-*`，Dialog 默认不透明度回到 75%；
+- `containsGlass` 恢复为检测 `.glass-surface`，列表/页面入场对玻璃卡只做 opacity，不位移；
+- Dialog 进出场改为纯 opacity（不再 scale/y），避免缩放打断 backdrop 采样。
+
+保留内容：B7.0 液态玻璃下架与迁移；`queueGlassRepaint()` 在每个动画结束回调里补一次重采样；玻璃只做 opacity 的动画约束（5.1）。实测截图确认：`bgBlur=0` 时壁纸清晰、卡片内部仍是模糊背景；`bgBlur=20` 时壁纸整体模糊；列表入场中途卡片保持模糊。
+
+结论：在 WebView2 上，「背景模糊」与「组件模糊」需要两个独立实现——前者控壁纸，后者只能靠每张卡的 `backdrop-filter`（或未来的预模糊副本方案）。整页单层方案无法同时满足两者，撤销。
+
 ## 备选方案
 
 ### 每卡片 `background-attachment: fixed` 壁纸副本
@@ -142,3 +162,4 @@ Dialog / Toast / Dropdown / Menu / Popover 浮在页面内容之上，背景层�
 |---|---|---|---|
 | 2026-11-24 | v1.0 | 初版创建（立项） | AI Agent |
 | 2026-11-24 | v1.1 | 背景模糊改为「全窗口静态模糊层」而非媒体 `filter`，补动态壁纸适配与降级顺序；液态玻璃改列移除候选（下架 + 迁移，代码暂存） | AI Agent |
+| 2026-11-24 | v1.2 | 回滚 B7.1~B7.3：`bgBlur` 滑块失效、组件模糊消失、成片暗块；恢复卡片级 `backdrop-filter`，保留 B7.0 与重采样/opacity 约束 | AI Agent |
