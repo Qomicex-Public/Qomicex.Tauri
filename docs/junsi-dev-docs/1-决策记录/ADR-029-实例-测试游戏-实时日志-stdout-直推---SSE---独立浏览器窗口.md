@@ -43,6 +43,7 @@
 |---|---|---|---|
 | 2026-08-20 | v1.0 | 初版创建 | AI Agent |
 | 2026-09-12 | v1.1 | 修复日志窗口两个缺陷（非 UTF-8 读取中断 + 连接状态竞态）并补齐 release IPC 初始化 | AI Agent |
+| 2026-11-25 | v1.2 | 修复游戏 stdout/stderr 中文乱码：启动参数强制 UTF-8（issue #386） | AI Agent |
 
 ### 2026-08-21 更新
 
@@ -69,4 +70,17 @@
 3. **release 下日志窗口无 IPC 初始化（潜在）** — 独立日志窗口不经过 `AppContent` 健康轮询，从不调用 `initApiTransport()` → `isIpcMode()` 恒 false → 走 HTTP `:5000`；release 下 `QOMICEX_NO_TCP=1` 无 TCP 监听 → 完全无输出。**修复**：打开流前 `await initApiTransport()`。
 
 验证：debug 后端独立实例（5055 端口）+ Playwright Tauri mock 实测——输出由修复前卡在第 69 行（首个 GBK 字节处）变为持续到 213+ 行；连接状态由恒「未连接」变为恒「已连接」。
+
+## 修订（2026-11-25）：游戏输出中文乱码（issue #386）
+
+v1.1 只保证「读到坏字节不中断」，但 GBK 中文被 `from_utf8_lossy` 解码后仍是 U+FFFD（界面上表现为乱码/问号）。根因在编码源头：游戏 stdout 是 JVM 的 `System.out`，中文 Windows 下默认用系统代码页（GBK），而后端按 UTF-8 解码。
+
+**修复**：`qomicex-core-rust/src/services/launch/jvm_args.rs` 的默认 JVM 参数强制控制台编码为 UTF-8：
+
+- `-Dsun.stdout.encoding=UTF-8` / `-Dsun.stderr.encoding=UTF-8`（JDK 8–17 读取）；
+- `-Dstdout.encoding=UTF-8` / `-Dstderr.encoding=UTF-8`（JDK 18+，JEP 400 读取；旧 JDK 忽略未知属性）。
+
+刻意**不设** `-Dfile.encoding=UTF-8`：那会改变模组读写文件时的默认字符集，可能让依赖 GBK 默认编码的老模组行为变化。新增回归测试 `default_params_force_utf8_console_encoding`（去掉任一属性必 FAIL）。
+
+不覆盖的情况：整合包自带 `log4j2.xml` 且给 Console appender 指定了 charset 时，由该配置决定输出编码。
 
