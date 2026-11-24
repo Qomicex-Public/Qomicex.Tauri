@@ -2,11 +2,30 @@
 
 | 属性 | 内容 |
 |---|---|
-| 状态 | 草案 v2（覆盖优先，待确认后实施） |
+| 状态 | v2 已实施（B0/B1/B1.5/B1.6/B2/B6 完成，B3/B4/B5/B7 部分完成，见「实施进度」） |
 | 日期 | 2026-11-23 |
 | 参照 | `D:\Project\PCLCE\PCL-CE`（Avalonia，`PCL.Core.UI.Animation` + 控件基类内置动效） |
 | v1 变更 | v1 按「批次」组织、只覆盖十余个场景；本版改为**按 UI 层级全覆盖**，并把分散写法收敛为 3 个原语 |
 | 新增依赖 | 无 |
+
+---
+
+## 实施进度（2026-11-24）
+
+| 批次 | 状态 | 备注 |
+|---|---|---|
+| B0 前提修复 | 完成 | 页面入场收敛到 `PageShell`；全局门控；折叠竞态；死代码清理 |
+| B1 原语 | 完成 | `src/lib/motion.ts`、`PageShell` 内建 Reveal、motion 工具类；`Presence` 未抽公共 hook，等价行为分别落在 ContextMenu / Toast / 更新横幅 |
+| B1.5 列表 | 完成 | `useAnimatedList` 改 MutationObserver + FLIP；`listDiff.ts` + 24 项单测 |
+| B1.6 骨架溶解 | 8/10 | 实例列表、资源中心、实例详情-模组、插件商店×2、资源详情；实例详情其余 5 个标签页与导入弹窗未接 |
+| B2 页面与二级导航 | 完成 | 顶层块自动分层；Tabs 指示器 transform；TabContent 方向感知 |
+| B3 浮层与菜单 | 部分 | 右键菜单退场+错位、Toast 退场+强调、更新横幅进出场；Select/Combobox 选项错位、Dialog 内容三段 stagger 未做 |
+| B4 列表与结构件 | 部分 | Card/TableRow/实例卡/账户行/ModCard 统一 `anim-row`；分组头、空状态补齐未做 |
+| B5 输入与反馈 | 部分 | 拖选框、合规提示已加；错误文本展开、搜索清除、Slider、进度条 transform 未做 |
+| B6 布局与全局 | 完成 | 侧栏指示条回弹、标题栏 `anim-tap`、滚动到顶、启动屏 320ms |
+| B7 材质重构 | B7.1~B7.3 完成 | 全窗口静态模糊层、`.glass-surface` 去 `backdrop-filter`、浮层去 blur、Dialog 默认 88%；B7.4 仅剩调试小浮层与设置文案（i18n 在子模块） |
+
+**已知剩余**：实例详情 5 个 tab 的骨架溶解；Select/Combobox 选项错位；Dialog 内容 stagger；分组头/空状态；错误文本、搜索清除、Slider、进度条；液态玻璃物理移除（quidlass 依赖与 `Card` 分支）。
 
 ---
 
