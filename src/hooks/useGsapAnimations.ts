@@ -217,7 +217,33 @@ export function useAnimatedList<T extends HTMLElement>(
           queueGlassRepaint()
         },
       }
-      if (!glass) {
+
+      if (glass) {
+        // 玻璃卡不能整体位移（祖先 transform 会打断 backdrop 采样），
+        // 改为让卡「内容」上滑：卡片淡入 + 内部文字/图标位移，既有层次又不丢模糊。
+        const glassEl = node.matches('.glass-surface')
+          ? node
+          : node.querySelector<HTMLElement>('.glass-surface')
+        if (glassEl) {
+          const content = Array.from(glassEl.children).filter(
+            (child): child is HTMLElement => child instanceof HTMLElement,
+          ).slice(0, 6)
+          if (content.length > 0) {
+            gsap.fromTo(content,
+              { y: opts.y ?? 10 },
+              {
+                y: 0,
+                duration: enterDuration * 1.1,
+                delay,
+                stagger: 0.01 * motion.multiplier,
+                ease: 'power3.out',
+                overwrite: 'auto',
+                ...gpuVars(motion),
+                onComplete: () => gsap.set(content, { clearProps: 'transform' }),
+              })
+          }
+        }
+      } else {
         if (opts.x !== undefined) { from.x = opts.x; to.x = 0 }
         if (opts.y !== undefined) { from.y = opts.y; to.y = 0 }
         if (opts.scale !== undefined) { from.scale = opts.scale; to.scale = 1 }

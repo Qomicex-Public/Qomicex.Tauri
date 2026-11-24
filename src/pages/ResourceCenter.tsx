@@ -650,7 +650,11 @@ export default function ResourceCenter() {
   const [exhausted, setExhausted] = useState(false)
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null)
   /** 列表底部哨兵：进入视口即触发下一页（IO 观察点必须常驻，条件渲染会断开自动加载链路）。 */
-  const sentinelRef = useRef<HTMLDivElement>(null)
+  /**
+   * 哨兵元素用 state 而不是 ref：ContentTransition 会在加载结束后再挂载列表，
+   * effect 首次运行时哨兵还不存在；只依赖 loading 不会重跑，自动翻页会失效。
+   */
+  const [sentinelEl, setSentinelEl] = useState<HTMLDivElement | null>(null)
   /** 同步防重入：IO 回调可能在 `setLoading(true)` 生效前连续触发，重复请求会插进重复卡片。 */
   const loadMoreBusyRef = useRef(false)
   /**
@@ -1253,7 +1257,7 @@ export default function ResourceCenter() {
   // 不重建会用过期条件判断（如已 exhausted 还在请求）。
   useEffect(() => {
     if (view !== 'search') return
-    const target = sentinelRef.current
+    const target = sentinelEl
     if (!target) return
     if (exhausted || loadMoreError || initialLoading) return
 
@@ -1268,7 +1272,10 @@ export default function ResourceCenter() {
     }, { root: node, rootMargin: '300px 0px' })
     observer.observe(target)
     return () => observer.disconnect()
-  }, [view, loadMore, exhausted, loadMoreError, initialLoading])
+    // items.length 必须进依赖：ContentTransition 在 initialLoading 翻转后还会保持
+    // 骨架 120ms 才挂载列表，effect 首次运行时 sentinel 还不存在；只靠 initialLoading
+    // 不会再触发，自动翻页会彻底失效。
+  }, [view, loadMore, exhausted, loadMoreError, initialLoading, sentinelEl])
 
   // ---- P2：收藏夹增删改 + 标签过滤 ----
 
@@ -2011,7 +2018,7 @@ export default function ResourceCenter() {
           {view === 'search' && !initialLoading && !isReplacing && !error && items.length > 0 && (
             /* 无限滚动页脚：哨兵常驻（条件渲染会让 IO 目标消失、自动加载断链），
                状态文案叠在它上面。追加失败时只在这里提示 + 重试，不动已加载列表。 */
-            <div ref={sentinelRef} className="mt-5 flex min-h-[32px] flex-col items-center justify-center gap-2">
+            <div ref={setSentinelEl} data-load-more-sentinel className="mt-5 flex min-h-[32px] flex-col items-center justify-center gap-2">
               {loadMoreError ? (
                 <>
                   <p className="text-xs text-destructive">{loadMoreError}</p>

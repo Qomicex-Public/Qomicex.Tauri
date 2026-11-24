@@ -238,7 +238,8 @@ export function ContentTransition({
             <div
               ref={veilRef}
               aria-hidden
-              className="pointer-events-none absolute inset-0 z-20"
+              data-content-veil
+              className="pointer-events-none absolute inset-0 z-20 opacity-0"
               style={{ background: 'linear-gradient(to bottom, hsl(var(--background) / 0.55), transparent 62%)' }}
             />
           )}

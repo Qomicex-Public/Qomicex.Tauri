@@ -78,6 +78,28 @@ export function PageShell({ children, className }: PageShellProps) {
           { opacity: 0 },
           { opacity: 1, duration: sec(180, m), ease: 'power2.out' },
           delay)
+
+        // 玻璃块不能整体位移，退一步让「卡片内容」上滑：卡片淡入 + 文字/图标位移，
+        // 既有层次感，又不会打断 backdrop 采样。
+        const glassCards = (el.matches('.glass-surface')
+          ? [el]
+          : Array.from(el.querySelectorAll<HTMLElement>('.glass-surface'))).slice(0, 3)
+        const contents = glassCards.flatMap((card) =>
+          Array.from(card.children).filter((child): child is HTMLElement => child instanceof HTMLElement).slice(0, 3),
+        )
+        if (contents.length > 0) {
+          tl.fromTo(contents,
+            { y: 12 },
+            {
+              y: 0,
+              duration: sec(280, m),
+              stagger: sec(15, m),
+              ease: 'power3.out',
+              ...gpuVars(m),
+              onComplete: () => gsap.set(contents, { clearProps: 'transform' }),
+            },
+            delay)
+        }
         return
       }
 
