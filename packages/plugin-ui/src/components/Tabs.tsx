@@ -46,8 +46,8 @@ export function Tabs({ tabs, activeTab, onChange, className, orientation = 'hori
     const tween = gsap.to(buttons, {
       x: 0,
       opacity: 1,
-      duration: 0.14 * multiplier,
-      stagger: 0.012 * multiplier,
+      duration: 0.13 * multiplier,
+      stagger: 0.08 * multiplier,
       ease: 'power3.out',
       paused: true,
       onComplete: () => gsap.set(buttons, { clearProps: 'transform,opacity' }),

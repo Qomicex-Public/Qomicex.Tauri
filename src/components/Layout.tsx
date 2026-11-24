@@ -7,6 +7,7 @@ import Sidebar from './Sidebar.tsx'
 import { TitleBar } from './TitleBar.tsx'
 import ScrollToTop from './ScrollToTop.tsx'
 import { getSettings, onSettingsChange } from '../api/settings.ts'
+import { applySettingsToDom } from '../lib/applySettingsToDom.ts'
 import { get, API_BASE } from '../api/client.ts'
 import { useMessageBox } from './ui'
 import { DebugProvider, useDebug } from './DebugContext.tsx'
@@ -69,10 +70,14 @@ function DebugEffects() {
   }, [navigate, unlock])
 
   useEffect(() => {
-    document.documentElement.style.setProperty(
-      '--anim-duration-multiplier',
-      state.disableAnimations ? '0' : ''
-    )
+    if (!state.disableAnimations) {
+      // 恢复设置里的开关与倍速；此前写空字符串会把手动设置的倍速清掉，回到 1x
+      applySettingsToDom(getSettings())
+      return
+    }
+    const root = document.documentElement
+    root.dataset.animEnabled = 'false'
+    root.style.setProperty('--anim-duration-multiplier', '0')
   }, [state.disableAnimations])
 
   useEffect(() => {

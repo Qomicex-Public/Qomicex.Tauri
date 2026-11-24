@@ -15,10 +15,10 @@ export function SettingSection({ title, icon, children, action, id }: { title: s
     const motion = readMotion()
     if (!motion.enabled) return
 
-    // 逐块切入：单块约 200ms，块间隔 150ms（约上一块的 75%）保持连贯。
-    // 首块 90ms 起步：与侧栏最后几项重叠，避免「内容区先空一拍」。
+    // 逐块切入：单块约 200ms，块间隔 150ms（约上一块的 75%）。
+    // 首块 40ms 起步：倍速调到 0.1 时 40ms 会被放大成 400ms，再大就会看成「先空一拍」。
     const index = el.parentElement ? Array.from(el.parentElement.children).indexOf(el) : 0
-    const delay = 90 + Math.min(index, 10) * 150
+    const delay = 40 + Math.min(index, 10) * 150
     const header = el.firstElementChild as HTMLElement | null
     const card = el.lastElementChild as HTMLElement | null
     const rows = card
