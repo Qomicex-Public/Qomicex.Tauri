@@ -766,7 +766,7 @@ export default function ResourceDetailPage() {
       <div className="flex-1 min-h-0 overflow-y-auto scroll-fade-mask">
         <div className="space-y-6 p-8">
 
-      <ContentTransition loading={loading} skeletonVisible={showSkeleton} skeleton={
+      <ContentTransition className="space-y-6" loading={loading} skeletonVisible={showSkeleton} skeleton={
         <div className="space-y-6">
           <Card className="overflow-hidden">
             <CardContent className="p-0">

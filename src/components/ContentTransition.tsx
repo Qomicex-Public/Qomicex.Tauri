@@ -59,8 +59,15 @@ export function ContentTransition({
   // 未显式传入时内部做「400ms 延迟 + 300ms 最短停留」
   const autoSkeletonVisible = useDelayedFlag(loading)
   const resolvedSkeletonVisible = skeletonVisible ?? autoSkeletonVisible
-  const skeletonVisibleRef = useRef(resolvedSkeletonVisible)
-  skeletonVisibleRef.current = resolvedSkeletonVisible
+  // 骨架是否已经真正出现在屏幕上（用于加载结束后的淡出判定）。
+  // 不能直接读 skeletonVisible：useDelayedFlag 可能在 loading 翻转的同一帧把
+  // 它置回 false，骨架会先被卸载，淡出根本没机会播。
+  const everShownRef = useRef(false)
+  useLayoutEffect(() => {
+    if (phase === 'ready') everShownRef.current = false
+    else if (resolvedSkeletonVisible) everShownRef.current = true
+  })
+
   const [enterTick, setEnterTick] = useState(0)
 
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -96,7 +103,7 @@ export function ContentTransition({
     }
 
     // 骨架从未显示过：没有可退场的对象，直接切内容
-    if (!skeletonVisibleRef.current) {
+    if (!everShownRef.current) {
       setPhase('ready')
       return
     }
@@ -218,7 +225,7 @@ export function ContentTransition({
     gsap.killTweensOf([skeletonRef.current, contentRef.current, veilRef.current].filter(Boolean) as Element[])
   }, [])
 
-  const showSkeleton = phase !== 'ready' && resolvedSkeletonVisible
+  const showSkeleton = phase !== 'ready' && (resolvedSkeletonVisible || everShownRef.current)
   const showContent = phase !== 'loading'
 
   return (

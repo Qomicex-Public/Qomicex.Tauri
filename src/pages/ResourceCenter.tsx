@@ -495,7 +495,7 @@ function ResourceCard({
               鼠标移到该处仍由卡片承载 :hover，徽章照常退场。 */}
           <Badge
             variant="secondary"
-            className="pointer-events-none mb-2 shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 transition-opacity duration-200 sm:absolute sm:left-1/2 sm:top-1/2 sm:mb-0 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:group-hover:opacity-0 sm:group-focus-within:opacity-0"
+            className="pointer-events-none mb-2 shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 transition-opacity duration-150 delay-[120ms] sm:absolute sm:left-1/2 sm:top-1/2 sm:mb-0 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:group-hover:opacity-0 sm:group-hover:delay-0 sm:group-focus-within:opacity-0 sm:group-focus-within:delay-0"
           >
             {t(`resource.categories.${cardCategory}`)}
           </Badge>
@@ -505,7 +505,7 @@ function ResourceCard({
               变成带文字的「更换版本」，因为此时它不再是安装，而是替换现有版本。
               默认隐藏、hover 卡片时从右侧滑入；键盘可达由 group-focus-within 兜底
               （Tab 到任一按钮即整行显形，避免键盘用户聚焦到「看不见的按钮」）。 */}
-          <div className="flex flex-row items-center gap-2 transition-all duration-200 sm:translate-x-3 sm:opacity-0 sm:group-hover:translate-x-0 sm:group-hover:opacity-100 sm:group-focus-within:translate-x-0 sm:group-focus-within:opacity-100">
+          <div className="flex flex-row items-center gap-2 transition-[opacity,transform] duration-150 sm:translate-x-3 sm:opacity-0 sm:group-hover:translate-x-0 sm:group-hover:opacity-100 sm:group-hover:delay-[120ms] sm:group-focus-within:translate-x-0 sm:group-focus-within:opacity-100 sm:group-focus-within:delay-[120ms]">
             <Tooltip content={installed ? t('resource.changeVersion') : t('resource.install')}>
               <Button
                 variant="outline"

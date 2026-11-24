@@ -1,8 +1,10 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useRef, useEffect, Fragment, type ReactNode } from 'react'
+import { useRef, useEffect, useLayoutEffect, Fragment, type ReactNode } from 'react'
 import { cn } from '../lib/cn.js'
+import gsap from 'gsap'
+import { readAnimConfig } from '../lib/anim.js'
 
 export interface Tab {
   id: string
@@ -27,7 +29,34 @@ export function Tabs({ tabs, activeTab, onChange, className, orientation = 'hori
 }) {
   const indicatorRef = useRef<HTMLDivElement>(null)
   const tabsRef = useRef<Map<string, HTMLButtonElement>>(new Map())
+  const containerRef = useRef<HTMLDivElement>(null)
   const vertical = orientation === 'vertical'
+
+  // 侧边二级导航：逐个从左侧滑入（PCL 的左栏效果）。
+  // 只在竖排时启用；横排 tab 用指示器位移表达切换，不再逐项入场。
+  useLayoutEffect(() => {
+    if (!vertical) return
+    const container = containerRef.current
+    if (!container) return
+    const { enabled, multiplier } = readAnimConfig()
+    if (!enabled) return
+    const buttons = Array.from(container.querySelectorAll('button'))
+    if (buttons.length === 0) return
+    const tween = gsap.fromTo(buttons,
+      { x: -14, opacity: 0 },
+      {
+        x: 0,
+        opacity: 1,
+        duration: 0.24 * multiplier,
+        stagger: 0.025 * multiplier,
+        ease: 'power3.out',
+        onComplete: () => gsap.set(buttons, { clearProps: 'transform,opacity' }),
+      })
+    return () => {
+      tween.kill()
+      gsap.set(buttons, { clearProps: 'transform,opacity' })
+    }
+  }, [vertical])
 
   useEffect(() => {
     const activeEl = tabsRef.current.get(activeTab)
@@ -43,7 +72,7 @@ export function Tabs({ tabs, activeTab, onChange, className, orientation = 'hori
   }, [activeTab, tabs])
 
   return (
-    <div className={cn(
+    <div ref={containerRef} className={cn(
       'relative flex gap-0.5',
       vertical ? 'flex-col' : 'flex-row',
       className

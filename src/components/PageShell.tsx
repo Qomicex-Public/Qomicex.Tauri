@@ -87,7 +87,9 @@ export function PageShell({ children, className }: PageShellProps) {
         const contents = glassCards.flatMap((card) =>
           Array.from(card.children).filter((child): child is HTMLElement => child instanceof HTMLElement).slice(0, 3),
         )
-        if (contents.length > 0) {
+        // SettingSection 自带逐块错开，块级这里不再重复推内容
+        const handledBySections = !!el.querySelector('[data-setting-section]')
+        if (contents.length > 0 && !handledBySections) {
           tl.fromTo(contents,
             { y: 12 },
             {
@@ -103,14 +105,12 @@ export function PageShell({ children, className }: PageShellProps) {
         return
       }
 
-      // 两段：先走完大部分距离（250ms 减速），再用回弹收尾（350ms）
+      // 两段改一段：此前 -16→-5（250ms）再接 -5→0（350ms backout），两段速度不连续，
+      // 首屏长任务下看起来像「卡一下」。单段 420ms power3.out 更顺。
       tl.fromTo(el,
         { opacity: 0, y: -16 },
-        { opacity: 1, y: -5, duration: sec(250, m), ease: 'power3.out', ...gpuVars(m) },
+        { opacity: 1, y: 0, duration: sec(420, m), ease: 'power3.out', ...gpuVars(m) },
         delay)
-      tl.to(el,
-        { y: 0, duration: sec(350, m), ease: 'back.out(1.4)', ...gpuVars(m) },
-        delay + sec(250, m))
     })
 
     return () => {

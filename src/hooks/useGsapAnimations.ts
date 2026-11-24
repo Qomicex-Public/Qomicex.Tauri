@@ -105,11 +105,10 @@ export function useAnimatedList<T extends HTMLElement>(
     if (!motion.enabled) return
     if (children.length === 0 && prevSnapshot.size === 0) return
 
-    // 滚动期间的变更不播动画：与滚动抢帧只会更卡。
-    // 首屏例外：页面挂载时浏览器可能因滚动锚定补发一次 scroll，若一并跳过，
-    // 进场动画会随机丢失（现象就是「有时候没有逐个进入」）。
+    // 滚动期间的变更：只跳过 FLIP 与退场（它们会与滚动抢帧），新增项仍要淡入——
+    // 自动翻页恰好发生在「用户正在滚到底部」时，一刀切会让新内容直接跳出来。
     const initial = prevSnapshot.size === 0
-    if (!initial && performance.now() - lastScrollAtRef.current < SCROLL_QUIET_MS) return
+    const scrolling = !initial && performance.now() - lastScrollAtRef.current < SCROLL_QUIET_MS
 
     const prevRects: ListRectInput[] = [...prevSnapshot.entries()].map(([key, entry]) => ({
       key, top: entry.top, left: entry.left,
@@ -153,7 +152,7 @@ export function useAnimatedList<T extends HTMLElement>(
     // 搜索/筛选会让大量条目同时消失，逐条克隆会飞出几十块碎片：
     // 只有「少量删除」才播退场，大量消失交给 replace/静默处理。
     const animatedExitLimit = Math.max(3, Math.round(prevSnapshot.size * 0.3))
-    const exitTargets = diff.exit.length <= animatedExitLimit
+    const exitTargets = !scrolling && diff.exit.length <= animatedExitLimit
       ? diff.exit
         .map((key) => prevSnapshot.get(key))
         .filter((entry): entry is SnapshotEntry => !!entry && inViewport(entry))
@@ -192,10 +191,13 @@ export function useAnimatedList<T extends HTMLElement>(
     }
 
     // ---- 逐项入场：新增 key，按 DOM 顺序错位 ----
+    // 追加分页（无退场、只有新增）不跑 FLIP：分页本应只往列表尾部追加，
+    // 让旧项跟着位移会看成「上面的内容整块往上切」。
+    const isAppend = diff.exit.length === 0 && diff.enter.length > 0
     const enterKeys = diff.enter.slice(0, MAX_ANIMATE_ITEMS)
     enterKeys.forEach((key, index) => {
       const entry = next.get(key)
-      if (!entry || !inViewport(entry)) return
+      if (!entry) return
       const node = entry.el
       const glass = containsGlass(node)
       const delay = Math.min(staggerBase, 0.5 / Math.max(enterKeys.length, 1)) * index * motion.multiplier
@@ -252,7 +254,7 @@ export function useAnimatedList<T extends HTMLElement>(
     })
 
     // ---- FLIP：位置变化的旧条目补间到新位置 ----
-    for (const move of diff.move) {
+    if (!isAppend && !scrolling) for (const move of diff.move) {
       const entry = next.get(move.key)
       if (!entry || !inViewport(entry)) continue
       const node = entry.el
