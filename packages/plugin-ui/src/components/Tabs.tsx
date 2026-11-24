@@ -42,17 +42,25 @@ export function Tabs({ tabs, activeTab, onChange, className, orientation = 'hori
     if (!enabled) return
     const buttons = Array.from(container.querySelectorAll('button'))
     if (buttons.length === 0) return
-    const tween = gsap.fromTo(buttons,
-      { x: -8, opacity: 0 },
-      {
-        x: 0,
-        opacity: 1,
-        duration: 0.18 * multiplier,
-        stagger: 0.02 * multiplier,
-        ease: 'power3.out',
-        onComplete: () => gsap.set(buttons, { clearProps: 'transform,opacity' }),
-      })
+    gsap.set(buttons, { x: -8, opacity: 0 })
+    const tween = gsap.to(buttons, {
+      x: 0,
+      opacity: 1,
+      duration: 0.14 * multiplier,
+      stagger: 0.012 * multiplier,
+      ease: 'power3.out',
+      paused: true,
+      onComplete: () => gsap.set(buttons, { clearProps: 'transform,opacity' }),
+    })
+    // 等两帧再播：第一帧用于布局与首屏 backdrop 采样，动画不会被长帧拖成「卡一下」
+    const rafIds: number[] = []
+    let cancelled = false
+    rafIds.push(requestAnimationFrame(() => {
+      rafIds.push(requestAnimationFrame(() => { if (!cancelled) tween.play(0) }))
+    }))
     return () => {
+      cancelled = true
+      rafIds.forEach((id) => cancelAnimationFrame(id))
       tween.kill()
       gsap.set(buttons, { clearProps: 'transform,opacity' })
     }

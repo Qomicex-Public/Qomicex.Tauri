@@ -15,19 +15,19 @@ export function SettingSection({ title, icon, children, action, id }: { title: s
     const motion = readMotion()
     if (!motion.enabled) return
 
-    // 逐块切入：同一容器内按 DOM 顺序错开。单块动画控制在 200ms 左右，
-    // 间隔 140ms 才能看得出「一块一块进来」；之前的 45ms 会让相邻块完全重叠。
-    // 只动标题和卡片内的行，卡片本身不位移，避免打断 backdrop 采样。
+    // 逐块切入：单块约 200ms，块间隔 150ms（约上一块的 75%）保持连贯。
+    // 首块 90ms 起步：与侧栏最后几项重叠，避免「内容区先空一拍」。
     const index = el.parentElement ? Array.from(el.parentElement.children).indexOf(el) : 0
-    const delay = 120 + Math.min(index, 10) * 140
+    const delay = 90 + Math.min(index, 10) * 150
     const header = el.firstElementChild as HTMLElement | null
     const card = el.lastElementChild as HTMLElement | null
     const rows = card
       ? Array.from(card.children).filter((child): child is HTMLElement => child instanceof HTMLElement).slice(0, 8)
       : []
 
-    const tl = gsap.timeline()
+    const tl = gsap.timeline({ paused: true })
     if (header) {
+      gsap.set(header, { y: 6, opacity: 0 })
       tl.fromTo(header,
         { y: 6, opacity: 0 },
         { y: 0, opacity: 1, duration: sec(170, motion), ease: 'power3.out' },
@@ -35,12 +35,14 @@ export function SettingSection({ title, icon, children, action, id }: { title: s
     }
     // 卡片面板和行一起淡入：只动行的话，入场期间会先露出一块空的深色卡片（像黑块）
     if (card) {
+      gsap.set(card, { opacity: 0 })
       tl.fromTo(card,
         { opacity: 0 },
         { opacity: 1, duration: sec(180, motion), ease: 'power2.out' },
         sec(delay, motion))
     }
     if (rows.length > 0) {
+      gsap.set(rows, { y: 8 })
       tl.fromTo(rows,
         { y: 8 },
         {
@@ -53,7 +55,17 @@ export function SettingSection({ title, icon, children, action, id }: { title: s
         sec(delay + 30, motion))
     }
 
+    // 首帧先落初始态，等两次 rAF（首帧布局/模糊采样完成）后再播，
+    // 避免把挂载时的长帧算进动画第一帧，侧栏导航看起来会卡一下。
+    const rafIds: number[] = []
+    let cancelled = false
+    rafIds.push(requestAnimationFrame(() => {
+      rafIds.push(requestAnimationFrame(() => { if (!cancelled) tl.play(0) }))
+    }))
+
     return () => {
+      cancelled = true
+      rafIds.forEach((id) => cancelAnimationFrame(id))
       tl.kill()
       if (header) gsap.set(header, { clearProps: 'transform,opacity' })
       if (card) gsap.set(card, { clearProps: 'opacity' })

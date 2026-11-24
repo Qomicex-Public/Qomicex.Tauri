@@ -48,6 +48,9 @@ export function PageShell({ children, className }: PageShellProps) {
     )
     const targets: { el: HTMLElement; level: number }[] = []
     for (const child of rootChildren) {
+      // 含 SettingSection 的区块交给各 section 自己错开：外层再淡一次会让所有
+      // 玻璃卡片逐帧重采样 backdrop，正好和侧栏导航动画抢帧（表现为导航卡顿）。
+      if (child.querySelector('[data-setting-section]')) continue
       const marked = child.matches('[data-reveal]')
         ? [child]
         : Array.from(child.querySelectorAll<HTMLElement>('[data-reveal]'))
