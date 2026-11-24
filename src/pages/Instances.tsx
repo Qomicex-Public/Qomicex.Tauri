@@ -158,7 +158,12 @@ function matchKeyOf(v: ScannedVersion): string {
  *  JSON `id` 相同时会塌成一张卡片，被隐藏目录的实例/设置从列表上无法访问
  *  （issue #244 评审）。此时用序号保证每条各自成键，不隐藏任何版本。 */
 function listKeyOf(v: ScannedVersion, index: number): string {
-  return v.dirName ?? `\u0000missing-dirname-${index}`
+  // dirName 是实例身份键（issue #244）。缺失时不能用 index 兜底：
+  // 增删会让 key 抖动，列表差分误判为整组替换、入场动画整段重播。
+  if (v.dirName) return v.dirName
+  const loader = firstRealLoader(v)
+  const stable = `${v.name}\u0000${v.gameVersion}\u0000${loader.type ?? ''}\u0000${loader.version ?? ''}`
+  return stable || `\u0000missing-dirname-${index}`
 }
 
 /** 取扫描版本里第一个真实加载器（过滤 Vanilla/Unknown——原版实例 loader 应保持空） */
