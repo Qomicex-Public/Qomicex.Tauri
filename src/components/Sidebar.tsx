@@ -178,7 +178,7 @@ export default function Sidebar() {
   return (
     <nav
       className={cn(
-        'anim-transition sidebar-expand-transition flex shrink-0 flex-col items-center overflow-x-hidden border-r border-border/50 bg-card/80 backdrop-blur-xl shadow-xl shadow-black/20',
+        'anim-transition sidebar-expand-transition flex shrink-0 flex-col items-center overflow-x-hidden border-r border-border/50 bg-card/80 shadow-xl shadow-black/20',
         expanded ? 'w-52' : 'w-16'
       )}
     >

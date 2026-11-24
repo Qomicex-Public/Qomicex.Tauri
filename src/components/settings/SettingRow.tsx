@@ -15,41 +15,42 @@ export function SettingSection({ title, icon, children, action, id }: { title: s
     const motion = readMotion()
     if (!motion.enabled) return
 
-    // 逐块切入：同一容器内按 DOM 顺序错开 45ms；只动标题和卡片内的行，
-    // 卡片本身（玻璃）不动，避免打断 backdrop 采样。
+    // 逐块切入：同一容器内按 DOM 顺序错开。单块动画控制在 200ms 左右，
+    // 间隔 140ms 才能看得出「一块一块进来」；之前的 45ms 会让相邻块完全重叠。
+    // 只动标题和卡片内的行，卡片本身不位移，避免打断 backdrop 采样。
     const index = el.parentElement ? Array.from(el.parentElement.children).indexOf(el) : 0
-    const delay = Math.min(index, 10) * 45
+    const delay = 120 + Math.min(index, 10) * 140
     const header = el.firstElementChild as HTMLElement | null
     const card = el.lastElementChild as HTMLElement | null
     const rows = card
-      ? Array.from(card.children).filter((child): child is HTMLElement => child instanceof HTMLElement).slice(0, 12)
+      ? Array.from(card.children).filter((child): child is HTMLElement => child instanceof HTMLElement).slice(0, 8)
       : []
 
     const tl = gsap.timeline()
     if (header) {
       tl.fromTo(header,
-        { y: 8, opacity: 0 },
-        { y: 0, opacity: 1, duration: sec(220, motion), ease: 'power3.out' },
+        { y: 6, opacity: 0 },
+        { y: 0, opacity: 1, duration: sec(170, motion), ease: 'power3.out' },
         sec(delay, motion))
     }
     // 卡片面板和行一起淡入：只动行的话，入场期间会先露出一块空的深色卡片（像黑块）
     if (card) {
       tl.fromTo(card,
         { opacity: 0 },
-        { opacity: 1, duration: sec(200, motion), ease: 'power2.out' },
+        { opacity: 1, duration: sec(180, motion), ease: 'power2.out' },
         sec(delay, motion))
     }
     if (rows.length > 0) {
       tl.fromTo(rows,
-        { y: 10 },
+        { y: 8 },
         {
           y: 0,
-          duration: sec(280, motion),
-          stagger: sec(14, motion),
+          duration: sec(220, motion),
+          stagger: sec(8, motion),
           ease: 'power3.out',
           onComplete: () => gsap.set(rows, { clearProps: 'transform' }),
         },
-        sec(delay + 40, motion))
+        sec(delay + 30, motion))
     }
 
     return () => {
