@@ -143,8 +143,8 @@ export default function UpdateDialog({ open, plan, required = false, onClose }: 
           <div className="flex items-center gap-3">
             <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
               <div
-                className="h-full rounded-full bg-primary transition-all duration-300"
-                style={{ width: `${progress}%` }}
+                className="h-full w-full origin-left rounded-full bg-primary transition-transform duration-300"
+                style={{ transform: `scaleX(${progress / 100})` }}
               />
             </div>
             <span className="w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground">

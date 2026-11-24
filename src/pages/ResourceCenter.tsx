@@ -32,6 +32,8 @@ import { Tooltip } from '../components/ui'
 import { useMessageBox } from '../components/ui'
 import { Skeleton } from '../components/ui'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
+import { useDelayedFlag } from '../hooks/useDelayedFlag.ts'
+import { ContentTransition } from '../components/ContentTransition.tsx'
 import { useFavoritesStore, useFavoriteKeys, useFolderMap, favoriteKey } from '../stores/favoritesStore.ts'
 import FavoriteEditDialog from '../components/FavoriteEditDialog.tsx'
 import FavoriteImportDialog from '../components/FavoriteImportDialog.tsx'
@@ -493,7 +495,7 @@ function ResourceCard({
               鼠标移到该处仍由卡片承载 :hover，徽章照常退场。 */}
           <Badge
             variant="secondary"
-            className="pointer-events-none mb-2 shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 transition-opacity duration-200 sm:absolute sm:left-1/2 sm:top-1/2 sm:mb-0 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:group-hover:opacity-0 sm:group-focus-within:opacity-0"
+            className="pointer-events-none mb-2 shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 transition-opacity duration-150 delay-[120ms] sm:absolute sm:left-1/2 sm:top-1/2 sm:mb-0 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:group-hover:opacity-0 sm:group-hover:delay-0 sm:group-focus-within:opacity-0 sm:group-focus-within:delay-0"
           >
             {t(`resource.categories.${cardCategory}`)}
           </Badge>
@@ -503,7 +505,7 @@ function ResourceCard({
               变成带文字的「更换版本」，因为此时它不再是安装，而是替换现有版本。
               默认隐藏、hover 卡片时从右侧滑入；键盘可达由 group-focus-within 兜底
               （Tab 到任一按钮即整行显形，避免键盘用户聚焦到「看不见的按钮」）。 */}
-          <div className="flex flex-row items-center gap-2 transition-all duration-200 sm:translate-x-3 sm:opacity-0 sm:group-hover:translate-x-0 sm:group-hover:opacity-100 sm:group-focus-within:translate-x-0 sm:group-focus-within:opacity-100">
+          <div className="flex flex-row items-center gap-2 transition-[opacity,transform] duration-150 sm:translate-x-3 sm:opacity-0 sm:group-hover:translate-x-0 sm:group-hover:opacity-100 sm:group-hover:delay-[120ms] sm:group-focus-within:translate-x-0 sm:group-focus-within:opacity-100 sm:group-focus-within:delay-[120ms]">
             <Tooltip content={installed ? t('resource.changeVersion') : t('resource.install')}>
               <Button
                 variant="outline"
@@ -648,7 +650,11 @@ export default function ResourceCenter() {
   const [exhausted, setExhausted] = useState(false)
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null)
   /** 列表底部哨兵：进入视口即触发下一页（IO 观察点必须常驻，条件渲染会断开自动加载链路）。 */
-  const sentinelRef = useRef<HTMLDivElement>(null)
+  /**
+   * 哨兵元素用 state 而不是 ref：ContentTransition 会在加载结束后再挂载列表，
+   * effect 首次运行时哨兵还不存在；只依赖 loading 不会重跑，自动翻页会失效。
+   */
+  const [sentinelEl, setSentinelEl] = useState<HTMLDivElement | null>(null)
   /** 同步防重入：IO 回调可能在 `setLoading(true)` 生效前连续触发，重复请求会插进重复卡片。 */
   const loadMoreBusyRef = useRef(false)
   /**
@@ -828,6 +834,12 @@ export default function ResourceCenter() {
   const restoredRef = useRef(!freshEntry && !!snap)
   const snapRef = useRef({ category, source, keyword, sort, gameVersion, loader, tags, items, total, page, searchInput, cnNames, view, favFolder, favTags })
   const listRef = useAnimatedList<HTMLDivElement>([items.length, category, source, keyword, sort, initialLoading, isReplacing], { y: 12, scale: 0.97, duration: 0.25 })
+
+  // 骨架延迟显示 + 最短停留（400ms 内返回不闪骨架）
+  const skeletonLoading = view === 'search'
+    ? (initialLoading || isReplacing)
+    : (favoritesLoading && !favoritesLoaded)
+  const showSkeleton = useDelayedFlag(skeletonLoading)
   useEffect(() => { snapRef.current = { category, source, keyword, sort, gameVersion, loader, tags, items, total, page, searchInput, cnNames, view, favFolder, favTags } })
 
   useEffect(() => {
@@ -1245,7 +1257,7 @@ export default function ResourceCenter() {
   // 不重建会用过期条件判断（如已 exhausted 还在请求）。
   useEffect(() => {
     if (view !== 'search') return
-    const target = sentinelRef.current
+    const target = sentinelEl
     if (!target) return
     if (exhausted || loadMoreError || initialLoading) return
 
@@ -1260,7 +1272,10 @@ export default function ResourceCenter() {
     }, { root: node, rootMargin: '300px 0px' })
     observer.observe(target)
     return () => observer.disconnect()
-  }, [view, loadMore, exhausted, loadMoreError, initialLoading])
+    // items.length 必须进依赖：ContentTransition 在 initialLoading 翻转后还会保持
+    // 骨架 120ms 才挂载列表，effect 首次运行时 sentinel 还不存在；只靠 initialLoading
+    // 不会再触发，自动翻页会彻底失效。
+  }, [view, loadMore, exhausted, loadMoreError, initialLoading, sentinelEl])
 
   // ---- P2：收藏夹增删改 + 标签过滤 ----
 
@@ -1903,7 +1918,7 @@ export default function ResourceCenter() {
             </div>
           )}
 
-      {(view === 'search' ? (initialLoading || isReplacing) : (favoritesLoading && !favoritesLoaded)) ? (
+      <ContentTransition loading={skeletonLoading} skeletonVisible={showSkeleton} veil skeleton={
         <div className="flex flex-col gap-3">
           {Array.from({ length: 5 }).map((_, index) => (
             <Card key={index} className="border-border/60 bg-card/95 p-4">
@@ -1918,7 +1933,8 @@ export default function ResourceCenter() {
             </Card>
           ))}
         </div>
-      ) : shownError ? (
+      }>
+      {shownError ? (
         <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
           <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-destructive/10">
             <Search className="h-6 w-6 text-destructive/60" />
@@ -2002,7 +2018,7 @@ export default function ResourceCenter() {
           {view === 'search' && !initialLoading && !isReplacing && !error && items.length > 0 && (
             /* 无限滚动页脚：哨兵常驻（条件渲染会让 IO 目标消失、自动加载断链），
                状态文案叠在它上面。追加失败时只在这里提示 + 重试，不动已加载列表。 */
-            <div ref={sentinelRef} className="mt-5 flex min-h-[32px] flex-col items-center justify-center gap-2">
+            <div ref={setSentinelEl} data-load-more-sentinel className="mt-5 flex min-h-[32px] flex-col items-center justify-center gap-2">
               {loadMoreError ? (
                 <>
                   <p className="text-xs text-destructive">{loadMoreError}</p>
@@ -2023,6 +2039,7 @@ export default function ResourceCenter() {
           )}
         </>
       )}
+      </ContentTransition>
       </div>
 
       {editFavorite && (

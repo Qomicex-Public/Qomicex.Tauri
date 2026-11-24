@@ -67,7 +67,7 @@ export interface AppSettings {
   /** 全局主题强调色（hex，如 `#22c55e`）；空/缺失 = 使用默认配色（绿） */
   themeColor?: string
   /** 组件材质：'default' 默认 / 'frosted' 毛玻璃 / 'acrylic' 亚克力玻璃 / 'aero' Aero / 'liquid' 液态玻璃 */
-  componentMaterial?: 'default' | 'frosted' | 'acrylic' | 'aero' | 'liquid'
+  componentMaterial?: 'default' | 'frosted' | 'acrylic' | 'aero'
   /** 毛玻璃/亚克力玻璃/液态玻璃模糊强度（px，默认 18）；材质为 default 时不生效 */
   glassBlur?: number
   /** 默认材质卡片透明度（0-100，100 = 不透明，默认 50）；材质为 default 时生效 */
@@ -236,6 +236,10 @@ async function doLoadSettings(): Promise<AppSettings> {
         launchHardwareBoost:
           data.launchHardwareBoost ?? cached.launchHardwareBoost ?? DEFAULT_SETTINGS.launchHardwareBoost,
         processPriority: data.processPriority ?? cached.processPriority ?? DEFAULT_SETTINGS.processPriority,
+      }
+      // 液态玻璃已下架（ADR-141 2.1）：存量值迁移到 frosted，避免视觉突变
+      if ((cached.componentMaterial as string | undefined) === 'liquid') {
+        cached.componentMaterial = 'frosted'
       }
       loaded = true
       applyDownloadTimeoutSetting(cached)

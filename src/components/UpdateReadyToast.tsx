@@ -2,10 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { createPortal } from 'react-dom'
+import { useEffect, useState } from 'react'
 import { Check, X } from 'lucide-react'
 import { Tooltip } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import { useUpdaterStore } from '../stores/updaterStore.ts'
+import { readMotion } from '../lib/motion.ts'
+import { cn } from '../lib/utils.ts'
 
 /**
  * 「已准备好安装更新」Toast。
@@ -31,21 +34,41 @@ export default function UpdateReadyToast() {
 
   // 只在「包已下好、等安装」且用户本次会话没关掉它时展示。installing 阶段横幅
   // 消失（进程马上退出，留着反而让人以为还能取消）。
-  if (!staged || phase !== 'ready' || toastDismissed) return null
+  const active = !!staged && phase === 'ready' && !toastDismissed
+  const [mounted, setMounted] = useState(active)
+
+  useEffect(() => {
+    if (active) {
+      setMounted(true)
+      return
+    }
+    if (!mounted) return
+    const motion = readMotion()
+    const timer = window.setTimeout(() => setMounted(false), motion.enabled ? 120 * motion.multiplier : 0)
+    return () => window.clearTimeout(timer)
+  }, [active, mounted])
+
+  if (!mounted || !staged) return null
 
   return createPortal(
     <div className="pointer-events-none fixed inset-x-0 bottom-6 z-[110] flex justify-center px-4">
       <div
+        key={active ? 'active' : 'closing'}
         role="button"
         tabIndex={0}
-        onClick={() => { void installStaged() }}
+        onClick={() => { if (active) void installStaged() }}
         onKeyDown={(e) => {
+          // 退场动画期间不再响应回车/空格，否则「已关闭」的横幅仍会触发安装并重启应用
+          if (!active) return
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault()
             void installStaged()
           }
         }}
-        className="glass-surface pointer-events-auto flex w-fit max-w-[min(92vw,560px)] cursor-pointer items-center gap-3 rounded-xl border border-border/50 bg-popover/90 py-2.5 pl-3 pr-2 text-sm shadow-2xl backdrop-blur-lg transition-all duration-300 hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className={cn(
+          'glass-surface pointer-events-auto flex w-fit max-w-[min(92vw,560px)] cursor-pointer items-center gap-3 rounded-xl border border-border/50 bg-popover/90 py-2.5 pl-3 pr-2 text-sm shadow-2xl backdrop-blur-lg transition-all duration-300 hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          active ? 'animate-zoom-fade-in' : 'animate-zoom-fade-out',
+        )}
       >
         {/* 绿色方块 + 白勾：与截图一致的「成功/就绪」视觉锚点 */}
         <span

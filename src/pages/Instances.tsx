@@ -43,6 +43,8 @@ import { loadAccounts } from '../stores/accountsStore.ts'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
+import { useDelayedFlag } from '../hooks/useDelayedFlag.ts'
+import { ContentTransition } from '../components/ContentTransition.tsx'
 import { useFavoritesStore } from '../stores/favoritesStore.ts'
 import { scheduleFavoriteInstall } from '../stores/pendingFavoriteInstallStore.ts'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
@@ -156,7 +158,14 @@ function matchKeyOf(v: ScannedVersion): string {
  *  JSON `id` 相同时会塌成一张卡片，被隐藏目录的实例/设置从列表上无法访问
  *  （issue #244 评审）。此时用序号保证每条各自成键，不隐藏任何版本。 */
 function listKeyOf(v: ScannedVersion, index: number): string {
-  return v.dirName ?? `\u0000missing-dirname-${index}`
+  // dirName 是实例身份键（issue #244）。缺失时不能用 index 兜底：
+  // 增删会让 key 抖动，列表差分误判为整组替换、入场动画整段重播。
+  if (v.dirName) return v.dirName
+  const loader = firstRealLoader(v)
+  const stable = `${v.name}\u0000${v.gameVersion}\u0000${loader.type ?? ''}\u0000${loader.version ?? ''}`
+  // 两个目录的 JSON id / 版本 / 加载器完全相同时，上面的组合会撞键并被去重丢掉一个；
+  // 末尾保留序号只是为了兜底唯一性，缺 dirName 的扫描结果本身很少见。
+  return `${stable || '\u0000missing-dirname'}\u0000${index}`
 }
 
 /** 取扫描版本里第一个真实加载器（过滤 Vanilla/Unknown——原版实例 loader 应保持空） */
@@ -872,12 +881,14 @@ export default function Instances() {
     return list
   }, [scannedLocal, search, filterType, groupFilter, getVersionType, getInstanceForVersion])
 
-  // 卡片列表 GSAP stagger 动画（性能版：只动画视口内条目 + 滚动暂停）
-  // loading/scanning 进 deps：骨架图→内容切换时加载状态翻转触发动画
+  // 卡片列表 GSAP stagger 动画（DOM 变更驱动 + FLIP）
   const gridAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, viewMode, loading, scanning], { y: 12, scale: 0.95 })
 
-  // 列表视图 GSAP stagger 动画（性能版）
+  // 列表视图 GSAP stagger 动画
   const listAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, viewMode, loading, scanning], { x: -12, duration: 0.25 })
+
+  // 骨架延迟显示 + 最短停留：400ms 内返回不闪骨架，出现则至少保留 300ms
+  const showSkeleton = useDelayedFlag(loading || scanning)
 
   // 目录下拉框弹出动画
   useEffect(() => {
@@ -992,7 +1003,7 @@ export default function Instances() {
         </div>
 
         {sortedRemote.length === 0 ? (
-          <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 py-20 text-center text-muted-foreground">
+          <div className="animate-in fade-in flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 py-20 text-center text-muted-foreground">
             <Box className="mb-3 h-8 w-8 opacity-30" />
             <p className="text-sm font-medium">{t('instances.noRemoteMatch')}</p>
             <p className="mt-1 text-xs text-muted-foreground/70">{t('instances.noRemoteMatchHint')}</p>
@@ -1000,7 +1011,7 @@ export default function Instances() {
         ) : remoteViewMode === 'grid' ? (
           <div ref={remoteGridAnimRef} className="grid max-h-[520px] grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
             {sortedRemote.map((v) => (
-              <button key={v.id} data-key={v.id} onClick={() => selectRemoteVersion(v)} className="group glass-surface flex flex-col gap-1.5 rounded-lg border bg-card p-3 text-left transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5">
+              <button key={v.id} data-key={v.id} onClick={() => selectRemoteVersion(v)} className="group glass-surface flex flex-col gap-1.5 rounded-lg border bg-card p-3 text-left anim-row hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5">
                 <div className="flex items-center gap-1.5">
                   <Box className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   <span className="truncate text-sm font-medium">{v.id}</span>
@@ -1015,7 +1026,7 @@ export default function Instances() {
         ) : (
           <div ref={remoteListAnimRef} className="max-h-[520px] space-y-2 overflow-y-auto pr-1">
             {sortedRemote.map((v) => (
-              <div key={v.id} data-key={v.id} role="button" tabIndex={0} onClick={() => selectRemoteVersion(v)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRemoteVersion(v) } }} className="group glass-surface flex w-full cursor-pointer items-center justify-between gap-4 rounded-xl border bg-card p-4 text-left transition-all hover:border-primary/30 hover:shadow-sm">
+              <div key={v.id} data-key={v.id} role="button" tabIndex={0} onClick={() => selectRemoteVersion(v)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectRemoteVersion(v) } }} className="group glass-surface flex w-full cursor-pointer items-center justify-between gap-4 rounded-xl border bg-card p-4 text-left anim-row hover:border-primary/30 hover:shadow-sm">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="flex items-center gap-2">
@@ -1640,8 +1651,7 @@ export default function Instances() {
         </div>
       ) : null}
 
-      {loading || scanning ? (
-        viewMode === 'grid' ? (
+      <ContentTransition loading={loading || scanning} skeletonVisible={showSkeleton} veil skeleton={viewMode === 'grid' ? (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {Array.from({ length: 6 }).map((_, index) => (
               <Skeleton key={index} className="glass-surface rounded-xl border bg-card p-5 text-center">
@@ -1666,8 +1676,9 @@ export default function Instances() {
               </Skeleton>
             ))}
           </div>
-        )
-      ) : scannedLocal.length === 0 ? (
+        )}
+      >
+        {scannedLocal.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-24 text-center text-muted-foreground">
           <Box className="h-10 w-10 opacity-30" />
           <p className="text-sm">{search ? t('instances.noMatch') : t('instances.noVersionDetected')}</p>
@@ -1679,7 +1690,7 @@ export default function Instances() {
           <div ref={gridAnimRef} className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {filtered.map((v, vi) => (
               <ContextMenu key={listKeyOf(v, vi)} items={buildInstanceContextItems(v)}>
-                <div data-key={listKeyOf(v, vi)} className="group glass-surface relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center transition-all hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => openVersionSettings(v)}>
+                <div data-key={listKeyOf(v, vi)} className="group glass-surface relative flex cursor-pointer flex-col items-center rounded-xl border bg-card p-5 text-center anim-row hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5" onClick={() => openVersionSettings(v)}>
                 <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={getLoadersForVersion(v)[0]?.type} className="mb-3 h-16 w-16 rounded-2xl" />
                 <h3 className="w-full truncate text-sm font-medium leading-tight">{v.name}</h3>
                 {getInstanceForVersion(v)?.remark && (
@@ -1733,7 +1744,7 @@ export default function Instances() {
           <div ref={listAnimRef} className="space-y-3">
             {filtered.map((v, vi) => (
               <ContextMenu key={listKeyOf(v, vi)} items={buildInstanceContextItems(v)}>
-                <div data-key={listKeyOf(v, vi)} className="group glass-surface flex items-center gap-4 rounded-xl border bg-card px-5 py-4 transition-all hover:border-primary/30 hover:shadow-sm">
+                <div data-key={listKeyOf(v, vi)} className="group glass-surface flex items-center gap-4 rounded-xl border bg-card px-5 py-4 anim-row hover:border-primary/30 hover:shadow-sm">
                 <InstanceIcon icon={getInstanceForVersion(v)?.icon ?? null} iconData={getInstanceForVersion(v)?.iconData ?? null} loader={getLoadersForVersion(v)[0]?.type} className="h-12 w-12 shrink-0 rounded-xl" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -1792,7 +1803,8 @@ export default function Instances() {
           </div>
         ))}
         </div>
-      )}
+        )}
+      </ContentTransition>
       <AccountSelectDialog
         open={showSelectAccount}
         onClose={handleCancelSelect}

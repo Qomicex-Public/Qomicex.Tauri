@@ -56,14 +56,14 @@ export function TitleBar() {
         <button
           onClick={() => win.minimize()}
           data-qomicex-drag-region={false}
-          className="flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 transition-all duration-150 hover:bg-white/10 hover:text-foreground active:bg-white/20"
+          className="anim-tap flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 hover:bg-white/10 hover:text-foreground active:bg-white/20"
         >
           <MinIcon />
         </button>
         <button
           onClick={() => win.toggleMaximize()}
           data-qomicex-drag-region={false}
-          className="flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 transition-all duration-150 hover:bg-white/10 hover:text-foreground active:bg-white/20"
+          className="anim-tap flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 hover:bg-white/10 hover:text-foreground active:bg-white/20"
         >
           <MorphIcon
             icon={maximized ? RESTORE_ICON : MAXIMIZE_ICON}
@@ -78,7 +78,7 @@ export function TitleBar() {
         <button
           onClick={safeClose}
           data-qomicex-drag-region={false}
-          className="flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 transition-all duration-150 hover:bg-destructive/80 hover:text-destructive-foreground active:bg-destructive"
+          className="anim-tap flex h-9 w-11 items-center justify-center rounded-[4px] text-muted-foreground/60 hover:bg-destructive/80 hover:text-destructive-foreground active:bg-destructive"
         >
           <CloseIcon />
         </button>

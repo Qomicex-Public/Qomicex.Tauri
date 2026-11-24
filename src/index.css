@@ -101,17 +101,32 @@
     --anim-duration-multiplier: 0;
   }
 
-  [data-anim-enabled="false"] .animate-in {
-    animation-duration: 0ms !important;
-    animation-name: none !important;
+  /* 全局门控：关闭动画或系统要求减少动态效果时，所有 CSS 动画/过渡按「瞬时」执行。
+     只清时长/延迟，不改 animation-name 与 transition-property —— 否则会把
+     组件的静态终态一起干掉。用 0.01ms 而不是 0ms：0ms 在部分 WebView2 版本上
+     不触发 transitionend/animationend，依赖这些事件收尾的组件（MorphIcon、
+     Radix 状态机）会卡住。 */
+  [data-anim-enabled="false"],
+  [data-anim-enabled="false"] *,
+  [data-anim-enabled="false"] *::before,
+  [data-anim-enabled="false"] *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
   }
 
-  [data-anim-enabled="false"] .fade-in,
-  [data-anim-enabled="false"] .zoom-in-95,
-  [data-anim-enabled="false"] .slide-up {
-    animation-name: none !important;
-    opacity: 1 !important;
-    transform: none !important;
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-delay: 0ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      transition-delay: 0ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 
 }
@@ -201,36 +216,6 @@
     }
   }
 
-  @keyframes slideUpIn {
-    from {
-      opacity: 0;
-      transform: translateY(16px);
-    }
-    to {
-      opacity: 1;
-      transform: none;
-    }
-  }
-
-  .slide-up-in {
-    animation-name: slideUpIn;
-  }
-
-  @keyframes scaleIn {
-    from {
-      opacity: 0;
-      transform: scale(0.95);
-    }
-    to {
-      opacity: 1;
-      transform: none;
-    }
-  }
-
-  .scale-in {
-    animation-name: scaleIn;
-  }
-
   @keyframes slideInRight {
     from {
       opacity: 0;
@@ -244,21 +229,6 @@
 
   .slide-in-right {
     animation-name: slideInRight;
-  }
-
-  @keyframes slideInLeft {
-    from {
-      opacity: 0;
-      transform: translateX(12px);
-    }
-    to {
-      opacity: 1;
-      transform: none;
-    }
-  }
-
-  .slide-in-left {
-    animation-name: slideInLeft;
   }
 
   .instance-grid-card, .instance-list-card {
@@ -279,49 +249,13 @@
     contain-intrinsic-size: auto 48px;
   }
 
-  .anim-stagger > * {
-    animation-name: scaleIn;
-    animation-duration: calc(var(--anim-duration, 150ms) * var(--anim-duration-multiplier, 1));
-    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
-    animation-fill-mode: backwards;
-  }
-
-  .anim-stagger > *:nth-child(1) { animation-delay: 0ms; }
-  .anim-stagger > *:nth-child(2) { animation-delay: 40ms; }
-  .anim-stagger > *:nth-child(3) { animation-delay: 80ms; }
-  .anim-stagger > *:nth-child(4) { animation-delay: 120ms; }
-  .anim-stagger > *:nth-child(5) { animation-delay: 160ms; }
-  .anim-stagger > *:nth-child(6) { animation-delay: 200ms; }
-  .anim-stagger > *:nth-child(7) { animation-delay: 240ms; }
-  .anim-stagger > *:nth-child(8) { animation-delay: 280ms; }
-  .anim-stagger > *:nth-child(9) { animation-delay: 320ms; }
-  .anim-stagger > *:nth-child(10) { animation-delay: 360ms; }
-
-  [data-anim-enabled="false"] .anim-stagger > * {
-    animation: none !important;
-  }
-
   /* 骨架高光同样受「界面动画」开关与 reduced-motion 控制（motion-reduce 变体在组件侧）。 */
   [data-anim-enabled="false"] .animate-shimmer {
     animation: none !important;
   }
 
-  /* 显式过度（transition）同样要尊重「界面动画」开关与系统 reduced-motion 偏好：
-     Tailwind 的 transition-* 不读 --anim-duration-multiplier，必须在这里兜住。
-     需要被开关控制的过渡元素加 `anim-transition` 类即可。 */
-  [data-anim-enabled="false"] .anim-transition {
-    transition: none !important;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .anim-transition {
-      transition: none !important;
-    }
-  }
-
   /* 侧边栏宽度过渡：只针对 width，避免与行内部件的过渡互相干扰。
-     与 .anim-transition 配合，动画开关/系统 reduced-motion 由上面的
-     `transition: none !important` 直接兜住，宽度变化立即完成。 */
+     开关与 reduced-motion 由上面的全局门控兜住。 */
   .sidebar-expand-transition {
     transition-property: width;
     transition-duration: calc(var(--anim-duration, 150ms) * var(--anim-duration-multiplier, 1));
@@ -365,8 +299,14 @@
     background: hsl(var(--primary));
     border: 3px solid hsl(var(--background));
     box-shadow: 0 0 0 1px hsl(var(--primary) / 0.3);
-    transition: box-shadow 0.15s;
+    transition:
+      transform calc(120ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.05, 0.85, 0.15, 1),
+      box-shadow 150ms ease-out;
     cursor: pointer;
+  }
+
+  input[type="range"]:active::-webkit-slider-thumb {
+    transform: scale(1.15);
   }
 
   input[type="range"]::-webkit-slider-thumb:hover {
@@ -399,6 +339,20 @@
     cursor: not-allowed;
   }
 
+  /* 伪元素不参与通用门控选择器（* 不匹配 ::-webkit-slider-thumb），
+     滑块按压这类新加的过渡要单独在关闭动画 / reduced-motion 下落终值。 */
+  [data-anim-enabled="false"] input[type="range"]::-webkit-slider-thumb,
+  [data-anim-enabled="false"] input[type="range"]::-moz-range-thumb {
+    transition-duration: 0.01ms !important;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    input[type="range"]::-webkit-slider-thumb,
+    input[type="range"]::-moz-range-thumb {
+      transition-duration: 0.01ms !important;
+    }
+  }
+
   @keyframes popIn {
     0% { opacity: 0; transform: translateY(4px) scale(0.95); }
     50% { opacity: 1; transform: translateY(-2px) scale(1.05); }
@@ -406,12 +360,114 @@
   }
 
   .pop-in {
-    animation: popIn 300ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    animation: popIn calc(300ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.34, 1.56, 0.64, 1) both;
   }
 
   .pop-out {
-    animation: popIn 200ms ease-in reverse both;
+    animation: popIn calc(200ms * var(--anim-duration-multiplier, 1)) ease-in reverse both;
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * 交互状态动效（motion 原语）
+ *
+ * 全部读 --anim-duration-multiplier；关闭动画 / reduced-motion 由
+ * 上面的全局门控落终值。非分层规则，优先级高于 Tailwind utilities。
+ * 玻璃表面（.glass-surface）只允许自身 opacity 与颜色，见 ADR-141 5.1。
+ * ------------------------------------------------------------------ */
+
+/* 按下快、松开慢、指针离开更慢（PCL MyButton 的曲线）。
+   颜色过渡显式列在同一个 shorthand 里：unlayered 规则会覆盖 Tailwind 的
+   transition-colors，不写就会让按钮 hover 变色变成瞬切。 */
+.anim-press {
+  transition:
+    transform calc(300ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.16, 1, 0.3, 1),
+    color calc(150ms * var(--anim-duration-multiplier, 1)) ease-out,
+    background-color calc(150ms * var(--anim-duration-multiplier, 1)) ease-out,
+    border-color calc(150ms * var(--anim-duration-multiplier, 1)) ease-out,
+    box-shadow calc(150ms * var(--anim-duration-multiplier, 1)) ease-out;
+}
+.anim-press:active {
+  transform: scale(0.955);
+  transition:
+    transform calc(80ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.05, 0.85, 0.15, 1),
+    color calc(150ms * var(--anim-duration-multiplier, 1)) ease-out,
+    background-color calc(150ms * var(--anim-duration-multiplier, 1)) ease-out,
+    border-color calc(150ms * var(--anim-duration-multiplier, 1)) ease-out,
+    box-shadow calc(150ms * var(--anim-duration-multiplier, 1)) ease-out;
+}
+.anim-press:disabled:active,
+.anim-press[aria-disabled='true']:active {
+  transform: none;
+}
+
+/* 图标按钮：位移小、回弹快 */
+.anim-tap {
+  transition-property: transform, color, background-color, border-color, box-shadow;
+  transition-duration: calc(180ms * var(--anim-duration-multiplier, 1));
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+.anim-tap:active {
+  transform: scale(0.9);
+  transition-duration: calc(90ms * var(--anim-duration-multiplier, 1));
+}
+
+/* 列表项背景层：0.85 → 1，进 120ms / 出 180ms */
+.anim-hover {
+  transition-property: transform, opacity, background-color, border-color, color;
+  transition-duration: calc(180ms * var(--anim-duration-multiplier, 1));
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+.anim-hover:is(:hover, :focus-visible) {
+  transition-duration: calc(120ms * var(--anim-duration-multiplier, 1));
+}
+
+/* 表格/紧凑行：只做背景与颜色，不做位移 */
+.anim-row {
+  transition-property: background-color, color, border-color, box-shadow;
+  transition-duration: calc(200ms * var(--anim-duration-multiplier, 1));
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+.anim-row:hover {
+  transition-duration: calc(100ms * var(--anim-duration-multiplier, 1));
+}
+
+/* 导航/选中指示条：位移带回弹，透明度单独一条 */
+.anim-indicator {
+  transition:
+    transform calc(300ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity calc(200ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 非玻璃卡片：hover 上浮 2px（玻璃卡禁用，见 ADR-141） */
+.anim-lift {
+  transition-property: transform, box-shadow, border-color;
+  transition-duration: calc(180ms * var(--anim-duration-multiplier, 1));
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+.anim-lift:hover {
+  transform: translateY(-2px);
+}
+
+/* 表单错误行：高度展开/收起（FieldError 组件） */
+.field-error {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows calc(180ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.16, 1, 0.3, 1),
+    opacity calc(150ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.16, 1, 0.3, 1);
+}
+.field-error[data-open='true'] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+/* 出现/消失：只做透明度与短位移（滚动到顶、启动屏等） */
+.anim-fade {
+  transition:
+    opacity calc(180ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.16, 1, 0.3, 1),
+    transform calc(200ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* 日志容器：允许像编辑框一样框选复制。
@@ -472,6 +528,7 @@
   background-blend-mode: overlay;
   -webkit-backdrop-filter: blur(16px) saturate(1.8);
   backdrop-filter: blur(16px) saturate(1.8);
+
   border: 1px solid hsl(var(--card-foreground) / 0.2);
   box-shadow:
     inset 0 1px 0 hsl(var(--card-foreground) / 0.3),

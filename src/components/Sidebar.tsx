@@ -41,7 +41,7 @@ const ICON_SLOT = 'flex h-11 w-11 shrink-0 items-center justify-center'
 const ROW_LABEL = 'min-w-0 flex-1 truncate whitespace-nowrap text-sm transition-opacity duration-200 anim-transition'
 
 /** 行选中指示条 */
-const ROW_INDICATOR = 'absolute left-0 top-1/2 w-0.5 -translate-y-1/2 rounded-r-full bg-primary transition-all duration-200 anim-transition'
+const ROW_INDICATOR = 'anim-indicator absolute left-0 top-1/2 w-0.5 -translate-y-1/2 rounded-r-full bg-primary'
 
 export function NavItem({ to, label, icon, end }: { to: string; label: string; icon: React.ReactNode; end?: boolean }) {
   const { expanded } = useSidebarExpanded()
@@ -178,7 +178,7 @@ export default function Sidebar() {
   return (
     <nav
       className={cn(
-        'anim-transition sidebar-expand-transition flex shrink-0 flex-col items-center overflow-x-hidden border-r border-border/50 bg-card/80 backdrop-blur-xl shadow-xl shadow-black/20',
+        'anim-transition sidebar-expand-transition flex shrink-0 flex-col items-center overflow-x-hidden border-r border-border/50 bg-card/80 shadow-xl shadow-black/20',
         expanded ? 'w-52' : 'w-16'
       )}
     >

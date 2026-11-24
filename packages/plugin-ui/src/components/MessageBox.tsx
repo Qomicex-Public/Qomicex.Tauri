@@ -4,6 +4,7 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
 import { cn } from "../lib/cn.js"
+import { readAnimConfig } from "../lib/anim.js"
 
 import { Button } from "./Button.js"
 import { Input } from "./Input.js"
@@ -112,6 +113,23 @@ function MessageBoxProvider({ children, messages = defaultMessages }: { children
   const [promptValue, setPromptValue] = React.useState("")
   const [toast, setToast] = React.useState<ToastState>({ open: false, message: '', type: 'info', count: 0 })
   const toastTimer = React.useRef<number | undefined>(undefined)
+  // 退场期间保持挂载：open 变 false 后先播 120ms 淡出，再卸载
+  const [toastMounted, setToastMounted] = React.useState(false)
+
+  React.useEffect(() => {
+    if (toast.open) {
+      setToastMounted(true)
+      return
+    }
+    if (!toastMounted) return
+    const { enabled, multiplier } = readAnimConfig()
+    if (!enabled) {
+      setToastMounted(false)
+      return
+    }
+    const timer = window.setTimeout(() => setToastMounted(false), 120 * multiplier)
+    return () => window.clearTimeout(timer)
+  }, [toast.open, toastMounted])
 
   const notify = React.useCallback((message: string, type: MessageBoxType = 'info') => {
     if (toastTimer.current !== undefined) clearTimeout(toastTimer.current)
@@ -223,11 +241,12 @@ function MessageBoxProvider({ children, messages = defaultMessages }: { children
           </Button>
         </DialogFooter>
       </Dialog>
-      {createPortal(
+      {toastMounted && createPortal(
         <div
+          key={toast.count}
           className={cn(
-            'fixed bottom-6 right-6 z-[100] flex w-fit max-w-[min(92vw,520px)] items-center gap-2.5 rounded-xl border border-border/50 bg-popover/90 px-4 py-3 text-sm shadow-2xl backdrop-blur-lg transition-all duration-300 glass-surface',
-            toast.open ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0 pointer-events-none'
+            'fixed bottom-6 right-6 z-[100] flex w-fit max-w-[min(92vw,520px)] items-center gap-2.5 rounded-xl border border-border/50 bg-popover/90 px-4 py-3 text-sm shadow-2xl backdrop-blur-lg glass-surface',
+            toast.open ? 'animate-zoom-fade-in' : 'animate-zoom-fade-out pointer-events-none'
           )}
         >
           <MessageIcon type={toast.type} />

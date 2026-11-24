@@ -203,13 +203,14 @@ export function Select({ value, onChange, children, className, placeholder, disa
                           disabled={opt.disabled}
                           onClick={() => !opt.disabled && handleSelect(opt.value)}
                           className={cn(
-                            'flex w-full items-center rounded-md px-3 py-1.5 text-left text-sm transition-colors',
+                            'animate-zoom-fade-in flex w-full items-center rounded-md px-3 py-1.5 text-left text-sm transition-colors',
                             opt.disabled
                               ? 'cursor-not-allowed text-muted-foreground/50'
                               : opt.value === value
                                 ? 'bg-primary/10 text-primary font-medium'
                                 : 'text-foreground hover:bg-accent'
                           )}
+                          style={{ animationDelay: `${Math.min(i * 12, 120)}ms`, animationFillMode: 'both' }}
                         >
                           {opt.label}
                         </button>

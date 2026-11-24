@@ -199,7 +199,9 @@ pub struct SettingsResponse {
     pub auto_select_source: Option<bool>,
     pub download_timeout: i32,
     pub animations_enabled: Option<bool>,
-    pub animation_speed: Option<i32>,
+    /// 动画速度倍率（前端 0.25~2 的浮点；曾经写成 i32，前端保存 0.1 会反序列化失败，
+    /// 表现为「改了速度，切几个页面又回到 1x」）。
+    pub animation_speed: Option<f64>,
     /// GPU 硬件加速动画（GSAP force3D，动画元素提升到独立 GPU 合成层）。
     /// `None`/`Some(true)` = 开启（默认开）；`Some(false)` = 关闭（2D 渲染，低端设备兜底）。
     #[serde(default)]

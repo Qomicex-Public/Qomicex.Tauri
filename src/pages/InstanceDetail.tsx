@@ -59,6 +59,8 @@ import SaveCard from '../components/SaveCard.tsx'
 import ScreenshotCard from '../components/ScreenshotCard.tsx'
 import DataPackCard from '../components/DataPackCard.tsx'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
+import { useDelayedFlag } from '../hooks/useDelayedFlag.ts'
+import { ContentTransition } from '../components/ContentTransition.tsx'
 import { useListSelection } from '../hooks/useListSelection.ts'
 import { useDebug } from '../components/DebugContext.tsx'
 import { logWindowUrl, openLogWindow } from '../lib/gameLogWindow.ts'
@@ -240,6 +242,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
   }, [saves, search, sortBy])
 
   const { selected, setSelected, selectMode, setSelectMode, toggleSelect, handleDragSelect, clear, selectAll } = useListSelection(filtered, (s) => s.filePath)
+  const savesAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading], { y: 10 })
 
   const load = useCallback(async () => {
     setSelected(new Set())
@@ -306,17 +309,18 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
             </Button>
           </div>
         </div>
-        {loading ? (
+        <ContentTransition loading={loading} skeleton={
           <div className="flex items-center justify-center gap-2 px-4 py-8 text-sm text-muted-foreground">
             <RotateCw className="h-4 w-4 animate-spin" />{t('instanceDetail.loading')}
           </div>
-        ) : filtered.length === 0 ? (
+        }>
+        {filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
             {search ? t('instanceDetail.saves.noMatch') : t('instanceDetail.saves.empty')}
           </div>
         ) : (
           <DragSelectArea onSelect={handleDragSelect}>
-            <div className="flex flex-col gap-2 p-4">
+            <div ref={savesAnimRef} className="flex flex-col gap-2 p-4">
               {filtered.map((save) => (
                 <div key={save.filePath} data-key={save.filePath} data-select-item={save.filePath}>
                   <SaveCard save={save} instanceId={instanceId} onRefresh={load} selected={selected.has(save.filePath)} selectMode={selectMode} onSelect={(e) => toggleSelect(save.filePath, e.shiftKey, e.ctrlKey)} onQuickJoin={isQuickPlaySupported(gameVersion) ? () => onQuickJoinWorld(save.name) : undefined} running={running} />
@@ -325,6 +329,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
             </div>
           </DragSelectArea>
         )}
+        </ContentTransition>
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={clear}
@@ -390,6 +395,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
   }, [screenshots, search, sortBy])
 
   const { selected, setSelected, selectMode, setSelectMode, toggleSelect, handleDragSelect, clear, selectAll } = useListSelection(filtered, (s) => s.filePath)
+  const screenshotsAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading], { y: 10 })
 
   const load = useCallback(async () => {
     setSelected(new Set())
@@ -456,7 +462,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
             </Button>
           </div>
         </div>
-        {loading ? (
+        <ContentTransition loading={loading} skeleton={
           <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
             {Array.from({ length: 6 }).map((_, i) => (
               <Skeleton key={i} className="glass-surface rounded-xl border border-border/60 bg-card/95 overflow-hidden">
@@ -468,13 +474,14 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
               </Skeleton>
             ))}
           </div>
-        ) : filtered.length === 0 ? (
+        }>
+        {filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
             {search ? t('instanceDetail.screenshots.noMatch') : t('instanceDetail.screenshots.empty')}
           </div>
         ) : (
           <DragSelectArea onSelect={handleDragSelect}>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4">
+            <div ref={screenshotsAnimRef} className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4">
               {filtered.map((s) => (
                 <div key={s.filePath} data-key={s.filePath} data-select-item={s.filePath}>
                   <ScreenshotCard screenshot={s} instanceId={instanceId} onRefresh={load} selected={selected.has(s.filePath)} selectMode={selectMode} onSelect={(e) => toggleSelect(s.filePath, e.shiftKey, e.ctrlKey)} />
@@ -483,6 +490,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
             </div>
           </DragSelectArea>
         )}
+        </ContentTransition>
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={clear}
@@ -527,6 +535,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loadProgress, setLoadProgress] = useState<{ current: number; total: number } | null>(null)
+  const showSkeleton = useDelayedFlag(loading)
   const [versionDialogMod, setVersionDialogMod] = useState<ModMetadata | null>(null)
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
   const [updates, setUpdates] = useState<ModUpdateEntry[]>([])
@@ -1137,7 +1146,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
             </div>
           )}
 
-          {loading ? (
+          <ContentTransition loading={loading} skeletonVisible={showSkeleton} skeleton={
             <div className="space-y-3 p-4">
               {loadProgress && loadProgress.total > 0 && (
                 <div className="space-y-1.5">
@@ -1149,7 +1158,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                     <span className="tabular-nums">{Math.round(loadProgress.current / loadProgress.total * 100)}%</span>
                   </div>
                   <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
-                    <div className="h-full rounded-full bg-primary transition-all duration-300" style={{ width: `${Math.round(loadProgress.current / loadProgress.total * 100)}%` }} />
+                    <div className="h-full w-full origin-left rounded-full bg-primary transition-transform duration-300" style={{ transform: `scaleX(${loadProgress.current / loadProgress.total})` }} />
                   </div>
                 </div>
               )}
@@ -1177,7 +1186,8 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                 ))}
               </div>
             </div>
-          ) : loadError ? (
+          }>
+            {loadError ? (
             <div className="py-8 text-center text-sm text-destructive">
               {t('instanceDetail.mods.loadFailed', { error: loadError })}
             </div>
@@ -1213,6 +1223,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
               </div>
             </DragSelectArea>
           )}
+          </ContentTransition>
       </SettingSection>
 
       <I18nBatchToolbar
@@ -1454,7 +1465,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
               ))}
             </Select>
           </div>
-        {loading ? (
+        <ContentTransition loading={loading} skeleton={
           <div className={cn('flex flex-col p-4', packViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
             {Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} className={cn('glass-surface flex items-center border border-border/60 bg-card/95', packViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
@@ -1467,7 +1478,8 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
               </Skeleton>
             ))}
           </div>
-        ) : filtered.length === 0 ? (
+        }>
+        {filtered.length === 0 ? (
           search ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">{t('instanceDetail.resourcepacks.noMatch')}</div>
           ) : (
@@ -1496,6 +1508,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
             </div>
           </DragSelectArea>
         )}
+        </ContentTransition>
       </SettingSection>
 
       <I18nBatchToolbar
@@ -1705,7 +1718,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
               ))}
             </Select>
           </div>
-        {loading ? (
+        <ContentTransition loading={loading} skeleton={
           <div className={cn('flex flex-col p-4', shaderViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
             {Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} className={cn('glass-surface flex items-center border border-border/60 bg-card/95', shaderViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
@@ -1718,7 +1731,8 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
               </Skeleton>
             ))}
           </div>
-        ) : filtered.length === 0 ? (
+        }>
+        {filtered.length === 0 ? (
           search ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">{t('instanceDetail.shaderpacks.noMatch')}</div>
           ) : (
@@ -1747,6 +1761,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
             </div>
           </DragSelectArea>
         )}
+        </ContentTransition>
       </SettingSection>
 
       <I18nBatchToolbar
@@ -1956,7 +1971,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
               ))}
             </Select>
           </div>
-        {loading ? (
+        <ContentTransition loading={loading} skeleton={
           <div className={cn('flex flex-col p-4', dataPackViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
             {Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} className={cn('glass-surface flex items-center border border-border/60 bg-card/95', dataPackViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
@@ -1969,7 +1984,8 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
               </Skeleton>
             ))}
           </div>
-        ) : filtered.length === 0 ? (
+        }>
+        {filtered.length === 0 ? (
           search ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">{t('instanceDetail.datapacks.noMatch')}</div>
           ) : (
@@ -1998,6 +2014,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
             </div>
           </DragSelectArea>
         )}
+        </ContentTransition>
       </SettingSection>
 
       <I18nBatchToolbar
@@ -2191,11 +2208,12 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
             />
           </div>
         </div>
-        {loading ? (
+        <ContentTransition loading={loading} skeleton={
           <div className="flex items-center justify-center gap-2 px-4 py-8 text-sm text-muted-foreground">
             <RotateCw className="h-4 w-4 animate-spin" />{t('instanceDetail.loading')}
           </div>
-        ) : filtered.length === 0 ? (
+        }>
+        {filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
             {search ? t('instanceDetail.schematics.noMatch') : t('instanceDetail.schematics.empty')}
           </div>
@@ -2275,6 +2293,7 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
             </div>
           </DragSelectArea>
         )}
+        </ContentTransition>
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={clear}
@@ -2470,7 +2489,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
               </Button>
             </div>
           </div>
-          {loading ? (
+          <ContentTransition loading={loading} skeleton={
             <div className="flex flex-col gap-1 p-4">
               {Array.from({ length: 3 }).map((_, i) => (
                 <Skeleton key={i} className="glass-surface flex items-center gap-3 rounded-lg border border-border/60 bg-card/95 px-3 py-2.5">
@@ -2487,7 +2506,8 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
                 </Skeleton>
               ))}
             </div>
-          ) : filtered.length === 0 ? (
+          }>
+          {filtered.length === 0 ? (
             <div className="py-8 text-center text-sm text-muted-foreground">
               {search ? t('instanceDetail.servers.noMatch') : t('instanceDetail.servers.empty')}
             </div>
@@ -2572,6 +2592,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
               })}
             </div>
           )}
+          </ContentTransition>
           {lanGames.length > 0 && (
             <>
               <Separator className="my-3" />
@@ -2920,7 +2941,7 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
         </div>
         {!loading && <span className="shrink-0 text-xs font-normal text-muted-foreground">({settings.length})</span>}
       </div>
-        {loading ? (
+        <ContentTransition loading={loading} skeleton={
           <div className="space-y-3 p-4">
             {Array.from({ length: 8 }).map((_, i) => (
               <Skeleton key={i} className="flex items-center gap-3">
@@ -2932,7 +2953,8 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
               </Skeleton>
             ))}
           </div>
-        ) : filtered.length === 0 ? (
+        }>
+        {filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
             {search ? t('instanceDetail.gamesettings.noMatch') : t('instanceDetail.gamesettings.empty')}
           </div>
@@ -3016,6 +3038,7 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
             })}
           </div>
         )}
+        </ContentTransition>
     </SettingSection>
   )
 }
@@ -3665,7 +3688,7 @@ export default function InstanceDetailPage() {
         </div>
 
         <div className="flex-1 min-w-0 overflow-y-auto scroll-fade-mask relative pb-8" style={{ transform: 'translateZ(0)' }}>
-          <TabContent activeTab={tab} tabId="overview">
+          <TabContent direction="vertical" activeTab={tab} tabId="overview">
             <div className="space-y-4">
               <SettingSection title={t('instances.basicInfo')} icon={<Info className="h-4 w-4" />}>
                 <div className="grid grid-cols-2 gap-4 p-4 text-sm">
@@ -4008,15 +4031,15 @@ export default function InstanceDetailPage() {
             </div>
           )}
 
-          <TabContent activeTab={tab} tabId="saves"><SavesTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} refreshKey={savesRefresh} onRefresh={() => setSavesRefresh(k => k + 1)} onQuickJoinWorld={(name) => handleQuickLaunch({ joinWorld: name })} running={runningInstances.some(r => r.instanceId === id)} /></TabContent>
-          <TabContent activeTab={tab} tabId="screenshots"><ScreenshotsTab instanceId={id!} gameDir={gameDir} refreshKey={screenshotsRefresh} onRefresh={() => setScreenshotsRefresh(k => k + 1)} /></TabContent>
-          <TabContent activeTab={tab} tabId="mods"><ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={gameDir} refreshKey={modsRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-mods`); setModsRefresh(k => k + 1) }} /></TabContent>
-          <TabContent activeTab={tab} tabId="resourcepacks"><ResourcePacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={resourcePacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-resourcepacks`); setResourcePacksRefresh(k => k + 1) }} /></TabContent>
-          <TabContent activeTab={tab} tabId="shaderpacks"><ShadersTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={shadersRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-shaders`); setShadersRefresh(k => k + 1) }} /></TabContent>
-          <TabContent activeTab={tab} tabId="datapacks"><DataPacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={dataPacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-datapacks`); setDataPacksRefresh(k => k + 1) }} /></TabContent>
-          <TabContent activeTab={tab} tabId="schematics"><SchematicsTab instanceId={id!} gameDir={gameDir} refreshKey={schematicsRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-schematics`); setSchematicsRefresh(k => k + 1) }} /></TabContent>
-          <TabContent activeTab={tab} tabId="servers"><ServersTab instanceId={id!} refreshKey={serversRefresh} onRefresh={() => setServersRefresh(k => k + 1)} onQuickJoinServer={(ip) => handleQuickLaunch({ joinServer: ip })} /></TabContent>
-          <TabContent activeTab={tab} tabId="gamesettings"><GameSettingsTab instanceId={id!} refreshKey={gameSettingsRefresh} onRefresh={() => setGameSettingsRefresh(k => k + 1)} /></TabContent>
+          <TabContent direction="vertical" activeTab={tab} tabId="saves"><SavesTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} refreshKey={savesRefresh} onRefresh={() => setSavesRefresh(k => k + 1)} onQuickJoinWorld={(name) => handleQuickLaunch({ joinWorld: name })} running={runningInstances.some(r => r.instanceId === id)} /></TabContent>
+          <TabContent direction="vertical" activeTab={tab} tabId="screenshots"><ScreenshotsTab instanceId={id!} gameDir={gameDir} refreshKey={screenshotsRefresh} onRefresh={() => setScreenshotsRefresh(k => k + 1)} /></TabContent>
+          <TabContent direction="vertical" activeTab={tab} tabId="mods"><ModsTab instanceId={id!} gameVersion={instance.gameVersion} loader={instance.loader || undefined} gameDir={gameDir} refreshKey={modsRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-mods`); setModsRefresh(k => k + 1) }} /></TabContent>
+          <TabContent direction="vertical" activeTab={tab} tabId="resourcepacks"><ResourcePacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={resourcePacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-resourcepacks`); setResourcePacksRefresh(k => k + 1) }} /></TabContent>
+          <TabContent direction="vertical" activeTab={tab} tabId="shaderpacks"><ShadersTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={shadersRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-shaders`); setShadersRefresh(k => k + 1) }} /></TabContent>
+          <TabContent direction="vertical" activeTab={tab} tabId="datapacks"><DataPacksTab instanceId={id!} gameDir={gameDir} gameVersion={instance.gameVersion} loader={instance.loader ?? undefined} refreshKey={dataPacksRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-datapacks`); setDataPacksRefresh(k => k + 1) }} /></TabContent>
+          <TabContent direction="vertical" activeTab={tab} tabId="schematics"><SchematicsTab instanceId={id!} gameDir={gameDir} refreshKey={schematicsRefresh} onRefresh={() => { cacheInvalidate(`api-instance-${id}-schematics`); setSchematicsRefresh(k => k + 1) }} /></TabContent>
+          <TabContent direction="vertical" activeTab={tab} tabId="servers"><ServersTab instanceId={id!} refreshKey={serversRefresh} onRefresh={() => setServersRefresh(k => k + 1)} onQuickJoinServer={(ip) => handleQuickLaunch({ joinServer: ip })} /></TabContent>
+          <TabContent direction="vertical" activeTab={tab} tabId="gamesettings"><GameSettingsTab instanceId={id!} refreshKey={gameSettingsRefresh} onRefresh={() => setGameSettingsRefresh(k => k + 1)} /></TabContent>
         </div>
       </div>
       <AccountSelectDialog

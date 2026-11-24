@@ -8,6 +8,8 @@ import { MorphActionIcon } from './MorphActionIcon.tsx'
 import { Button, Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter, Input, Select, SelectOption, Separator, Skeleton, useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
+import { useDelayedFlag } from '../hooks/useDelayedFlag.ts'
+import { ContentTransition } from './ContentTransition.tsx'
 import { PERMISSION_CATALOG } from '../plugins/types.ts'
 import { usePluginStore } from '../stores/pluginStore.ts'
 import { PluginIcon } from './PluginIcon.tsx'
@@ -104,6 +106,7 @@ export default function PluginStoreBrowse() {
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
 
   const storeAnimRef = useAnimatedList<HTMLDivElement>([items.length, loading], { y: 12, scale: 0.95 })
+  const showSkeleton = useDelayedFlag(loading)
 
   function findLocal(slug: string) {
     return localPlugins.find((p) => matchesLocalId(slug, p.manifest.id))
@@ -224,7 +227,7 @@ export default function PluginStoreBrowse() {
             </Button>
           </div>
 
-          {loading ? (
+          <ContentTransition loading={loading} skeletonVisible={showSkeleton} skeleton={
             <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 xl:grid-cols-3">
               {Array.from({ length: 6 }).map((_, i) => (
                 <Skeleton key={i} className="flex flex-col gap-2 rounded-lg border border-border bg-card px-4 py-3">
@@ -245,7 +248,8 @@ export default function PluginStoreBrowse() {
                 </Skeleton>
               ))}
             </div>
-          ) : loadError ? (
+          }>
+          {loadError ? (
             <div className="flex flex-col items-center gap-3 py-10">
               <p className="text-muted-foreground">{t('settings.plugins.store.loadFailed')}</p>
               <Button size="sm" variant="outline" onClick={() => void load(page)}>{t('common.refresh')}</Button>
@@ -339,6 +343,7 @@ export default function PluginStoreBrowse() {
               )}
             </>
           )}
+          </ContentTransition>
       </div>
 
       {/* 权限确认对话框（安装/更新共用） */}

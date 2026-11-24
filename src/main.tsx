@@ -5,6 +5,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 // 必须先于任何 rAF 消费者（GSAP 等）求值：它在导入期接管 window.requestAnimationFrame。
 import "./lib/fps-limiter.ts";
+import gsap from "gsap";
 import { installDragRegions } from "@qomicex/plugin-ui";
 import { installGlobalErrorLogging, logError } from "./lib/frontendLog.ts";
 import "./index.css";
@@ -15,6 +16,11 @@ installDragRegions();
 
 // 全局未捕获异常上报：必须在 App 及其依赖求值前安装，覆盖启动阶段的错误。
 installGlobalErrorLogging();
+
+// 主线程被长任务阻塞（首屏 React 提交 + 玻璃卡片布局）时，GSAP 下一帧会按真实
+// 经过时间补齐，动画直接跳到终态——表现就是「有时候没有入场动画」。默认 500ms
+// 阈值太宽；这里把超过 220ms 的空档按 16ms 计，保证动画总能被看见。
+gsap.ticker.lagSmoothing(220, 16);
 
 // 动态导入 App：静态 import 会在 main.tsx 执行前求值 App 依赖，早于全局监听器。
 void import("./App.tsx")

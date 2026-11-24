@@ -1328,7 +1328,7 @@ export default function Settings() {
         </div>
 
         <div className="flex-1 min-w-0 space-y-4">
-          <TabContent activeTab={category} tabId="launcher">
+          <TabContent direction="vertical" activeTab={category} tabId="launcher">
             <div className="space-y-6">
             <SettingSection title={t('settings.category.basic')} icon={<SettingsIcon className="h-4 w-4" />}>
               <SettingRow
@@ -1883,7 +1883,7 @@ export default function Settings() {
 
             </div>
           </TabContent>
-          <TabContent activeTab={category} tabId="java">
+          <TabContent direction="vertical" activeTab={category} tabId="java">
             <div className="space-y-6">
               <SettingSection title={t('settings.java.title')} icon={<Coffee className="h-4 w-4" />}>
                 <div className="flex items-center justify-between gap-4 px-4 py-3">
@@ -2118,7 +2118,7 @@ export default function Settings() {
             </div>
           </TabContent>
 
-          <TabContent activeTab={category} tabId="appearance">
+          <TabContent direction="vertical" activeTab={category} tabId="appearance">
             <div className="space-y-6">
               <SettingSection title={t('settings.appearance.title')} icon={<Palette className="h-4 w-4" />}>
                 <SettingRow
@@ -2269,13 +2269,7 @@ export default function Settings() {
                     <Select
                       value={settings.componentMaterial ?? 'default'}
                       onChange={(v) => {
-                        if (v === 'liquid') {
-                          msgConfirm(t('settings.appearance.componentMaterialLiquidConfirmBody'), t('settings.appearance.componentMaterialLiquidConfirmTitle')).then((ok) => {
-                            if (ok) update('componentMaterial', v as 'default' | 'frosted' | 'acrylic' | 'aero' | 'liquid')
-                          })
-                        } else {
-                          update('componentMaterial', v as 'default' | 'frosted' | 'acrylic' | 'aero' | 'liquid')
-                        }
+                        update('componentMaterial', v as 'default' | 'frosted' | 'acrylic' | 'aero')
                       }}
                       className="w-48"
                     >
@@ -2283,16 +2277,9 @@ export default function Settings() {
                       <SelectOption value="frosted">{t('settings.appearance.componentMaterialFrosted')}</SelectOption>
                       <SelectOption value="acrylic">{t('settings.appearance.componentMaterialAcrylic')}</SelectOption>
                       <SelectOption value="aero">{t('settings.appearance.componentMaterialAero')}</SelectOption>
-                      <SelectOption value="liquid">{t('settings.appearance.componentMaterialLiquidPreview')}</SelectOption>
                     </Select>
                   }
                 />
-                {settings.componentMaterial === 'liquid' && (
-                  <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-600 dark:text-amber-400">
-                    <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />
-                    <span>{t('settings.appearance.componentMaterialLiquidWarning')}</span>
-                  </div>
-                )}
                 {settings.componentMaterial !== 'default' && (
                   <div className="space-y-2 px-4 py-3">
                     <div className="flex items-center gap-3">
@@ -2633,11 +2620,11 @@ export default function Settings() {
             </div>
           </TabContent>
 
-          <TabContent activeTab={category} tabId="toolbox"><ToolboxTab /></TabContent>
-          <TabContent activeTab={category} tabId="plugins"><PluginStoreTab /></TabContent>
-          <TabContent activeTab={category} tabId="about"><AboutTab sysInfo={sysInfo} licenseStatus={licenseStatus} onOpenLicenseDialog={() => setLicenseDialogOpen(true)} autoInstall={settings.updateAutoInstall !== false} onAutoInstallChange={(next) => update('updateAutoInstall', next)} /></TabContent>
-          <TabContent activeTab={category} tabId="logs"><LogTab /></TabContent>
-          <TabContent activeTab={category} tabId="debug"><DebugTab /></TabContent>
+          <TabContent direction="vertical" activeTab={category} tabId="toolbox"><ToolboxTab /></TabContent>
+          <TabContent direction="vertical" activeTab={category} tabId="plugins"><PluginStoreTab /></TabContent>
+          <TabContent direction="vertical" activeTab={category} tabId="about"><AboutTab sysInfo={sysInfo} licenseStatus={licenseStatus} onOpenLicenseDialog={() => setLicenseDialogOpen(true)} autoInstall={settings.updateAutoInstall !== false} onAutoInstallChange={(next) => update('updateAutoInstall', next)} /></TabContent>
+          <TabContent direction="vertical" activeTab={category} tabId="logs"><LogTab /></TabContent>
+          <TabContent direction="vertical" activeTab={category} tabId="debug"><DebugTab /></TabContent>
 
           <Dialog open={addDialogOpen} onClose={() => setAddDialogOpen(false)}>
             <DialogHeader onClose={() => setAddDialogOpen(false)}>

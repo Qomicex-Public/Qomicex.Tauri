@@ -9,7 +9,7 @@ import { useInstanceResourceUsage, useRunningInstances } from '../stores/running
 import { Button } from '../components/ui'
 import { Card, CardContent } from '../components/ui'
 import { PageHeader } from '../components/PageHeader.tsx'
-import { usePageAnimation } from '../hooks/usePageAnimation.ts'
+import { PageShell } from '../components/PageShell.tsx'
 import { useI18n } from '../i18n/index.tsx'
 
 function formatElapsed(startedAt: number, now: number, t: ReturnType<typeof useI18n>['t']): string {
@@ -43,7 +43,6 @@ export default function RunningInstances() {
   const { killInstance } = useRunningActions()
   const runningInstances = useRunningInstances()
   const navigate = useNavigate()
-  const pageRef = usePageAnimation()
   const { t } = useI18n()
   const [now, setNow] = useState(Date.now())
 
@@ -54,7 +53,7 @@ export default function RunningInstances() {
   }, [runningInstances.length])
 
   return (
-    <div ref={pageRef} className="flex flex-1 min-h-0 flex-col overflow-y-auto p-8">
+    <PageShell className="overflow-y-auto p-8">
       <PageHeader
         title={t('running.title')}
         subtitle={runningInstances.length > 0 ? t('running.instancesRunning', { count: runningInstances.length }) : undefined}
@@ -108,6 +107,6 @@ export default function RunningInstances() {
           ))}
         </div>
       )}
-    </div>
+    </PageShell>
   )
 }

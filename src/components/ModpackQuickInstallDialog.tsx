@@ -19,6 +19,7 @@ import { useI18n } from '../i18n/index.tsx'
 import { collectInstallModes, invokeInstallMode } from '../plugins/install-modes.ts'
 import type { PluginInstallMode } from '../plugins/install-modes.ts'
 import { PluginIcon } from './PluginIcon.tsx'
+import { FieldError } from './FieldError.tsx'
 
 interface ModpackQuickInstallDialogProps {
   open: boolean
@@ -325,7 +326,7 @@ export default function ModpackQuickInstallDialog({
               <Label htmlFor="inst-name">{t('dialogs.modpackInstall.instanceName')}</Label>
               <Input id="inst-name" value={instanceName} onChange={e => setInstanceName(e.target.value)} />
             </div>
-            {error && <p className="text-destructive text-sm">{error}</p>}
+            <FieldError message={error} />
           </>
         )}
 

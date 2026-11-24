@@ -387,10 +387,10 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
         <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">
           <div
             className={cn(
-              'h-full rounded-full transition-all duration-500',
+              'h-full w-full origin-left rounded-full transition-transform duration-500',
               task.status === 'completed' ? 'bg-emerald-500' : task.status === 'failed' ? 'bg-red-500' : task.status === 'paused' || isAwaiting ? 'bg-amber-400' : 'bg-primary'
             )}
-            style={{ width: `${task.progress}%` }}
+            style={{ transform: `scaleX(${task.progress / 100})` }}
           />
         </div>
         {(steps || showSpeedGraph) && (
@@ -610,7 +610,7 @@ export default function DownloadCenter() {
       </div>
 
       {filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 py-24 text-center">
+        <div className="animate-in fade-in flex flex-col items-center justify-center rounded-xl border border-dashed border-border/60 py-24 text-center">
           <Download className="mb-3 h-10 w-10 text-muted-foreground/30" />
           <p className="text-sm font-medium text-muted-foreground">{t('downloads.empty')}</p>
           <p className="mt-1 text-xs text-muted-foreground/70">{t('downloads.emptyHint')}</p>

@@ -32,7 +32,7 @@ export function SplashScreen({ state, onRetry }: SplashScreenProps) {
     if (state === 'ready') {
       setProgress(100)
       setExiting(true)
-      const t = setTimeout(() => setMounted(false), 600)
+      const t = setTimeout(() => setMounted(false), 320)
       return () => clearTimeout(t)
     }
   }, [state])
@@ -42,8 +42,8 @@ export function SplashScreen({ state, onRetry }: SplashScreenProps) {
   return (
     <div
       className={cn(
-        'fixed inset-0 z-[9999] flex flex-col items-center justify-center gap-8 bg-background cursor-default select-none',
-        exiting && 'opacity-0 transition-opacity duration-500'
+        'anim-fade fixed inset-0 z-[9999] flex flex-col items-center justify-center gap-8 bg-background cursor-default select-none',
+        exiting && 'opacity-0'
       )}
     >
       {/* 顶部 36px 拖动条（与主窗口 TitleBar 等高）：启动阶段只保留这一条可拖，
@@ -53,8 +53,8 @@ export function SplashScreen({ state, onRetry }: SplashScreenProps) {
       <div className="flex w-72 flex-col items-center gap-3">
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
           <div
-            className="h-full rounded-full bg-primary transition-all duration-[400ms] ease-out"
-            style={{ width: `${progress}%` }}
+            className="h-full w-full origin-left rounded-full bg-primary transition-transform duration-[400ms] ease-out"
+            style={{ transform: `scaleX(${progress / 100})` }}
           />
         </div>
         {state === 'loading' && (

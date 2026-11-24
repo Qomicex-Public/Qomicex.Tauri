@@ -61,8 +61,6 @@ function Dialog({ open, onClose, children, className, closeOnBackdrop = true, cl
       if (content) {
         closeTimerRef.current = gsap.to(content, {
           opacity: 0,
-          scale: 0.95,
-          y: 8,
           duration,
           ease: EASE_OUT,
           ...withGpu({}),
@@ -97,9 +95,27 @@ function Dialog({ open, onClose, children, className, closeOnBackdrop = true, cl
     )
     gsap.fromTo(
       content,
-      { opacity: 0, scale: 0.95, y: 8 },
-      { opacity: 1, scale: 1, y: 0, duration, ease: EASE_IN, ...withGpu({}) }
+      { opacity: 0 },
+      { opacity: 1, duration, ease: EASE_IN, ...withGpu({}) }
     )
+    // 内容分块入场：标题/正文/操作区各错开 20ms，比整块缩放更有层次
+    const sections = Array.from(content.children) as HTMLElement[]
+    if (sections.length > 1) {
+      gsap.fromTo(
+        sections,
+        { opacity: 0, y: 6 },
+        {
+          opacity: 1,
+          y: 0,
+          duration: duration * 0.9,
+          delay: duration * 0.2,
+          stagger: 0.02 * multiplier,
+          ease: EASE_IN,
+          ...withGpu({}),
+          onComplete: () => gsap.set(sections, { clearProps: 'transform,opacity' }),
+        }
+      )
+    }
   }, [mounted, isClosing])
 
   const handleClose = React.useCallback(() => {

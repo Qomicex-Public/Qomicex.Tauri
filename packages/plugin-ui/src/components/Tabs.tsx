@@ -1,8 +1,10 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useRef, useEffect, Fragment, type ReactNode } from 'react'
+import { useRef, useEffect, useLayoutEffect, Fragment, type ReactNode } from 'react'
 import { cn } from '../lib/cn.js'
+import gsap from 'gsap'
+import { readAnimConfig } from '../lib/anim.js'
 
 export interface Tab {
   id: string
@@ -27,7 +29,42 @@ export function Tabs({ tabs, activeTab, onChange, className, orientation = 'hori
 }) {
   const indicatorRef = useRef<HTMLDivElement>(null)
   const tabsRef = useRef<Map<string, HTMLButtonElement>>(new Map())
+  const containerRef = useRef<HTMLDivElement>(null)
   const vertical = orientation === 'vertical'
+
+  // 侧边二级导航：逐个从左侧滑入（PCL 的左栏效果）。
+  // 只在竖排时启用；横排 tab 用指示器位移表达切换，不再逐项入场。
+  useLayoutEffect(() => {
+    if (!vertical) return
+    const container = containerRef.current
+    if (!container) return
+    const { enabled, multiplier } = readAnimConfig()
+    if (!enabled) return
+    const buttons = Array.from(container.querySelectorAll('button'))
+    if (buttons.length === 0) return
+    gsap.set(buttons, { x: -8, opacity: 0 })
+    const tween = gsap.to(buttons, {
+      x: 0,
+      opacity: 1,
+      duration: 0.13 * multiplier,
+      stagger: 0.08 * multiplier,
+      ease: 'power3.out',
+      paused: true,
+      onComplete: () => gsap.set(buttons, { clearProps: 'transform,opacity' }),
+    })
+    // 等两帧再播：第一帧用于布局与首屏 backdrop 采样，动画不会被长帧拖成「卡一下」
+    const rafIds: number[] = []
+    let cancelled = false
+    rafIds.push(requestAnimationFrame(() => {
+      rafIds.push(requestAnimationFrame(() => { if (!cancelled) tween.play(0) }))
+    }))
+    return () => {
+      cancelled = true
+      rafIds.forEach((id) => cancelAnimationFrame(id))
+      tween.kill()
+      gsap.set(buttons, { clearProps: 'transform,opacity' })
+    }
+  }, [vertical])
 
   useEffect(() => {
     const activeEl = tabsRef.current.get(activeTab)
@@ -35,23 +72,23 @@ export function Tabs({ tabs, activeTab, onChange, className, orientation = 'hori
     if (activeEl && indicator) {
       // offsetTop/Left 相对 offsetParent（本容器，已 relative），故竖排/横排共用；
       // 分组标题会推低后续按钮，offsetTop 自动包含该偏移。
-      indicator.style.top = `${activeEl.offsetTop}px`
-      indicator.style.left = `${activeEl.offsetLeft}px`
+      // 位置用 transform（不触发重排），宽高仍走 transition。
+      indicator.style.transform = `translate(${activeEl.offsetLeft}px, ${activeEl.offsetTop}px)`
       indicator.style.width = `${activeEl.offsetWidth}px`
       indicator.style.height = `${activeEl.offsetHeight}px`
     }
   }, [activeTab, tabs])
 
   return (
-    <div className={cn(
+    <div ref={containerRef} className={cn(
       'relative flex gap-0.5',
       vertical ? 'flex-col' : 'flex-row',
       className
     )}>
       <div
         ref={indicatorRef}
-        className="absolute bg-primary/10 rounded-lg transition-all duration-200"
-        style={{ top: 0, left: 0, width: 0, height: 0 }}
+        className="anim-indicator absolute left-0 top-0 rounded-lg bg-primary/10"
+        style={{ transform: 'translate(0, 0)', width: 0, height: 0 }}
       />
       {tabs.map((tab, i) => {
         // 竖排且分组名变化时插入分组标题（首个分组用 pt-0，避免顶部多余留白）
@@ -97,11 +134,13 @@ export function Tabs({ tabs, activeTab, onChange, className, orientation = 'hori
   )
 }
 
-export function TabContent({ activeTab, tabId, children, className }: {
+export function TabContent({ activeTab, tabId, children, className, direction = 'horizontal' }: {
   activeTab: string
   tabId: string
   children: ReactNode
   className?: string
+  /** 内容出现方向：横排 tab 从下、竖排 tab 从右 */
+  direction?: 'horizontal' | 'vertical'
 }) {
   const prevRef = useRef(activeTab)
   const mountedRef = useRef(false)
@@ -112,11 +151,12 @@ export function TabContent({ activeTab, tabId, children, className }: {
   }, [activeTab])
 
   const justMounted = !mountedRef.current
+  const anim = direction === 'vertical' ? 'animate-slide-in-right' : 'animate-slide-in-up'
 
   if (activeTab !== tabId) return null
 
   return (
-    <div className={cn(justMounted ? '' : 'animate-slide-in-right', className)}>
+    <div className={cn(justMounted ? '' : anim, className)}>
       {children}
     </div>
   )

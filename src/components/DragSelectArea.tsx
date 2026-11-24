@@ -148,7 +148,7 @@ export default function DragSelectArea({ children, onSelect }: {
       {children}
       {box && (
         <div
-          className="pointer-events-none absolute z-10 rounded-sm border border-primary/70 bg-primary/10"
+          className="animate-zoom-fade-in pointer-events-none absolute z-10 rounded-sm border border-primary/70 bg-primary/10"
           style={{ left: box.left, top: box.top, width: box.width, height: box.height }}
         />
       )}

@@ -142,6 +142,7 @@
 - [ADR-138 下载镜像轮换限界、批次自动重试及任务卡去重（issue #366）](1-决策记录/ADR-138-下载镜像轮换限界与批次自动重试及任务卡去重-issue-366.md)
 - [ADR-139 前端状态层分层与数据流收敛](1-决策记录/ADR-139-前端状态层分层与数据流收敛.md)
 - [ADR-140 日志管道统一：startup_id、启动边界事件与字段字典](1-决策记录/ADR-140-日志管道统一-startup_id与启动边界事件.md)
+- [ADR-141 毛玻璃改为整页预模糊底，移除卡片级 backdrop-filter](1-决策记录/ADR-141-毛玻璃改为整页预模糊底并移除卡片级-backdrop-filter.md)
 - [Batch Plan: Full Migration C# → Rust + Axum→IPC](1-决策记录/BATCH-PLAN-CSharp到Rust迁移批次计划.md)
 - [复测记录：connector 房主身份解析修复 + host_port game_info/game_mods 增强](1-决策记录/VERIFICATION_LOG-联机房主解析复测.md)
 

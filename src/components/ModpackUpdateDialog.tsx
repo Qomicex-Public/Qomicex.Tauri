@@ -12,6 +12,7 @@ import { ApiError } from '../api/client.ts'
 import { addTask } from '../stores/downloadStore.ts'
 import { useI18n } from '../i18n/index.tsx'
 import { cn } from './ui'
+import { FieldError } from './FieldError.tsx'
 import type {
   ModpackUpdateCheck,
   ModpackUpdateCandidate,
@@ -160,7 +161,7 @@ export default function ModpackUpdateDialog({ open, onClose, instanceId, instanc
         {/* ② 选版本 */}
         {step === 'select' && (
           <>
-            {error && <p className="text-destructive text-sm">{error}</p>}
+            <FieldError message={error} />
             {!error && check && !check.eligible && (
               <p className="py-4 text-center text-sm text-muted-foreground">
                 {check.reason ? t(REASON_KEY[check.reason]) : t('dialogs.modpackUpdate.notEligible')}
@@ -226,7 +227,7 @@ export default function ModpackUpdateDialog({ open, onClose, instanceId, instanc
                 {t('dialogs.modpackUpdate.checking')}
               </div>
             )}
-            {!previewLoading && error && <p className="text-destructive text-sm">{error}</p>}
+            <FieldError message={previewLoading ? null : error} />
             {!previewLoading && !error && preview && (
               <>
                 <div>
