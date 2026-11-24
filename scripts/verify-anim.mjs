@@ -103,17 +103,22 @@ try {
   check('页面入场：结束后无内联 transform 残留', settled.every((s) => !s.hasInlineTransform))
 
   // --- 场景 2：列表入场（实例页：stub 没有数据，这里补两条版本记录） ---
-  await page.route('**/api/versions/scan**', (route) => route.fulfill({
-    json: {
-      path: '.minecraft',
-      noJsonDirs: [],
-      refineRequired: false,
-      versions: [
-        { name: '1.20.1', dirName: '1.20.1', gameVersion: '1.20.1', state: 'Available', stateDescribe: '', loaders: [] },
-        { name: '1.20.1-Forge-47.1.0', dirName: '1.20.1-Forge-47.1.0', gameVersion: '1.20.1', state: 'Available', stateDescribe: '', loaders: [{ type: 'Forge', version: '47.1.0' }] },
-      ],
-    },
-  }))
+  await page.route('**/api/versions/scan**', async (route) => {
+    // 慢接口：让骨架必然显示（400ms 延迟 + 最短停留），同时守住
+    // 「加载完成后骨架必须切换成内容」这条回归（PR #387 审查修复引入过卡死）。
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+    await route.fulfill({
+      json: {
+        path: '.minecraft',
+        noJsonDirs: [],
+        refineRequired: false,
+        versions: [
+          { name: '1.20.1', dirName: '1.20.1', gameVersion: '1.20.1', state: 'Available', stateDescribe: '', loaders: [] },
+          { name: '1.20.1-Forge-47.1.0', dirName: '1.20.1-Forge-47.1.0', gameVersion: '1.20.1', state: 'Available', stateDescribe: '', loaders: [{ type: 'Forge', version: '47.1.0' }] },
+        ],
+      },
+    })
+  })
   await page.route('**/api/instance', (route) => {
     if (route.request().method() !== 'GET' || new URL(route.request().url()).pathname !== '/api/instance') {
       return route.fallback()
@@ -122,8 +127,34 @@ try {
   })
 
   await page.goto(`${VITE_URL}/instances`, { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector('main', { timeout: 30000 })
-  await page.waitForTimeout(1200)
+  await page.waitForSelector('main .animate-shimmer', { timeout: 4000 })
+  const skeletonDuring = await page.$$eval('main .animate-shimmer', (nodes) => nodes.length)
+  const cardsDuring = await page.$$eval('main [data-key]', (nodes) => nodes.length)
+  check('骨架溶解：慢接口时先出占位、不出内容', skeletonDuring > 0 && cardsDuring === 0, `${skeletonDuring} 占位 / ${cardsDuring} 卡片`)
+
+  await page.waitForSelector('main [data-key]', { timeout: 8000 })
+  const skeletonAfter = await page.$$eval('main .animate-shimmer', (nodes) => nodes.length)
+  check('骨架溶解：加载完成后占位已移除', skeletonAfter === 0, `${skeletonAfter} 个残留`)
+
+  await page.waitForTimeout(900)
+
+  // --- 场景 2b：中途删除——剩余条目要 FLIP 让位、退场要有克隆 ---
+  const flip = await page.evaluate(() => new Promise((resolve) => {
+    const card = document.querySelector('main [data-key]')
+    if (!card) return resolve({ moved: false, clone: 0 })
+    let target = card
+    while (target.parentElement && target.parentElement.querySelectorAll('[data-key]').length === 1) {
+      target = target.parentElement
+    }
+    const root = target.parentElement
+    root.removeChild(target)
+    setTimeout(() => resolve({
+      moved: Array.from(root.children).some((n) => n.style.transform !== ''),
+      clone: document.querySelectorAll('[data-anim-clone]').length,
+    }), 120)
+  }))
+  check('列表退场：剩余条目有 FLIP 让位', flip.moved, JSON.stringify(flip))
+  check('列表退场：出现退场克隆', flip.clone > 0, `${flip.clone} 个`)
   const frames = await page.evaluate(() => window.__qmxFrames ?? [])
   const withCards = frames.filter((f) => f.opacity !== null)
   const dipped = withCards.some((f) => f.opacity < 0.99)

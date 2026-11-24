@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useCallback, useLayoutEffect, useRef, type RefObject } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, type RefObject } from 'react'
 import gsap from 'gsap'
 import { containsGlass, gpuVars, readMotion, sec } from '../lib/motion.ts'
 import { queueGlassRepaint } from './useGlassRepaint.ts'
@@ -76,7 +76,7 @@ export function useAnimatedList<T extends HTMLElement>(
   _deps: unknown[] = [],
   options?: AnimatedListOptions,
 ): RefObject<T | null> {
-  const ref = useRef<T>(null)
+  const elementRef = useRef<T | null>(null)
   const optionsRef = useRef(options)
   optionsRef.current = options
 
@@ -186,11 +186,10 @@ export function useAnimatedList<T extends HTMLElement>(
       clone.dataset.animClone = ''
       clonesRef.current.add(clone)
       document.body.appendChild(clone)
-      // 玻璃克隆保持同一约束：只淡出，不位移/缩放
-      const glass = containsGlass(entry.el)
       gsap.to(clone, {
         opacity: 0,
-        ...(glass ? {} : { y: -8, scale: 0.96 }),
+        y: -8,
+        scale: 0.96,
         duration: exitDuration,
         ease: 'power2.in',
         force3D: motion.gpu,
@@ -274,7 +273,6 @@ export function useAnimatedList<T extends HTMLElement>(
       const entry = next.get(move.key)
       if (!entry || !inViewport(entry)) continue
       const node = entry.el
-      if (containsGlass(node)) continue
       animatedRef.current.add(node)
       // 只停位移补间：保留可能还在跑的入场 opacity（否则该行会停在半透明）
       gsap.killTweensOf(node, 'x,y')
@@ -331,30 +329,19 @@ export function useAnimatedList<T extends HTMLElement>(
     animate(el)
   }, [animate])
 
-  // 每次渲染后确保已挂载（条件渲染的列表在数据到达后才出现）
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (el) attach(el)
-  })
-
-  // 列表被 ContentTransition 延迟挂载时父组件不会再渲染一次：
-  // 用有限次 rAF 轮询等 ref 落地，避免监听器一直没接上。
-  useLayoutEffect(() => {
-    let raf = 0
-    let tries = 0
-    const tick = () => {
-      const el = ref.current
-      if (el) {
-        attach(el)
-        return
-      }
-      if (++tries < 120) raf = requestAnimationFrame(tick)
-    }
-    tick()
-    return () => {
-      if (raf) cancelAnimationFrame(raf)
-    }
-  }, [attach])
+  // 用带 setter 的 ref 对象而不是普通 useRef：列表被 ContentTransition 拖到骨架
+  // 退场之后才挂载时，页面组件不会再渲染一次，layout effect 不会再跑；setter 在
+  // commit 阶段立即挂载，不会漏掉首屏入场，也不需要定时轮询。
+  const ref = useMemo<RefObject<T | null>>(() => ({
+    get current() {
+      return elementRef.current
+    },
+    set current(el) {
+      elementRef.current = el
+      if (el) attach(el)
+      else detachRef.current()
+    },
+  }), [attach])
 
   // 卸载时断开观察者、终止补间、清掉残留克隆
   useLayoutEffect(() => () => detachRef.current(), [])

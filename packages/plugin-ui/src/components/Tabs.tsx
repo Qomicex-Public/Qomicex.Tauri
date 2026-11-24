@@ -47,7 +47,9 @@ export function Tabs({ tabs, activeTab, onChange, className, orientation = 'hori
       x: 0,
       opacity: 1,
       duration: 0.13 * multiplier,
-      stagger: 0.08 * multiplier,
+      // 间隔要明显短于条目自身时长：实例详情有 9 个导航项，
+      // 80ms 的级联会在内容区块播完后才收尾，改成 45ms 仍保留逐项感。
+      stagger: 0.045 * multiplier,
       ease: 'power3.out',
       paused: true,
       onComplete: () => gsap.set(buttons, { clearProps: 'transform,opacity' }),

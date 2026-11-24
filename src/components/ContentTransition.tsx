@@ -100,52 +100,52 @@ export function ContentTransition({
       return
     }
 
-    if (!wasLoading) return
+    // 已加载完但仍停在 loading：等骨架最短停留结束后退场。
+    // 不能在这里用 wasLoading 提前返回：resolvedSkeletonVisible 变化也会触发本 effect，
+    // 那时 prevLoadingRef 早已翻成 false，会把真正的退场永久挡掉。
+    if (phaseRef.current === 'loading') {
+      if (resolvedSkeletonVisible) return
+
+      const motion = readMotion()
+      if (!motion.enabled) {
+        setPhase('ready')
+        return
+      }
+
+      // 骨架从未显示过：没有可退场的对象，直接切内容
+      if (!everShownRef.current) {
+        setPhase('ready')
+        return
+      }
+
+      if (mode === 'overlay') {
+        // 内容与骨架同时在 DOM 里，由下面的 phase 效果同时播
+        setPhase('leaving')
+        return
+      }
+
+      const skeletonEl = skeletonRef.current
+      if (!skeletonEl) {
+        setPhase('ready')
+        return
+      }
+
+      track(gsap.to(skeletonEl, {
+        opacity: 0,
+        // 骨架里的玻璃占位卡也不做祖先 transform
+        ...(containsGlass(skeletonEl) ? {} : { scale: 0.995 }),
+        duration: sec(120, motion),
+        ease: 'power2.in',
+        overwrite: 'auto',
+        onComplete: () => setPhase('ready'),
+      }))
+      return
+    }
 
     // 加载 <400ms、骨架从未出现：直接给内容补一次入场，避免「瞬间出现」
-    if (phaseRef.current === 'ready') {
+    if (wasLoading && phaseRef.current === 'ready') {
       setEnterTick((tick) => tick + 1)
-      return
     }
-
-    if (phaseRef.current !== 'loading') return
-
-    // 骨架已经显示过：等最短停留结束（useDelayedFlag 会把它置回 false）再退场
-    if (resolvedSkeletonVisible) return
-
-    const motion = readMotion()
-    if (!motion.enabled) {
-      setPhase('ready')
-      return
-    }
-
-    // 骨架从未显示过：没有可退场的对象，直接切内容
-    if (!everShownRef.current) {
-      setPhase('ready')
-      return
-    }
-
-    if (mode === 'overlay') {
-      // 内容与骨架同时在 DOM 里，由下面的 phase 效果同时播
-      setPhase('leaving')
-      return
-    }
-
-    const skeletonEl = skeletonRef.current
-    if (!skeletonEl) {
-      setPhase('ready')
-      return
-    }
-
-    track(gsap.to(skeletonEl, {
-      opacity: 0,
-      // 骨架里的玻璃占位卡也不做祖先 transform
-      ...(containsGlass(skeletonEl) ? {} : { scale: 0.995 }),
-      duration: sec(120, motion),
-      ease: 'power2.in',
-      overwrite: 'auto',
-      onComplete: () => setPhase('ready'),
-    }))
   }, [loading, mode, resolvedSkeletonVisible])
 
   // 过渡表现：overlay 同时进退场；sequence 只负责内容入场
