@@ -387,10 +387,10 @@ function TaskCard({ task, t, onFix }: { task: DownloadTask; t: TFunc; onFix?: (t
         <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">
           <div
             className={cn(
-              'h-full rounded-full transition-all duration-500',
+              'h-full w-full origin-left rounded-full transition-transform duration-500',
               task.status === 'completed' ? 'bg-emerald-500' : task.status === 'failed' ? 'bg-red-500' : task.status === 'paused' || isAwaiting ? 'bg-amber-400' : 'bg-primary'
             )}
-            style={{ width: `${task.progress}%` }}
+            style={{ transform: `scaleX(${task.progress / 100})` }}
           />
         </div>
         {(steps || showSpeedGraph) && (

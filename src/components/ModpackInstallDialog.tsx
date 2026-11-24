@@ -15,6 +15,7 @@ import { useI18n } from '../i18n/index.tsx'
 import { collectInstallModes, invokeInstallMode } from '../plugins/install-modes.ts'
 import type { PluginInstallMode } from '../plugins/install-modes.ts'
 import { PluginIcon } from './PluginIcon.tsx'
+import { FieldError } from './FieldError.tsx'
 
 /**
  * Technic 是「一个包 = 一个直链」，无版本/fileId 概念（issue #151，ADR-105）。
@@ -255,7 +256,7 @@ export default function ModpackInstallDialog({
               <Label htmlFor="inst-name">{t('dialogs.modpackInstall.instanceName')}</Label>
               <Input id="inst-name" value={instanceName} onChange={e => setInstanceName(e.target.value)} />
             </div>
-            {error && <p className="text-destructive text-sm">{error}</p>}
+            <FieldError message={error} />
           </>
         )}
 

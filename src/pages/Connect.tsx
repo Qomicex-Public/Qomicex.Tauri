@@ -582,7 +582,7 @@ export default function Connect() {
                 <span className="ml-auto text-xs">{Math.round(easyTier.progress)}% {fmtSpeed(easyTier.speed)}</span>
               </div>
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.max(2, easyTier.progress)}%` }} />
+                <div className="h-full w-full origin-left rounded-full bg-primary transition-transform" style={{ transform: `scaleX(${Math.max(2, easyTier.progress) / 100})` }} />
               </div>
             </>
           )}
@@ -710,7 +710,7 @@ export default function Connect() {
               </div>
               {launchProgress && (
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                  <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.max(2, launchProgress.progress)}%` }} />
+                  <div className="h-full w-full origin-left rounded-full bg-primary transition-transform" style={{ transform: `scaleX(${Math.max(2, launchProgress.progress) / 100})` }} />
                 </div>
               )}
               <Button variant="destructive" onClick={handleLeave} disabled={busy} className="w-full">

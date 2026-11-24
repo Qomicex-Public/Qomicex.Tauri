@@ -539,7 +539,7 @@ export function InitialSetupWizard({ open, settings, onComplete }: InitialSetupW
                         ) : dl && (dl.status === 'downloading' || dl.status === 'queued') ? (
                           <div className="flex items-center gap-2">
                             <div className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
-                              <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.max(0, Math.min(100, dl.progress))}%` }} />
+                              <div className="h-full w-full origin-left rounded-full bg-primary transition-transform" style={{ transform: `scaleX(${Math.max(0, Math.min(100, dl.progress)) / 100})` }} />
                             </div>
                             <span className="text-xs text-muted-foreground">{t('wizard.javaDownloading', { progress: String(Math.round(dl.progress)) })}</span>
                           </div>

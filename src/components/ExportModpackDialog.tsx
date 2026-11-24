@@ -43,8 +43,8 @@ function ProgressBar({ percent }: { percent: number }) {
   return (
     <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
       <div
-        className="h-full rounded-full bg-primary transition-all duration-200"
-        style={{ width: `${clamped}%` }}
+        className="h-full w-full origin-left rounded-full bg-primary transition-transform duration-200"
+        style={{ transform: `scaleX(${clamped / 100})` }}
       />
     </div>
   )
@@ -473,7 +473,7 @@ export default function ExportModpackDialog({ open, onClose, instance }: Props) 
                       </span>
                       <div className="flex-1">
                         <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                          <div className={cn('h-full rounded-full transition-all duration-300', active ? 'bg-primary' : done ? 'bg-emerald-400' : 'bg-muted-foreground/20')} style={{ width: `${pct}%` }} />
+                          <div className={cn('h-full w-full origin-left rounded-full transition-transform duration-300', active ? 'bg-primary' : done ? 'bg-emerald-400' : 'bg-muted-foreground/20')} style={{ transform: `scaleX(${pct / 100})` }} />
                         </div>
                       </div>
                       <span className="w-8 text-right text-[10px] tabular-nums text-muted-foreground">{Math.round(pct)}%</span>

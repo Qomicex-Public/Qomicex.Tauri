@@ -95,8 +95,8 @@ export default function LaunchProgressDialog() {
         </div>
         <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
           <div
-            className={cn('h-full rounded-full transition-all', isError ? 'bg-destructive' : 'bg-primary')}
-            style={{ width: `${launchProgress.progress}%` }}
+            className={cn('h-full w-full origin-left rounded-full transition-transform', isError ? 'bg-destructive' : 'bg-primary')}
+            style={{ transform: `scaleX(${launchProgress.progress / 100})` }}
           />
         </div>
         {launchProgress.error && (

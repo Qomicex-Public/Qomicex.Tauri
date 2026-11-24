@@ -53,8 +53,8 @@ export function SplashScreen({ state, onRetry }: SplashScreenProps) {
       <div className="flex w-72 flex-col items-center gap-3">
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
           <div
-            className="h-full rounded-full bg-primary transition-all duration-[400ms] ease-out"
-            style={{ width: `${progress}%` }}
+            className="h-full w-full origin-left rounded-full bg-primary transition-transform duration-[400ms] ease-out"
+            style={{ transform: `scaleX(${progress / 100})` }}
           />
         </div>
         {state === 'loading' && (

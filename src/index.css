@@ -299,8 +299,14 @@
     background: hsl(var(--primary));
     border: 3px solid hsl(var(--background));
     box-shadow: 0 0 0 1px hsl(var(--primary) / 0.3);
-    transition: box-shadow 0.15s;
+    transition:
+      transform calc(120ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.05, 0.85, 0.15, 1),
+      box-shadow 150ms ease-out;
     cursor: pointer;
+  }
+
+  input[type="range"]:active::-webkit-slider-thumb {
+    transform: scale(1.15);
   }
 
   input[type="range"]::-webkit-slider-thumb:hover {
@@ -418,6 +424,20 @@
 }
 .anim-lift:hover {
   transform: translateY(-2px);
+}
+
+/* 表单错误行：高度展开/收起（FieldError 组件） */
+.field-error {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows calc(180ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.16, 1, 0.3, 1),
+    opacity calc(150ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.16, 1, 0.3, 1);
+}
+.field-error[data-open='true'] {
+  grid-template-rows: 1fr;
+  opacity: 1;
 }
 
 /* 出现/消失：只做透明度与短位移（滚动到顶、启动屏等） */
