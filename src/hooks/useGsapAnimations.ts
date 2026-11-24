@@ -5,8 +5,7 @@ import { useCallback, useLayoutEffect, useRef, type RefObject } from 'react'
 import gsap from 'gsap'
 import { containsGlass, gpuVars, readMotion, sec } from '../lib/motion.ts'
 import { queueGlassRepaint } from './useGlassRepaint.ts'
-import { computeListDiff, type ListRectInput } from './listDiff.ts'
-
+import { computeListDiff, isTailAppend, type ListRectInput } from './listDiff.ts'
 /** 单次最多逐项动画的条目数：覆盖首屏（网格 6 列 × 5~6 行） */
 const MAX_ANIMATE_ITEMS = 35
 /** 滚动后多久内不播动画（毫秒）：避免滚动与补间抢主线程 */
@@ -51,7 +50,8 @@ function inViewport(entry: SnapshotEntry): boolean {
 }
 
 function findScrollParent(start: HTMLElement | null): HTMLElement | null {
-  let node = start?.parentElement ?? null
+  // 从列表节点自身开始：Instances 的远程网格/列表把 ref 直接绑在 overflow-y-auto 容器上
+  let node: HTMLElement | null = start
   while (node) {
     const style = getComputedStyle(node)
     if (/(auto|scroll|overlay)/.test(style.overflowY)) return node
@@ -86,6 +86,8 @@ export function useAnimatedList<T extends HTMLElement>(
   const animatedRef = useRef<Set<HTMLElement>>(new Set())
   const clonesRef = useRef<Set<HTMLElement>>(new Set())
   const lastScrollAtRef = useRef(0)
+  const scrollTopRef = useRef(0)
+  const scrollerRef = useRef<HTMLElement | null>(null)
   const detachRef = useRef<() => void>(() => {})
 
   const animate = useCallback((el: HTMLElement) => {
@@ -108,10 +110,16 @@ export function useAnimatedList<T extends HTMLElement>(
     // 滚动期间的变更：只跳过 FLIP 与退场（它们会与滚动抢帧），新增项仍要淡入——
     // 自动翻页恰好发生在「用户正在滚到底部」时，一刀切会让新内容直接跳出来。
     const initial = prevSnapshot.size === 0
+    // 两次快照之间可能发生过滚动：旧快照的 top 用的是当时的 scrollTop。
+    // 先补偿滚动位移再算 FLIP，否则「滚动后删除一项」会把没动过的行拉回原处。
+    const currentScroll = scrollerRef.current?.scrollTop ?? 0
+    const scrollDelta = initial ? 0 : currentScroll - scrollTopRef.current
+    scrollTopRef.current = currentScroll
+
     const scrolling = !initial && performance.now() - lastScrollAtRef.current < SCROLL_QUIET_MS
 
     const prevRects: ListRectInput[] = [...prevSnapshot.entries()].map(([key, entry]) => ({
-      key, top: entry.top, left: entry.left,
+      key, top: entry.top - scrollDelta, left: entry.left,
     }))
     const nextRects: ListRectInput[] = [...next.entries()].map(([key, entry]) => ({
       key, top: entry.top, left: entry.left,
@@ -162,6 +170,9 @@ export function useAnimatedList<T extends HTMLElement>(
     for (const entry of exitTargets) {
       const clone = entry.el.cloneNode(true) as HTMLElement
       clone.removeAttribute('id')
+      // 克隆体不应进入键盘焦点顺序（行内有 tabIndex/按钮）
+      clone.inert = true
+      clone.setAttribute('aria-hidden', 'true')
       clone.style.position = 'fixed'
       clone.style.left = `${entry.left}px`
       clone.style.top = `${entry.top}px`
@@ -175,10 +186,11 @@ export function useAnimatedList<T extends HTMLElement>(
       clone.dataset.animClone = ''
       clonesRef.current.add(clone)
       document.body.appendChild(clone)
+      // 玻璃克隆保持同一约束：只淡出，不位移/缩放
+      const glass = containsGlass(entry.el)
       gsap.to(clone, {
         opacity: 0,
-        y: -8,
-        scale: 0.96,
+        ...(glass ? {} : { y: -8, scale: 0.96 }),
         duration: exitDuration,
         ease: 'power2.in',
         force3D: motion.gpu,
@@ -191,9 +203,13 @@ export function useAnimatedList<T extends HTMLElement>(
     }
 
     // ---- 逐项入场：新增 key，按 DOM 顺序错位 ----
-    // 追加分页（无退场、只有新增）不跑 FLIP：分页本应只往列表尾部追加，
-    // 让旧项跟着位移会看成「上面的内容整块往上切」。
-    const isAppend = diff.exit.length === 0 && diff.enter.length > 0
+    // 只有「旧序列仍是新序列的前缀」才算真正的尾部追加；头部/中间插入也要跑 FLIP。
+    const prevKeysOrdered = prevRects.map((rect) => rect.key)
+    const nextKeysOrdered = nextRects.map((rect) => rect.key)
+    const isAppend =
+      diff.enter.length > 0 &&
+      diff.exit.length === 0 &&
+      isTailAppend(prevKeysOrdered, nextKeysOrdered)
     const enterKeys = diff.enter.slice(0, MAX_ANIMATE_ITEMS)
     enterKeys.forEach((key, index) => {
       const entry = next.get(key)
@@ -258,8 +274,10 @@ export function useAnimatedList<T extends HTMLElement>(
       const entry = next.get(move.key)
       if (!entry || !inViewport(entry)) continue
       const node = entry.el
+      if (containsGlass(node)) continue
       animatedRef.current.add(node)
-      gsap.killTweensOf(node)
+      // 只停位移补间：保留可能还在跑的入场 opacity（否则该行会停在半透明）
+      gsap.killTweensOf(node, 'x,y')
       gsap.fromTo(node,
         { x: move.dx, y: move.dy },
         {
@@ -286,6 +304,8 @@ export function useAnimatedList<T extends HTMLElement>(
     snapshotRef.current = new Map()
 
     const scroller = findScrollParent(el)
+    scrollerRef.current = scroller
+    scrollTopRef.current = scroller?.scrollTop ?? 0
     const onScroll = () => { lastScrollAtRef.current = performance.now() }
     scroller?.addEventListener('scroll', onScroll, { passive: true })
 
@@ -304,6 +324,7 @@ export function useAnimatedList<T extends HTMLElement>(
       clonesRef.current.clear()
       targetRef.current = null
       snapshotRef.current = new Map()
+      scrollerRef.current = null
     }
 
     // 首屏：把已有子节点当作一次「全部新增」，播放入场（不播退场）
@@ -315,6 +336,25 @@ export function useAnimatedList<T extends HTMLElement>(
     const el = ref.current
     if (el) attach(el)
   })
+
+  // 列表被 ContentTransition 延迟挂载时父组件不会再渲染一次：
+  // 用有限次 rAF 轮询等 ref 落地，避免监听器一直没接上。
+  useLayoutEffect(() => {
+    let raf = 0
+    let tries = 0
+    const tick = () => {
+      const el = ref.current
+      if (el) {
+        attach(el)
+        return
+      }
+      if (++tries < 120) raf = requestAnimationFrame(tick)
+    }
+    tick()
+    return () => {
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [attach])
 
   // 卸载时断开观察者、终止补间、清掉残留克隆
   useLayoutEffect(() => () => detachRef.current(), [])

@@ -35,7 +35,16 @@ const FRAME_RECORDER = () => {
   const start = performance.now()
   const tick = () => {
     const node = document.querySelector('main [data-key]')
-    const target = node?.parentElement ?? node
+    let target = node
+    if (node) {
+      // 与 useAnimatedList 一致：动画目标是「列表根的直接子元素」，
+      // 它可能是带 data-key 的节点，也可能是包了一层的无 key 包装器。
+      let current = node
+      while (current.parentElement && current.parentElement.querySelectorAll('[data-key]').length === 1) {
+        current = current.parentElement
+      }
+      target = current
+    }
     if (target) {
       window.__qmxFrames.push({
         t: Math.round(performance.now() - start),
@@ -118,15 +127,17 @@ try {
   const frames = await page.evaluate(() => window.__qmxFrames ?? [])
   const withCards = frames.filter((f) => f.opacity !== null)
   const dipped = withCards.some((f) => f.opacity < 0.99)
+  check('列表入场：fixture 卡片已渲染', withCards.length > 0, `${withCards.length} 帧`)
   if (withCards.length > 0) {
     check('列表入场：出现过未到终态的卡片', dipped, `${withCards.length} 帧 / 最低 ${Math.min(...withCards.map((f) => f.opacity)).toFixed(2)}`)
     const cardsSettled = await page.$$eval('main [data-key]', (nodes) => nodes.map((n) => {
-      const target = n.parentElement ?? n
+      let target = n
+      while (target.parentElement && target.parentElement.querySelectorAll('[data-key]').length === 1) {
+        target = target.parentElement
+      }
       return target.style.transform !== '' || target.style.opacity !== ''
     }))
     check('列表入场：结束后无内联样式残留', cardsSettled.every((has) => !has))
-  } else {
-    console.log('SKIP 列表入场：实例接口在 stub 下无数据')
   }
 
   // --- 场景 3：全局门控 ---

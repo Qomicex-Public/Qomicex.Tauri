@@ -67,3 +67,12 @@ export function computeListDiff(
 
   return { enter, exit, move, replace }
 }
+
+/**
+ * 旧 key 序列是否仍是新序列的前缀（真正的尾部追加）。
+ * 只用于决定「追加分页不跑 FLIP」；头/中插入即使没有删除也返回 false。
+ */
+export function isTailAppend(prevKeys: string[], nextKeys: string[]): boolean {
+  if (prevKeys.length >= nextKeys.length) return false
+  return prevKeys.every((key, index) => key === nextKeys[index])
+}

@@ -2,11 +2,11 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// src/hooks/listDiff.ts 的回归测试。
-// 锁住三件事：
+// src/hooks/listDiff.ts 的差分回归（不含动画播放本身）：
 //  1. 追加分页只动画新增项，不从列表顶部重播（issue #355 的原始回归）
 //  2. 头/中/尾插入都能算出 enter，且已有项产生 move（FLIP 让位）
 //  3. 整组替换（分组/分类切换）不再逐项播 70 条动画
+// 播放层决策（尾部追加跳过 FLIP）由 isTailAppend 锁定；头/中插入返回 false。
 // 做法与 test-deep-link-parse.mjs 一致：用仓库自带 tsc 编译真实源码到临时目录再断言。
 //
 // 运行：pnpm run test:list-enter-selection
@@ -45,7 +45,7 @@ try {
     { stdio: 'inherit' },
   )
   const require = createRequire(import.meta.url)
-  const { computeListDiff } = require(join(outDir, 'listDiff.js'))
+  const { computeListDiff, isTailAppend } = require(join(outDir, 'listDiff.js'))
 
   // 首屏：prev 为空 → 全部按新增处理（调用方再截断到 35）
   const first = computeListDiff([], [item('a', 0), item('b', 100)])
@@ -126,6 +126,12 @@ try {
   check('搜索过滤不判定替换', filtered.replace, false)
   check('搜索过滤只产生退场', filtered.enter, [])
   check('搜索过滤的退场项', filtered.exit, ['c', 'd', 'e'])
+
+  // 尾部追加判定：只有「旧序列是新序列前缀」才算追加，头/中插入必须继续跑 FLIP
+  check('尾部追加判定', isTailAppend(['a', 'b'], ['a', 'b', 'c']), true)
+  check('头部插入不算追加', isTailAppend(['a', 'b'], ['x', 'a', 'b']), false)
+  check('中间插入不算追加', isTailAppend(['a', 'b'], ['a', 'x', 'b']), false)
+  check('数量不变不算追加', isTailAppend(['a', 'b'], ['a', 'b']), false)
 
   // 写入快照后位置稳定：第二次相同输入不产生任何动作
   const stable = computeListDiff([item('a', 10)], [item('a', 10)])

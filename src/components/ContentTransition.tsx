@@ -75,13 +75,27 @@ export function ContentTransition({
   const contentRef = useRef<HTMLDivElement>(null)
   const veilRef = useRef<HTMLDivElement>(null)
 
+  const animsRef = useRef<gsap.core.Tween[]>([])
+  const contentAnimatedRef = useRef(false)
+  const track = (tw: gsap.core.Tween) => { animsRef.current.push(tw) }
+  const stopAll = () => {
+    for (const tw of animsRef.current) tw.kill()
+    animsRef.current.length = 0
+    contentAnimatedRef.current = false
+  }
+
   // loading 翻转：进入 loading，或开始骨架退场
   useEffect(() => {
     const wasLoading = prevLoadingRef.current
     prevLoadingRef.current = loading
 
     if (loading) {
-      gsap.killTweensOf([skeletonRef.current, contentRef.current])
+      stopAll()
+      const skeletonEl = skeletonRef.current
+      if (skeletonEl) {
+        // 退场中断后重新加载：清掉上一轮写入的内联状态，避免骨架变暗/保持绝对定位
+        gsap.set(skeletonEl, { clearProps: 'opacity,transform,position,inset,zIndex,pointerEvents' })
+      }
       if (phaseRef.current !== 'loading') setPhase('loading')
       return
     }
@@ -95,6 +109,9 @@ export function ContentTransition({
     }
 
     if (phaseRef.current !== 'loading') return
+
+    // 骨架已经显示过：等最短停留结束（useDelayedFlag 会把它置回 false）再退场
+    if (resolvedSkeletonVisible) return
 
     const motion = readMotion()
     if (!motion.enabled) {
@@ -120,15 +137,16 @@ export function ContentTransition({
       return
     }
 
-    gsap.to(skeletonEl, {
+    track(gsap.to(skeletonEl, {
       opacity: 0,
-      scale: 0.995,
+      // 骨架里的玻璃占位卡也不做祖先 transform
+      ...(containsGlass(skeletonEl) ? {} : { scale: 0.995 }),
       duration: sec(120, motion),
       ease: 'power2.in',
       overwrite: 'auto',
       onComplete: () => setPhase('ready'),
-    })
-  }, [loading, mode])
+    }))
+  }, [loading, mode, resolvedSkeletonVisible])
 
   // 过渡表现：overlay 同时进退场；sequence 只负责内容入场
   useLayoutEffect(() => {
@@ -146,13 +164,13 @@ export function ContentTransition({
         skeletonEl.style.position = 'absolute'
         skeletonEl.style.inset = '0'
         skeletonEl.style.zIndex = '10'
-        gsap.to(skeletonEl, {
+        track(gsap.to(skeletonEl, {
           opacity: 0,
           duration: sec(120, motion),
           ease: 'power2.in',
           overwrite: 'auto',
           onComplete: () => setPhase('ready'),
-        })
+        }))
       } else {
         setPhase('ready')
       }
@@ -161,11 +179,12 @@ export function ContentTransition({
         const glass = containsGlass(contentEl)
         const listOwned = !!contentEl.querySelector('[data-key]')
         if (!listOwned) {
-          gsap.fromTo(contentEl,
+          contentAnimatedRef.current = true
+          track(gsap.fromTo(contentEl,
             { opacity: 0, ...(glass ? {} : { y: 6 }) },
             {
               opacity: 1,
-              y: 0,
+              ...(glass ? {} : { y: 0 }),
               duration: sec(240, motion),
               ease: 'power3.out',
               overwrite: 'auto',
@@ -174,7 +193,7 @@ export function ContentTransition({
                 gsap.set(contentEl, { clearProps: 'transform,opacity' })
                 queueGlassRepaint()
               },
-            })
+            }))
         }
       }
       return
@@ -188,12 +207,13 @@ export function ContentTransition({
     const glass = containsGlass(contentEl)
     // 列表自己有条目级 stagger：容器再淡一次会与条目 opacity 相乘，前 200ms 发灰
     const listOwned = !!contentEl.querySelector('[data-key]')
-    if (!listOwned) {
-      gsap.fromTo(contentEl,
+    // overlay 分支已经在 leaving 阶段播过内容淡入，这里不再重播（否则会二次消失）
+    if (!listOwned && !contentAnimatedRef.current) {
+      track(gsap.fromTo(contentEl,
         { opacity: 0, ...(glass ? {} : { y: 6 }) },
         {
           opacity: 1,
-          y: 0,
+          ...(glass ? {} : { y: 0 }),
           duration: sec(glass ? 200 : 240, motion),
           ease: 'power3.out',
           overwrite: 'auto',
@@ -202,14 +222,15 @@ export function ContentTransition({
             gsap.set(contentEl, { clearProps: 'transform,opacity' })
             queueGlassRepaint()
           },
-        })
+        }))
     } else {
       queueGlassRepaint()
     }
+    contentAnimatedRef.current = false
 
     const veilEl = veilRef.current
     if (veilEl) {
-      gsap.fromTo(veilEl,
+      track(gsap.fromTo(veilEl,
         { opacity: 1 },
         {
           opacity: 0,
@@ -217,12 +238,12 @@ export function ContentTransition({
           ease: 'power2.out',
           overwrite: 'auto',
           onComplete: () => gsap.set(veilEl, { clearProps: 'opacity' }),
-        })
+        }))
     }
   }, [phase, mode, enterTick])
 
   useEffect(() => () => {
-    gsap.killTweensOf([skeletonRef.current, contentRef.current, veilRef.current].filter(Boolean) as Element[])
+    stopAll()
   }, [])
 
   const showSkeleton = phase !== 'ready' && (resolvedSkeletonVisible || everShownRef.current)

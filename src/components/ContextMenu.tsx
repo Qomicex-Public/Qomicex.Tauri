@@ -35,9 +35,16 @@ export function ContextMenu({ items, children }: ContextMenuProps) {
       setOpen(false)
       return
     }
+    // 先取消上一次的关闭定时器：连续两次外部点击会各排一个定时器，
+    // 重开菜单时旧句柄已经丢失，会在新菜单上误触发关闭。
+    if (closeTimerRef.current !== undefined) {
+      window.clearTimeout(closeTimerRef.current)
+      closeTimerRef.current = undefined
+    }
     // 先播 120ms 退场再卸载：右键菜单此前是直接消失，与下拉/对话框手感不一致
     setClosing(true)
     closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = undefined
       setClosing(false)
       setOpen(false)
     }, 120 * motion.multiplier)

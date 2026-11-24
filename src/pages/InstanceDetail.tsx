@@ -242,6 +242,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
   }, [saves, search, sortBy])
 
   const { selected, setSelected, selectMode, setSelectMode, toggleSelect, handleDragSelect, clear, selectAll } = useListSelection(filtered, (s) => s.filePath)
+  const savesAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading], { y: 10 })
 
   const load = useCallback(async () => {
     setSelected(new Set())
@@ -319,7 +320,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
           </div>
         ) : (
           <DragSelectArea onSelect={handleDragSelect}>
-            <div className="flex flex-col gap-2 p-4">
+            <div ref={savesAnimRef} className="flex flex-col gap-2 p-4">
               {filtered.map((save) => (
                 <div key={save.filePath} data-key={save.filePath} data-select-item={save.filePath}>
                   <SaveCard save={save} instanceId={instanceId} onRefresh={load} selected={selected.has(save.filePath)} selectMode={selectMode} onSelect={(e) => toggleSelect(save.filePath, e.shiftKey, e.ctrlKey)} onQuickJoin={isQuickPlaySupported(gameVersion) ? () => onQuickJoinWorld(save.name) : undefined} running={running} />
@@ -394,6 +395,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
   }, [screenshots, search, sortBy])
 
   const { selected, setSelected, selectMode, setSelectMode, toggleSelect, handleDragSelect, clear, selectAll } = useListSelection(filtered, (s) => s.filePath)
+  const screenshotsAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, loading], { y: 10 })
 
   const load = useCallback(async () => {
     setSelected(new Set())
@@ -479,7 +481,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
           </div>
         ) : (
           <DragSelectArea onSelect={handleDragSelect}>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4">
+            <div ref={screenshotsAnimRef} className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4">
               {filtered.map((s) => (
                 <div key={s.filePath} data-key={s.filePath} data-select-item={s.filePath}>
                   <ScreenshotCard screenshot={s} instanceId={instanceId} onRefresh={load} selected={selected.has(s.filePath)} selectMode={selectMode} onSelect={(e) => toggleSelect(s.filePath, e.shiftKey, e.ctrlKey)} />

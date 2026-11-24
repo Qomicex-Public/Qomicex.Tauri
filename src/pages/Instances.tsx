@@ -163,7 +163,9 @@ function listKeyOf(v: ScannedVersion, index: number): string {
   if (v.dirName) return v.dirName
   const loader = firstRealLoader(v)
   const stable = `${v.name}\u0000${v.gameVersion}\u0000${loader.type ?? ''}\u0000${loader.version ?? ''}`
-  return stable || `\u0000missing-dirname-${index}`
+  // 两个目录的 JSON id / 版本 / 加载器完全相同时，上面的组合会撞键并被去重丢掉一个；
+  // 末尾保留序号只是为了兜底唯一性，缺 dirName 的扫描结果本身很少见。
+  return `${stable || '\u0000missing-dirname'}\u0000${index}`
 }
 
 /** 取扫描版本里第一个真实加载器（过滤 Vanilla/Unknown——原版实例 loader 应保持空） */

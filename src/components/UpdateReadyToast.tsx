@@ -56,8 +56,10 @@ export default function UpdateReadyToast() {
         key={active ? 'active' : 'closing'}
         role="button"
         tabIndex={0}
-        onClick={() => { void installStaged() }}
+        onClick={() => { if (active) void installStaged() }}
         onKeyDown={(e) => {
+          // 退场动画期间不再响应回车/空格，否则「已关闭」的横幅仍会触发安装并重启应用
+          if (!active) return
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault()
             void installStaged()

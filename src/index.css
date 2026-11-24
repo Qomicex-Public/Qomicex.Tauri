@@ -339,6 +339,20 @@
     cursor: not-allowed;
   }
 
+  /* 伪元素不参与通用门控选择器（* 不匹配 ::-webkit-slider-thumb），
+     滑块按压这类新加的过渡要单独在关闭动画 / reduced-motion 下落终值。 */
+  [data-anim-enabled="false"] input[type="range"]::-webkit-slider-thumb,
+  [data-anim-enabled="false"] input[type="range"]::-moz-range-thumb {
+    transition-duration: 0.01ms !important;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    input[type="range"]::-webkit-slider-thumb,
+    input[type="range"]::-moz-range-thumb {
+      transition-duration: 0.01ms !important;
+    }
+  }
+
   @keyframes popIn {
     0% { opacity: 0; transform: translateY(4px) scale(0.95); }
     50% { opacity: 1; transform: translateY(-2px) scale(1.05); }
@@ -362,16 +376,25 @@
  * 玻璃表面（.glass-surface）只允许自身 opacity 与颜色，见 ADR-141 5.1。
  * ------------------------------------------------------------------ */
 
-/* 按下快、松开慢、指针离开更慢（PCL MyButton 的曲线） */
+/* 按下快、松开慢、指针离开更慢（PCL MyButton 的曲线）。
+   颜色过渡显式列在同一个 shorthand 里：unlayered 规则会覆盖 Tailwind 的
+   transition-colors，不写就会让按钮 hover 变色变成瞬切。 */
 .anim-press {
-  transition-property: transform;
-  transition-duration: calc(300ms * var(--anim-duration-multiplier, 1));
-  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  transition:
+    transform calc(300ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.16, 1, 0.3, 1),
+    color calc(150ms * var(--anim-duration-multiplier, 1)) ease-out,
+    background-color calc(150ms * var(--anim-duration-multiplier, 1)) ease-out,
+    border-color calc(150ms * var(--anim-duration-multiplier, 1)) ease-out,
+    box-shadow calc(150ms * var(--anim-duration-multiplier, 1)) ease-out;
 }
 .anim-press:active {
   transform: scale(0.955);
-  transition-duration: calc(80ms * var(--anim-duration-multiplier, 1));
-  transition-timing-function: cubic-bezier(0.05, 0.85, 0.15, 1);
+  transition:
+    transform calc(80ms * var(--anim-duration-multiplier, 1)) cubic-bezier(0.05, 0.85, 0.15, 1),
+    color calc(150ms * var(--anim-duration-multiplier, 1)) ease-out,
+    background-color calc(150ms * var(--anim-duration-multiplier, 1)) ease-out,
+    border-color calc(150ms * var(--anim-duration-multiplier, 1)) ease-out,
+    box-shadow calc(150ms * var(--anim-duration-multiplier, 1)) ease-out;
 }
 .anim-press:disabled:active,
 .anim-press[aria-disabled='true']:active {

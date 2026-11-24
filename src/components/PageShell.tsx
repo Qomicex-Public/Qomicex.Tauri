@@ -88,7 +88,9 @@ export function PageShell({ children, className }: PageShellProps) {
           ? [el]
           : Array.from(el.querySelectorAll<HTMLElement>('.glass-surface'))).slice(0, 3)
         const contents = glassCards.flatMap((card) =>
-          Array.from(card.children).filter((child): child is HTMLElement => child instanceof HTMLElement).slice(0, 3),
+          Array.from(card.children)
+            .filter((child): child is HTMLElement => child instanceof HTMLElement && !containsGlass(child))
+            .slice(0, 3),
         )
         // SettingSection 自带逐块错开，块级这里不再重复推内容
         const handledBySections = !!el.querySelector('[data-setting-section]')
