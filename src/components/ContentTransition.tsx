@@ -6,6 +6,7 @@ import gsap from 'gsap'
 import { cn } from '../lib/utils.ts'
 import { containsGlass, gpuVars, readMotion, sec } from '../lib/motion.ts'
 import { queueGlassRepaint } from '../hooks/useGlassRepaint.ts'
+import { useDelayedFlag } from '../hooks/useDelayedFlag.ts'
 
 type Phase = 'loading' | 'leaving' | 'ready'
 
@@ -13,8 +14,8 @@ interface ContentTransitionProps {
   /** 真实加载态（不要传延迟后的值） */
   loading: boolean
   /**
-   * 骨架是否已到显示时机（通常传 useDelayedFlag(loading) 的结果）。
-   * 加载在 400ms 内结束时它一直是 false：此时不渲染骨架，加载结束直接内容入场。
+   * 骨架是否已到显示时机。不传时内部按 400ms 延迟 + 300ms 最短停留处理；
+   * 已经自己算过 useDelayedFlag 的调用点可以显式传入。
    */
   skeletonVisible?: boolean
   skeleton: ReactNode
@@ -44,7 +45,7 @@ interface ContentTransitionProps {
  */
 export function ContentTransition({
   loading,
-  skeletonVisible = true,
+  skeletonVisible,
   skeleton,
   children,
   className,
@@ -55,8 +56,11 @@ export function ContentTransition({
   const phaseRef = useRef(phase)
   phaseRef.current = phase
   const prevLoadingRef = useRef(loading)
-  const skeletonVisibleRef = useRef(skeletonVisible)
-  skeletonVisibleRef.current = skeletonVisible
+  // 未显式传入时内部做「400ms 延迟 + 300ms 最短停留」
+  const autoSkeletonVisible = useDelayedFlag(loading)
+  const resolvedSkeletonVisible = skeletonVisible ?? autoSkeletonVisible
+  const skeletonVisibleRef = useRef(resolvedSkeletonVisible)
+  skeletonVisibleRef.current = resolvedSkeletonVisible
   const [enterTick, setEnterTick] = useState(0)
 
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -214,7 +218,7 @@ export function ContentTransition({
     gsap.killTweensOf([skeletonRef.current, contentRef.current, veilRef.current].filter(Boolean) as Element[])
   }, [])
 
-  const showSkeleton = phase !== 'ready' && skeletonVisible
+  const showSkeleton = phase !== 'ready' && resolvedSkeletonVisible
   const showContent = phase !== 'loading'
 
   return (

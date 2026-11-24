@@ -308,11 +308,12 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
             </Button>
           </div>
         </div>
-        {loading ? (
+        <ContentTransition loading={loading} skeleton={
           <div className="flex items-center justify-center gap-2 px-4 py-8 text-sm text-muted-foreground">
             <RotateCw className="h-4 w-4 animate-spin" />{t('instanceDetail.loading')}
           </div>
-        ) : filtered.length === 0 ? (
+        }>
+        {filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
             {search ? t('instanceDetail.saves.noMatch') : t('instanceDetail.saves.empty')}
           </div>
@@ -327,6 +328,7 @@ function SavesTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh, onQu
             </div>
           </DragSelectArea>
         )}
+        </ContentTransition>
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={clear}
@@ -458,7 +460,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
             </Button>
           </div>
         </div>
-        {loading ? (
+        <ContentTransition loading={loading} skeleton={
           <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
             {Array.from({ length: 6 }).map((_, i) => (
               <Skeleton key={i} className="glass-surface rounded-xl border border-border/60 bg-card/95 overflow-hidden">
@@ -470,7 +472,8 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
               </Skeleton>
             ))}
           </div>
-        ) : filtered.length === 0 ? (
+        }>
+        {filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
             {search ? t('instanceDetail.screenshots.noMatch') : t('instanceDetail.screenshots.empty')}
           </div>
@@ -485,6 +488,7 @@ function ScreenshotsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh
             </div>
           </DragSelectArea>
         )}
+        </ContentTransition>
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={clear}
@@ -1152,7 +1156,7 @@ function ModsTab({ instanceId, gameVersion, loader, gameDir, refreshKey, onRefre
                     <span className="tabular-nums">{Math.round(loadProgress.current / loadProgress.total * 100)}%</span>
                   </div>
                   <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
-                    <div className="h-full rounded-full bg-primary transition-all duration-300" style={{ width: `${Math.round(loadProgress.current / loadProgress.total * 100)}%` }} />
+                    <div className="h-full w-full origin-left rounded-full bg-primary transition-transform duration-300" style={{ transform: `scaleX(${loadProgress.current / loadProgress.total})` }} />
                   </div>
                 </div>
               )}
@@ -1459,7 +1463,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
               ))}
             </Select>
           </div>
-        {loading ? (
+        <ContentTransition loading={loading} skeleton={
           <div className={cn('flex flex-col p-4', packViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
             {Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} className={cn('glass-surface flex items-center border border-border/60 bg-card/95', packViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
@@ -1472,7 +1476,8 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
               </Skeleton>
             ))}
           </div>
-        ) : filtered.length === 0 ? (
+        }>
+        {filtered.length === 0 ? (
           search ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">{t('instanceDetail.resourcepacks.noMatch')}</div>
           ) : (
@@ -1501,6 +1506,7 @@ function ResourcePacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey
             </div>
           </DragSelectArea>
         )}
+        </ContentTransition>
       </SettingSection>
 
       <I18nBatchToolbar
@@ -1710,7 +1716,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
               ))}
             </Select>
           </div>
-        {loading ? (
+        <ContentTransition loading={loading} skeleton={
           <div className={cn('flex flex-col p-4', shaderViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
             {Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} className={cn('glass-surface flex items-center border border-border/60 bg-card/95', shaderViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
@@ -1723,7 +1729,8 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
               </Skeleton>
             ))}
           </div>
-        ) : filtered.length === 0 ? (
+        }>
+        {filtered.length === 0 ? (
           search ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">{t('instanceDetail.shaderpacks.noMatch')}</div>
           ) : (
@@ -1752,6 +1759,7 @@ function ShadersTab({ instanceId, gameDir, gameVersion, loader, refreshKey, onRe
             </div>
           </DragSelectArea>
         )}
+        </ContentTransition>
       </SettingSection>
 
       <I18nBatchToolbar
@@ -1961,7 +1969,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
               ))}
             </Select>
           </div>
-        {loading ? (
+        <ContentTransition loading={loading} skeleton={
           <div className={cn('flex flex-col p-4', dataPackViewMode === 'compact' ? 'gap-1.5' : 'gap-2')}>
             {Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} className={cn('glass-surface flex items-center border border-border/60 bg-card/95', dataPackViewMode === 'compact' ? 'gap-3 rounded-lg px-3 py-2' : 'gap-4 rounded-xl p-4')}>
@@ -1974,7 +1982,8 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
               </Skeleton>
             ))}
           </div>
-        ) : filtered.length === 0 ? (
+        }>
+        {filtered.length === 0 ? (
           search ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">{t('instanceDetail.datapacks.noMatch')}</div>
           ) : (
@@ -2003,6 +2012,7 @@ function DataPacksTab({ instanceId, gameDir, gameVersion, loader, refreshKey, on
             </div>
           </DragSelectArea>
         )}
+        </ContentTransition>
       </SettingSection>
 
       <I18nBatchToolbar
@@ -2196,11 +2206,12 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
             />
           </div>
         </div>
-        {loading ? (
+        <ContentTransition loading={loading} skeleton={
           <div className="flex items-center justify-center gap-2 px-4 py-8 text-sm text-muted-foreground">
             <RotateCw className="h-4 w-4 animate-spin" />{t('instanceDetail.loading')}
           </div>
-        ) : filtered.length === 0 ? (
+        }>
+        {filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
             {search ? t('instanceDetail.schematics.noMatch') : t('instanceDetail.schematics.empty')}
           </div>
@@ -2280,6 +2291,7 @@ function SchematicsTab({ instanceId, gameDir, refreshKey, onRefresh: _onRefresh 
             </div>
           </DragSelectArea>
         )}
+        </ContentTransition>
       <I18nBatchToolbar
         selectedCount={selected.size}
         onClear={clear}
@@ -2475,7 +2487,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
               </Button>
             </div>
           </div>
-          {loading ? (
+          <ContentTransition loading={loading} skeleton={
             <div className="flex flex-col gap-1 p-4">
               {Array.from({ length: 3 }).map((_, i) => (
                 <Skeleton key={i} className="glass-surface flex items-center gap-3 rounded-lg border border-border/60 bg-card/95 px-3 py-2.5">
@@ -2492,7 +2504,8 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
                 </Skeleton>
               ))}
             </div>
-          ) : filtered.length === 0 ? (
+          }>
+          {filtered.length === 0 ? (
             <div className="py-8 text-center text-sm text-muted-foreground">
               {search ? t('instanceDetail.servers.noMatch') : t('instanceDetail.servers.empty')}
             </div>
@@ -2577,6 +2590,7 @@ function ServersTab({ instanceId, refreshKey, onRefresh: _onRefresh, onQuickJoin
               })}
             </div>
           )}
+          </ContentTransition>
           {lanGames.length > 0 && (
             <>
               <Separator className="my-3" />
@@ -2925,7 +2939,7 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
         </div>
         {!loading && <span className="shrink-0 text-xs font-normal text-muted-foreground">({settings.length})</span>}
       </div>
-        {loading ? (
+        <ContentTransition loading={loading} skeleton={
           <div className="space-y-3 p-4">
             {Array.from({ length: 8 }).map((_, i) => (
               <Skeleton key={i} className="flex items-center gap-3">
@@ -2937,7 +2951,8 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
               </Skeleton>
             ))}
           </div>
-        ) : filtered.length === 0 ? (
+        }>
+        {filtered.length === 0 ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
             {search ? t('instanceDetail.gamesettings.noMatch') : t('instanceDetail.gamesettings.empty')}
           </div>
@@ -3021,6 +3036,7 @@ function GameSettingsTab({ instanceId, refreshKey, onRefresh: _onRefresh }: { in
             })}
           </div>
         )}
+        </ContentTransition>
     </SettingSection>
   )
 }

@@ -18,6 +18,8 @@ import { useNavigate } from 'react-router-dom'
 import { addTask } from '../stores/downloadStore.ts'
 import { useI18n } from '../i18n/index.tsx'
 import { cn } from '../lib/utils.ts'
+import { ContentTransition } from './ContentTransition.tsx'
+import { FieldError } from './FieldError.tsx'
 import { importDialogActive } from '../lib/drop-routing.ts'
 
 /** 字节数格式化为 MB/KB（可选模组体积展示）。 */
@@ -284,11 +286,11 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
               {t('dialogs.import.chooseFolder')}
             </Button>
             <p className="text-xs text-muted-foreground">{t('dialogs.import.folderHint')}</p>
-            {error && <p className="text-destructive text-sm">{error}</p>}
+            <FieldError message={error} />
           </div>
         )}
 
-        {step === 'parsing' && (
+        <ContentTransition loading={step === 'parsing'} skeleton={
           <div className="space-y-4">
             <div className="space-y-2">
               <Skeleton className="h-4 w-24 rounded" />
@@ -311,7 +313,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
             </div>
             <p className="text-xs text-muted-foreground">{t('dialogs.import.parsing')}</p>
           </div>
-        )}
+        }>
 
         {step === 'preview' && parsed && (
           <div className="space-y-4">
@@ -392,7 +394,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
                 </div>
               </>
             )}
-            {error && <p className="text-destructive text-sm">{error}</p>}
+            <FieldError message={error} />
             <div className="flex justify-end gap-2">
               <Button variant="outline" disabled={installing} onClick={() => { reset(); onClose() }}>{t('common.cancel')}</Button>
               <Button onClick={handleInstall} disabled={installing}>
@@ -404,6 +406,7 @@ export default function ImportDialog({ open, onClose, gameDir, versionIsolation 
             </div>
           </div>
         )}
+        </ContentTransition>
       </DialogBody>
     </Dialog>
   )
