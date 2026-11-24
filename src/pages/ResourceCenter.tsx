@@ -32,6 +32,8 @@ import { Tooltip } from '../components/ui'
 import { useMessageBox } from '../components/ui'
 import { Skeleton } from '../components/ui'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
+import { useDelayedFlag } from '../hooks/useDelayedFlag.ts'
+import { ContentTransition } from '../components/ContentTransition.tsx'
 import { useFavoritesStore, useFavoriteKeys, useFolderMap, favoriteKey } from '../stores/favoritesStore.ts'
 import FavoriteEditDialog from '../components/FavoriteEditDialog.tsx'
 import FavoriteImportDialog from '../components/FavoriteImportDialog.tsx'
@@ -828,6 +830,12 @@ export default function ResourceCenter() {
   const restoredRef = useRef(!freshEntry && !!snap)
   const snapRef = useRef({ category, source, keyword, sort, gameVersion, loader, tags, items, total, page, searchInput, cnNames, view, favFolder, favTags })
   const listRef = useAnimatedList<HTMLDivElement>([items.length, category, source, keyword, sort, initialLoading, isReplacing], { y: 12, scale: 0.97, duration: 0.25 })
+
+  // 骨架延迟显示 + 最短停留（400ms 内返回不闪骨架）
+  const skeletonLoading = view === 'search'
+    ? (initialLoading || isReplacing)
+    : (favoritesLoading && !favoritesLoaded)
+  const showSkeleton = useDelayedFlag(skeletonLoading)
   useEffect(() => { snapRef.current = { category, source, keyword, sort, gameVersion, loader, tags, items, total, page, searchInput, cnNames, view, favFolder, favTags } })
 
   useEffect(() => {
@@ -1903,7 +1911,7 @@ export default function ResourceCenter() {
             </div>
           )}
 
-      {(view === 'search' ? (initialLoading || isReplacing) : (favoritesLoading && !favoritesLoaded)) ? (
+      <ContentTransition loading={skeletonLoading} skeletonVisible={showSkeleton} veil skeleton={
         <div className="flex flex-col gap-3">
           {Array.from({ length: 5 }).map((_, index) => (
             <Card key={index} className="border-border/60 bg-card/95 p-4">
@@ -1918,7 +1926,8 @@ export default function ResourceCenter() {
             </Card>
           ))}
         </div>
-      ) : shownError ? (
+      }>
+      {shownError ? (
         <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
           <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-destructive/10">
             <Search className="h-6 w-6 text-destructive/60" />
@@ -2023,6 +2032,7 @@ export default function ResourceCenter() {
           )}
         </>
       )}
+      </ContentTransition>
       </div>
 
       {editFavorite && (

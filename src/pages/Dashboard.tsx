@@ -5,8 +5,8 @@ import { useEffect, useMemo } from 'react'
 import { Pencil } from 'lucide-react'
 import { usePluginStore } from '../stores/pluginStore.ts'
 import { useSlotContent } from '../plugins/slots.tsx'
-import { usePageAnimation } from '../hooks/usePageAnimation.ts'
 import { useMessageBox } from '../components/ui'
+import { PageShell } from '../components/PageShell.tsx'
 import { MicrosoftReauthDialog } from '../components/MicrosoftReauthDialog.tsx'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
@@ -107,13 +107,12 @@ function DashboardContent() {
 
 export default function Dashboard() {
   useMessageBox()
-  const pageRef = usePageAnimation()
 
   return (
-    <div ref={pageRef} className="relative flex flex-1 min-h-0 flex-col overflow-y-auto scroll-fade-mask p-8">
+    <PageShell className="relative overflow-y-auto scroll-fade-mask p-8">
       <DashboardProvider>
         <DashboardContent />
       </DashboardProvider>
-    </div>
+    </PageShell>
   )
 }

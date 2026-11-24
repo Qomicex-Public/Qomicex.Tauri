@@ -2,9 +2,12 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// src/hooks/listEnterSelection.ts 的回归测试（issue #355）。
-// 锁住「追加分页只动画新增项，不从列表顶部重播」这一判定，防止未来改动退化。
-// 做法与 test-deep-link-parse.mjs 一致：用仓库自带 tsc 把真实源码编译到临时目录再断言。
+// src/hooks/listDiff.ts 的回归测试。
+// 锁住三件事：
+//  1. 追加分页只动画新增项，不从列表顶部重播（issue #355 的原始回归）
+//  2. 头/中/尾插入都能算出 enter，且已有项产生 move（FLIP 让位）
+//  3. 整组替换（分组/分类切换）不再逐项播 70 条动画
+// 做法与 test-deep-link-parse.mjs 一致：用仓库自带 tsc 编译真实源码到临时目录再断言。
 //
 // 运行：pnpm run test:list-enter-selection
 
@@ -17,10 +20,10 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const source = join(root, 'src', 'hooks', 'listEnterSelection.ts')
+const source = join(root, 'src', 'hooks', 'listDiff.ts')
 const tsc = join(root, 'node_modules', 'typescript', 'bin', 'tsc')
 
-const outDir = mkdtempSync(join(tmpdir(), 'qmx-list-enter-'))
+const outDir = mkdtempSync(join(tmpdir(), 'qmx-list-diff-'))
 let checks = 0
 
 function check(name, actual, expected) {
@@ -32,8 +35,8 @@ function check(name, actual, expected) {
   checks += 1
 }
 
-const el = (key) => ({ dataset: { key } })
-const keys = (items) => items.map((i) => i.dataset.key)
+const item = (key, top, left = 0) => ({ key, top, left })
+const keys = (list) => list.map((k) => (typeof k === 'string' ? k : k.key))
 
 try {
   execFileSync(
@@ -42,32 +45,91 @@ try {
     { stdio: 'inherit' },
   )
   const require = createRequire(import.meta.url)
-  const { selectEnterItems } = require(join(outDir, 'listEnterSelection.js'))
+  const { computeListDiff } = require(join(outDir, 'listDiff.js'))
 
-  // 首屏：prev 为空 → 动画前 max 个（覆盖首屏），其余保持最终态
-  const first = [el('a'), el('b'), el('c'), el('d')]
-  check('首屏取前 max 个', keys(selectEnterItems(first, [], 3)), ['a', 'b', 'c'])
+  // 首屏：prev 为空 → 全部按新增处理（调用方再截断到 35）
+  const first = computeListDiff([], [item('a', 0), item('b', 100)])
+  check('首屏全部新增', first.enter, ['a', 'b'])
+  check('首屏无退场', first.exit, [])
+  check('首屏不判定为替换', first.replace, false)
 
-  // 追加分页：只新增底部两项 → 只动画这两项，顶部旧项不再重播（issue #355 核心）
-  const before = [el('a'), el('b')]
-  const appended = [el('a'), el('b'), el('c'), el('d')]
-  check('追加只动画新增项', keys(selectEnterItems(appended, before, 35)), ['c', 'd'])
+  // 追加分页：只新增底部两项，旧项位置不变 → 不重播、不移动（issue #355）
+  const appended = computeListDiff(
+    [item('a', 0), item('b', 100)],
+    [item('a', 0), item('b', 100), item('c', 200), item('d', 300)],
+  )
+  check('追加只动画新增项', appended.enter, ['c', 'd'])
+  check('追加不重播旧项', appended.move, [])
+  check('追加无退场', appended.exit, [])
 
-  // 整页替换：key 全变 → 动画新一批的前 max 个
-  const replaced = [el('x'), el('y'), el('z')]
-  check('整页替换动画新一批', keys(selectEnterItems(replaced, before, 2)), ['x', 'y'])
+  // 头部插入：新项 enter，已有项整体下移 → 每个旧项都要 FLIP
+  const head = computeListDiff(
+    [item('a', 100), item('b', 200)],
+    [item('x', 0), item('a', 200), item('b', 300)],
+  )
+  check('头部插入产生新项', head.enter, ['x'])
+  check('头部插入让旧项下移', keys(head.move), ['a', 'b'])
+  check('头部插入的位移量', head.move.map((m) => m.dy), [-100, -100])
 
-  // 纯删除 / 重排（无新增）：不重播任何入场动画
-  check('纯删除不重播', keys(selectEnterItems([el('a')], before, 35)), [])
-  check('重排不重播', keys(selectEnterItems([el('b'), el('a')], before, 35)), [])
+  // 中间插入：只有插入点之后的项移动
+  const middle = computeListDiff(
+    [item('a', 0), item('b', 100), item('c', 200)],
+    [item('a', 0), item('x', 100), item('b', 200), item('c', 300)],
+  )
+  check('中间插入产生新项', middle.enter, ['x'])
+  check('中间插入只移动受影响项', keys(middle.move), ['b', 'c'])
 
-  // 新增超过 max：仍只动画前 max 个（限动视口，避免大量 blur 卡片同时进 tween）
-  const many = [el('a'), ...Array.from({ length: 40 }, (_, i) => el(`n${i}`))]
-  check('新增超上限截断', keys(selectEnterItems(many, before, 35)).length, 35)
+  // 尾部插入：旧项不动
+  const tail = computeListDiff(
+    [item('a', 0)],
+    [item('a', 0), item('z', 100)],
+  )
+  check('尾部插入只有新项', tail.enter, ['z'])
+  check('尾部插入不移动旧项', tail.move, [])
 
-  // 无 data-key 的项不参与 diff（调用方契约：子元素必须带 data-key）
-  const keyless = [{ dataset: {} }, el('a'), el('b')]
-  check('忽略无 key 项', keys(selectEnterItems(keyless, [el('a')], 35)), ['b'])
+  // 删除中间项：该项退场，后面的项上移
+  const remove = computeListDiff(
+    [item('a', 0), item('b', 100), item('c', 200)],
+    [item('a', 0), item('c', 100)],
+  )
+  check('删除产生退场', remove.exit, ['b'])
+  check('删除后后续项上移', keys(remove.move), ['c'])
+  check('删除后位移量', remove.move[0].dy, 100)
+
+  // 整组替换（分组切换）：新旧 key 无交集 → 不逐项播
+  const replace = computeListDiff(
+    [item('a', 0), item('b', 100), item('c', 200), item('d', 300)],
+    [item('x', 0), item('y', 100), item('z', 200)],
+  )
+  check('整组替换判定', replace.replace, true)
+  check('整组替换仍有 enter 列表', replace.enter, ['x', 'y', 'z'])
+
+  // 交集 40%（2/5）高于阈值 0.35 → 仍按逐项处理
+  const partial = computeListDiff(
+    [item('a', 0), item('b', 100), item('c', 200), item('d', 300), item('e', 400)],
+    [item('a', 0), item('b', 100), item('x', 200)],
+  )
+  check('交集 40% 不判定替换', partial.replace, false)
+
+  // 亚像素抖动不产生移动
+  const jitter = computeListDiff(
+    [item('a', 100.2)],
+    [item('a', 100.0)],
+  )
+  check('0.2px 抖动不移动', jitter.move, [])
+
+  // 搜索/筛选：只是子集消失，没有新 key → 不能判定为整组替换（否则剩余项会重播淡入）
+  const filtered = computeListDiff(
+    [item('a', 0), item('b', 100), item('c', 200), item('d', 300), item('e', 400)],
+    [item('a', 0), item('b', 100)],
+  )
+  check('搜索过滤不判定替换', filtered.replace, false)
+  check('搜索过滤只产生退场', filtered.enter, [])
+  check('搜索过滤的退场项', filtered.exit, ['c', 'd', 'e'])
+
+  // 写入快照后位置稳定：第二次相同输入不产生任何动作
+  const stable = computeListDiff([item('a', 10)], [item('a', 10)])
+  check('位置不变无动作', [stable.enter.length, stable.exit.length, stable.move.length], [0, 0, 0])
 
   console.log(`test-list-enter-selection: ${checks} checks passed`)
 } finally {

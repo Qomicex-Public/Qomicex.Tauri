@@ -3,7 +3,6 @@
 
 import { useEffect, useState, useRef, useMemo, type CSSProperties } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
-import gsap from 'gsap'
 import Sidebar from './Sidebar.tsx'
 import { TitleBar } from './TitleBar.tsx'
 import ScrollToTop from './ScrollToTop.tsx'
@@ -110,8 +109,6 @@ export default function Layout() {
   const { confirm: msgConfirm } = useMessageBox()
   const { t } = useI18n()
   const location = useLocation()
-  const mainRef = useRef<HTMLElement>(null)
-  const prevPathRef = useRef(location.pathname)
   // WebView2 的 backdrop-filter 首帧/动态插入不采样：统一在路由/背景/卡片变化后补重绘。
   useGlassRepaint(location.pathname)
 
@@ -150,32 +147,10 @@ export default function Layout() {
     })
   }, [])
 
-  // 页面切换动画
+  // 换页后重扫滚动容器（ADR-087：双指滑动 = 滚轮滚动，内层滚动不外溢）。
+  // 页面入场动画由 PageShell 独占（见 components/PageShell.tsx），此处不再动 main。
   useEffect(() => {
-    // 换页后重扫滚动容器（ADR-087：双指滑动 = 滚轮滚动，内层滚动不外溢）。
-    // MutationObserver 也会兜底后挂载内容，这里保证切页即时生效。
     applyScrollContainment()
-
-    if (location.pathname === prevPathRef.current) return
-    prevPathRef.current = location.pathname
-
-    const el = mainRef.current
-    if (!el) return
-
-    const settings = getSettings()
-    if (!settings.animationsEnabled) return
-
-    const speed = settings.animationSpeed ?? 1
-
-    // 立即设置 opacity: 0，避免内容闪现
-    gsap.set(el, { opacity: 0, y: 8 })
-
-    // 等待 DOM 更新后执行动画
-    requestAnimationFrame(() => {
-      gsap.to(el,
-        { opacity: 1, y: 0, duration: 0.25 / speed, ease: 'power3.out', force3D: settings.gpuAcceleration !== false }
-      )
-    })
   }, [location.pathname])
 
   useEffect(() => {
@@ -249,7 +224,7 @@ export default function Layout() {
           {!isLinux && !isMacos && <TitleBar />}
           <div className="relative flex flex-1 min-w-0 overflow-hidden">
             <div className="absolute inset-0 bg-background/50" style={{ backdropFilter: blur > 0 ? `blur(${blur}px)` : 'none' }} />
-            <main ref={mainRef} className="relative z-10 flex min-h-0 overflow-hidden flex-1">
+            <main className="relative z-10 flex min-h-0 overflow-hidden flex-1">
               <Outlet />
             </main>
           </div>

@@ -43,6 +43,8 @@ import { loadAccounts } from '../stores/accountsStore.ts'
 import { AccountSelectDialog } from '../components/AccountSelectDialog.tsx'
 import { NoAccountDialog } from '../components/NoAccountDialog.tsx'
 import { useRequireDefaultAccount } from '../hooks/useRequireDefaultAccount.ts'
+import { useDelayedFlag } from '../hooks/useDelayedFlag.ts'
+import { ContentTransition } from '../components/ContentTransition.tsx'
 import { useFavoritesStore } from '../stores/favoritesStore.ts'
 import { scheduleFavoriteInstall } from '../stores/pendingFavoriteInstallStore.ts'
 import { useAnimatedList } from '../hooks/useGsapAnimations.ts'
@@ -872,12 +874,14 @@ export default function Instances() {
     return list
   }, [scannedLocal, search, filterType, groupFilter, getVersionType, getInstanceForVersion])
 
-  // 卡片列表 GSAP stagger 动画（性能版：只动画视口内条目 + 滚动暂停）
-  // loading/scanning 进 deps：骨架图→内容切换时加载状态翻转触发动画
+  // 卡片列表 GSAP stagger 动画（DOM 变更驱动 + FLIP）
   const gridAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, viewMode, loading, scanning], { y: 12, scale: 0.95 })
 
-  // 列表视图 GSAP stagger 动画（性能版）
+  // 列表视图 GSAP stagger 动画
   const listAnimRef = useAnimatedList<HTMLDivElement>([filtered.length, viewMode, loading, scanning], { x: -12, duration: 0.25 })
+
+  // 骨架延迟显示 + 最短停留：400ms 内返回不闪骨架，出现则至少保留 300ms
+  const showSkeleton = useDelayedFlag(loading || scanning)
 
   // 目录下拉框弹出动画
   useEffect(() => {
@@ -1640,8 +1644,7 @@ export default function Instances() {
         </div>
       ) : null}
 
-      {loading || scanning ? (
-        viewMode === 'grid' ? (
+      <ContentTransition loading={loading || scanning} skeletonVisible={showSkeleton} veil skeleton={viewMode === 'grid' ? (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {Array.from({ length: 6 }).map((_, index) => (
               <Skeleton key={index} className="glass-surface rounded-xl border bg-card p-5 text-center">
@@ -1666,8 +1669,9 @@ export default function Instances() {
               </Skeleton>
             ))}
           </div>
-        )
-      ) : scannedLocal.length === 0 ? (
+        )}
+      >
+        {scannedLocal.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-24 text-center text-muted-foreground">
           <Box className="h-10 w-10 opacity-30" />
           <p className="text-sm">{search ? t('instances.noMatch') : t('instances.noVersionDetected')}</p>
@@ -1792,7 +1796,8 @@ export default function Instances() {
           </div>
         ))}
         </div>
-      )}
+        )}
+      </ContentTransition>
       <AccountSelectDialog
         open={showSelectAccount}
         onClose={handleCancelSelect}

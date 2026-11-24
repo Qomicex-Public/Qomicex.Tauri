@@ -146,7 +146,7 @@ export function AccountWidget() {
         <div
           ref={dropdownRef}
           style={{ position: 'fixed', top: dropdownPos.top, right: dropdownPos.right, zIndex: 9999 }}
-          className="no-drag w-56 rounded-lg border bg-popover p-1 shadow-lg animate-in fade-in slide-in-from-top-2 zoom-in-95 duration-200"
+          className="no-drag w-56 rounded-lg border bg-popover p-1 shadow-lg animate-zoom-fade-in"
         >
           <div className="max-h-60 overflow-y-auto">
             {allAccounts.map((acc) => {

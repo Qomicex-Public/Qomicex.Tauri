@@ -5,12 +5,12 @@ import type { ReactNode } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faArrowLeft } from '@fortawesome/free-solid-svg-icons'
 
-export function PageHeader({ title, subtitle, actions, onBack }: { title: ReactNode; subtitle?: ReactNode; actions?: ReactNode; onBack?: () => void }) {
+export function PageHeader({ title, subtitle, actions, onBack, reveal = 1 }: { title: ReactNode; subtitle?: ReactNode; actions?: ReactNode; onBack?: () => void; reveal?: number }) {
   return (
-    <div className="flex items-center justify-between gap-4">
+    <div data-reveal={reveal} className="flex items-center justify-between gap-4">
       <div className="flex items-center gap-3 min-w-0">
         {onBack && (
-          <button onClick={onBack} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-foreground active:scale-95">
+          <button onClick={onBack} className="anim-tap flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground">
             <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
           </button>
         )}

@@ -46,7 +46,11 @@ export function applySettingsToDom(s: AppSettings): void {
   root.style.setProperty('--radius', `${s.cornerRadius ?? 8}px`)
 
   // ---- 组件材质 ----
-  root.dataset.material = s.componentMaterial ?? 'default'
+  // 液态玻璃已下架（ADR-141 2.1）：老配置写回的 'liquid' 在这里兜底为 frosted
+  const material = ((s.componentMaterial as string | undefined) === 'liquid'
+    ? 'frosted'
+    : (s.componentMaterial ?? 'default')) as 'default' | 'frosted' | 'acrylic' | 'aero'
+  root.dataset.material = material
   root.style.setProperty('--glass-blur', `${Math.max(0, s.glassBlur ?? 18)}px`)
 
   // ---- 默认材质卡片样式 ----

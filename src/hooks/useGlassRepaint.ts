@@ -22,6 +22,23 @@ function repaintGlass(): void {
   root.classList.remove(REPAINT_CLASS)
 }
 
+let repaintScheduled = 0
+
+/**
+ * 动画结束时立即补一次重采样（rAF 合批）。
+ *
+ * `useGlassRepaint` 里的 450ms 定时器是在「猜」动画结束时间；动画原语
+ * （Reveal / Presence / useAnimatedList / ContentTransition）在完成回调里
+ * 调用本函数，模糊恢复时机才准确，不再依赖鼠标移入。
+ */
+export function queueGlassRepaint(): void {
+  if (repaintScheduled) return
+  repaintScheduled = window.requestAnimationFrame(() => {
+    repaintScheduled = 0
+    repaintGlass()
+  })
+}
+
 /**
  * 在 Layout 调用：路由切换、背景媒体加载、玻璃表面动态插入、材质切换后
  * 各补一次重采样。不依赖具体页面的动画实现，覆盖所有页面的卡片。

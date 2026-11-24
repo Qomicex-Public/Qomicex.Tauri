@@ -1,67 +1,342 @@
 // Copyright (C) 2026 Qomicex Launcher Contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { useEffect, useLayoutEffect, useRef, RefObject } from 'react'
+import { useCallback, useLayoutEffect, useRef, type RefObject } from 'react'
 import gsap from 'gsap'
-import { getSettings } from '../api/settings.ts'
-import { selectEnterItems } from './listEnterSelection.ts'
+import { containsGlass, gpuVars, readMotion, sec } from '../lib/motion.ts'
+import { queueGlassRepaint } from './useGlassRepaint.ts'
+import { computeListDiff, type ListRectInput } from './listDiff.ts'
+
+/** 单次最多逐项动画的条目数：覆盖首屏（网格 6 列 × 5~6 行） */
+const MAX_ANIMATE_ITEMS = 35
+/** 滚动后多久内不播动画（毫秒）：避免滚动与补间抢主线程 */
+const SCROLL_QUIET_MS = 150
+
+interface AnimatedListOptions {
+  x?: number
+  y?: number
+  scale?: number
+  /** 秒，未乘倍率 */
+  stagger?: number
+  /** 秒，未乘倍率 */
+  duration?: number
+  /** 秒，未乘倍率 */
+  exitDuration?: number
+}
+
+interface SnapshotEntry {
+  el: HTMLElement
+  top: number
+  left: number
+  width: number
+  height: number
+}
+
+function keyOf(el: Element, index: number): string {
+  const own = (el as HTMLElement).dataset.key
+  if (own) return own
+  // 卡片常被 ContextMenu 之类的无 key 包装器裹一层：取第一个带 data-key 的后代，
+  // 否则退化为下标 key，头/中插入时会误判成整组替换
+  const nested = el.querySelector('[data-key]')?.getAttribute('data-key')
+  return nested ?? `\u0000idx-${index}`
+}
+
+function measure(el: HTMLElement): SnapshotEntry {
+  const rect = el.getBoundingClientRect()
+  return { el, top: rect.top, left: rect.left, width: rect.width, height: rect.height }
+}
+
+function inViewport(entry: SnapshotEntry): boolean {
+  return entry.top < window.innerHeight && entry.top + entry.height > 0
+}
+
+function findScrollParent(start: HTMLElement | null): HTMLElement | null {
+  let node = start?.parentElement ?? null
+  while (node) {
+    const style = getComputedStyle(node)
+    if (/(auto|scroll|overlay)/.test(style.overflowY)) return node
+    node = node.parentElement
+  }
+  return null
+}
 
 /**
- * 页面入场动画 Hook
- * 在路由切换时触发目标元素的淡入+上滑动画
+ * 列表动效：DOM 变更驱动（MutationObserver）+ 位置快照 FLIP。
+ *
+ * 与旧实现的区别（ADR 见 docs/juni-dev-docs/6-UI/UI动画优化方案.md 3.5.1）：
+ * - 不再依赖调用方手写 deps：任何子节点增删都会重新差分，忘记声明依赖不会再丢动画
+ * - 头/中/尾插入都播；已有条目用 FLIP 让位，不再瞬移
+ * - 删除是逐项退场（按旧位置克隆），不是整块重播
+ * - 新旧 key 交集 < 35% 判为整组替换，改为快淡入，避免几十条 tween 打架
+ * - 玻璃卡只做 opacity（祖先 transform 会让 backdrop-filter 停止采样，见 ADR-141 5.1）
+ *
+ * `deps` 参数保留只为兼容现有调用点，已不再参与判定。
  */
-export function usePageTransition<T extends HTMLElement>(options?: {
-  duration?: number
-  y?: number
-}): RefObject<T | null> {
+export function useAnimatedList<T extends HTMLElement>(
+  _deps: unknown[] = [],
+  options?: AnimatedListOptions,
+): RefObject<T | null> {
   const ref = useRef<T>(null)
+  const optionsRef = useRef(options)
+  optionsRef.current = options
 
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
+  const snapshotRef = useRef<Map<string, SnapshotEntry>>(new Map())
+  const targetRef = useRef<HTMLElement | null>(null)
+  const observerRef = useRef<MutationObserver | null>(null)
+  const animatedRef = useRef<Set<HTMLElement>>(new Set())
+  const clonesRef = useRef<Set<HTMLElement>>(new Set())
+  const lastScrollAtRef = useRef(0)
+  const detachRef = useRef<() => void>(() => {})
 
-    const settings = getSettings()
-    if (!settings.animationsEnabled) return
+  const animate = useCallback((el: HTMLElement) => {
+    const motion = readMotion()
+    const opts = optionsRef.current ?? {}
 
-    const speed = settings.animationSpeed ?? 1
-    const duration = (options?.duration ?? 0.25) / speed
-    const y = options?.y ?? 12
-
-    gsap.fromTo(el,
-      { opacity: 0, y },
-      { opacity: 1, y: 0, duration, ease: 'power3.out', ...(settings.gpuAcceleration !== false ? { force3D: true } : {}) }
+    const children = Array.from(el.children).filter(
+      (child): child is HTMLElement => child instanceof HTMLElement,
     )
-  }, [options?.duration, options?.y])
+    const next = new Map<string, SnapshotEntry>()
+    children.forEach((child, index) => next.set(keyOf(child, index), measure(child)))
+
+    const prevSnapshot = snapshotRef.current
+    snapshotRef.current = next
+
+    // 关闭动画 / reduced-motion：不写任何内联样式，直接落终态
+    if (!motion.enabled) return
+    if (children.length === 0 && prevSnapshot.size === 0) return
+
+    // 滚动期间的变更不播动画：与滚动抢帧只会更卡
+    if (performance.now() - lastScrollAtRef.current < SCROLL_QUIET_MS) return
+
+    const prevRects: ListRectInput[] = [...prevSnapshot.entries()].map(([key, entry]) => ({
+      key, top: entry.top, left: entry.left,
+    }))
+    const nextRects: ListRectInput[] = [...next.entries()].map(([key, entry]) => ({
+      key, top: entry.top, left: entry.left,
+    }))
+    const diff = computeListDiff(prevRects, nextRects)
+
+    const staggerBase = opts.stagger ?? 0.05
+    const enterDuration = sec((opts.duration ?? 0.25) * 1000, motion)
+    const exitDuration = sec((opts.exitDuration ?? 0.23) * 1000, motion)
+    const replaceDuration = sec(140, motion)
+    const moveDuration = sec(220, motion)
+
+    // ---- 整组替换：不做逐项位移/退场，只把新内容淡进来 ----
+    if (diff.replace) {
+      const targets = [...next.values()].filter(inViewport).slice(0, MAX_ANIMATE_ITEMS)
+      targets.forEach((entry) => {
+        const node = entry.el
+        animatedRef.current.add(node)
+        gsap.killTweensOf(node)
+        gsap.fromTo(node,
+          { opacity: 0 },
+          {
+            opacity: 1,
+            duration: replaceDuration,
+            ease: 'power2.out',
+            overwrite: 'auto',
+            onComplete: () => {
+              gsap.set(node, { clearProps: 'opacity' })
+              animatedRef.current.delete(node)
+              queueGlassRepaint()
+            },
+          })
+      })
+      return
+    }
+
+    // ---- 逐项退场：按旧位置克隆到 body，播完移除 ----
+    // 搜索/筛选会让大量条目同时消失，逐条克隆会飞出几十块碎片：
+    // 只有「少量删除」才播退场，大量消失交给 replace/静默处理。
+    const animatedExitLimit = Math.max(3, Math.round(prevSnapshot.size * 0.3))
+    const exitTargets = diff.exit.length <= animatedExitLimit
+      ? diff.exit
+        .map((key) => prevSnapshot.get(key))
+        .filter((entry): entry is SnapshotEntry => !!entry && inViewport(entry))
+        .slice(0, MAX_ANIMATE_ITEMS)
+      : []
+
+    for (const entry of exitTargets) {
+      const clone = entry.el.cloneNode(true) as HTMLElement
+      clone.removeAttribute('id')
+      clone.style.position = 'fixed'
+      clone.style.left = `${entry.left}px`
+      clone.style.top = `${entry.top}px`
+      clone.style.width = `${entry.width}px`
+      clone.style.height = `${entry.height}px`
+      clone.style.margin = '0'
+      clone.style.transform = 'none'
+      clone.style.opacity = '1'
+      clone.style.pointerEvents = 'none'
+      clone.style.zIndex = '9999'
+      clone.dataset.animClone = ''
+      clonesRef.current.add(clone)
+      document.body.appendChild(clone)
+      gsap.to(clone, {
+        opacity: 0,
+        y: -8,
+        scale: 0.96,
+        duration: exitDuration,
+        ease: 'power2.in',
+        force3D: motion.gpu,
+        onComplete: () => {
+          clone.remove()
+          clonesRef.current.delete(clone)
+          queueGlassRepaint()
+        },
+      })
+    }
+
+    // ---- 逐项入场：新增 key，按 DOM 顺序错位 ----
+    const enterKeys = diff.enter.slice(0, MAX_ANIMATE_ITEMS)
+    enterKeys.forEach((key, index) => {
+      const entry = next.get(key)
+      if (!entry || !inViewport(entry)) return
+      const node = entry.el
+      const glass = containsGlass(node)
+      const delay = Math.min(staggerBase, 0.5 / Math.max(enterKeys.length, 1)) * index * motion.multiplier
+
+      animatedRef.current.add(node)
+      gsap.killTweensOf(node)
+
+      const from: gsap.TweenVars = { opacity: 0 }
+      const to: gsap.TweenVars = {
+        opacity: 1,
+        duration: enterDuration,
+        delay,
+        ease: 'power3.out',
+        overwrite: 'auto',
+        ...gpuVars(motion),
+        onComplete: () => {
+          gsap.set(node, { clearProps: 'transform,opacity' })
+          animatedRef.current.delete(node)
+          queueGlassRepaint()
+        },
+      }
+      if (!glass) {
+        if (opts.x !== undefined) { from.x = opts.x; to.x = 0 }
+        if (opts.y !== undefined) { from.y = opts.y; to.y = 0 }
+        if (opts.scale !== undefined) { from.scale = opts.scale; to.scale = 1 }
+      }
+      gsap.fromTo(node, from, to)
+    })
+
+    // ---- FLIP：位置变化的旧条目补间到新位置 ----
+    for (const move of diff.move) {
+      const entry = next.get(move.key)
+      if (!entry || !inViewport(entry)) continue
+      const node = entry.el
+      animatedRef.current.add(node)
+      gsap.killTweensOf(node)
+      gsap.fromTo(node,
+        { x: move.dx, y: move.dy },
+        {
+          x: 0,
+          y: 0,
+          duration: moveDuration,
+          ease: 'power3.out',
+          overwrite: 'auto',
+          ...gpuVars(motion),
+          onComplete: () => {
+            gsap.set(node, { clearProps: 'transform' })
+            animatedRef.current.delete(node)
+            queueGlassRepaint()
+          },
+        })
+    }
+  }, [])
+
+  const attach = useCallback((el: HTMLElement) => {
+    if (targetRef.current === el) return
+    detachRef.current()
+
+    targetRef.current = el
+    snapshotRef.current = new Map()
+
+    const scroller = findScrollParent(el)
+    const onScroll = () => { lastScrollAtRef.current = performance.now() }
+    scroller?.addEventListener('scroll', onScroll, { passive: true })
+
+    // DOM 变更即差分：mutation 回调在 paint 前执行，不会先闪一帧终态
+    const observer = new MutationObserver(() => animate(el))
+    observer.observe(el, { childList: true })
+    observerRef.current = observer
+
+    detachRef.current = () => {
+      observer.disconnect()
+      observerRef.current = null
+      scroller?.removeEventListener('scroll', onScroll)
+      for (const node of animatedRef.current) gsap.killTweensOf(node)
+      animatedRef.current.clear()
+      for (const clone of clonesRef.current) clone.remove()
+      clonesRef.current.clear()
+      targetRef.current = null
+      snapshotRef.current = new Map()
+    }
+
+    // 首屏：把已有子节点当作一次「全部新增」，播放入场（不播退场）
+    animate(el)
+  }, [animate])
+
+  // 每次渲染后确保已挂载（条件渲染的列表在数据到达后才出现）
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (el) attach(el)
+  })
+
+  // 卸载时断开观察者、终止补间、清掉残留克隆
+  useLayoutEffect(() => () => detachRef.current(), [])
 
   return ref
 }
 
 /**
- * 展开/折叠动画 Hook
- * 用于可折叠面板、手风琴等
+ * 展开/折叠：先测内容高度，再动画自身高度。
+ *
+ * 修复：旧实现未 killTweensOf，快速连点时上一轮的 onComplete 会把
+ * `display/height` 写成相反的终态。现在每轮先终止旧补间，并在结束时统一
+ * 复位四个内联值；动画关闭时直接落终值。
  */
 export function useExpandAnimation(
   isExpanded: boolean,
-  options?: {
-    duration?: number
-  }
+  options?: { duration?: number },
 ): RefObject<HTMLDivElement | null> {
   const ref = useRef<HTMLDivElement>(null)
+  const mountedRef = useRef(false)
+  const prevExpandedRef = useRef(isExpanded)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
 
-    const settings = getSettings()
-    if (!settings.animationsEnabled) {
-      el.style.height = isExpanded ? 'auto' : '0px'
-      el.style.opacity = isExpanded ? '1' : '0'
-      el.style.overflow = 'hidden'
+    const settle = (expanded: boolean) => {
+      el.style.overflow = ''
+      el.style.opacity = expanded ? '1' : '0'
+      el.style.height = expanded ? 'auto' : ''
+      el.style.display = expanded ? 'block' : 'none'
+    }
+
+    // 首次挂载只落终态，不播动画（否则进入设置页时所有折叠面板会先展开一次）
+    if (!mountedRef.current) {
+      mountedRef.current = true
+      prevExpandedRef.current = isExpanded
+      settle(isExpanded)
       return
     }
 
-    const speed = settings.animationSpeed ?? 1
-    const duration = (options?.duration ?? 0.25) / speed
+    if (prevExpandedRef.current === isExpanded) return
+    prevExpandedRef.current = isExpanded
+
+    const motion = readMotion()
+    const durationMs = (options?.duration ?? 0.25) * 1000
+
+    gsap.killTweensOf(el)
+
+    if (!motion.enabled) {
+      settle(isExpanded)
+      return
+    }
 
     el.style.overflow = 'hidden'
 
@@ -73,340 +348,30 @@ export function useExpandAnimation(
         {
           height,
           opacity: 1,
-          duration,
-          ease: 'power2.out',
+          duration: sec(durationMs * 0.88, motion),
+          ease: 'power4.out',
+          overwrite: 'auto',
           onComplete: () => {
             el.style.height = 'auto'
             el.style.overflow = ''
-          }
-        }
-      )
-    } else {
-      const height = el.scrollHeight
-      el.style.height = `${height}px`
-      gsap.to(el, {
-        height: 0,
-        opacity: 0,
-        duration,
-        ease: 'power2.in',
-        onComplete: () => {
-          el.style.display = 'none'
-          el.style.overflow = ''
-        }
-      })
-    }
-  }, [isExpanded, options?.duration])
-
-  return ref
-}
-
-/**
- * 对话框进入动画
- * 用于 Dialog 组件的进入/退出动画
- */
-export function useDialogAnimation(open: boolean): {
-  backdropRef: RefObject<HTMLDivElement | null>
-  contentRef: RefObject<HTMLDivElement | null>
-} {
-  const backdropRef = useRef<HTMLDivElement>(null)
-  const contentRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-
-    const settings = getSettings()
-    if (!settings.animationsEnabled) return
-
-    const speed = settings.animationSpeed ?? 1
-    const duration = 0.2 / speed
-
-    if (backdropRef.current) {
-      gsap.fromTo(backdropRef.current,
-        { opacity: 0 },
-        { opacity: 1, duration, ease: 'power3.out' }
-      )
-    }
-
-    if (contentRef.current) {
-      gsap.fromTo(contentRef.current,
-        { opacity: 0, scale: 0.95, y: 8 },
-        {
-          opacity: 1,
-          scale: 1,
-          y: 0,
-          duration,
-          ease: 'power3.out',
-          ...(settings.gpuAcceleration !== false ? { force3D: true } : {})
-        }
-      )
-    }
-  }, [open])
-
-  return { backdropRef, contentRef }
-}
-
-/**
- * 下拉框弹出动画
- * 用于 Select/Combobox 的弹出层
- */
-export function usePopupAnimation(open: boolean): RefObject<HTMLDivElement | null> {
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open || !ref.current) return
-
-    const settings = getSettings()
-    if (!settings.animationsEnabled) return
-
-    const speed = settings.animationSpeed ?? 1
-    const duration = 0.15 / speed
-
-    gsap.fromTo(ref.current,
-      { opacity: 0, scale: 0.94, y: -4 },
-      {
-        opacity: 1,
-        scale: 1,
-        y: 0,
-        duration,
-        ease: 'power3.out',
-        ...(settings.gpuAcceleration !== false ? { force3D: true } : {})
-      }
-    )
-  }, [open])
-
-  return ref
-}
-
-/** 一次最多交错动画的条目数：覆盖首屏约 35 个（网格 6 列 × 5~6 行），
- *  避免几百个 backdrop-filter 卡片同时进 tween 造成主线程卡顿 */
-const MAX_ANIMATE_ITEMS = 35
-
-/**
- * 交错列表动画（性能优化版）
- * 用于列表/网格子元素的入场/退场动画：
- * 1. 只动画前 MAX_ANIMATE_ITEMS 个（视口量），其余立即显示——避免几百个
- *    backdrop-filter 卡片同时进 tween，合成器每帧重采样 N 次背景导致卡顿。
- * 2. 滚动期间暂停本列表自身的动画（局部 timeline，不影响全局），停止 200ms 后恢复。
- * 3. 用 useLayoutEffect 保证骨架图→内容切换时动画必播（deps 变化 + 容器挂载）。
- * 4. 被移除的项（deps 变化后消失的 data-key）克隆到容器内 absolute 定位，播淡出+收缩后删除。
- *
- * 调用方必须给子元素加 `data-key` 才能启用退出动画。
- */
-/** 中断/结束动画前每个元素的内联样式快照（只覆盖 GSAP 会写的两个属性）。 */
-interface OriginalStyle {
-  transform: string
-  opacity: string
-}
-
-/** 终止入场 timeline 并把元素内联样式还原到动画前（幂等）。 */
-function stopAnimation(
-  tlRef: { current: gsap.core.Timeline | null },
-  originalsRef: { current: Map<HTMLElement, OriginalStyle> },
-): void {
-  // 先摘掉完成回调，避免 kill 后悬挂回调继续引用将被卸载的节点。
-  tlRef.current?.eventCallback('onComplete', null)
-  tlRef.current?.kill()
-  tlRef.current = null
-  for (const [node, original] of originalsRef.current) {
-    node.style.transform = original.transform
-    node.style.opacity = original.opacity
-  }
-  originalsRef.current.clear()
-}
-
-export function useAnimatedList<T extends HTMLElement>(
-  deps: unknown[] = [],
-  options?: {
-    x?: number
-    y?: number
-    scale?: number
-    stagger?: number
-    duration?: number
-    exitDuration?: number
-  }
-): RefObject<T | null> {
-  const ref = useRef<T>(null)
-  const tlRef = useRef<gsap.core.Timeline | null>(null)
-  // 每个被动画元素动画前的内联 transform/opacity：结束时原样还原，
-  // 只清 GSAP 写入的值，不碰 Tailwind/调用方自己的样式。
-  const originalsRef = useRef<Map<HTMLElement, OriginalStyle>>(new Map())
-  const prevChildrenRef = useRef<HTMLElement[]>([])
-  // 上一批 children 每个 data-key 的视口坐标（旧节点卸载后 getBoundingClientRect 归零，
-  // 必须在挂载时提前记录，退出克隆才能定位到原位置而不是左上角）
-  const prevRectsRef = useRef<Map<string, { left: number; top: number; width: number; height: number }>>(new Map())
-
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) {
-      stopAnimation(tlRef, originalsRef)
-      return
-    }
-
-    const settings = getSettings()
-    if (!settings.animationsEnabled) {
-      // 关闭动画时旧 timeline 可能仍在跑：终止并还原它写入的 transform，
-      // 否则残留合成层会让毛玻璃不重绘（issue #327）。
-      stopAnimation(tlRef, originalsRef)
-      return
-    }
-
-    const speed = settings.animationSpeed ?? 1
-    const allChildren = Array.from(el.children) as HTMLElement[]
-    if (allChildren.length === 0) return
-
-    // 保存上一批 children 用于 diff（下方基线块会覆盖 ref，必须先取快照）。
-    const prevChildren = prevChildrenRef.current
-
-    // 基线兜底：首次渲染（或上一次渲染容器未就绪导致 prev 为空）时，
-    // 先记录当前 children 作为 diff 基线，不触发退出动画。
-    if (prevChildren.length === 0) {
-      prevChildrenRef.current = allChildren
-      const rects = new Map<string, { left: number; top: number; width: number; height: number }>()
-      allChildren.forEach((c) => {
-        const key = c.dataset.key
-        if (!key) return
-        const r = c.getBoundingClientRect()
-        rects.set(key, { left: r.left, top: r.top, width: r.width, height: r.height })
-      })
-      prevRectsRef.current = rects
-    }
-
-    // 退出动画：diff 出上一批存在、本次消失的 data-key 项，克隆播淡出
-    // 克隆不能 append 到 React 管理的容器（会被下一次 reconciliation 清除），
-    // 因此挂到 body 层用 fixed 定位（视口坐标），播完再移除。
-    // 只给前 MAX_ANIMATE_ITEMS 个被移除项做退出动画（避免大量 blur 卡片同时进 tween）。
-    const newKeys = new Set(allChildren.map((c) => c.dataset.key))
-    const removed = prevChildren.filter(
-      (n): n is HTMLElement & { dataset: { key: string } } =>
-        !!n.dataset.key && !newKeys.has(n.dataset.key)
-    )
-    removed.slice(0, MAX_ANIMATE_ITEMS).forEach((node) => {
-        const recorded = prevRectsRef.current.get(node.dataset.key)
-        const left = recorded?.left ?? 0
-        const top = recorded?.top ?? 0
-        const width = recorded?.width ?? node.offsetWidth
-        const height = recorded?.height ?? node.offsetHeight
-        const clone = node.cloneNode(true) as HTMLElement
-        clone.removeAttribute('id')
-        clone.style.position = 'fixed'
-        clone.style.left = `${left}px`
-        clone.style.top = `${top}px`
-        clone.style.width = `${width}px`
-        clone.style.height = `${height}px`
-        clone.style.margin = '0'
-        clone.style.transform = 'none'
-        clone.style.opacity = '1'
-        clone.style.pointerEvents = 'none'
-        clone.style.zIndex = '9999'
-        document.body.appendChild(clone)
-        gsap.to(clone, {
-          opacity: 0,
-          y: -8,
-          scale: 0.92,
-          duration: (options?.exitDuration ?? 0.23) / speed,
-          ease: 'power2.in',
-          force3D: true,
-          onComplete: () => clone.remove(),
+          },
         })
-      })
-
-    // 进入动画：只动画本次新增项（按 data-key diff）；首屏/整页替换退化为前 35 个。
-    // 详见 selectEnterItems 注释（issue #355）。
-    const children = selectEnterItems(allChildren, prevChildren, MAX_ANIMATE_ITEMS)
-
-    const from: gsap.TweenVars = { opacity: 0 }
-    const to: gsap.TweenVars = {
-      opacity: 1,
-      duration: (options?.duration ?? 0.25) / speed,
-      ease: 'power3.out',
-      ...(settings.gpuAcceleration !== false ? { force3D: true } : {}),
-    }
-    if (options?.x !== undefined) {
-      from.x = options.x
-      to.x = 0
-    }
-    if (options?.y !== undefined) {
-      from.y = options.y
-      to.y = 0
-    }
-    if (options?.scale !== undefined) {
-      from.scale = options.scale
-      to.scale = 1
-    }
-    to.stagger = Math.min(options?.stagger ?? 0.05, 0.5 / children.length) / speed
-
-    // 结束上一轮动画并还原它写入的 transform，再记录这批元素的原始值。
-    // 顺序不能反：先快照会把上一轮的 translate3d(0,0,0) 当成「原始值」。
-    stopAnimation(tlRef, originalsRef)
-    const originals = new Map<HTMLElement, OriginalStyle>()
-    for (const child of children) {
-      originals.set(child, { transform: child.style.transform, opacity: child.style.opacity })
-    }
-    originalsRef.current = originals
-
-    if (children.length > 0) {
-      const timeline = gsap.timeline()
-      tlRef.current = timeline
-      timeline.fromTo(children, from, to)
-      // 入场 tween 结束后把内联 transform 还原（force3D 会留下
-      // translate3d(0,0,0)）。这些残留会把卡片固定在独立合成层里，WebView2 下
-      // `.glass-surface` 的 backdrop-filter 首帧不重绘：列表项看不到毛玻璃，
-      // 鼠标移入触发别的重绘后才恢复（issue #327）。
-      // 列表更新会重建 timeline：旧回调不得还原成上一轮的残留值。
-      timeline.eventCallback('onComplete', () => {
-        if (tlRef.current !== timeline) return
-        for (const [node, original] of originals) {
-          node.style.transform = original.transform
-          node.style.opacity = original.opacity
-        }
-      })
+      return
     }
 
-    // 记录本批 children 及其视口坐标（在挂载期间记录，供下次退出克隆定位）
-    prevChildrenRef.current = allChildren
-    const rects = new Map<string, { left: number; top: number; width: number; height: number }>()
-    allChildren.forEach((c) => {
-      const key = c.dataset.key
-      if (!key) return
-      const r = c.getBoundingClientRect()
-      rects.set(key, { left: r.left, top: r.top, width: r.width, height: r.height })
+    gsap.to(el, {
+      height: 0,
+      opacity: 0,
+      duration: sec(durationMs * 0.64, motion),
+      ease: 'power3.in',
+      overwrite: 'auto',
+      onComplete: () => {
+        el.style.display = 'none'
+        el.style.height = ''
+        el.style.overflow = ''
+      },
     })
-    prevRectsRef.current = rects
-  }, deps)
-
-  // 卸载时终止动画并还原内联 transform（列表在入场动画途中切换页面时，
-  // 避免旧 timeline 继续跑、节点残留合成层）。
-  useLayoutEffect(() => () => stopAnimation(tlRef, originalsRef), [])
-
-  // 滚动期间暂停本列表自身的动画 timeline，停止后恢复
-  // 自动向上查找最近的滚动祖先，无需页面单独传滚动容器 ref
-  useLayoutEffect(() => {
-    const findScrollContainer = (start: HTMLElement | null): HTMLElement | null => {
-      let node = start?.parentElement ?? null
-      while (node) {
-        const style = getComputedStyle(node)
-        if (/(auto|scroll|overlay)/.test(style.overflowY)) return node
-        node = node.parentElement
-      }
-      return null
-    }
-
-    const container = findScrollContainer(ref.current)
-    if (!container) return
-
-    let resumeTimer: ReturnType<typeof setTimeout> | null = null
-    const onScroll = () => {
-      tlRef.current?.pause()
-      if (resumeTimer) clearTimeout(resumeTimer)
-      resumeTimer = setTimeout(() => tlRef.current?.resume(), 200)
-    }
-    container.addEventListener('scroll', onScroll, { passive: true })
-    return () => {
-      container.removeEventListener('scroll', onScroll)
-      if (resumeTimer) clearTimeout(resumeTimer)
-      tlRef.current?.resume()
-    }
-  }, deps)
+  }, [isExpanded, options?.duration])
 
   return ref
 }

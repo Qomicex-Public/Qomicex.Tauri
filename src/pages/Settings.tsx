@@ -2269,13 +2269,7 @@ export default function Settings() {
                     <Select
                       value={settings.componentMaterial ?? 'default'}
                       onChange={(v) => {
-                        if (v === 'liquid') {
-                          msgConfirm(t('settings.appearance.componentMaterialLiquidConfirmBody'), t('settings.appearance.componentMaterialLiquidConfirmTitle')).then((ok) => {
-                            if (ok) update('componentMaterial', v as 'default' | 'frosted' | 'acrylic' | 'aero' | 'liquid')
-                          })
-                        } else {
-                          update('componentMaterial', v as 'default' | 'frosted' | 'acrylic' | 'aero' | 'liquid')
-                        }
+                        update('componentMaterial', v as 'default' | 'frosted' | 'acrylic' | 'aero')
                       }}
                       className="w-48"
                     >
@@ -2283,16 +2277,9 @@ export default function Settings() {
                       <SelectOption value="frosted">{t('settings.appearance.componentMaterialFrosted')}</SelectOption>
                       <SelectOption value="acrylic">{t('settings.appearance.componentMaterialAcrylic')}</SelectOption>
                       <SelectOption value="aero">{t('settings.appearance.componentMaterialAero')}</SelectOption>
-                      <SelectOption value="liquid">{t('settings.appearance.componentMaterialLiquidPreview')}</SelectOption>
                     </Select>
                   }
                 />
-                {settings.componentMaterial === 'liquid' && (
-                  <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-600 dark:text-amber-400">
-                    <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />
-                    <span>{t('settings.appearance.componentMaterialLiquidWarning')}</span>
-                  </div>
-                )}
                 {settings.componentMaterial !== 'default' && (
                   <div className="space-y-2 px-4 py-3">
                     <div className="flex items-center gap-3">
