@@ -55,9 +55,31 @@ export function attachHost(host: HTMLDivElement) {
  * 不支持时不能靠 `appendChild` 搬动活着的 iframe：那会重建浏览上下文、重跑插件脚本，
  * 而且每次进出插件页都重来一遍（不是一次）。那种环境下改为固定宿主位置 + 纯 CSS
  * 呈现切换（见 mountHost / unmountHost），节点始终不离开原来的父节点。
+ *
+ * macOS WKWebView 单独处理：即使 `Element.prototype.moveBefore` 存在也不能用——
+ * iframe 被搬进页面容器后命中测试失效，pointerdown / click / keydown 都到不了插件
+ * （issue #390：插件能显示、API 桥接正常，但按钮点不动）。统一走固定覆盖路径。
  */
 function supportsMoveBefore(): boolean {
+  if (isMacWkWebView()) return false
   return typeof (Element.prototype as unknown as { moveBefore?: unknown }).moveBefore === 'function'
+}
+
+/**
+ * 是否运行在 macOS 的 WKWebView（Tauri v2 的 macOS WebView）。
+ *
+ * 用 UA 判断而不是 `navigator.platform`：Node 22 在 macOS 上同样报 `MacIntel`，
+ * 测试环境会被误判成 WKWebView。WKWebView 的 UA 是冻结的 Macintosh UA，不带
+ * Chromium / Firefox 标识；Node 的 UA 是 `Node.js/x.y.z`，两者不会混淆。
+ *
+ * 取自 issue #390 的实测 UA：
+ * `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)`。
+ */
+function isMacWkWebView(): boolean {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent
+  if (!ua.includes('Macintosh') || !ua.includes('AppleWebKit')) return false
+  return !/Chrome|Chromium|Edg|OPR|Firefox/i.test(ua)
 }
 
 /** 同文档搬动节点：`moveBefore` 不重建浏览上下文，插件脚本不会重跑。 */
@@ -75,9 +97,13 @@ function moveNode(node: HTMLElement, parent: HTMLElement) {
 /**
  * 显示态的覆盖：宿主挪进页面容器时铺满容器；无 `moveBefore` 时宿主留在 body，
  * 用 fixed 定位覆盖到页面容器所占的矩形上（纯视觉切换，iframe 不重载）。
+ *
+ * z-index 必须高于启动器主内容容器（`Layout.tsx` 的 `z-10`）：主内容本身是透明的，
+ * 层级低了 iframe 虽然可见，命中测试却会落到主内容上——看得见点不到（issue #390）。
+ * 对话框 / Toast 从 `z-40` 起，覆盖层必须留在它们下面。
  */
 const COVER_STYLE =
-  'position:fixed;overflow:hidden;pointer-events:auto;visibility:visible;z-index:1'
+  'position:fixed;overflow:hidden;pointer-events:auto;visibility:visible;z-index:30'
 
 /**
  * 无 `moveBefore` 时，宿主用 fixed 覆盖页面容器，需要跟随容器位置变化（窗口缩放、

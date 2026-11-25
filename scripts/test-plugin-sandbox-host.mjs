@@ -10,6 +10,7 @@
 //   1. 常驻宿主固定在 document.body 上（不在页面容器里也不会被卸载）
 //   2. 进出插件页面只搬动宿主，节点本身不离开文档（moveBefore 路径）
 //   3. 启用/停用循环后 body 上不残留宿主
+//   4. macOS WKWebView 即使有 moveBefore 也走固定覆盖，覆盖层 z-index 高于主内容（#390）
 //
 // 做法沿用 test-plugin-theme-sync.mjs：用仓库自带 tsc 编译**真实源码**再断言
 // （sandbox-host.ts 无 import，可独立编译）。DOM 用最小 stub 顶替。
@@ -53,7 +54,7 @@ function checkNode(name, actual, expected) {
 }
 
 /** 最小 DOM stub：只覆盖 sandbox-host.ts 用到的部分。 */
-function installDomStub({ moveBefore = true } = {}) {
+function installDomStub({ moveBefore = true, userAgent = 'Node.js/test' } = {}) {
   class FakeElement {
     constructor(tag) {
       this.tagName = tag.toUpperCase()
@@ -126,6 +127,12 @@ function installDomStub({ moveBefore = true } = {}) {
     addEventListener() {},
     removeEventListener() {},
   }
+  // WKWebView 判定只看 UA（不看 navigator.platform：Node 在 macOS 上也报 MacIntel）
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { userAgent },
+    configurable: true,
+    writable: true,
+  })
   return { body, documentElement, FakeElement }
 }
 
@@ -240,10 +247,30 @@ try {
   checkNode('无 moveBefore 时宿主不搬家（iframe 不重载）', host2.parentElement, globalThis.document.body)
   check('无 moveBefore 时改为固定定位覆盖', host2.style.cssText.includes('position:fixed'), true)
   check('无 moveBefore 时对齐容器几何', host2.style.cssText.includes('left:64px') && host2.style.cssText.includes('width:800px'), true)
+  check('覆盖层 z-index 高于主内容 z-10、低于对话框 z-40', host2.style.cssText.includes('z-index:30'), true)
   check('无 moveBefore 时可见', host2.getAttribute('aria-hidden'), null)
   noMove.unmountHost(host2)
   checkNode('无 moveBefore 时退回隐藏位仍是同一父节点', host2.parentElement, globalThis.document.body)
   check('无 moveBefore 时恢复隐藏样式', host2.style.cssText, HIDDEN_HOST_STYLE)
+
+  // ---- macOS WKWebView（issue #390）：即使有 moveBefore 也不搬动，固定覆盖 ----
+  // 实测 UA 来自 issue：WKWebView 不带 Chrome/Safari 标识；Node 的 UA 不含 Macintosh。
+  const MAC_WK_UA =
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)'
+  const wk = reloadWithStub({ moveBefore: true, userAgent: MAC_WK_UA })
+  const host3 = wk.createHost('mac-plugin')
+  wk.attachHost(host3)
+  const page3 = globalThis.document.createElement('div')
+  page3.getBoundingClientRect = () => ({ left: 240, top: 48, width: 1200, height: 800 })
+  globalThis.document.body.appendChild(page3)
+  wk.mountHost(host3, page3)
+  checkNode('WKWebView 有 moveBefore 时也不搬动宿主', host3.parentElement, globalThis.document.body)
+  check('WKWebView 改用固定覆盖', host3.style.cssText.includes('position:fixed'), true)
+  check('WKWebView 覆盖层几何跟随目标矩形', host3.style.cssText.includes('left:240px') && host3.style.cssText.includes('height:800px'), true)
+  check('WKWebView 覆盖层 z-index 30', host3.style.cssText.includes('z-index:30'), true)
+  wk.unmountHost(host3)
+  checkNode('WKWebView 退回隐藏位仍是同一父节点', host3.parentElement, globalThis.document.body)
+  check('WKWebView 恢复隐藏样式', host3.style.cssText, wk.HIDDEN_HOST_STYLE)
 
   console.log(`\n[test-plugin-sandbox-host] OK — ${checks} 项断言通过`)
 } catch (err) {
