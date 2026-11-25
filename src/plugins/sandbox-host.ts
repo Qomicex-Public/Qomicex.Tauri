@@ -66,20 +66,18 @@ function supportsMoveBefore(): boolean {
 }
 
 /**
- * 是否运行在 macOS 的 WKWebView（Tauri v2 的 macOS WebView）。
+ * 是否运行在 macOS（Tauri 在 macOS 上恒为 WKWebView）。
  *
- * 用 UA 判断而不是 `navigator.platform`：Node 22 在 macOS 上同样报 `MacIntel`，
- * 测试环境会被误判成 WKWebView。WKWebView 的 UA 是冻结的 Macintosh UA，不带
- * Chromium / Firefox 标识；Node 的 UA 是 `Node.js/x.y.z`，两者不会混淆。
+ * 平台判断就够：Tauri v2 的 macOS WebView 只有 WKWebView，Intel 与 Apple Silicon
+ * 没有区别，`navigator.platform` 在两者上都是 `MacIntel`。WKWebView 即使暴露
+ * `moveBefore`，把 iframe 搬进页面容器后同样收不到事件，所以统一走固定覆盖路径
+ * （issue #390）。
  *
- * 取自 issue #390 的实测 UA：
- * `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)`。
+ * 测试脚本会整体替换 `globalThis.navigator`，Node 测试环境不受宿主平台影响。
  */
 function isMacWkWebView(): boolean {
   if (typeof navigator === 'undefined') return false
-  const ua = navigator.userAgent
-  if (!ua.includes('Macintosh') || !ua.includes('AppleWebKit')) return false
-  return !/Chrome|Chromium|Edg|OPR|Firefox/i.test(ua)
+  return /^Mac/.test(navigator.platform ?? '')
 }
 
 /** 同文档搬动节点：`moveBefore` 不重建浏览上下文，插件脚本不会重跑。 */

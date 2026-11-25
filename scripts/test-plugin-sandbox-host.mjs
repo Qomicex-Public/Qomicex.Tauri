@@ -54,7 +54,7 @@ function checkNode(name, actual, expected) {
 }
 
 /** 最小 DOM stub：只覆盖 sandbox-host.ts 用到的部分。 */
-function installDomStub({ moveBefore = true, userAgent = 'Node.js/test' } = {}) {
+function installDomStub({ moveBefore = true, platform = 'Win32' } = {}) {
   class FakeElement {
     constructor(tag) {
       this.tagName = tag.toUpperCase()
@@ -127,9 +127,10 @@ function installDomStub({ moveBefore = true, userAgent = 'Node.js/test' } = {}) 
     addEventListener() {},
     removeEventListener() {},
   }
-  // WKWebView 判定只看 UA（不看 navigator.platform：Node 在 macOS 上也报 MacIntel）
+  // sandbox-host 用 navigator.platform 判断 macOS；测试必须自己指定平台，
+  // 否则 macOS 开发者本机跑测试时 Node 会返回 MacIntel，顶掉 moveBefore 分支。
   Object.defineProperty(globalThis, 'navigator', {
-    value: { userAgent },
+    value: { platform },
     configurable: true,
     writable: true,
   })
@@ -254,10 +255,8 @@ try {
   check('无 moveBefore 时恢复隐藏样式', host2.style.cssText, HIDDEN_HOST_STYLE)
 
   // ---- macOS WKWebView（issue #390）：即使有 moveBefore 也不搬动，固定覆盖 ----
-  // 实测 UA 来自 issue：WKWebView 不带 Chrome/Safari 标识；Node 的 UA 不含 Macintosh。
-  const MAC_WK_UA =
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)'
-  const wk = reloadWithStub({ moveBefore: true, userAgent: MAC_WK_UA })
+  // Tauri 在 macOS 上恒为 WKWebView，Intel / Apple Silicon 的 navigator.platform 都是 MacIntel。
+  const wk = reloadWithStub({ moveBefore: true, platform: 'MacIntel' })
   const host3 = wk.createHost('mac-plugin')
   wk.attachHost(host3)
   const page3 = globalThis.document.createElement('div')

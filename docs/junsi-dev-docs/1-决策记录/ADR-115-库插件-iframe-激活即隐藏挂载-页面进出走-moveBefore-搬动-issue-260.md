@@ -140,8 +140,8 @@ l4 插件（`render: "webview"` 或 `layers: ["l4"]`）跑在独立 WebviewWindo
 修复：
 
 - `COVER_STYLE` 的 `z-index` 1 → 30：高于主内容 `z-10`，低于对话框 / Toast（`z-40` 起）。
-- `supportsMoveBefore()` 在 macOS WKWebView 上恒返回 false，统一用覆盖路径。判定只看 `navigator.userAgent`（Macintosh + AppleWebKit 且不带 Chromium / Firefox 标识）——**不用 `navigator.platform`**：Node 22 在 macOS 上也报 `MacIntel`，会把非浏览器测试环境误判成 WKWebView。
-- 回归测试新增：WKWebView UA + 存在 moveBefore 时宿主不搬家、`position:fixed`、z-index 30、几何跟随目标矩形；无 moveBefore 路径同样断言 z-index 30。
+- `supportsMoveBefore()` 在 macOS 上恒返回 false，统一用覆盖路径。判定用 `navigator.platform`（`Mac` 前缀）即可：Tauri v2 在 macOS 上只有 WKWebView，Intel 与 Apple Silicon 的 platform 都是 `MacIntel`，不存在架构差异；测试脚本整体替换 `globalThis.navigator` 并显式指定 platform，Node 测试环境不受宿主平台影响。
+- 回归测试新增：platform 为 `MacIntel` 且存在 moveBefore 时宿主不搬家、`position:fixed`、z-index 30、几何跟随目标矩形；无 moveBefore 路径同样断言 z-index 30。
 
 验证：`pnpm run test:plugin-sandbox-host` 124 项断言通过；只回退 `sandbox-host.ts` 时该测试失败（WKWebView 断言走到 moveBefore 分支）。
 
