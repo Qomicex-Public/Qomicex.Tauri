@@ -304,7 +304,9 @@ const MODS_CACHE_EMPTY_TTL_SECS: i64 = 5 * 60;
 /// v5：jar 元数据解析按实例 loader 选侧（issue #255）——旧缓存里 Forge 实例的
 /// dependencies 取自 fabric.mod.json，含着 `fabric`/`fabricloader` 等 Fabric 侧依赖，
 /// 不失效就会继续误报「缺少 fabric 前置」。
-const MODS_CACHE_SCHEMA: u32 = 5;
+/// v6：解析 `provides` 别名（issue #373）——旧缓存的 providesIds 只有嵌套 jar id，
+/// FFAPI 声明的 `fabric` / `fabric-api` 匹配不上，不失效会继续误报「缺少 Fabric API」。
+const MODS_CACHE_SCHEMA: u32 = 6;
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -60,8 +60,24 @@ issue #363：Forge/NeoForge 整合包用信雅互联（Sinytra Connector）加�
 - 只映射 `fabric` 前缀；若将来 FFAPI 改了命名规则或 Connector 又换 id，需要同步更新常量。
 - 无后端/缓存变更，回滚只需还原前端文件与脚本。
 
+## 修订（2026-11-25）：v1.0 的 Connector 判定从未生效（issue #373 评论）
+
+实测两个真实 jar 后修正前提：
+
+1. `Connector-1.0.0-beta.49+1.20.1.jar` **没有** `META-INF/mods.toml` 也没有 `fabric.mod.json`——它是 Forge 的 `IModLocator`（条目只有 `META-INF/services`、class、`mappings.tsrg`）。静态扫描结果里不存在 `connector` / `connectormod` 这个模组，所以 v1.0 的 `connectorPresent` 恒为 false，归一逻辑从未生效。
+2. `fabric-api-0.92.6+1.11.15+1.20.1.jar`（FFAPI）的 `META-INF/mods.toml`：`modId = "fabric_api"`，`provides = ["fabric", "fabric-api"]`；子模块是 `META-INF/jarjar/*.jar` 嵌套 jar，id 保持上游连字符（`fabric-lifecycle-events-v1`）。
+3. core 原先只收集嵌套 jar 的 id，不解析 `provides`，因此 `fabric` / `fabric-api` 永远匹配不上。
+
+修正：
+
+- core（`qomicex-core-rust/src/services/local/mods.rs`）解析 `fabric.mod.json` 与 `mods.toml` 的 `provides` 并入 `providesIds`（trim、去重、排除自身 id）；per-jar 缓存版本 5 → 6，后端 mods 缓存 schema 5 → 6，升级后自动重扫。
+- 前端开关从「Connector mod id 存在」改为「**启用中的 FFAPI 存在**」（`fabric_api` / `fabric-api`）：FFAPI 只在 Connector 环境里存在，且不依赖 Connector 的模组元数据。
+- 归一改为双向（`fabric-*` ↔ `fabric_*`），覆盖依赖写成 FML 下划线 id 的情况；仍只与 FFAPI 自己提供的 id 比较。
+- 回归脚本改为「有 FFAPI 放行 / 无 FFAPI 仍报 / 双向归一」。
+
 ## 修订记录
 
 | 日期 | 版本 | 修改内容 | 修改人 |
 |---|---|---|---|
 | 2026-11-18 | v1.0 | 初版创建 | AI Agent |
+| 2026-11-25 | v1.1 | Connector 判定改为 FFAPI 存在性；core 解析 provides；双向归一；缓存版本 +1（issue #373） | AI Agent |
