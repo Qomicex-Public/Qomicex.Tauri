@@ -127,3 +127,22 @@ l4 插件（`render: "webview"` 或 `layers: ["l4"]`）跑在独立 WebviewWindo
 - `src/plugins/sandbox-host.ts`、`src/plugins/sandbox.ts`、`src/plugins/plugin-registry.ts`、`src/plugins/l4-registry-bridge.ts`、`src/plugins/l4-registry.ts`、`src/plugins/webview-bridge.ts`、`src/pages/PluginPage.tsx`、`src/pages/PluginWebviewPage.tsx`、`src/plugins/plugin-loader.tsx`、`src/plugins/PluginSlot.tsx`
 - ADR-049：插件激活的全局副作用必须与停用成对清理
 - ADR-054：l4 远程 WebView 独立窗口
+
+## 修订（2026-11-25）：macOS WKWebView 下 iframe 无法交互（issue #390）
+
+用户在 macOS（WKWebView）上打开 L2 插件：iframe 正常渲染、API 桥接正常，但按钮点不动、按键无反应；同一插件在 Chrome mock 与 `render: "inline"` 下正常。
+
+根因两条：
+
+1. **覆盖层 z-index 低于主内容**：macOS 上走的是「宿主留在 body + fixed 覆盖」路径，`COVER_STYLE` 只有 `z-index:1`；启动器主内容容器是 `Layout.tsx` 的 `z-10`。主内容本身透明，iframe 可见，但命中测试落到主内容上，pointerdown / click / keydown 全部进不了 iframe。
+2. **WKWebView 的 `moveBefore` 不可用/不可靠**：即使 `Element.prototype.moveBefore` 存在，把 iframe 搬进页面容器后同样收不到事件，必须固定走覆盖路径。
+
+修复：
+
+- `COVER_STYLE` 的 `z-index` 1 → 30：高于主内容 `z-10`，低于对话框 / Toast（`z-40` 起）。
+- `supportsMoveBefore()` 在 macOS 上恒返回 false，统一用覆盖路径。判定用 `navigator.platform`（`Mac` 前缀）即可：Tauri v2 在 macOS 上只有 WKWebView，Intel 与 Apple Silicon 的 platform 都是 `MacIntel`，不存在架构差异；测试脚本整体替换 `globalThis.navigator` 并显式指定 platform，Node 测试环境不受宿主平台影响。
+- 回归测试新增：platform 为 `MacIntel` 且存在 moveBefore 时宿主不搬家、`position:fixed`、z-index 30、几何跟随目标矩形；无 moveBefore 路径同样断言 z-index 30。
+
+验证：`pnpm run test:plugin-sandbox-host` 124 项断言通过；只回退 `sandbox-host.ts` 时该测试失败（WKWebView 断言走到 moveBefore 分支）。
+
+限制：维护者无 macOS 设备，只能在 Windows/Linux 上验证逻辑与回归测试；真机交互需等 macOS 用户反馈。
