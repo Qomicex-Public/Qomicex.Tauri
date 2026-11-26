@@ -145,12 +145,15 @@ try {
   check('骨架溶解：加载完成后占位已移除', skeletonAfter === 0, `${skeletonAfter} 个残留`)
 
   const skeletonFrames = await page.evaluate(() => window.__qmxSkeletonFrames)
-  const enterFirst = skeletonFrames[0]?.opacity ?? 1
-  const enterMax = Math.max(...skeletonFrames.map((f) => f.opacity))
+  const firstOpaque = skeletonFrames.findIndex((f) => f.opacity >= 0.99)
+  const enterFrames = firstOpaque === -1 ? skeletonFrames : skeletonFrames.slice(0, firstOpaque + 1)
+  const enterFirst = enterFrames[0]?.opacity ?? 1
+  // 只截取「挂载 → 首次满不透明」这一段：退场淡出同样会经过中间值，不能混进来。
+  const enterMid = enterFrames.filter((f) => f.opacity > 0.05 && f.opacity < 0.95).length
   check(
-    '骨架入场：挂载首帧淡入而非瞬间满不透明',
-    skeletonFrames.length > 2 && enterFirst < 0.9 && enterMax > 0.99,
-    `${skeletonFrames.length} 帧，首帧 ${enterFirst.toFixed(2)}，最高 ${enterMax.toFixed(2)}`,
+    '骨架入场：首帧淡入且有中间帧',
+    enterFrames.length > 2 && enterFirst < 0.9 && enterMid >= 2,
+    `${enterFrames.length} 帧，首帧 ${enterFirst.toFixed(2)}，中间帧 ${enterMid}`,
   )
 
   await page.waitForTimeout(900)

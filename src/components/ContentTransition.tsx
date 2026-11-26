@@ -84,12 +84,17 @@ export function ContentTransition({
     contentAnimatedRef.current = false
   }
 
+  const showSkeleton = phase !== 'ready' && (resolvedSkeletonVisible || everShownRef.current)
+  const showContent = phase !== 'loading'
+
   // loading 翻转：进入 loading，或开始骨架退场
   useEffect(() => {
     const wasLoading = prevLoadingRef.current
     prevLoadingRef.current = loading
 
     if (loading) {
+      // 仅骨架可见性变化（loading 未翻）时跳过重置：否则会杀掉布局效果刚启动的入场补间
+      if (wasLoading) return
       stopAll()
       const skeletonEl = skeletonRef.current
       if (skeletonEl) {
@@ -242,11 +247,12 @@ export function ContentTransition({
     }
   }, [phase, mode, enterTick])
 
-  // 骨架入场：延迟 400ms 后挂载时整块淡入。只做 opacity——骨架里的玻璃占位卡
-  // 不能有祖先 transform，否则 backdrop-filter 停止采样（ADR-141 5.1）。
+  // 骨架入场：按「骨架是否显示」而非可见性标志触发，重新挂载时也能淡入。
+  // 只做 opacity——骨架里的玻璃占位卡不能有祖先 transform，否则 backdrop-filter 停止采样（ADR-141 5.1）。
   useLayoutEffect(() => {
+    if (!showSkeleton) return
     const skeletonEl = skeletonRef.current
-    if (!skeletonEl || !resolvedSkeletonVisible) return
+    if (!skeletonEl) return
     const motion = readMotion()
     if (!motion.enabled) return
     track(gsap.fromTo(skeletonEl,
@@ -256,16 +262,16 @@ export function ContentTransition({
         duration: sec(200, motion),
         ease: 'power2.out',
         overwrite: 'auto',
-        onComplete: () => gsap.set(skeletonEl, { clearProps: 'opacity' }),
+        onComplete: () => {
+          gsap.set(skeletonEl, { clearProps: 'opacity' })
+          if (containsGlass(skeletonEl)) queueGlassRepaint()
+        },
       }))
-  }, [resolvedSkeletonVisible])
+  }, [showSkeleton])
 
   useEffect(() => () => {
     stopAll()
   }, [])
-
-  const showSkeleton = phase !== 'ready' && (resolvedSkeletonVisible || everShownRef.current)
-  const showContent = phase !== 'loading'
 
   return (
     <div ref={wrapRef} className={cn('relative', className)}>
