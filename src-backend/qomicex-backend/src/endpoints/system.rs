@@ -332,9 +332,25 @@ async fn open_folder(Json(body): Json<OpenPathRequest>) -> ApiResult<StatusCode>
             .to_string_lossy()
             .into_owned();
     }
-    let _ = std::fs::create_dir_all(&path);
-    let _ = open::that_detached(&path);
+    ensure_dir_for_open(std::path::Path::new(&path))?;
+    open::that_detached(&path)
+        .map_err(|e| ApiError::internal(format!("Open folder failed: {e}")))?;
     Ok(StatusCode::OK)
+}
+
+/// 只补齐目标目录本身。父目录不存在说明宿主目录（如已删除实例的版本目录）已消失，
+/// 此时再 `create_dir_all` 会把它重建出来，删除实例后就留下一个空目录。
+fn ensure_dir_for_open(target: &std::path::Path) -> ApiResult<()> {
+    if let Some(parent) = target.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            return Err(ApiError::not_found(
+                "PATH_NOT_FOUND",
+                format!("Target directory no longer exists: {}", target.display()),
+            ));
+        }
+    }
+    std::fs::create_dir_all(target)?;
+    Ok(())
 }
 
 async fn open_backgrounds() -> ApiResult<StatusCode> {
@@ -789,5 +805,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         assert_eq!(stat_files_in_dir(&dir.join("nonexistent"), "json").files, 0);
+    }
+
+    #[test]
+    fn ensure_dir_for_open_skips_missing_parent() {
+        let root =
+            std::env::temp_dir().join(format!("qml-open-folder-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let target = root.join("versions").join("GTNH").join("mods");
+
+        std::fs::create_dir_all(root.join("versions").join("GTNH")).unwrap();
+        ensure_dir_for_open(&target).unwrap();
+        assert!(target.is_dir());
+
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(ensure_dir_for_open(&target).is_err());
+        assert!(!root.exists(), "missing parent must not be recreated");
     }
 }
