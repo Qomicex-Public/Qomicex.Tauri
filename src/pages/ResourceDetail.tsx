@@ -821,7 +821,7 @@ export default function ResourceDetailPage() {
           </div>
         </Card>
       ) : (
-        <>
+        <div className="space-y-6">
           <Card className="overflow-hidden">
             <CardContent className="p-0">
               <div className="grid gap-0 lg:grid-cols-[220px_minmax(0,1fr)]">
@@ -1251,7 +1251,7 @@ export default function ResourceDetailPage() {
             </Card>
             </div>
           </div>
-        </>
+        </div>
       )}
       </ContentTransition>
         </div>

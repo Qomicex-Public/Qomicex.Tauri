@@ -32,8 +32,16 @@ function check(name, ok, detail = '') {
  */
 const FRAME_RECORDER = () => {
   window.__qmxFrames = []
+  window.__qmxSkeletonFrames = []
   const start = performance.now()
   const tick = () => {
+    const skeleton = document.querySelector('main [data-skeleton]')
+    if (skeleton) {
+      window.__qmxSkeletonFrames.push({
+        t: Math.round(performance.now() - start),
+        opacity: Number(getComputedStyle(skeleton).opacity),
+      })
+    }
     const node = document.querySelector('main [data-key]')
     let target = node
     if (node) {
@@ -135,6 +143,15 @@ try {
   await page.waitForSelector('main [data-key]', { timeout: 8000 })
   const skeletonAfter = await page.$$eval('main .animate-shimmer', (nodes) => nodes.length)
   check('骨架溶解：加载完成后占位已移除', skeletonAfter === 0, `${skeletonAfter} 个残留`)
+
+  const skeletonFrames = await page.evaluate(() => window.__qmxSkeletonFrames)
+  const enterFirst = skeletonFrames[0]?.opacity ?? 1
+  const enterMax = Math.max(...skeletonFrames.map((f) => f.opacity))
+  check(
+    '骨架入场：挂载首帧淡入而非瞬间满不透明',
+    skeletonFrames.length > 2 && enterFirst < 0.9 && enterMax > 0.99,
+    `${skeletonFrames.length} 帧，首帧 ${enterFirst.toFixed(2)}，最高 ${enterMax.toFixed(2)}`,
+  )
 
   await page.waitForTimeout(900)
 

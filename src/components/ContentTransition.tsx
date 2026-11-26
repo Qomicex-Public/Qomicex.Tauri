@@ -242,6 +242,24 @@ export function ContentTransition({
     }
   }, [phase, mode, enterTick])
 
+  // 骨架入场：延迟 400ms 后挂载时整块淡入。只做 opacity——骨架里的玻璃占位卡
+  // 不能有祖先 transform，否则 backdrop-filter 停止采样（ADR-141 5.1）。
+  useLayoutEffect(() => {
+    const skeletonEl = skeletonRef.current
+    if (!skeletonEl || !resolvedSkeletonVisible) return
+    const motion = readMotion()
+    if (!motion.enabled) return
+    track(gsap.fromTo(skeletonEl,
+      { opacity: 0 },
+      {
+        opacity: 1,
+        duration: sec(200, motion),
+        ease: 'power2.out',
+        overwrite: 'auto',
+        onComplete: () => gsap.set(skeletonEl, { clearProps: 'opacity' }),
+      }))
+  }, [resolvedSkeletonVisible])
+
   useEffect(() => () => {
     stopAll()
   }, [])
@@ -254,6 +272,7 @@ export function ContentTransition({
       {showSkeleton && (
         <div
           ref={skeletonRef}
+          data-skeleton
           className={mode === 'overlay' && phase === 'leaving' ? 'pointer-events-none absolute inset-0 z-10' : undefined}
         >
           {skeleton}
