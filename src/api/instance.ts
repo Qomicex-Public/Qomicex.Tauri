@@ -116,6 +116,10 @@ export interface LaunchInstanceOptions {
   joinServer?: string
   joinWorld?: string
   accountUuid?: string
+  /** 前端按窗口预设换算后的像素宽高；fullscreen 为 true 时忽略宽高 */
+  windowWidth?: number
+  windowHeight?: number
+  windowFullscreen?: boolean
 }
 
 /// 启动实例。可被插件 hook（`hook:launchInstance`）：before 修改 options

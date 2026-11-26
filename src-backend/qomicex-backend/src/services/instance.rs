@@ -78,6 +78,17 @@ pub struct GameInstance {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modpack_version_published_at: Option<String>,
     pub skip_integrity_check: bool,
+    /// 游戏窗口模式：缺失/null = 跟随全局；default/small/medium/large/fullscreen/custom。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game_window_mode: Option<String>,
+    /// 自定义窗口宽/高（像素），仅 `game_window_mode = "custom"` 时使用。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game_window_width: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game_window_height: Option<i32>,
+    /// 实例进程优先级：缺失/null = 跟随全局；below_normal/normal/above_normal/high。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_priority: Option<String>,
     // 对应 C# [JsonIgnore(WhenWritingNull)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_game_dir: Option<String>,
@@ -134,6 +145,10 @@ impl Default for GameInstance {
             modpack_origin: None,
             modpack_version_published_at: None,
             skip_integrity_check: false,
+            game_window_mode: None,
+            game_window_width: None,
+            game_window_height: None,
+            process_priority: None,
             resolved_game_dir: None,
             custom_group_ids: Vec::new(),
             remark: None,
@@ -617,6 +632,30 @@ impl InstanceService {
             "skipIntegrityCheck",
             old.skip_integrity_check,
             next.skip_integrity_check,
+        );
+        track(
+            &mut cleared,
+            "gameWindowMode",
+            old.game_window_mode.is_some(),
+            next.game_window_mode.is_some(),
+        );
+        track(
+            &mut cleared,
+            "gameWindowWidth",
+            old.game_window_width.is_some(),
+            next.game_window_width.is_some(),
+        );
+        track(
+            &mut cleared,
+            "gameWindowHeight",
+            old.game_window_height.is_some(),
+            next.game_window_height.is_some(),
+        );
+        track(
+            &mut cleared,
+            "processPriority",
+            old.process_priority.is_some(),
+            next.process_priority.is_some(),
         );
         track(
             &mut cleared,
@@ -1503,6 +1542,18 @@ impl InstanceService {
         if target.version_isolation.is_none() && !cleared.contains("versionIsolation") {
             target.version_isolation = source.version_isolation;
         }
+        if target.game_window_mode.is_none() && !cleared.contains("gameWindowMode") {
+            target.game_window_mode = source.game_window_mode.clone();
+        }
+        if target.game_window_width.is_none() && !cleared.contains("gameWindowWidth") {
+            target.game_window_width = source.game_window_width;
+        }
+        if target.game_window_height.is_none() && !cleared.contains("gameWindowHeight") {
+            target.game_window_height = source.game_window_height;
+        }
+        if target.process_priority.is_none() && !cleared.contains("processPriority") {
+            target.process_priority = source.process_priority.clone();
+        }
         if !target.skip_integrity_check
             && source.skip_integrity_check
             && !cleared.contains("skipIntegrityCheck")
@@ -1699,6 +1750,18 @@ impl InstanceService {
         if cleared("skipIntegrityCheck") {
             slot.skip_integrity_check = cur.skip_integrity_check;
         }
+        if cleared("gameWindowMode") {
+            slot.game_window_mode = cur.game_window_mode.clone();
+        }
+        if cleared("gameWindowWidth") {
+            slot.game_window_width = cur.game_window_width;
+        }
+        if cleared("gameWindowHeight") {
+            slot.game_window_height = cur.game_window_height;
+        }
+        if cleared("processPriority") {
+            slot.process_priority = cur.process_priority.clone();
+        }
         if cleared("customGroupIds") {
             slot.custom_group_ids = cur.custom_group_ids.clone();
         }
@@ -1742,6 +1805,18 @@ impl InstanceService {
         }
         if cur.skip_integrity_check != orig.skip_integrity_check {
             slot.skip_integrity_check = cur.skip_integrity_check;
+        }
+        if cur.game_window_mode != orig.game_window_mode {
+            slot.game_window_mode = cur.game_window_mode.clone();
+        }
+        if cur.game_window_width != orig.game_window_width {
+            slot.game_window_width = cur.game_window_width;
+        }
+        if cur.game_window_height != orig.game_window_height {
+            slot.game_window_height = cur.game_window_height;
+        }
+        if cur.process_priority != orig.process_priority {
+            slot.process_priority = cur.process_priority.clone();
         }
         if cur.account_name != orig.account_name {
             slot.account_name = cur.account_name.clone();

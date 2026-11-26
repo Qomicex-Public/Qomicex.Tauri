@@ -51,6 +51,10 @@ const ALLOWED_KEYS: &[&str] = &[
     "modpackOrigin",
     "modpackVersionPublishedAt",
     "skipIntegrityCheck",
+    "gameWindowMode",
+    "gameWindowWidth",
+    "gameWindowHeight",
+    "processPriority",
     "customGroupIds",
     "remark",
 ];

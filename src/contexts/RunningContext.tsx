@@ -5,6 +5,8 @@ import { createContext, useContext, useState, useRef, useCallback, useEffect, us
 import type { ReactNode } from 'react'
 import { launchInstance as apiLaunchInstance, getLaunchProgress, cancelLaunch as apiCancelLaunch, getInstance } from '../api/instance.ts'
 import type { LaunchInstanceOptions } from '../api/instance.ts'
+import { getSettings } from '../api/settings.ts'
+import { resolveGameWindowArgs } from '../lib/gameWindow.ts'
 import { getJavaRequirement, searchJava, getJavaDownloadCatalog, startJavaDownload, getJavaDownloadProgress, cancelJavaDownload } from '../api/java.ts'
 import { getProcessResourceUsage } from '../api/system.ts'
 import { ApiError } from '../api/client.ts'
@@ -334,7 +336,17 @@ export function RunningProvider({ children }: { children: ReactNode }) {
 
     let result: LaunchResult
     try {
-      result = await apiLaunchInstance(id, quickJoin)
+      // 窗口参数在启动瞬间换算（屏幕/DPI 可能变）；实例 null = 跟随全局。
+      let windowArgs: LaunchInstanceOptions = {}
+      try {
+        const [inst, settings] = await Promise.all([getInstance(id), Promise.resolve(getSettings())])
+        windowArgs = resolveGameWindowArgs(
+          { mode: inst.gameWindowMode, width: inst.gameWindowWidth, height: inst.gameWindowHeight },
+          { mode: settings.gameWindowMode, width: settings.gameWindowWidth, height: settings.gameWindowHeight },
+        )
+      } catch { /* 读不到实例/设置时不传窗口参数，不阻塞启动 */ }
+
+      result = await apiLaunchInstance(id, { ...quickJoin, ...windowArgs })
     } catch (e) {
       if (launchSeqRef.current.get(id) !== seq) return { success: false, processId: 0 } as LaunchResult
       // 请求异常（超时/后端不可达）：清掉启动 dialog，避免残留"准备启动"无法关闭

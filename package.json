@@ -24,6 +24,7 @@
     "verify:anim": "node scripts/verify-anim.mjs",
     "test:i18n-steps": "node scripts/test-i18n-step-keys.mjs",
     "test:i18n-keys": "node scripts/test-i18n-keys.mjs",
+    "test:game-window": "node scripts/test-game-window.mjs",
     "test:mod-deps": "node scripts/test-mod-dependencies.mjs",
     "test:plugin-theme-sync": "node scripts/test-plugin-theme-sync.mjs",
     "test:plugin-sandbox-host": "node scripts/test-plugin-sandbox-host.mjs",

@@ -352,6 +352,15 @@ pub struct SettingsResponse {
     /// 应用时降级为 normal（见 [`crate::services::hardware`]）。
     #[serde(default)]
     pub process_priority: Option<String>,
+    /// 游戏窗口模式：`None` = 不指定（沿用游戏默认）；其余为
+    /// `"default"` / `"small"` / `"medium"` / `"large"` / `"fullscreen"` / `"custom"`。
+    #[serde(default)]
+    pub game_window_mode: Option<String>,
+    /// 自定义窗口宽/高（像素），仅 `game_window_mode = "custom"` 时使用。
+    #[serde(default)]
+    pub game_window_width: Option<i32>,
+    #[serde(default)]
+    pub game_window_height: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -432,6 +441,9 @@ impl Default for SettingsResponse {
             update_auto_install: Some(true),
             launch_hardware_boost: Some(true),
             process_priority: Some("normal".to_string()),
+            game_window_mode: None,
+            game_window_width: None,
+            game_window_height: None,
         }
     }
 }
@@ -495,9 +507,25 @@ fn normalize_loaded_settings(s: &mut SettingsResponse) {
     ) {
         s.process_priority = Some("normal".to_string());
     }
+    // 窗口模式/宽高的脏值收敛为「不指定」，避免启动参数拿到半套值。
+    normalize_game_window(s);
     // `gameDir` 落盘后必须是绝对路径：相对值只可能来自旧配置/手改，交给
     // [`normalize_game_dir`] 一次解析干净，避免每个消费点各自按 cwd 猜。
     s.game_dir = normalize_game_dir(&s.game_dir);
+}
+
+/// 读盘与保存（PUT /settings）共用，保证内存与磁盘一致。
+pub(crate) fn normalize_game_window(s: &mut SettingsResponse) {
+    s.game_window_mode =
+        crate::services::game_window::normalize_mode(s.game_window_mode.as_deref())
+            .map(str::to_string);
+    s.game_window_width = crate::services::game_window::normalize_dimension(s.game_window_width);
+    s.game_window_height = crate::services::game_window::normalize_dimension(s.game_window_height);
+    if s.game_window_mode.as_deref() == Some("custom")
+        && (s.game_window_width.is_none() || s.game_window_height.is_none())
+    {
+        s.game_window_mode = None;
+    }
 }
 
 /// 旧版「分别选择具体源」→ 新版「一个偏好 + 一个自动开关」的迁移。
@@ -1115,6 +1143,21 @@ mod relay_node_tests {
             );
             normalize_loaded_settings(&mut s);
             assert_eq!(s.auto_select_source, Some(true));
+        }
+
+        /// 自定义模式缺尺寸 = 半套配置，读盘后必须回到「不指定」，避免启动参数落空。
+        #[test]
+        fn custom_window_without_dimensions_is_cleared() {
+            let mut broken = parse(r#""gameWindowMode":"custom","gameWindowWidth":0"#);
+            normalize_loaded_settings(&mut broken);
+            assert_eq!(broken.game_window_mode, None);
+            assert_eq!(broken.game_window_width, None);
+
+            let mut ok =
+                parse(r#""gameWindowMode":"custom","gameWindowWidth":1280,"gameWindowHeight":720"#);
+            normalize_loaded_settings(&mut ok);
+            assert_eq!(ok.game_window_mode.as_deref(), Some("custom"));
+            assert_eq!(ok.game_window_height, Some(720));
         }
     }
 }

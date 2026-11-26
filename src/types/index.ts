@@ -236,6 +236,13 @@ export interface GameInstance {
   isHidden: boolean
   versionIsolation: boolean | null
   isDefault: boolean
+  /** 游戏窗口模式：null = 跟随全局 */
+  gameWindowMode?: string | null
+  /** 仅 mode=custom 时使用 */
+  gameWindowWidth?: number | null
+  gameWindowHeight?: number | null
+  /** 进程优先级：null = 跟随全局 */
+  processPriority?: string | null
   icon: string | null
   iconData: string | null
   modpackName: string | null
@@ -275,6 +282,12 @@ export interface CreateInstanceRequest {
   accessToken?: string
   jvmArgs?: string | null
   versionIsolation?: boolean | null
+  /** 游戏窗口模式：null = 跟随全局 */
+  gameWindowMode?: string | null
+  gameWindowWidth?: number | null
+  gameWindowHeight?: number | null
+  /** 进程优先级：null = 跟随全局 */
+  processPriority?: string | null
   icon?: string
   skipIntegrityCheck?: boolean
   iconData?: string
