@@ -32,8 +32,16 @@ function check(name, ok, detail = '') {
  */
 const FRAME_RECORDER = () => {
   window.__qmxFrames = []
+  window.__qmxSkeletonFrames = []
   const start = performance.now()
   const tick = () => {
+    const skeleton = document.querySelector('main [data-skeleton]')
+    if (skeleton) {
+      window.__qmxSkeletonFrames.push({
+        t: Math.round(performance.now() - start),
+        opacity: Number(getComputedStyle(skeleton).opacity),
+      })
+    }
     const node = document.querySelector('main [data-key]')
     let target = node
     if (node) {
@@ -135,6 +143,18 @@ try {
   await page.waitForSelector('main [data-key]', { timeout: 8000 })
   const skeletonAfter = await page.$$eval('main .animate-shimmer', (nodes) => nodes.length)
   check('骨架溶解：加载完成后占位已移除', skeletonAfter === 0, `${skeletonAfter} 个残留`)
+
+  const skeletonFrames = await page.evaluate(() => window.__qmxSkeletonFrames)
+  const firstOpaque = skeletonFrames.findIndex((f) => f.opacity >= 0.99)
+  const enterFrames = firstOpaque === -1 ? skeletonFrames : skeletonFrames.slice(0, firstOpaque + 1)
+  const enterFirst = enterFrames[0]?.opacity ?? 1
+  // 只截取「挂载 → 首次满不透明」这一段：退场淡出同样会经过中间值，不能混进来。
+  const enterMid = enterFrames.filter((f) => f.opacity > 0.05 && f.opacity < 0.95).length
+  check(
+    '骨架入场：首帧淡入且有中间帧',
+    enterFrames.length > 2 && enterFirst < 0.9 && enterMid >= 2,
+    `${enterFrames.length} 帧，首帧 ${enterFirst.toFixed(2)}，中间帧 ${enterMid}`,
+  )
 
   await page.waitForTimeout(900)
 

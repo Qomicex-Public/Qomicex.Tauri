@@ -329,6 +329,7 @@ const { mounted, ref, closing } = usePresence(open, { enter: 160, exit: 120, y: 
 - **`mode="sequence"`（默认，高度不定）**：上面的三段式，不重叠、无高度动画。
 
 - 总感知约 320ms；骨架与内容不重叠，因此没有高度动画、没有双重布局，也不会有「内容先被骨架压着、解锁时跳一下」的问题。
+- 骨架挂载自身补 200ms `opacity 0→1` 淡入（`power2.out`），避免延迟 400ms 后整块跳出；骨架可能含玻璃占位卡，只做 opacity、不加祖先 transform（同 5.1）。回归断言见 `scripts/verify-anim.mjs`「骨架入场：挂载首帧淡入而非瞬间满不透明」。
 - **沙画感**：`ready` 阶段在内容容器上叠一层普通 `div` 遮罩（`pointer-events-none`，`linear-gradient(hsl(var(--card)/.85), transparent)`），260ms 淡出。**不用 `mask-image`**——ADR-037 已确认遮罩会切断 `backdrop-filter` 采样，玻璃卡片会失效。
 - 列表页与 `useAnimatedList` 天然叠加：卡片自身错位淡入 + 遮罩退去，就是「沙子沉下去、画浮现出来」的观感。玻璃卡片**不参与位移**（理由见 5.1），所以这里不做 6px 上浮。
 - 三道门控：关闭动画 / reduced-motion → 直接 `ready`；`maxFrameRate < 60` → 跳过遮罩层，只保留卡片淡入。
@@ -523,6 +524,7 @@ const { mounted, ref, closing } = usePresence(open, { enter: 160, exit: 120, y: 
 - v2.3 增加 **5.1 毛玻璃硬约束**：确认 WebView2 下 `backdrop-filter` 在合成层动画期间不重采样，规定「玻璃只做自身 opacity、祖先不位移」，动画结束统一 `queueGlassRepaint()`；固定高度容器允许 overlay 交叉淡入；把骨架溶解独立为 **B1.6**，并新增可选的 **B7 预模糊背景**（根治方案）。
 - v2.4 **B7 立项**：新增 [ADR-141](../1-决策记录/ADR-141-毛玻璃改为整页预模糊底并移除卡片级-backdrop-filter.md)，把材质模糊上移到整页静态背景层、卡片去 `backdrop-filter`，拆为 B7.1~B7.4。落地后 5.1 的位移禁令解除，B1.5/B1.6/B2 里的保守参数可恢复。
 - v2.5 按反馈修订 B7：背景模糊改为**全窗口静态模糊层**（不动媒体元素，动态壁纸零改动）；液态玻璃下架并迁移到 `frosted`（B7.0，代码暂存）；补动态壁纸的 12px 封顶与三级降级。
+- v2.6 骨架入场：`ContentTransition` 在骨架挂载时补 200ms opacity 淡入（见 3.7.1），并加回归断言；资源详情内容区补纵向间距。
 
 ---
 
@@ -533,3 +535,4 @@ const { mounted, ref, closing } = usePresence(open, { enter: 160, exit: 120, y: 
 3. **列表整组替换语义**：切换分组时走容器 crossfade（建议，快且不闪），还是逐项「旧项退、新项进」（更"活"，但 60+ 项会掉帧）？
 4. **首批范围**：建议 B0 + B1 + B1.5 + B1.6 一次合入。B1.5 修正列表行为，B1.6 修正骨架硬切，两者都不改调用方契约；B2 起才是观感铺开。
 5. **B7 材质重构**：B7.1~B7.3 已按实测反馈回滚（ADR-141 v1.2），仅保留 B7.0 液态玻璃下架。5.1 的「玻璃只做 opacity」约束继续生效。
+
