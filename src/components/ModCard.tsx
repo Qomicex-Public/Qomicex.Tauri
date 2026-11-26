@@ -17,7 +17,8 @@ import { enableMod, disableMod, deleteMod } from '../api/instance-files.ts'
 import { ApiError } from '../api/client.ts'
 import { updateModsViaDownloadCenter } from '../lib/updateMods.ts'
 import { formatMissingDependency } from '../lib/modDependencies.ts'
-import { openUrl, openPath } from '@tauri-apps/plugin-opener'
+import { openUrl } from '@tauri-apps/plugin-opener'
+import { openFolder } from '../api/settings.ts'
 import { useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import type { ModDependency, ModMetadata, ModUpdateEntry } from '../types/index.ts'
@@ -176,9 +177,9 @@ export default function ModCard({
     {
       label: t('instanceDetail.mods.openModsFolder'),
       onClick: () => {
-        // 失败不能静默：目录缺失 / 平台打开器拒绝时给出可见反馈（与其它资源卡片一致）
+        // 失败不能静默：目录缺失 / 后端打开失败时给出可见反馈（与其它资源卡片一致）
         if (!modsDir) { notify(t('dialogs.common.openFailed'), 'error'); return }
-        openPath(modsDir).catch((e) => {
+        openFolder(modsDir).catch((e) => {
           logError('mod.openFolder', e, { path: modsDir })
           notify(t('dialogs.common.openFailed'), 'error')
         })
