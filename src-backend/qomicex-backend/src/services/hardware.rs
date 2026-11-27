@@ -55,12 +55,15 @@ pub fn prepare_launch(java_path: &str) {
     let _ = java_path;
 }
 
-/// 进程起来之后调用：按设置项调整优先级。
-pub fn apply_priority(pid: i32) {
+/// 进程起来之后调用：实例显式档位优先，`None` 回落到全局设置。
+pub fn apply_priority(pid: i32, instance_level: Option<&str>) {
     if pid <= 0 {
         return;
     }
-    let level = normalize_priority(settings_snapshot().process_priority.as_deref());
+    let level = match instance_level {
+        Some(value) => normalize_priority(Some(value)),
+        None => normalize_priority(settings_snapshot().process_priority.as_deref()),
+    };
     set_priority(pid, level);
 }
 

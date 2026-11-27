@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, ArrowUp, Ban, Bot, Box, Camera, Check, ChevronDown, Clipboard, CopyPlus, Database, Download, Eye, FileOutput, FolderOpen, Gamepad2, Info, Layers, LayoutList, List, ListChecks, MemoryStick, Package, Pen, PenTool, Play, Plus, RotateCcw, RotateCw, Rows3, Save, Search, Server, Settings, ShieldCheck, SlidersHorizontal, SquareTerminal, Star, Sun, Trash2, TriangleAlert, User, Wifi, X } from 'lucide-react'
+import { ArrowLeft, ArrowUp, Ban, Bot, Box, Camera, Check, ChevronDown, Clipboard, CopyPlus, Database, Download, Eye, FileOutput, FolderOpen, Gamepad2, Info, Layers, LayoutList, List, ListChecks, MemoryStick, Monitor, Package, Pen, PenTool, Play, Plus, RotateCcw, RotateCw, Rows3, Save, Search, Server, Settings, ShieldCheck, SlidersHorizontal, SquareTerminal, Star, Sun, Trash2, TriangleAlert, User, Wifi, X } from 'lucide-react'
 import { ArrowUp as ArrowUpData, RotateCw as RotateCwData, Upload as UploadData } from 'lucide'
 import { MorphActionIcon } from '../components/MorphActionIcon.tsx'
 import { SettingRow, SettingSection } from '../components/settings/SettingRow.tsx'
@@ -3060,6 +3060,10 @@ const INSTANCE_PATCH_FIELDS = new Set<string>([
   'customGroupIds',
   'remark',
   'skipIntegrityCheck',
+  'gameWindowMode',
+  'gameWindowWidth',
+  'gameWindowHeight',
+  'processPriority',
 ])
 
 /**
@@ -3085,6 +3089,14 @@ function toInstancePatch(field: string, value: unknown): InstancePatch | null {
   if (field === 'versionIsolation') {
     // undefined 也代表“跟随全局”：必须显式发 null 清除，不能当成“未修改”。
     return { versionIsolation: value === undefined ? null : (value as boolean | null) }
+  }
+  if (field === 'gameWindowMode' || field === 'processPriority') {
+    // 实例侧 null = 跟随全局；重置到初始 undefined 时同样必须发 null。
+    return { [field]: value === undefined ? null : (value as string | null) } as InstancePatch
+  }
+  if (field === 'gameWindowWidth' || field === 'gameWindowHeight') {
+    const num = typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.round(value) : null
+    return { [field]: num } as InstancePatch
   }
   if (field === 'memoryMode') {
     // undefined 代表“恢复默认 auto”：必须显式发 null 清除独立配置里的值。
@@ -3124,6 +3136,7 @@ export default function InstanceDetailPage() {
   const javaRuntimes = useJavaRuntimes()
   const [accounts, setAccounts] = useState<Account[]>([])
   const [form, setForm] = useState<GameInstance | null>(null)
+  const isWindows = !navigator.userAgent.includes('Mac') && !navigator.userAgent.includes('Linux')
   const initialFormRef = useRef<GameInstance | null>(null)
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
   const [memoryMode, setMemoryMode] = useState<'auto' | 'custom'>('auto')
@@ -3993,6 +4006,81 @@ export default function InstanceDetailPage() {
                     )
                   })()}
                 </div>
+              </SettingSection>
+
+              <SettingSection title={t('instanceDetail.settingsTab.startup')} icon={<Monitor className="h-4 w-4" />} action={<ResetButton fields={['gameWindowMode', 'gameWindowWidth', 'gameWindowHeight', 'processPriority']} />}>
+                <SettingRow
+                  label={t('instanceDetail.settingsTab.gameWindow')}
+                  description={t('instanceDetail.settingsTab.gameWindowDesc')}
+                  control={
+                    <Select
+                      value={form.gameWindowMode ?? 'global'}
+                      onChange={(v) => {
+                        if (v !== 'custom') {
+                          update('gameWindowMode', v === 'global' ? null : v)
+                          return
+                        }
+                        // 切到自定义时补默认宽高，否则后端会因缺尺寸清掉 custom。
+                        const settings = getSettings()
+                        update('gameWindowWidth', form.gameWindowWidth ?? settings.gameWindowWidth ?? 1280)
+                        update('gameWindowHeight', form.gameWindowHeight ?? settings.gameWindowHeight ?? 720)
+                        update('gameWindowMode', 'custom')
+                      }}
+                    >
+                      <SelectOption value="global">{t('instanceDetail.settingsTab.followGlobal')}</SelectOption>
+                      <SelectOption value="default">{t('instanceDetail.settingsTab.gameWindowDefault')}</SelectOption>
+                      <SelectOption value="small">{t('instanceDetail.settingsTab.gameWindowSmall')}</SelectOption>
+                      <SelectOption value="medium">{t('instanceDetail.settingsTab.gameWindowMedium')}</SelectOption>
+                      <SelectOption value="large">{t('instanceDetail.settingsTab.gameWindowLarge')}</SelectOption>
+                      <SelectOption value="fullscreen">{t('instanceDetail.settingsTab.gameWindowFullscreen')}</SelectOption>
+                      <SelectOption value="custom">{t('instanceDetail.settingsTab.gameWindowCustom')}</SelectOption>
+                    </Select>
+                  }
+                />
+                {form.gameWindowMode === 'custom' && (
+                  <SettingRow
+                    label={t('instanceDetail.settingsTab.gameWindowWidth')}
+                    control={
+                      <Input
+                        type="number"
+                        min={1}
+                        value={form.gameWindowWidth ?? ''}
+                        onChange={(e) => update('gameWindowWidth', parseInt(e.target.value, 10) || null)}
+                        className="w-32"
+                      />
+                    }
+                  />
+                )}
+                {form.gameWindowMode === 'custom' && (
+                  <SettingRow
+                    label={t('instanceDetail.settingsTab.gameWindowHeight')}
+                    control={
+                      <Input
+                        type="number"
+                        min={1}
+                        value={form.gameWindowHeight ?? ''}
+                        onChange={(e) => update('gameWindowHeight', parseInt(e.target.value, 10) || null)}
+                        className="w-32"
+                      />
+                    }
+                  />
+                )}
+                <SettingRow
+                  label={t('instanceDetail.settingsTab.processPriority')}
+                  description={t('instanceDetail.settingsTab.processPriorityDesc')}
+                  control={
+                    <Select
+                      value={form.processPriority ?? 'global'}
+                      onChange={(v) => update('processPriority', v === 'global' ? null : v)}
+                    >
+                      <SelectOption value="global">{t('instanceDetail.settingsTab.followGlobal')}</SelectOption>
+                      <SelectOption value="below_normal">{t('settings.launcher.priorityBelowNormal')}</SelectOption>
+                      <SelectOption value="normal">{t('settings.launcher.priorityNormal')}</SelectOption>
+                      {isWindows && <SelectOption value="above_normal">{t('settings.launcher.priorityAboveNormal')}</SelectOption>}
+                      {isWindows && <SelectOption value="high">{t('settings.launcher.priorityHigh')}</SelectOption>}
+                    </Select>
+                  }
+                />
               </SettingSection>
 
               <SettingSection title={t('instanceDetail.settingsTab.jvmArgs')} icon={<SquareTerminal className="h-4 w-4" />} action={<ResetButton fields={['jvmArgs', 'accountUuid', 'accountName', 'accessToken']} />}>

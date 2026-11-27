@@ -931,6 +931,14 @@ export default function Settings() {
     notify(t('settings.saved'), 'success')
   }
 
+  /** 一次写多个键：连续 update() 会各自基于同一份旧快照重建并互相覆盖。 */
+  function patchSettings(patch: Partial<AppSettings>) {
+    const next = { ...settings, ...patch }
+    setSettings(next)
+    saveSettings(next)
+    notify(t('settings.saved'), 'success')
+  }
+
   const validCount = runtimes.filter((j) => j.state === 'Valid').length
 
   const isWindows = !navigator.userAgent.includes('Mac') && !navigator.userAgent.includes('Linux')
@@ -1485,6 +1493,64 @@ export default function Settings() {
                   )
                 }
               />
+              <SettingRow
+                label={t('settings.launcher.gameWindow')}
+                description={t('settings.launcher.gameWindowDesc')}
+                control={
+                  <Select
+                    value={settings.gameWindowMode ?? 'unspecified'}
+                    onChange={(v) => {
+                      if (v === 'custom') {
+                        // 一次写入三个键：连续 update() 会用同一份旧快照互相覆盖。
+                        patchSettings({
+                          gameWindowMode: 'custom',
+                          gameWindowWidth: settings.gameWindowWidth ?? 1280,
+                          gameWindowHeight: settings.gameWindowHeight ?? 720,
+                        })
+                        return
+                      }
+                      update('gameWindowMode', v === 'unspecified' ? null : v)
+                    }}
+                  >
+                    <SelectOption value="unspecified">{t('settings.launcher.gameWindowUnspecified')}</SelectOption>
+                    <SelectOption value="default">{t('settings.launcher.gameWindowDefault')}</SelectOption>
+                    <SelectOption value="small">{t('settings.launcher.gameWindowSmall')}</SelectOption>
+                    <SelectOption value="medium">{t('settings.launcher.gameWindowMedium')}</SelectOption>
+                    <SelectOption value="large">{t('settings.launcher.gameWindowLarge')}</SelectOption>
+                    <SelectOption value="fullscreen">{t('settings.launcher.gameWindowFullscreen')}</SelectOption>
+                    <SelectOption value="custom">{t('settings.launcher.gameWindowCustom')}</SelectOption>
+                  </Select>
+                }
+              />
+              {settings.gameWindowMode === 'custom' && (
+                <SettingRow
+                  label={t('settings.launcher.gameWindowWidth')}
+                  description={t('settings.launcher.gameWindowCustomInvalid')}
+                  control={
+                    <Input
+                      type="number"
+                      min={1}
+                      value={settings.gameWindowWidth ?? ''}
+                      onChange={(e) => update('gameWindowWidth', parseInt(e.target.value, 10) || null)}
+                      className="w-32"
+                    />
+                  }
+                />
+              )}
+              {settings.gameWindowMode === 'custom' && (
+                <SettingRow
+                  label={t('settings.launcher.gameWindowHeight')}
+                  control={
+                    <Input
+                      type="number"
+                      min={1}
+                      value={settings.gameWindowHeight ?? ''}
+                      onChange={(e) => update('gameWindowHeight', parseInt(e.target.value, 10) || null)}
+                      className="w-32"
+                    />
+                  }
+                />
+              )}
             </SettingSection>
 
             <SettingSection title={t('settings.category.download')} icon={<Download className="h-4 w-4" />}>

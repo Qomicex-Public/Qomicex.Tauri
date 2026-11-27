@@ -34,8 +34,14 @@ export function hostByPort(port: number): Promise<{ roomCode: string }> {
   return longPost<{ roomCode: string }>('/connector/host/port', { port })
 }
 
-export function hostByInstance(instanceId: string): Promise<{ status: string }> {
-  return post('/connector/host/instance', { instanceId })
+export interface HostWindowArgs {
+  windowWidth?: number
+  windowHeight?: number
+  windowFullscreen?: boolean
+}
+
+export function hostByInstance(instanceId: string, windowArgs?: HostWindowArgs): Promise<{ status: string }> {
+  return post('/connector/host/instance', { instanceId, ...(windowArgs ?? {}) })
 }
 
 export function joinRoom(code: string): Promise<{ mcHost: string; mcPort: number }> {

@@ -265,6 +265,7 @@ async fn put_settings(
     // 在边界处规范化：这些值会被拿去构造 Semaphore / Duration，越界值必须在落盘前
     // 就钳住，否则一个手改的 settings.json 或一次直连 API 调用就能让后续请求 panic。
     body.clamp_numeric_ranges();
+    settings::normalize_game_window(&mut body);
 
     // 自定义联机节点（issue #112）在落盘前强制校验并规范化：非法条目拒绝保存。
     // 放在这里而非仅在前端校验 —— settings.json 可手改、本地 API 也能被插件直接调用，

@@ -25,6 +25,8 @@ import { useRunningActions } from '../contexts/RunningContext.tsx'
 import { loadInstances, useInstancesStore } from '../stores/instancesStore.ts'
 import { useI18n } from '../i18n/index.tsx'
 import { cropHeadFromSkin } from '../lib/skin-avatar.ts'
+import { getSettings } from '../api/settings.ts'
+import { resolveGameWindowArgs } from '../lib/gameWindow.ts'
 import { buildRoomShareUrl } from '../lib/share.ts'
 import { ShareLinkDialog } from '../components/ShareLinkDialog.tsx'
 import type { ConnectorStatus, ConnectorPlayer, EasyTierStatus, NatTypeResult, LaunchProgress, KickReviewRequest } from '../types/index.ts'
@@ -398,7 +400,12 @@ export default function Connect() {
     startInstanceIdRef.current = selectedInstance
     setBusy(true)
     try {
-      await connectorApi.hostByInstance(selectedInstance)
+      const settings = getSettings()
+      const windowArgs = resolveGameWindowArgs(
+        { mode: inst?.gameWindowMode, width: inst?.gameWindowWidth, height: inst?.gameWindowHeight },
+        { mode: settings.gameWindowMode, width: settings.gameWindowWidth, height: settings.gameWindowHeight },
+      )
+      await connectorApi.hostByInstance(selectedInstance, windowArgs)
       // 后端代启：注册进"运行中的游戏"（轮询进度直至 running/终态）
       if (inst) watchInstance(inst.id, inst.name)
       await refreshStatus()

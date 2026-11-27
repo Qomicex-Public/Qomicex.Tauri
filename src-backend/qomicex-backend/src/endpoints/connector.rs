@@ -869,6 +869,11 @@ async fn host_instance(
         .instance
         .get_by_id(&req.instance_id)
         .ok_or_else(|| ApiError::not_found("INSTANCE_NOT_FOUND", "实例不存在"))?;
+    let extra_game_args = crate::services::game_window::extra_game_args(
+        req.window_width,
+        req.window_height,
+        req.window_fullscreen,
+    );
 
     let conn = connector();
     {
@@ -1000,8 +1005,12 @@ async fn host_instance(
                                     },
                                 );
                             });
-                        let mut opts =
-                            build_launch_options(&instance_clone, &java_path, Some(auth_options));
+                        let mut opts = build_launch_options(
+                            &instance_clone,
+                            &java_path,
+                            Some(auth_options),
+                            extra_game_args.clone(),
+                        );
                         opts.on_stage = Some(on_stage);
                         opts
                     };
@@ -1036,7 +1045,10 @@ async fn host_instance(
                     return;
                 }
                 tracker.track(&starting_id, pid);
-                crate::services::hardware::apply_priority(pid);
+                crate::services::hardware::apply_priority(
+                    pid,
+                    instance_clone.process_priority.as_deref(),
+                );
                 tracker.set_progress(
                     &starting_id,
                     LaunchProgress {
@@ -2523,6 +2535,7 @@ fn build_launch_options(
     instance: &crate::services::instance::GameInstance,
     java_path: &str,
     auth_options: Option<qomicex_core::models::auth::AuthOptions>,
+    extra_game_args: Option<Vec<String>>,
 ) -> qomicex_core::models::launch::LaunchOptions {
     use qomicex_core::models::launch::LaunchOptions;
     LaunchOptions {
@@ -2547,6 +2560,7 @@ fn build_launch_options(
             }),
         }),
         auth_options,
+        extra_game_args,
         ..Default::default()
     }
 }
@@ -2584,6 +2598,12 @@ pub struct HostPortResponse {
 #[serde(rename_all = "camelCase")]
 pub struct HostInstanceRequest {
     pub instance_id: String,
+    #[serde(default)]
+    pub window_width: Option<i32>,
+    #[serde(default)]
+    pub window_height: Option<i32>,
+    #[serde(default)]
+    pub window_fullscreen: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]

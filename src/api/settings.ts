@@ -122,6 +122,11 @@ export interface AppSettings {
   launchHardwareBoost?: boolean
   /** 游戏进程优先级：normal（默认）/ below_normal / above_normal / high；非 Windows 只提供前两档 */
   processPriority?: 'below_normal' | 'normal' | 'above_normal' | 'high'
+  /** 游戏窗口模式：缺失/null = 不指定（沿用游戏默认）；default/small/medium/large/fullscreen/custom */
+  gameWindowMode?: string | null
+  /** 仅 gameWindowMode=custom 时使用 */
+  gameWindowWidth?: number | null
+  gameWindowHeight?: number | null
   /** 资源文件下载命名格式（ENH-10）：cn-name-ver / name-cn-ver / cn-name / name-ver / name */
   fileNaming?: string
 }
@@ -184,6 +189,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   updateAutoInstall: true,
   launchHardwareBoost: true,
   processPriority: 'normal',
+  gameWindowMode: null,
+  gameWindowWidth: null,
+  gameWindowHeight: null,
 }
 
 let cached: AppSettings = { ...DEFAULT_SETTINGS }
@@ -236,6 +244,19 @@ async function doLoadSettings(): Promise<AppSettings> {
         launchHardwareBoost:
           data.launchHardwareBoost ?? cached.launchHardwareBoost ?? DEFAULT_SETTINGS.launchHardwareBoost,
         processPriority: data.processPriority ?? cached.processPriority ?? DEFAULT_SETTINGS.processPriority,
+        // null 是有效值（不指定），不能和「字段缺失」用同一个 ?? 回退。
+        gameWindowMode:
+          data.gameWindowMode === undefined
+            ? (cached.gameWindowMode ?? DEFAULT_SETTINGS.gameWindowMode)
+            : data.gameWindowMode,
+        gameWindowWidth:
+          data.gameWindowWidth === undefined
+            ? (cached.gameWindowWidth ?? DEFAULT_SETTINGS.gameWindowWidth)
+            : data.gameWindowWidth,
+        gameWindowHeight:
+          data.gameWindowHeight === undefined
+            ? (cached.gameWindowHeight ?? DEFAULT_SETTINGS.gameWindowHeight)
+            : data.gameWindowHeight,
       }
       // 液态玻璃已下架（ADR-141 2.1）：存量值迁移到 frosted，避免视觉突变
       if ((cached.componentMaterial as string | undefined) === 'liquid') {

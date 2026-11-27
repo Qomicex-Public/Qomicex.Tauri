@@ -87,6 +87,15 @@ struct UpdateInstanceRequest {
     version_isolation: Option<Option<bool>>,
     #[serde(default)]
     skip_integrity_check: Option<bool>,
+    /// 缺失=不修改；null=跟随全局；字符串=设置。
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    game_window_mode: Option<Option<String>>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    game_window_width: Option<Option<i32>>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    game_window_height: Option<Option<i32>>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    process_priority: Option<Option<String>>,
     #[serde(default)]
     custom_group_ids: Option<Vec<String>>,
     /// 用户自定义备注：缺失=不修改；null=清除；Some(Some(v))=设置。
@@ -215,6 +224,13 @@ struct LaunchInstanceRequest {
     join_world: Option<String>,
     #[serde(default)]
     account_uuid: Option<String>,
+    /// 前端按窗口预设换算后的像素宽高；`window_fullscreen` 优先。
+    #[serde(default)]
+    window_width: Option<i32>,
+    #[serde(default)]
+    window_height: Option<i32>,
+    #[serde(default)]
+    window_fullscreen: Option<bool>,
 }
 
 /// POST /api/instance/{id}/launch response (source: LaunchResultDto).
@@ -522,6 +538,22 @@ async fn update_instance(
         if let Some(v) = req.skip_integrity_check {
             existing.skip_integrity_check = v;
         }
+        if let Some(v) = req.game_window_mode.clone() {
+            existing.game_window_mode = v.and_then(|mode| {
+                crate::services::game_window::normalize_mode(Some(mode.as_str()))
+                    .map(str::to_string)
+            });
+        }
+        if let Some(v) = req.game_window_width {
+            existing.game_window_width = crate::services::game_window::normalize_dimension(v);
+        }
+        if let Some(v) = req.game_window_height {
+            existing.game_window_height = crate::services::game_window::normalize_dimension(v);
+        }
+        if let Some(v) = req.process_priority.clone() {
+            existing.process_priority =
+                v.filter(|level| crate::services::hardware::is_known_priority(level));
+        }
         if let Some(v) = req.custom_group_ids.clone() {
             existing.custom_group_ids = v;
         }
@@ -746,6 +778,9 @@ async fn launch_instance(
             join_server: None,
             join_world: None,
             account_uuid: None,
+            window_width: None,
+            window_height: None,
+            window_fullscreen: None,
         });
 
     // Resolve auth options from the (default or requested) stored account.
@@ -832,6 +867,12 @@ async fn launch_instance(
         .unwrap_or_else(crate::settings::get_global_version_isolation);
     let join_server = req.join_server;
     let join_world = req.join_world;
+    let process_priority = instance.process_priority.clone();
+    let extra_game_args = crate::services::game_window::extra_game_args(
+        req.window_width,
+        req.window_height,
+        req.window_fullscreen,
+    );
     let cancel_flag = tracker.get_or_create_cancel(&instance_id);
 
     // Build a per-instance repair core rooted at this instance's game_dir (not
@@ -1083,6 +1124,7 @@ async fn launch_instance(
                 }),
                 auth_options: Some(auth_options),
                 game_root: Some(game_dir.clone()),
+                extra_game_args,
                 on_stage: Some(stage_callback),
             };
             let result = core
@@ -1108,7 +1150,7 @@ async fn launch_instance(
                     return;
                 }
                 tracing::info!(instance = %instance_id, pid, "launch: game started");
-                crate::services::hardware::apply_priority(pid);
+                crate::services::hardware::apply_priority(pid, process_priority.as_deref());
                 tracker.set_progress(
                     &instance_id,
                     LaunchProgress {
