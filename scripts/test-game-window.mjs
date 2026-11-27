@@ -72,7 +72,7 @@ try {
 
   check('实例未设置时跟随全局', pickGameWindow({}, { mode: 'medium' }), { mode: 'medium' })
   check(
-    '实例自定义优先实例宽高',
+    '实例自定义宽高优先',
     pickGameWindow(
       { mode: 'custom', width: 1024, height: 600 },
       { mode: 'custom', width: 1920, height: 1080 },
@@ -80,9 +80,9 @@ try {
     { mode: 'custom', width: 1024, height: 600 },
   )
   check(
-    '实例自定义缺值时回退全局宽高',
-    pickGameWindow({ mode: 'custom' }, { mode: 'custom', width: 1920, height: 1080 }),
-    { mode: 'custom', width: 1920, height: 1080 },
+    '实例自定义缺一项时不回落全局（不传参数）',
+    pickGameWindow({ mode: 'custom', width: 1024 }, { mode: 'custom', width: 1920, height: 1080 }),
+    { mode: null },
   )
   check('都没有设置则无参数', pickGameWindow({}, {}), { mode: null })
 

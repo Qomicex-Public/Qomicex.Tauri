@@ -554,11 +554,6 @@ async fn update_instance(
             existing.process_priority =
                 v.filter(|level| crate::services::hardware::is_known_priority(level));
         }
-        if existing.game_window_mode.as_deref() == Some("custom")
-            && (existing.game_window_width.is_none() || existing.game_window_height.is_none())
-        {
-            existing.game_window_mode = None;
-        }
         if let Some(v) = req.custom_group_ids.clone() {
             existing.custom_group_ids = v;
         }

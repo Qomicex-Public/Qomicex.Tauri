@@ -47,7 +47,7 @@ export function fitSixteenByNine(
   return { width, height }
 }
 
-/** 实例未单独设置时沿用全局；自定义宽高优先用实例自己的值。 */
+/** 实例未单独设置时沿用全局；实例显式选了自定义就只用它自己的宽高，缺一项时不传参数。 */
 export function pickGameWindow(
   instance: GameWindowSource,
   global: GameWindowSource,
@@ -56,15 +56,11 @@ export function pickGameWindow(
   if (!mode) return { mode: null }
   if (mode !== 'custom') return { mode }
 
-  const candidates: GameWindowSource[] = []
-  if (instance.mode === 'custom') candidates.push(instance)
-  candidates.push(global, instance)
-  for (const source of candidates) {
-    const width = positive(source.width)
-    const height = positive(source.height)
-    if (width !== null && height !== null) return { mode, width, height }
-  }
-  return { mode: null }
+  // 实例明确选了 custom：缺一项就当作「不传窗口参数」，不能拿全局宽高兜底。
+  const source = instance.mode === 'custom' ? instance : global
+  const width = positive(source.width)
+  const height = positive(source.height)
+  return width !== null && height !== null ? { mode, width, height } : { mode: null }
 }
 
 /** 纯换算：屏幕尺寸显式传入，方便单测。 */
