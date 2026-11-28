@@ -6,7 +6,7 @@ import { RotateCw } from 'lucide-react'
 import { Dialog, DialogHeader, DialogTitle, DialogBody, DialogFooter } from './ui'
 import { Button } from './ui'
 import { checkModUpdates } from '../api/instance-files.ts'
-import { updateModsViaDownloadCenter } from '../lib/updateMods.ts'
+import { dedupModUpdates, updateModsViaDownloadCenter } from '../lib/updateMods.ts'
 import { useMessageBox } from './ui'
 import { useI18n } from '../i18n/index.tsx'
 import type { ModUpdateEntry } from '../types/index.ts'
@@ -33,9 +33,10 @@ export default function ModUpdateDialog({ open, onClose, instanceId, onDone, onU
     setUpdating(false)
     checkModUpdates(instanceId, true)
       .then(list => {
-        setUpdates(list)
-        setSelected(new Set(list.map(u => u.fileName)))
-        onUpdatesFound?.(list)
+        const unique = dedupModUpdates(list)
+        setUpdates(unique)
+        setSelected(new Set(unique.map(u => u.fileName)))
+        onUpdatesFound?.(unique)
       })
       .catch(() => notify(t('dialogs.modUpdate.checkFailed'), 'error'))
       .finally(() => setLoading(false))

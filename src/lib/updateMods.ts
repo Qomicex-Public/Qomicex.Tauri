@@ -83,6 +83,24 @@ export interface UpdateModsResult {
   failedFileNames: string[]
 }
 
+/** 按 fileName 去重更新条目，保留首条并优先保留 downloadUrl 非空的条目（与后端 dedup_mod_updates 一致）。 */
+export function dedupModUpdates(updates: ModUpdateEntry[]): ModUpdateEntry[] {
+  const indexByFile = new Map<string, number>()
+  const deduped: ModUpdateEntry[] = []
+  for (const entry of updates) {
+    const idx = indexByFile.get(entry.fileName)
+    if (idx === undefined) {
+      indexByFile.set(entry.fileName, deduped.length)
+      deduped.push(entry)
+    } else if (!deduped[idx].downloadUrl && entry.downloadUrl) {
+      deduped[idx] = entry
+    }
+  }
+  return deduped
+}
+
+const inFlightModUpdates = new Set<string>()
+
 /** 通过下载中心逐文件更新模组：start → 进下载中心 → 轮询 → 完成后删除旧文件。并行启动。 */
 export async function updateModsViaDownloadCenter(
   instanceId: string,
@@ -91,72 +109,87 @@ export async function updateModsViaDownloadCenter(
   t?: TFunc,
 ): Promise<UpdateModsResult> {
   const tf: TFunc = t ?? ((k: string) => k)
-  const started = await Promise.all(updates.map(async (u): Promise<{ taskId: string; u: ModUpdateEntry; startError?: string }> => {
-    try {
-      const { taskId } = await startResourceDownload(instanceId, u.downloadUrl, u.newFileName, 'mod')
-      addTask({
-        id: taskId,
-        name: u.name,
-        type: 'file',
-        gameVersion: '',
-        instanceId,
-        status: 'queued',
-        progress: 0,
-        taskId,
-        currentFile: u.newFileName,
-        icon: u.iconUrl,
-        createdAt: new Date().toISOString(),
-        resourceKind: 'mod',
-      })
-      return { taskId, u }
-    } catch (e) {
-      // 启动失败立即写入 failed 任务（下载中心可见），显式保留错误信息
-      const failedTaskId = `mod-start-failed:${instanceId}:${u.newFileName}`
-      addTask({
-        id: failedTaskId,
-        name: u.name,
-        type: 'file',
-        gameVersion: '',
-        instanceId,
-        status: 'failed',
-        progress: 0,
-        taskId: failedTaskId,
-        currentFile: u.newFileName,
-        icon: u.iconUrl,
-        createdAt: new Date().toISOString(),
-        error: e instanceof Error ? `${tf('dialogs.common.startFailed')}：${e.message}` : tf('dialogs.common.startFailed'),
-        resourceKind: 'mod',
-      })
-      return { taskId: failedTaskId, u, startError: e instanceof Error ? e.message : String(e) }
-    }
-  }))
-  const queued = started.filter(s => !s.startError)
-  if (queued.length > 0) onAdded?.(queued.length)
-  const results = await Promise.all(started.map(async ({ taskId, u, startError }): Promise<{ ok: boolean; fileName: string }> => {
-    if (startError) return { ok: false, fileName: u.fileName }
-    try {
-      const status = await waitForCompletion(taskId, tf)
-      if (status === 'completed') {
-        await deleteMod(instanceId, u.fileName)
-        return { ok: true, fileName: u.fileName }
-      }
-      return { ok: false, fileName: u.fileName }
-    } catch {
-      return { ok: false, fileName: u.fileName }
-    }
-  }))
-  const succeeded = results.filter(r => r.ok)
-  const success = succeeded.length
-  if (success > 0) {
-    // 统一咽喉点：失效 mods 列表缓存（三条入口共用，修复更新后列表不刷新）
-    cacheInvalidate(`api-instance-${instanceId}-mods`)
-    // 失效后端 update-cache，避免下次自动检查返回已更新模组的过期条目
-    invalidateModUpdatesCache(instanceId).catch(() => {})
+  const uniqueUpdates = dedupModUpdates(updates).filter(
+    u => !inFlightModUpdates.has(`${instanceId}:${u.fileName}`),
+  )
+  if (uniqueUpdates.length === 0) {
+    return { success: 0, failed: 0, succeededFileNames: [], failedFileNames: [] }
   }
-  return {
-    success,
-    failed: results.length - success,
-    succeededFileNames: succeeded.map(r => r.fileName),
-    failedFileNames: results.filter(r => !r.ok).map(r => r.fileName),
+  for (const u of uniqueUpdates) {
+    inFlightModUpdates.add(`${instanceId}:${u.fileName}`)
+  }
+  try {
+    const started = await Promise.all(uniqueUpdates.map(async (u): Promise<{ taskId: string; u: ModUpdateEntry; startError?: string }> => {
+      try {
+        const { taskId } = await startResourceDownload(instanceId, u.downloadUrl, u.newFileName, 'mod')
+        addTask({
+          id: taskId,
+          name: u.name,
+          type: 'file',
+          gameVersion: '',
+          instanceId,
+          status: 'queued',
+          progress: 0,
+          taskId,
+          currentFile: u.newFileName,
+          icon: u.iconUrl,
+          createdAt: new Date().toISOString(),
+          resourceKind: 'mod',
+        })
+        return { taskId, u }
+      } catch (e) {
+        // 启动失败立即写入 failed 任务（下载中心可见），显式保留错误信息
+        const failedTaskId = `mod-start-failed:${instanceId}:${u.newFileName}`
+        addTask({
+          id: failedTaskId,
+          name: u.name,
+          type: 'file',
+          gameVersion: '',
+          instanceId,
+          status: 'failed',
+          progress: 0,
+          taskId: failedTaskId,
+          currentFile: u.newFileName,
+          icon: u.iconUrl,
+          createdAt: new Date().toISOString(),
+          error: e instanceof Error ? `${tf('dialogs.common.startFailed')}：${e.message}` : tf('dialogs.common.startFailed'),
+          resourceKind: 'mod',
+        })
+        return { taskId: failedTaskId, u, startError: e instanceof Error ? e.message : String(e) }
+      }
+    }))
+    const queued = started.filter(s => !s.startError)
+    if (queued.length > 0) onAdded?.(queued.length)
+    const results = await Promise.all(started.map(async ({ taskId, u, startError }): Promise<{ ok: boolean; fileName: string }> => {
+      if (startError) return { ok: false, fileName: u.fileName }
+      try {
+        const status = await waitForCompletion(taskId, tf)
+        if (status === 'completed') {
+          await deleteMod(instanceId, u.fileName)
+          return { ok: true, fileName: u.fileName }
+        }
+        return { ok: false, fileName: u.fileName }
+      } catch {
+        return { ok: false, fileName: u.fileName }
+      }
+    }))
+    const succeeded = results.filter(r => r.ok)
+    const success = succeeded.length
+    if (success > 0) {
+      // 统一咽喉点：失效 mods 列表缓存（三条入口共用，修复更新后列表不刷新）
+      cacheInvalidate(`api-instance-${instanceId}-mods`)
+      // 失效后端 update-cache，避免下次自动检查返回已更新模组的过期条目
+      invalidateModUpdatesCache(instanceId).catch(() => {})
+    }
+    return {
+      success,
+      failed: results.length - success,
+      succeededFileNames: succeeded.map(r => r.fileName),
+      failedFileNames: results.filter(r => !r.ok).map(r => r.fileName),
+    }
+  } finally {
+    for (const u of uniqueUpdates) {
+      inFlightModUpdates.delete(`${instanceId}:${u.fileName}`)
+    }
   }
 }
