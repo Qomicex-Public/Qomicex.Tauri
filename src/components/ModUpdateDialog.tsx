@@ -33,9 +33,15 @@ export default function ModUpdateDialog({ open, onClose, instanceId, onDone, onU
     setUpdating(false)
     checkModUpdates(instanceId, true)
       .then(list => {
-        setUpdates(list)
-        setSelected(new Set(list.map(u => u.fileName)))
-        onUpdatesFound?.(list)
+        const seen = new Set<string>()
+        const unique = list.filter(u => {
+          if (seen.has(u.fileName)) return false
+          seen.add(u.fileName)
+          return true
+        })
+        setUpdates(unique)
+        setSelected(new Set(unique.map(u => u.fileName)))
+        onUpdatesFound?.(unique)
       })
       .catch(() => notify(t('dialogs.modUpdate.checkFailed'), 'error'))
       .finally(() => setLoading(false))

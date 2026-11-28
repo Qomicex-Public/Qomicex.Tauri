@@ -513,6 +513,25 @@ fn update_cache_usable(cache: &UpdateCacheEntry, current_loader: Option<&str>) -
     loader_matches(cache.loader.as_deref(), current_loader)
 }
 
+fn dedup_mod_updates(updates: &mut Vec<ModUpdateEntryDto>) {
+    let mut index_by_file: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    let mut deduped = Vec::with_capacity(updates.len());
+    for entry in updates.drain(..) {
+        match index_by_file.get(&entry.file_name).copied() {
+            None => {
+                index_by_file.insert(entry.file_name.clone(), deduped.len());
+                deduped.push(entry);
+            }
+            Some(idx) if deduped[idx].download_url.is_empty() && !entry.download_url.is_empty() => {
+                deduped[idx] = entry;
+            }
+            Some(_) => {}
+        }
+    }
+    *updates = deduped;
+}
+
 fn read_update_cache(
     data_dir: &Path,
     instance_id: &str,
@@ -520,13 +539,14 @@ fn read_update_cache(
 ) -> Option<UpdateCacheEntry> {
     let path = update_cache_path(data_dir, instance_id);
     let bytes = std::fs::read(path).ok()?;
-    let cache: UpdateCacheEntry = serde_json::from_slice(&bytes).ok()?;
+    let mut cache: UpdateCacheEntry = serde_json::from_slice(&bytes).ok()?;
     // 加载器变了（如 Forge → Fabric）→ 清单是按旧加载器筛出来的，不得复用
     if !update_cache_usable(&cache, current_loader) {
         return None;
     }
     let now = now_secs();
     if now - cache.fetched_at < UPDATE_CACHE_TTL_SECS {
+        dedup_mod_updates(&mut cache.updates);
         Some(cache)
     } else {
         None
@@ -540,12 +560,13 @@ fn read_update_cache_stale(
 ) -> Option<UpdateCacheEntry> {
     let path = update_cache_path(data_dir, instance_id);
     let bytes = std::fs::read(path).ok()?;
-    let cache: UpdateCacheEntry = serde_json::from_slice(&bytes).ok()?;
+    let mut cache: UpdateCacheEntry = serde_json::from_slice(&bytes).ok()?;
     // stale 分支同样要拒绝：返回按旧加载器的清单会让前端把错误的「可更新」标记
     // 贴到当前实例上。
     if !update_cache_usable(&cache, current_loader) {
         return None;
     }
+    dedup_mod_updates(&mut cache.updates);
     Some(cache)
 }
 
@@ -1601,6 +1622,7 @@ async fn refresh_mod_updates(
         }
     }
 
+    dedup_mod_updates(&mut updates);
     fill_mod_update_icons(&state.http_client, &state.curse_forge_api_key, &mut updates).await;
 
     Ok(updates)
@@ -3462,5 +3484,42 @@ mod tests {
 
         drop(lock);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dedup_mod_updates_keeps_first_per_file_and_prefers_non_empty_url() {
+        let entry = |file_name: &str, source: &str, download_url: &str| ModUpdateEntryDto {
+            file_name: file_name.to_string(),
+            name: "Create".to_string(),
+            current_version: "6.0.9".to_string(),
+            latest_version: format!("{source}-6.0.10"),
+            project_id: "1".to_string(),
+            source: source.to_string(),
+            download_url: download_url.to_string(),
+            new_file_name: "create-6.0.10.jar".to_string(),
+            icon_url: None,
+        };
+
+        let mut list = vec![
+            entry(
+                "create.jar",
+                "modrinth",
+                "https://cdn.modrinth.com/create.jar",
+            ),
+            entry(
+                "create.jar",
+                "curseforge",
+                "https://edge.forgecdn.net/create.jar",
+            ),
+            entry("jei.jar", "modrinth", ""),
+            entry("jei.jar", "curseforge", "https://edge.forgecdn.net/jei.jar"),
+        ];
+        dedup_mod_updates(&mut list);
+
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].file_name, "create.jar");
+        assert_eq!(list[0].source, "modrinth");
+        assert_eq!(list[1].file_name, "jei.jar");
+        assert_eq!(list[1].source, "curseforge");
     }
 }

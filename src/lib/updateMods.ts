@@ -91,7 +91,13 @@ export async function updateModsViaDownloadCenter(
   t?: TFunc,
 ): Promise<UpdateModsResult> {
   const tf: TFunc = t ?? ((k: string) => k)
-  const started = await Promise.all(updates.map(async (u): Promise<{ taskId: string; u: ModUpdateEntry; startError?: string }> => {
+  const seenFiles = new Set<string>()
+  const uniqueUpdates = updates.filter(u => {
+    if (seenFiles.has(u.fileName)) return false
+    seenFiles.add(u.fileName)
+    return true
+  })
+  const started = await Promise.all(uniqueUpdates.map(async (u): Promise<{ taskId: string; u: ModUpdateEntry; startError?: string }> => {
     try {
       const { taskId } = await startResourceDownload(instanceId, u.downloadUrl, u.newFileName, 'mod')
       addTask({
